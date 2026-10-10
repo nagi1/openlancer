@@ -1,0 +1,332 @@
+diff --git a/src/LibreLancer.Tests/ThnPathAnimationTests.cs b/src/LibreLancer.Tests/ThnPathAnimationTests.cs
+new file mode 100644
+index 00000000..3e29e7b4
+--- /dev/null
++++ b/src/LibreLancer.Tests/ThnPathAnimationTests.cs
+@@ -0,0 +1,279 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.IO;
++using System.Linq;
++using System.Numerics;
++using System.Text.RegularExpressions;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Thorn;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// START_PATH_ANIMATION without a renderer. The points and the keys of a path are in the frame of its path entity.
++// Each frame uses the order of Cutscene._Update: the processors run, then each scene object updates.
++public class ThnPathAnimationTests
++{
++    private const string BarScript = @"SCRIPTS\STORY\s003x_nrml_manhtn_bar_li_01_Bar_01.thn";
++
++    // An object starts on its path when it is this near to the first point. Space scenes have coordinates of
++    // up to 20 km, where the step of a float is 2 mm.
++    private const float StartTolerance = 0.01f;
++
++    private static readonly Quaternion Yaw90 = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI / 2);
++    private static readonly Quaternion Pitch30 = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 6);
++
++    // Makes a path from a retail path_data string, as the Lua runtime parses it: OPEN or CLOSED, then {x, y, z} for
++    // a point and {w, x, y, z} for an orientation. The test does not use the Lua runtime, because its compiler is
++    // native.
++    private static MotionPath ParsePath(string data)
++    {
++        var table = new ThornTable();
++        table.Append(data.TrimStart().StartsWith("CLOSED", StringComparison.Ordinal) ? 0 : 1);
++        foreach (Match tuple in Regex.Matches(data, @"\{([^{}]*)\}"))
++        {
++            var values = new ThornTable();
++            foreach (var value in tuple.Groups[1].Value.Split(','))
++            {
++                values.Append(float.Parse(value, CultureInfo.InvariantCulture));
++            }
++
++            table.Append(values);
++        }
++
++        return new MotionPath(table);
++    }
++
++    // One key of a path_data string: a point and an orientation.
++    private static string Key(Vector3 point, Quaternion orientation) => FormattableString.Invariant(
++        $"{{{point.X},{point.Y},{point.Z}}}, {{{orientation.W},{orientation.X},{orientation.Y},{orientation.Z}}}, ");
++
++    private static ThnSceneObject PathEntity(MotionPath path, Quaternion rotation) => new()
++    {
++        Name = "path",
++        Rotate = rotation,
++        Entity = new ThnEntity(new ThornTable { ["entity_name"] = "path", ["type"] = EntityTypes.MotionPath })
++        {
++            Path = path
++        }
++    };
++
++    private static ThnSceneObject Camera() => new() { Name = "camera", Rotate = Quaternion.Identity };
++
++    private static StartPathAnimationEvent Move(AttachFlags flags) => new()
++    {
++        Duration = 1,
++        StopPercent = 1,
++        Targets = ["camera", "path"],
++        Flags = flags
++    };
++
++    // The entities of a retail script by name. As in ThnScript, the names ignore case and the last one wins.
++    private static Dictionary<string, ThornTable> Entities(Dictionary<string, object> output)
++    {
++        var entities = new Dictionary<string, ThornTable>(StringComparer.OrdinalIgnoreCase);
++        foreach (var table in ((ThornTable)output["entities"]).Values.Cast<ThornTable>())
++        {
++            entities[(string)table["entity_name"]] = table;
++        }
++
++        return entities;
++    }
++
++    private static IEnumerable<ThornTable> PathEvents(Dictionary<string, object> output) =>
++        ((ThornTable)output["events"]).Values.Cast<ThornTable>()
++        .Where(x => ThnTypes.Convert<EventTypes>(x[2]) == EventTypes.StartPathAnimation);
++
++    private static bool HasOrientation(ThornTable entity) =>
++        entity.TryGetValue("spatialprops", out var spatial) && ((ThornTable)spatial).ContainsKey("orient");
++
++    // The scene object of a retail entity, as ThnScriptInstance makes it. A MOTION_PATH also gets its path.
++    private static ThnSceneObject SceneObject(ThornTable entity)
++    {
++        var obj = new ThnSceneObject()
++        {
++            Name = (string)entity["entity_name"],
++            Rotate = Quaternion.Identity,
++            Entity = new ThnEntity(entity)
++        };
++        if (entity.TryGetValue("spatialprops", out var value))
++        {
++            var spatial = (ThornTable)value;
++            if (spatial.TryGetVector3("pos", out var position))
++            {
++                obj.Translate = position;
++            }
++
++            if (spatial.TryGetValue("orient", out var orient))
++            {
++                obj.Rotate = ThnScript.GetQuaternion((ThornTable)orient);
++            }
++        }
++
++        if (entity.TryGetValue("pathprops", out value) && ((ThornTable)value).TryGetValue("path_data", out var data))
++        {
++            obj.Entity.Path = ParsePath((string)data);
++        }
++
++        return obj;
++    }
++
++    // Starts the event as ThnScriptInstance does at the event time. Then each object updates once.
++    private static ThnScriptInstance Start(ThnEvent ev, params ThnSceneObject[] objects)
++    {
++        var instance = new ThnScriptInstance(null!, new ThnScript() { Duration = 100 });
++        foreach (var obj in objects)
++        {
++            instance.Objects[obj.Name] = obj;
++        }
++
++        ev.Run(instance);
++        foreach (var obj in objects)
++        {
++            obj.Update();
++        }
++
++        return instance;
++    }
++
++    private static void Frames(ThnScriptInstance instance, int count, double frame)
++    {
++        for (int i = 0; i < count; i++)
++        {
++            instance.Update(frame);
++            foreach (var obj in instance.Objects.Values)
++            {
++                obj.Update();
++            }
++        }
++    }
++
++    // The angle of the turn from a to b, in degrees. Atan2 keeps small angles exact.
++    private static float Degrees(Quaternion a, Quaternion b)
++    {
++        var d = Quaternion.Normalize(Quaternion.Conjugate(a) * b);
++        return float.RadiansToDegrees(2 * MathF.Atan2(new Vector3(d.X, d.Y, d.Z).Length(), MathF.Abs(d.W)));
++    }
++
++    private static Vector3 Forward(Quaternion rotation) => Vector3.Transform(-Vector3.UnitZ, rotation);
++
++    private static void AssertNear(Vector3 expected, Vector3 actual) =>
++        Assert.True(Vector3.Distance(expected, actual) < 1e-4f, $"Expected {expected}, got {actual}");
++
++    // The path entity is turned 90 degrees to the left. Its keys pitch the camera up 30 degrees in the frame of the
++    // path, so the camera looks up toward -X. In the reversed order, the pitch becomes a roll about -X.
++    [Fact]
++    public void AKeyTurnsInTheFrameOfThePathEntity()
++    {
++        var path = PathEntity(ParsePath("OPEN, " + Key(Vector3.Zero, Pitch30) + Key(new(0, 0, -10), Pitch30)), Yaw90);
++        path.Translate = new Vector3(5, 0, 0);
++        var camera = Camera();
++        Start(Move(AttachFlags.Position | AttachFlags.Orientation), camera, path);
++
++        Assert.True(Degrees(Yaw90 * Pitch30, camera.Rotate) < 1e-3f, $"Got {camera.Rotate}");
++        AssertNear(new Vector3(-MathF.Cos(MathF.PI / 6), 0.5f, 0), Forward(camera.Rotate));
++        AssertNear(path.Translate, camera.Translate);
++    }
++
++    // The path entity is turned 90 degrees to the left and rolled 30 degrees. In its frame, the path climbs 5 m over
++    // 10 m. The camera aims along the path in the scene, and its up axis stays the scene up, so it does not roll
++    // with the path entity.
++    [Fact]
++    public void ALookAtPathAimsAlongThePathWithTheSceneUp()
++    {
++        var rotation = Yaw90 * Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 6);
++        var climb = new Vector3(0, 5, -10);
++        var path = PathEntity(
++            ParsePath("OPEN, " + Key(Vector3.Zero, Quaternion.Identity) + Key(climb, Quaternion.Identity)), rotation);
++        var camera = Camera();
++        Start(Move(AttachFlags.Position | AttachFlags.Orientation | AttachFlags.LookAt), camera, path);
++
++        AssertNear(Vector3.Normalize(Vector3.Transform(climb, rotation)), Forward(camera.Rotate));
++        Assert.Equal(0, Vector3.Transform(Vector3.UnitX, camera.Rotate).Y, 1e-4f);
++        Assert.True(Vector3.Transform(Vector3.UnitY, camera.Rotate).Y > 0, $"Got {camera.Rotate}");
++    }
++
++    // Retail objects that start on their path have the orientation of the first key, turned by the path entity.
++    // The test uses each START_PATH_ANIMATION whose keys give the orientation (ORIENTATION without LOOK_AT). The
++    // cases where the two orders of the key and the path entity differ by 1 degree or more decide the order. The
++    // retail data gives 172 matches within 0.1 degrees in 200 cases, and 30 in the 36 cases that decide. The
++    // others have small authoring errors. None of the 36 matches the reversed order. The test asks for minimums
++    // with a margin, because other retail data can give different counts.
++    [Fact]
++    public void RetailObjectsStartAtTheFirstKeyInTheFrameOfThePathEntity()
++    {
++        var data = RetailData.Open();
++        int cases = 0, matches = 0, differ = 0, differMatches = 0, reversedMatches = 0;
++        foreach (var file in Directory.EnumerateFiles(data.Folder, "*.thn", SearchOption.AllDirectories))
++        {
++            var output = new ThornRunner(ThnScript.ThnEnv, data.ReadThornFile).DoBytes(File.ReadAllBytes(file), file);
++            var entities = Entities(output);
++            foreach (var table in PathEvents(output))
++            {
++                var ev = new StartPathAnimationEvent(table);
++                if ((ev.Flags & (AttachFlags.Orientation | AttachFlags.LookAt)) != AttachFlags.Orientation ||
++                    ev.StartPercent != 0 ||
++                    !entities.TryGetValue(ev.Targets[0], out var objectEntity) || !HasOrientation(objectEntity) ||
++                    !entities.TryGetValue(ev.Targets[1], out var pathEntity))
++                {
++                    continue;
++                }
++
++                var obj = SceneObject(objectEntity);
++                var path = SceneObject(pathEntity);
++                if (path.Entity.Path == null)
++                {
++                    continue;
++                }
++
++                // The authored object must be at the first point of the path, in the frame of the path entity. An
++                // event without POSITION does not move the object, so the test does not use the update for this.
++                var first = new Transform3D(path.Translate, path.Rotate)
++                    .Transform(path.Entity.Path.GetPosition(0) + ev.Offset);
++                if (Vector3.Distance(obj.Translate, first) > StartTolerance)
++                {
++                    continue;
++                }
++
++                var authored = obj.Rotate;
++                Start(ev, obj, path);
++                cases++;
++                var match = Degrees(authored, obj.Rotate) < 0.1f;
++                matches += match ? 1 : 0;
++                var key = path.Entity.Path.GetOrientation(0);
++                if (Degrees(path.Rotate * key, key * path.Rotate) >= 1)
++                {
++                    differ++;
++                    differMatches += match ? 1 : 0;
++                    reversedMatches += Degrees(authored, key * path.Rotate) < 0.1f ? 1 : 0;
++                }
++            }
++        }
++
++        Assert.True(matches >= 163 && differMatches >= 23 && reversedMatches == 0,
++            $"{matches}/{cases} match, {differMatches}/{differ} that decide, {reversedMatches} match reversed");
++    }
++
++    // s003x from 80.218 s: the last bar shot cranes up on Cam_15_Path and tilts down to the bar. It ends near
++    // Cam_15_PCO_B. In the reversed order, the camera tilts up to the ceiling.
++    [Fact]
++    public void TheLastBarShotLooksDownAtTheBar()
++    {
++        var data = RetailData.Open();
++        var output = new ThornRunner(ThnScript.ThnEnv, data.ReadThornFile)
++            .DoBytes(data.ReadDataFile(BarScript), BarScript);
++        var entities = Entities(output);
++        var ev = new StartPathAnimationEvent(PathEvents(output).Single(x =>
++            (string)((ThornTable)x[3])[2] == "Cam_15_Path"));
++        var camera = SceneObject(entities["Cam_15_PCO_A"]);
++        var instance = Start(ev, camera, SceneObject(entities["Cam_15_Path"]));
++        Frames(instance, (int)Math.Ceiling(ev.Duration * 60) + 1, 1.0 / 60);
++
++        Assert.Empty(camera.Attachments);
++        Assert.True(Forward(camera.Rotate).Y < -0.7f, $"Forward {Forward(camera.Rotate)}");
++        var end = SceneObject(entities["Cam_15_PCO_B"]).Rotate;
++        Assert.True(Degrees(end, camera.Rotate) < 7, $"{Degrees(end, camera.Rotate)} degrees from Cam_15_PCO_B");
++    }
++}
+diff --git a/src/LibreLancer/Thn/MotionPath.cs b/src/LibreLancer/Thn/MotionPath.cs
+index 16a7aebc..88e5f4a8 100644
+--- a/src/LibreLancer/Thn/MotionPath.cs
++++ b/src/LibreLancer/Thn/MotionPath.cs
+@@ -50,11 +50,16 @@ namespace LibreLancer.Thn
+         private Quaternion[] curveQuats = [];
+         private bool curve = false;
+ 
++        // Abuse the Lua runtime to parse the path descriptor for us
+         public MotionPath(string pathdescriptor)
++            : this((ThornTable) new ThornRunner(env, null).DoString("path = {" + pathdescriptor + "}")["path"])
++        {
++        }
++
++        // Makes the path from the parsed descriptor: OPEN or CLOSED, then the keys. Tests use this constructor,
++        // because the parse needs the native Lua compiler.
++        internal MotionPath(ThornTable path)
+         {
+-            // Abuse the Lua runtime to parse the path descriptor for us
+-            var rt = new ThornRunner(env, null);
+-            var path = (ThornTable) (rt.DoString("path = {" + pathdescriptor + "}")["path"]);
+             var type = (int) path[1];
+             loop = type == CLOSED;
+             // detect if orientations are present
+diff --git a/src/LibreLancer/Thn/ThnSceneObject.cs b/src/LibreLancer/Thn/ThnSceneObject.cs
+index 2c2fee3c..1cd469be 100644
+--- a/src/LibreLancer/Thn/ThnSceneObject.cs
++++ b/src/LibreLancer/Thn/ThnSceneObject.cs
+@@ -174,13 +174,16 @@ public class ThnPathParent(ThnSceneObject Path)
+         var path = Path.Entity.Path!;
+         var parent = Path.GetTransform();
+         Quaternion orient = Quaternion.Identity;
++        // The path points and keys are in the frame of the path entity, as the position below.
+         if (pathLookAt)
+         {
+-            orient = QuaternionEx.LookRotation(path.GetDirection(T, Reverse), Vector3.UnitY) * parent.Orientation;
++            // The object aims along the path direction in the scene. Its up axis stays the scene up.
++            orient = QuaternionEx.LookRotation(Vector3.Transform(path.GetDirection(T, Reverse), parent.Orientation),
++                Vector3.UnitY);
+         }
+         else if (path.HasOrientation)
+         {
+-            orient = path.GetOrientation(T) * parent.Orientation;
++            orient = parent.Orientation * path.GetOrientation(T);
+         }
+ 
+         var pos = parent.Transform(path.GetPosition(T) + Offset);

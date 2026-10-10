@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Copies the Librelancer natives and dll.config files next to the tool. -->
+  <Import Project="..\..\external\Librelancer\src\PublishAssets\PublishAssets.projitems" Label="Shared" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>oltool</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,34 @@
+<Solution>
+  <Folder Name="/external/">
+    <Project Path="external/Librelancer/extern/bepuphysics2/BepuPhysics/BepuPhysics.csproj" />
+    <Project Path="external/Librelancer/extern/bepuphysics2/BepuUtilities/BepuUtilities.csproj" />
+    <Project Path="external/Librelancer/extern/blurgtext/dotnet/BlurgText/BlurgText.csproj" />
+    <Project Path="external/Librelancer/extern/LiteNetLib/LiteNetLib/LiteNetLib.csproj" />
+    <Project Path="external/Librelancer/extern/StringSquash/StringSquash/StringSquash.csproj" />
+    <Project Path="external/Librelancer/extern/wattlescript/src/WattleScript.HardwireGen/WattleScript.HardwireGen.csproj" />
+    <Project Path="external/Librelancer/extern/wattlescript/src/WattleScript.Interpreter/WattleScript.Interpreter.csproj" />
+    <Project Path="external/Librelancer/src/Editor/LibreLancer.ImUI/LibreLancer.ImUI.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Base/LibreLancer.Base.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Data.Generator/LibreLancer.Data.Generator.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Data/LibreLancer.Data.csproj" />
+    <Project Path="external/Librelancer/src/Librelancer.Database/LibreLancer.Database.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Entities/LibreLancer.Entities.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Media/LibreLancer.Media.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Net.Generator/LibreLancer.Net.Generator.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Physics/LibreLancer.Physics.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer.Thorn/LibreLancer.Thorn.csproj" />
+    <Project Path="external/Librelancer/src/LibreLancer/LibreLancer.csproj" />
+    <Project Path="external/Librelancer/extern/SimpleMesh/SimpleMesh/SimpleMesh.csproj" />
+    <Project Path="external/Librelancer/src/Editor/LibreLancer.ContentEdit/LibreLancer.ContentEdit.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/OpenLancer.Data/OpenLancer.Data.csproj" />
+    <Project Path="src/OpenLancer.Editor/OpenLancer.Editor.csproj" />
+    <Project Path="src/OpenLancer.Runtime/OpenLancer.Runtime.csproj" />
+    <Project Path="src/OpenLancer.Tools/OpenLancer.Tools.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/OpenLancer.DataTests/OpenLancer.DataTests.csproj" />
+    <Project Path="tests/OpenLancer.Tests/OpenLancer.Tests.csproj" />
+  </Folder>
+</Solution>

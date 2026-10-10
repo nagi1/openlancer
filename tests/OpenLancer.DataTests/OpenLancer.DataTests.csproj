@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Copies the Librelancer natives and dll.config files next to the test assembly. -->
+  <Import Project="..\..\external\Librelancer\src\PublishAssets\PublishAssets.projitems" Label="Shared" />
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\external\Librelancer\src\LibreLancer\LibreLancer.csproj" />
+    <ProjectReference Include="..\..\src\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+    <!-- OltoolValidateTests runs oltool from the test folder. -->
+    <ProjectReference Include="..\..\src\OpenLancer.Tools\OpenLancer.Tools.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

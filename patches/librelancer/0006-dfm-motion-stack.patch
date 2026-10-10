@@ -1,0 +1,1465 @@
+diff --git a/src/LibreLancer.Tests/DfmMotionStackTests.cs b/src/LibreLancer.Tests/DfmMotionStackTests.cs
+new file mode 100644
+index 00000000..b66ee79f
+--- /dev/null
++++ b/src/LibreLancer.Tests/DfmMotionStackTests.cs
+@@ -0,0 +1,550 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Numerics;
++using LibreLancer.Render;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Thorn;
++using LibreLancer.Utf.Anm;
++using LibreLancer.World;
++using LibreLancer.World.Components;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// The motion stack of DfmSkeletonManager, with retail characters and animations. The tests call UpdateScripts on
++// each frame, as AnimationComponent does.
++public class DfmMotionStackTests
++{
++    internal const string GenericMale = @"CHARACTERS\ANIMATIONS\BodyGenericMale.anm";
++    private const string HandMale = @"CHARACTERS\ANIMATIONS\HandMale.anm";
++    private const string Idle = "Sc_MLBODY_STND_IDLE_SMALL_000LV_xa_05";
++    private const string Run = "Sc_MLBODY_RNNG_STND_TRNS_000LV_XA_07";
++    private const string Turn = "Sc_MLBODY_STND_TURN_180LV_XA_04";
++    private const string Walk = "Sc_MLBODY_WLKG_000LV_XA_01";
++    private const string RightHand = "Sc_MLHAND_NEUT_RGHT_000LV_A_00";
++    private const double Frame = 1.0 / 60;
++    private const float OneDegree = MathF.PI / 180;
++
++    // The animation files are large, so the tests load them one time.
++    private static readonly Lazy<(RetailData Data, AnmFile Animations)> retail = new(() =>
++    {
++        var data = RetailData.Open();
++        return (data, data.LoadAnimations(GenericMale, HandMale));
++    });
++
++    private static DfmSkeletonManager Character(string costume) => retail.Value.Data.LoadCostume(costume)!;
++
++    private static Script Motion(string name) => retail.Value.Animations.Scripts[name];
++
++    // Calls UpdateScripts for a time in steps of dt.
++    private static void Step(DfmSkeletonManager skeleton, double seconds, double dt = Frame)
++    {
++        var count = (int)Math.Round(seconds / dt);
++        for (var i = 0; i < count; i++)
++        {
++            skeleton.UpdateScripts(dt);
++        }
++    }
++
++    // The bones of all parts by name. A body bone comes first, as in FindBone.
++    private static Dictionary<string, BoneInstance> Bones(DfmSkeletonManager skeleton)
++    {
++        var bones = new Dictionary<string, BoneInstance>(StringComparer.OrdinalIgnoreCase);
++        foreach (var part in new[]
++                 {
++                     skeleton.BodySkinning, skeleton.HeadSkinning, skeleton.LeftHandSkinning,
++                     skeleton.RightHandSkinning
++                 })
++        {
++            foreach (var (name, bone) in part?.Bones ?? [])
++            {
++                bones.TryAdd(name, bone);
++            }
++        }
++
++        return bones;
++    }
++
++    // The rotation samples of a motion at a motion time, by bone name. The rule for loops is the rule of
++    // DfmSkeletonManager.
++    private static Dictionary<string, Quaternion> Sample(Script script, double time, bool loop = false)
++    {
++        var samples = new Dictionary<string, Quaternion>(StringComparer.OrdinalIgnoreCase);
++        for (var i = 0; i < script.JointMaps.Count; i++)
++        {
++            ref var jm = ref script.JointMaps[i];
++            if (!jm.Channel.HasOrientation)
++            {
++                continue;
++            }
++
++            var t = (float)time;
++            if (loop && t > jm.Channel.Duration)
++            {
++                t %= jm.Channel.Duration;
++            }
++
++            var cursor = 0;
++            samples[jm.ChildName] = jm.Channel.QuaternionAtTime(t, ref cursor);
++        }
++
++        return samples;
++    }
++
++    private static Channel RootChannel(Script script) =>
++        script.ObjectMaps.First(x => x.ParentName.Equals("Root", StringComparison.OrdinalIgnoreCase)).Channel;
++
++    // The angle between two rotations. It is accurate also for small angles.
++    private static float Angle(Quaternion a, Quaternion b)
++    {
++        var d = Quaternion.Inverse(a) * b;
++        return 2 * MathF.Asin(Math.Min(1f, new Vector3(d.X, d.Y, d.Z).Length()));
++    }
++
++    // Each bone that has an expected rotation must have it.
++    private static void AssertPose(DfmSkeletonManager skeleton, Dictionary<string, Quaternion> expected,
++        float tolerance)
++    {
++        var bones = Bones(skeleton);
++        var count = 0;
++        foreach (var (name, rotation) in expected)
++        {
++            if (!bones.TryGetValue(name, out var bone))
++            {
++                continue;
++            }
++
++            var angle = Angle(rotation, bone.Rotation);
++            Assert.True(angle < tolerance, $"{name} is {angle} radians from the expected rotation");
++            count++;
++        }
++
++        Assert.True(count > 0, "No bone of the expected pose is in the skeleton");
++    }
++
++    // The expected rotation of each bone of b: the blend of a and b with the weight w.
++    private static Dictionary<string, Quaternion> Blend(Dictionary<string, Quaternion> a,
++        Dictionary<string, Quaternion> b, float w) =>
++        b.Where(x => a.ContainsKey(x.Key))
++            .ToDictionary(x => x.Key, x => Quaternion.Slerp(a[x.Key], x.Value, w), StringComparer.OrdinalIgnoreCase);
++
++    // The largest angle between the rotations of the bones that a and b both have.
++    private static float LargestAngle(Dictionary<string, Quaternion> a, Dictionary<string, Quaternion> b) =>
++        b.Where(x => a.ContainsKey(x.Key)).Max(x => Angle(a[x.Key], x.Value));
++
++    // The motion time of a motion after a number of frames, as ScriptInstance.RunScript calculates it.
++    private static double MotionTime(int frames, float timeScale = 1, float startTime = 0)
++    {
++        var t = 0.0;
++        for (var i = 0; i < frames; i++)
++        {
++            t += Frame;
++        }
++
++        return (float)(t * timeScale) + startTime;
++    }
++
++    [Theory]
++    [InlineData(0.25, 0.1464466f)]
++    [InlineData(0.5, 0.5f)]
++    [InlineData(0.75, 0.8535534f)]
++    [InlineData(-1, 0f)]
++    [InlineData(1, 1f)]
++    [InlineData(2, 1f)]
++    public void TheTransitionWeightIsACosineEase(double fraction, float weight)
++    {
++        Assert.Equal(weight, DfmSkeletonManager.TransitionWeight(fraction * 2, 2), 1e-6f);
++    }
++
++    [Fact]
++    public void AZeroTransitionGivesTheFullWeight()
++    {
++        Assert.Equal(1f, DfmSkeletonManager.TransitionWeight(0, 0));
++    }
++
++    // s002xe 55.791: Trent starts to run while an idle runs. The run has no transition, so it takes the root at once.
++    [Fact]
++    public void TheNewestMotionMovesTheRoot()
++    {
++        var skeleton = Character("trent");
++        skeleton.StartScript(Motion(Idle), 0, 0.5f, 5);
++        Step(skeleton, 3.134);
++        var run = Motion(Run);
++        skeleton.StartScript(run, 0, 1, 3.5f);
++        var root = RootChannel(run);
++        var cursor = 0;
++        var total = Vector3.Zero;
++        for (var i = 0; i < 56; i++)
++        {
++            skeleton.UpdateScripts(Frame);
++            Assert.True(skeleton.ApplyRootMotion, $"No root motion in frame {i}");
++            if (i == 0)
++            {
++                // The idle does not move the root, also not in the first frame.
++                var first = root.PositionAtTime((float)Frame, ref cursor) - root.PositionAtTime(0, ref cursor);
++                Assert.True(Vector3.Distance(first, skeleton.RootTranslation) < 1e-5f,
++                    $"Expected {first}, got {skeleton.RootTranslation} in the first frame");
++            }
++
++            total += skeleton.RootTranslation;
++        }
++
++        var expected = root.PositionAtTime((float)MotionTime(56), ref cursor) - root.PositionAtTime(0, ref cursor);
++        Assert.InRange(expected.Length(), 3.6f, 3.9f);
++        Assert.True(Vector3.Distance(expected, total) < 0.02f * expected.Length(), $"Expected {expected}, got {total}");
++    }
++
++    // s002xe 69.966: Syd turns half a circle while an idle runs. The turn has a transition of 0.7 s, but it moves the
++    // root from its first frame.
++    [Fact]
++    public void TheTurnGivesItsWholeYaw()
++    {
++        var skeleton = Character("syd");
++        skeleton.StartScript(Motion(Idle), 0, 0.5f, 10);
++        Step(skeleton, 1.011);
++        var turn = Motion(Turn);
++        skeleton.StartScript(turn, 0, 1.5f, 2.953f, transition: 0.7f);
++        var rotate = Quaternion.Identity;
++        for (var i = 0; i < 200; i++)
++        {
++            skeleton.UpdateScripts(Frame);
++            if (skeleton.ApplyRootMotion)
++            {
++                // As ThnSceneObject.UpdateEngineObjects.
++                rotate *= skeleton.RootRotation;
++            }
++        }
++
++        // The turn plays its whole channel: 2.953 s at the time scale 1.5.
++        var root = RootChannel(turn);
++        var cursor = 0;
++        var expected = Quaternion.Inverse(root.QuaternionAtTime(0, ref cursor)) *
++                       root.QuaternionAtTime(root.Duration, ref cursor);
++        Assert.InRange(Angle(Quaternion.Identity, expected), 175 * OneDegree, 180 * OneDegree);
++        Assert.True(Angle(expected, rotate) < 2 * OneDegree,
++            $"The root turns {Angle(expected, rotate) / OneDegree} degrees less or more than the motion");
++    }
++
++    [Fact]
++    public void AZeroTransitionTakesTheBonesAtOnce()
++    {
++        var skeleton = Character("trent");
++        skeleton.StartScript(Motion(Idle), 0, 1, 0, true);
++        Step(skeleton, 1);
++        skeleton.StartScript(Motion(Walk), 0, 1, 0, true);
++        skeleton.UpdateScripts(Frame);
++
++        AssertPose(skeleton, Sample(Motion(Walk), MotionTime(1), true), 1e-4f);
++    }
++
++    // The new motion blends over the idle with the weight (1 - cos(pi * t / transition)) / 2.
++    [Fact]
++    public void ATransitionUsesTheCosineEase()
++    {
++        var skeleton = Character("trent");
++        var idle = Motion(Idle);
++        var walk = Motion(Walk);
++        skeleton.StartScript(idle, 0, 1, 0, true);
++        Step(skeleton, 1);
++        skeleton.StartScript(walk, 0, 1, 0, true, transition: 1);
++
++        Step(skeleton, 0.25);
++        var under = Sample(idle, MotionTime(75), true);
++        var over = Sample(walk, MotionTime(15), true);
++        Assert.True(LargestAngle(under, over) > 10 * OneDegree, "The two motions have nearly the same pose");
++        AssertPose(skeleton, Blend(under, over, 0.1464466f), 1e-3f);
++
++        Step(skeleton, 0.25);
++        AssertPose(skeleton, Blend(Sample(idle, MotionTime(90), true), Sample(walk, MotionTime(30), true), 0.5f),
++            1e-3f);
++    }
++
++    // The walk ends and holds its last pose. Then the idle blends in from that pose. Held is the pose of the walk
++    // bones before the idle starts.
++    private static (Dictionary<string, Quaternion> Held, Dictionary<string, Quaternion> Pose) PoseAfterABlend(
++        double dt)
++    {
++        var skeleton = Character("trent");
++        var walk = Sample(Motion(Walk), 0);
++        skeleton.StartScript(Motion(Walk), 0, 1, 0);
++        Step(skeleton, 1.5, dt);
++        var held = Bones(skeleton).Where(x => walk.ContainsKey(x.Key))
++            .ToDictionary(x => x.Key, x => x.Value.Rotation, StringComparer.OrdinalIgnoreCase);
++        skeleton.StartScript(Motion(Idle), 0, 1, 0, true, transition: 1);
++        Step(skeleton, 0.5, dt);
++        return (held, Bones(skeleton).ToDictionary(x => x.Key, x => x.Value.Rotation));
++    }
++
++    // No motion runs under the idle. It blends from the pose that the ended walk holds, not from the pose of the
++    // last frame.
++    [Fact]
++    public void TheBlendDoesNotDependOnTheFrameRate()
++    {
++        var slow = PoseAfterABlend(1.0 / 30);
++        var fast = PoseAfterABlend(1.0 / 144);
++
++        AssertPoseEqual(slow.Pose, fast.Pose);
++        var idle = Sample(Motion(Idle), 0.5, true);
++        Assert.True(LargestAngle(slow.Held, idle) > 10 * OneDegree, "The two motions have nearly the same pose");
++        AssertPoseEqual(Blend(slow.Held, idle, 0.5f), slow.Pose);
++    }
++
++    private static void AssertPoseEqual(Dictionary<string, Quaternion> expected, Dictionary<string, Quaternion> actual)
++    {
++        foreach (var (name, rotation) in expected)
++        {
++            var angle = Angle(rotation, actual[name]);
++            Assert.True(angle < 1e-3f, $"{name} is {angle} radians from the expected rotation");
++        }
++    }
++
++    // The turn replaces a walk that loops. After the turn ends, the bones keep its last pose, and the walk does not
++    // come back. The walk also does not move the root again. The walk has a long duration, thus it stays in the
++    // stack without its bones until the turn takes its root.
++    [Fact]
++    public void AnEndedMotionHoldsItsLastPose()
++    {
++        var skeleton = Character("trent");
++        skeleton.StartScript(Motion(Walk), 0, 1, 100, true);
++        Step(skeleton, 1);
++        var turn = Motion(Turn);
++        skeleton.StartScript(turn, 0, 1, 0);
++        var end = turn.JointMaps.Max(x => x.Channel.Duration);
++        Step(skeleton, end + 0.1);
++
++        for (var i = 0; i < 60; i++)
++        {
++            skeleton.UpdateScripts(Frame);
++            Assert.False(skeleton.ApplyRootMotion, $"A motion moves the root {i} frames after the turn ended");
++        }
++
++        AssertPose(skeleton, Sample(turn, end), 1e-4f);
++    }
++
++    // A bone that no motion has posed has the flat Cons pose. A new motion takes such a bone at once, also when the
++    // motion has a transition and other bones already have a pose.
++    [Fact]
++    public void AMotionTakesABoneWithoutAPoseAtOnce()
++    {
++        var skeleton = Character("trent");
++        var idle = Motion(Idle);
++        skeleton.StartScript(idle, 0, 1, 0, true, transition: 1);
++        skeleton.UpdateScripts(Frame);
++        AssertPose(skeleton, Sample(idle, MotionTime(1), true), 1e-4f);
++
++        // The body motion does not move the hand bones.
++        var hand = Motion(RightHand);
++        var handBones = Sample(hand, 0).Keys;
++        Assert.DoesNotContain(handBones, x => Sample(idle, 0).ContainsKey(x));
++        Step(skeleton, 1);
++        skeleton.StartScript(hand, 0, 1, 0, true, transition: 0.5f);
++        skeleton.UpdateScripts(Frame);
++        AssertPose(skeleton, Sample(hand, MotionTime(1), true), 1e-4f);
++    }
++
++    // An overlay (event_flags 128) keeps the motion under it. When it ends, it blends back to that motion over its
++    // transition.
++    [Fact]
++    public void AnOverlayBlendsBackToTheMotionUnderIt()
++    {
++        var skeleton = Character("trent");
++        var idle = Motion(Idle);
++        var walk = Motion(Walk);
++        skeleton.StartScript(idle, 0, 1, 0, true);
++        Step(skeleton, 1);
++        // The overlay ends in the frame at 61/60 s.
++        skeleton.StartScript(walk, 0, 1, 1.01f, transition: 0.5f, overlay: true);
++        Step(skeleton, 61 * Frame);
++        var last = Sample(walk, MotionTime(61));
++        AssertPose(skeleton, last, 1e-4f);
++
++        // The blend back uses the cosine ease. 0.1 s after the end, the overlay weight is 1 - (1 - cos(0.2 pi)) / 2.
++        // A linear ramp gives 0.8.
++        Step(skeleton, 6 * Frame);
++        var under = Sample(idle, MotionTime(60 + 61 + 6), true);
++        Assert.True(LargestAngle(under, last) > 10 * OneDegree, "The two motions have nearly the same pose");
++        AssertPose(skeleton, Blend(under, last, 0.9045085f), 1e-3f);
++
++        // A quarter of a second after the end, the blend back is at one half.
++        Step(skeleton, 9 * Frame);
++        AssertPose(skeleton, Blend(Sample(idle, MotionTime(60 + 61 + 15), true), last, 0.5f), 1e-3f);
++
++        Step(skeleton, 20 * Frame);
++        AssertPose(skeleton, Sample(idle, MotionTime(60 + 61 + 15 + 20), true), 1e-4f);
++    }
++
++    // An overlay that has no motion under it holds its last pose when it ends, as a motion that is not an overlay.
++    [Fact]
++    public void AnOverlayWithNoMotionUnderItHoldsItsLastPose()
++    {
++        var skeleton = Character("trent");
++        var idle = Motion(Idle);
++        skeleton.StartScript(Motion(Walk), 0, 1, 0);
++        Step(skeleton, 1.5);
++        skeleton.StartScript(idle, 0, 1, 1.01f, transition: 0.5f, overlay: true);
++        Step(skeleton, 61 * Frame);
++        var last = Sample(idle, MotionTime(61));
++        Step(skeleton, 1);
++
++        AssertPose(skeleton, last, 1e-4f);
++    }
++
++    // Without a transition, a new motion frees the motions under it, also when it is an overlay. Thus the overlay holds
++    // its last pose when it ends.
++    [Fact]
++    public void AnOverlayWithoutATransitionHoldsItsLastPose()
++    {
++        var skeleton = Character("trent");
++        var walk = Motion(Walk);
++        skeleton.StartScript(Motion(Idle), 0, 1, 0, true);
++        Step(skeleton, 1);
++        skeleton.StartScript(walk, 0, 1, 1.01f, overlay: true);
++        Step(skeleton, 61 * Frame);
++        var last = Sample(walk, MotionTime(61));
++        Step(skeleton, 1);
++
++        AssertPose(skeleton, last, 1e-4f);
++    }
++
++    private static StartMotionEvent ReadEvent(float flags, float? transition, float duration = 2)
++    {
++        var targets = new ThornTable();
++        targets.Append("Char_trent");
++        var props = new ThornTable();
++        props["animation"] = Walk;
++        props["duration"] = duration;
++        props["time_scale"] = 1f;
++        props["weight"] = 1f;
++        props["heading"] = -1f;
++        props["event_flags"] = flags;
++        if (transition != null)
++        {
++            props["trans_time"] = transition.Value;
++        }
++
++        var table = new ThornTable();
++        table.Append(10.656f);
++        table.Append(EventTypes.StartMotion);
++        table.Append(targets);
++        table.Append(props);
++        return new StartMotionEvent(table);
++    }
++
++    [Theory]
++    [InlineData(0, false, false)]
++    [InlineData(2, true, false)]
++    [InlineData(3, true, false)]
++    [InlineData(128, false, true)]
++    [InlineData(130, true, true)]
++    public void AStartMotionEventReadsLoopAndOverlayFromItsFlags(float flags, bool loop, bool overlay)
++    {
++        var ev = ReadEvent(flags, null);
++
++        Assert.Equal(loop, ev.Loop);
++        Assert.Equal(overlay, ev.Overlay);
++    }
++
++    [Fact]
++    public void AStartMotionEventReadsItsTransition()
++    {
++        Assert.Equal(0f, ReadEvent(2, null).TransitionTime);
++        var ev = ReadEvent(2, 0.7f);
++        Assert.Equal(0.7f, ev.TransitionTime);
++
++        // Cutscene.FidgetScript uses Clone.
++        var clone = ev.Clone("Char_syd");
++        Assert.Equal(["Char_syd"], clone.Targets);
++        Assert.Equal(0.7f, clone.TransitionTime);
++        Assert.Equal(ev.Flags, clone.Flags);
++    }
++
++    // Runs the event at 0 s on a character through a THN script, as a cutscene does.
++    private static void RunEvent(DfmSkeletonManager skeleton, StartMotionEvent ev)
++    {
++        var obj = new GameObject() { RenderComponent = new CharacterRenderer(skeleton) };
++        obj.AnimationComponent = new AnimationComponent(obj, retail.Value.Animations);
++        ev.Time = 0;
++        var script = new ThnScript() { Duration = 100 };
++        script.Events.Add(ev);
++        var instance = new ThnScriptInstance(null!, script);
++        instance.Objects["Char_trent"] = new ThnSceneObject() { Name = "Char_trent", Object = obj };
++        instance.Update(0);
++    }
++
++    // The event gives its transition to the skeleton of the character.
++    [Fact]
++    public void AStartMotionEventBlendsOverItsTransition()
++    {
++        var skeleton = Character("trent");
++        var idle = Motion(Idle);
++        skeleton.StartScript(idle, 0, 1, 0, true);
++        Step(skeleton, 1);
++
++        RunEvent(skeleton, ReadEvent(2, 1));
++        Step(skeleton, 0.5);
++
++        AssertPose(skeleton, Blend(Sample(idle, MotionTime(90), true), Sample(Motion(Walk), MotionTime(30), true), 0.5f),
++            1e-3f);
++    }
++
++    // The event gives its loop and overlay flags to the skeleton of the character. The overlay plays past the end of
++    // its channels, then it blends back to the idle under it.
++    [Theory]
++    [InlineData(128)]
++    [InlineData(130)]
++    public void AStartMotionEventPlaysItsFlags(int flags)
++    {
++        var skeleton = Character("trent");
++        var idle = Motion(Idle);
++        var walk = Motion(Walk);
++        var loop = (flags & 2) != 0;
++        skeleton.StartScript(idle, 0, 1, 0, true);
++        Step(skeleton, 1);
++
++        // The check comes about 0.25 s after the end of the walk channels. The event ends 16 frames after the check.
++        var frames = (int)Math.Ceiling(walk.JointMaps.Max(x => x.Channel.Duration) / Frame) + 15;
++        RunEvent(skeleton, ReadEvent(flags, 0.5f, (frames + 15.5f) * (float)Frame));
++        Step(skeleton, frames * Frame);
++        var played = Sample(walk, MotionTime(frames), loop);
++        Assert.True(LargestAngle(played, Sample(walk, MotionTime(frames), !loop)) > 10 * OneDegree,
++            "The walk has nearly the same pose with and without a loop");
++        AssertPose(skeleton, played, 1e-4f);
++
++        // The blend back takes 30 frames.
++        Step(skeleton, 60 * Frame);
++        var under = Sample(idle, MotionTime(60 + frames + 60), true);
++        Assert.True(LargestAngle(under, Sample(walk, MotionTime(frames + 16), loop)) > 10 * OneDegree,
++            "The walk ends in nearly the pose of the idle");
++        AssertPose(skeleton, under, 1e-4f);
++    }
++
++    // Retail s009b has 43 events at 0 s. A stable sort keeps them in the order of the file. List.Sort is not stable
++    // for more than 16 elements.
++    [Fact]
++    public void ThnScriptKeepsTheFileOrderOfEventsAtTheSameTime()
++    {
++        var data = retail.Value.Data;
++        const string path = @"SCRIPTS\STORY\s009b_accept_King_li_01_Bar_01.thn";
++        var bytes = data.ReadDataFile(path);
++        var tables = ((ThornTable)new ThornRunner(ThnScript.ThnEnv, data.ReadThornFile).DoBytes(bytes, path)["events"])
++            .Values.Cast<ThornTable>();
++        var expected = tables.Select(x => (Time: (float)x[1], Text: Describe(x))).OrderBy(x => x.Time)
++            .Select(x => x.Text).ToList();
++        Assert.Equal(43, tables.Count(x => (float)x[1] == 0));
++
++        var actual = new ThnScript(bytes, data.ReadThornFile, path).Events
++            .Select(x => FormattableString.Invariant($"{x.Time} {x.Type} {string.Join(",", x.Targets)}")).ToList();
++
++        Assert.Equal(expected, actual);
++    }
++
++    private static string Describe(ThornTable table)
++    {
++        var targets = (ThornTable)table[3];
++        var names = Enumerable.Range(1, targets.Length).Select(i => (string)targets[i]);
++        return FormattableString.Invariant(
++            $"{(float)table[1]} {ThnTypes.Convert<EventTypes>(table[2])} {string.Join(",", names)}");
++    }
++}
+diff --git a/src/LibreLancer.Tests/RetailData.cs b/src/LibreLancer.Tests/RetailData.cs
+index 254fdedf..28aed37d 100644
+--- a/src/LibreLancer.Tests/RetailData.cs
++++ b/src/LibreLancer.Tests/RetailData.cs
+@@ -50,6 +50,9 @@ public class RetailData
+     // Reads a file that a THN script includes, as GameItemDb.ThornReadCallback does.
+     public byte[] ReadThornFile(string file) => VFS.ReadAllBytes("EXE/" + file);
+ 
++    // Reads a file in the DATA folder, for example a THN script.
++    public byte[] ReadDataFile(string path) => VFS.ReadAllBytes(ini.DataPath + path);
++
+     // Makes the skeleton of a costume, as ThnScriptInstance does for a DEFORMABLE entity.
+     public DfmSkeletonManager? LoadCostume(string nickname)
+     {
+@@ -83,12 +86,17 @@ public class RetailData
+     public GameObject LoadModel(string path) =>
+         new(resources.GetDrawable(ini.DataPath + path)!, resources, false, false);
+ 
+-    // Loads one file of character animations, as GameDataManager.GetCharacterAnimations does.
+-    public AnmFile LoadAnimations(string path)
++    // Loads files of character animations into one table, as GameDataManager.GetCharacterAnimations does.
++    public AnmFile LoadAnimations(params string[] paths)
+     {
+         var anm = new AnmFile();
+-        using var stream = VFS.Open(ini.DataPath + path);
+-        AnmFile.ParseToTable(anm.Scripts, anm.Buffer, new StringDeduplication(), stream, path);
++        var strings = new StringDeduplication();
++        foreach (var path in paths)
++        {
++            using var stream = VFS.Open(ini.DataPath + path);
++            AnmFile.ParseToTable(anm.Scripts, anm.Buffer, strings, stream, path);
++        }
++
+         anm.Buffer.Commit();
+         return anm;
+     }
+diff --git a/src/LibreLancer.Tests/S002xeChoreographyTests.cs b/src/LibreLancer.Tests/S002xeChoreographyTests.cs
+new file mode 100644
+index 00000000..0663a3bf
+--- /dev/null
++++ b/src/LibreLancer.Tests/S002xeChoreographyTests.cs
+@@ -0,0 +1,193 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Numerics;
++using LibreLancer.Render;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Thorn;
++using LibreLancer.World;
++using LibreLancer.World.Components;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// Replays the retail s002xe (the Manhattan intro) without a renderer. The replay runs the motions, the moves and the
++// attachments of Trent, the two medics and Syd. Each frame uses the order of Cutscene._Update: the events and
++// processors, then the scene objects, then the world.
++public class S002xeChoreographyTests
++{
++    private const string Script = @"SCRIPTS\STORY\s002xe_nrml_sinclair_li_01_Cityscape_01.thn";
++    private const string StoryMale = @"CHARACTERS\ANIMATIONS\BodyStoryMale.anm";
++    private const double Frame = 1.0 / 60;
++    private static readonly string[] Characters = ["Char_trent", "Char_medic_1", "Char_medic_2", "Char_syd"];
++    // The times in seconds at which the replay keeps the poses of the characters.
++    private static readonly double[] Times = [55.8, 57.4, 60.0, 62.0, 65.26, 69.9, 72.0, 73.3, 75.8, 77.3];
++
++    private static readonly Lazy<Replay> replay = new(() => new Replay());
++
++    private sealed class Replay
++    {
++        private readonly Dictionary<(double, string), Transform3D> poses = [];
++        private readonly Dictionary<string, Vector3> positions = new(StringComparer.OrdinalIgnoreCase);
++
++        // The scene pose of a character at one of the Times.
++        public Transform3D Pose(double time, string character) => poses[(time, character)];
++
++        // The position of an entity in the script.
++        public Vector3 Position(string entity) => positions[entity];
++
++        public Replay()
++        {
++            var data = RetailData.Open();
++            var bytes = data.ReadDataFile(Script);
++            var output = new ThornRunner(ThnScript.ThnEnv, data.ReadThornFile).DoBytes(bytes, Script);
++            // The head and hand motions do not move a character, so the replay does not load them.
++            var animations = data.LoadAnimations(DfmMotionStackTests.GenericMale, StoryMale);
++
++            var entities = new Dictionary<string, ThornTable>(StringComparer.OrdinalIgnoreCase);
++            foreach (var entity in ((ThornTable)output["entities"]).Values.Cast<ThornTable>())
++            {
++                var name = (string)entity["entity_name"];
++                entities[name] = entity;
++                if (entity.TryGetValue("spatialprops", out var sp) && ((ThornTable)sp).TryGetVector3("pos", out var pos))
++                {
++                    positions[name] = pos;
++                }
++            }
++
++            var script = new ThnScript() { Duration = (float)output["duration"] };
++            foreach (var table in ((ThornTable)output["events"]).Values.Cast<ThornTable>())
++            {
++                if (!Characters.Contains((string)((ThornTable)table[3])[1], StringComparer.OrdinalIgnoreCase))
++                {
++                    continue;
++                }
++
++                ThnEvent? ev = ThnTypes.Convert<EventTypes>(table[2]) switch
++                {
++                    EventTypes.StartMotion => new StartMotionEvent(table),
++                    EventTypes.StartSpatialPropAnim => new StartSpatialPropAnimEvent(table, Script),
++                    EventTypes.AttachEntity => new AttachEntityEvent(table),
++                    _ => null
++                };
++                if (ev == null || ev is AttachEntityEvent { Duration: > 0 } ||
++                    ev is StartMotionEvent motion && !animations.Scripts.ContainsKey(motion.Animation))
++                {
++                    continue;
++                }
++
++                script.Events.Add(ev);
++            }
++
++            // ThnScript sorts the events in the same way.
++            script.Events = script.Events.OrderBy(x => x.Time).ToList();
++            var instance = new ThnScriptInstance(null!, script);
++            var characters = new List<AnimationComponent>();
++            var names = script.Events.SelectMany(x => x.Targets).ToHashSet(StringComparer.OrdinalIgnoreCase);
++            foreach (var (name, entity) in entities)
++            {
++                if (!names.Contains(name))
++                {
++                    continue;
++                }
++
++                var obj = new ThnSceneObject()
++                {
++                    Name = name, Translate = positions.GetValueOrDefault(name), Rotate = Quaternion.Identity
++                };
++                if (entity.TryGetValue("spatialprops", out var sp) && ((ThornTable)sp).TryGetValue("orient", out var o))
++                {
++                    obj.Rotate = ThnScript.GetQuaternion((ThornTable)o);
++                }
++
++                if (ThnTypes.Convert<EntityTypes>(entity["type"]) == EntityTypes.Deformable)
++                {
++                    var skeleton = data.LoadCostume((string)entity["template_name"]);
++                    Assert.NotNull(skeleton);
++                    var props = (ThornTable)entity["compoundprops"];
++                    skeleton.FloorHeight = (float)props["floor_height"];
++                    obj.Object = new GameObject() { RenderComponent = new CharacterRenderer(skeleton) };
++                    var animation = new AnimationComponent(obj.Object, animations);
++                    obj.Object.AnimationComponent = animation;
++                    characters.Add(animation);
++                }
++
++                instance.Objects[name] = obj;
++            }
++
++            // Cutscene.SceneSetup runs the events at 0 s before the first frame.
++            instance.Update(0);
++            var next = 0;
++            while (next < Times.Length)
++            {
++                instance.Update(Frame);
++                foreach (var obj in instance.Objects.Values)
++                {
++                    obj.Update();
++                }
++
++                foreach (var animation in characters)
++                {
++                    animation.Update(Frame, null!);
++                }
++
++                for (; next < Times.Length && instance.CurrentTime >= Times[next] - 1e-6; next++)
++                {
++                    foreach (var name in Characters)
++                    {
++                        var obj = instance.Objects[name];
++                        poses[(Times[next], name)] = new Transform3D(obj.Translate, obj.Rotate);
++                    }
++                }
++            }
++        }
++    }
++
++    private static float GroundDistance(Vector3 a, Vector3 b) => Vector2.Distance(new(a.X, a.Z), new(b.X, b.Z));
++
++    // 55.8-62 s: Trent runs up to medic_2 and then walks with the medics. At 56.9-59.5 s his left hand reaches the
++    // shoulder of medic_2. The cut at 65.277 s moves Trent and medic_1 to their next marks, so they must be near
++    // these marks before the cut.
++    [Fact]
++    public void TrentRunsUpToTheMedics()
++    {
++        var r = replay.Value;
++        var run = r.Pose(55.8, "Char_trent").Position.X - r.Pose(57.4, "Char_trent").Position.X;
++        Assert.True(run >= 4.5f, $"Trent runs {run} m toward -X");
++        foreach (var time in new[] { 57.4, 60.0, 62.0 })
++        {
++            var distance = GroundDistance(r.Pose(time, "Char_trent").Position, r.Pose(time, "Char_medic_2").Position);
++            Assert.True(distance <= 1.5f, $"Trent is {distance} m from medic_2 at {time} s");
++        }
++
++        var trent = GroundDistance(r.Pose(65.26, "Char_trent").Position, r.Position("Char_Tr_Mk_loc_05_Stack_Correctly"));
++        Assert.True(trent <= 1.5f, $"Trent is {trent} m from his mark before the cut");
++        var medic = GroundDistance(r.Pose(65.26, "Char_medic_1").Position,
++            r.Position("Char_Medic_1_Mk_loc_04_Stack_Correctly"));
++        Assert.True(medic <= 1f, $"medic_1 is {medic} m from the mark before the cut");
++    }
++
++    // 70-72 s: Syd turns half a circle to the camera. From 73.3 s the camera pans up to his face. He lifts the
++    // cigarette at 75.8 s and blows smoke toward the camera at 77.3 s.
++    [Fact]
++    public void SydTurnsToTheCamera()
++    {
++        var r = replay.Value;
++
++        Assert.True(Facing(r, 69.9) < -0.9f, $"Syd faces the camera before the turn: {Facing(r, 69.9)}");
++        foreach (var time in new[] { 72.0, 73.3, 75.8, 77.3 })
++        {
++            Assert.True(Facing(r, time) > 0.9f, $"Syd does not face the camera at {time} s: {Facing(r, time)}");
++        }
++    }
++
++    // The cosine of the angle between the front of Syd and the direction to the camera, on the ground.
++    private static float Facing(Replay r, double time)
++    {
++        var pose = r.Pose(time, "Char_syd");
++        var front = Vector3.Transform(-Vector3.UnitZ, pose.Orientation);
++        var camera = r.Position("Cam_12_Wide_to_ACU_C_Syd_Smoke") - pose.Position;
++        return Vector2.Dot(Vector2.Normalize(new(front.X, front.Z)), Vector2.Normalize(new(camera.X, camera.Z)));
++    }
++}
+diff --git a/src/LibreLancer/Render/DfmSkeletonManager.cs b/src/LibreLancer/Render/DfmSkeletonManager.cs
+index 97236742..1150fab2 100644
+--- a/src/LibreLancer/Render/DfmSkeletonManager.cs
++++ b/src/LibreLancer/Render/DfmSkeletonManager.cs
+@@ -86,80 +86,61 @@ namespace LibreLancer.Render
+         }
+ 
+         // Scripting
++        // The motions, from the oldest to the newest. A bone channel starts from its oldest motion. Each newer motion
++        // blends over it with its weight.
+         private List<ScriptInstance> RunningScripts = [];
+-
++        // The bones that a motion has posed. A bone that no motion has posed has its Cons zero pose. For the body,
++        // that pose lies flat.
++        private readonly HashSet<BoneInstance> driven = [];
++        // Work sets of UpdateScripts. The bool is true for the translation channel of the bone.
++        private readonly HashSet<(BoneInstance, bool)> composed = [];
++        private readonly Dictionary<(BoneInstance, bool), Above> above = [];
++
++        // One channel of a joint map in a motion: the rotation or the translation of a bone.
+         private struct ResolvedJoint
+         {
+             public BoneInstance Bone;
+             public int JointMapIndex;
+             public int JointMapCursor;
+-
+-            public ResolvedJoint(BoneInstance bone, int jm)
+-            {
+-                Bone = bone;
+-                JointMapIndex = jm;
+-            }
+-        }
+-
+-        private struct BoneBlendData
+-        {
+-            public Quaternion Rotation;
+-            public Vector3 Translation;
+-            public float RotationWeight;
+-            public float TranslationWeight;
+-        }
+-
+-        private struct BonePose
+-        {
++            public bool IsTranslation;
++            // False when no motion had posed the bone when the motion started. The motion then takes the bone at once.
++            public bool FromPose;
++            // The pose of the bone when the motion started.
++            public Quaternion SourceRotation;
++            public Vector3 SourceTranslation;
++            // The channel sample of the last update.
+             public Quaternion Rotation;
+             public Vector3 Translation;
++            // No older motion drove this channel in the last update.
++            public bool Bottom;
+ 
+-            public BonePose(Quaternion rotation, Vector3 translation)
++            public ResolvedJoint(BoneInstance bone, int jm, bool isTranslation, bool fromPose)
+             {
+-                Rotation = rotation;
+-                Translation = translation;
++                Bone = bone;
++                JointMapIndex = jm;
++                IsTranslation = isTranslation;
++                FromPose = fromPose;
++                SourceRotation = Rotation = bone.Rotation;
++                SourceTranslation = Translation = bone.Translation;
+             }
+         }
+ 
+-        private static void AccumulateRotation(ref BoneBlendData data, Quaternion rotation, float weight)
++        // What the newer motions do with a bone channel, in the order of their effect on the older motions.
++        private enum Above
+         {
+-            if (weight <= 0f)
+-            {
+-                return;
+-            }
+-
+-            if (data.RotationWeight <= 0f)
+-            {
+-                data.Rotation = rotation;
+-            }
+-            else
+-            {
+-                var t = weight / (data.RotationWeight + weight);
+-                data.Rotation = Quaternion.Slerp(data.Rotation, rotation, t);
+-            }
+-
+-            data.RotationWeight += weight;
++            None,
++            // A newer motion blends over the channel. An ended motion under it stays, because the blend reads it.
++            Partial,
++            // A newer motion shows the channel at the full weight. An ended motion under it has no effect.
++            Covered,
++            // A newer motion took the channel. The older motions lose it.
++            Taken
+         }
+ 
+-        private static void AccumulateTranslation(ref BoneBlendData data, Vector3 translation, float weight)
+-        {
+-            if (weight <= 0f)
+-            {
+-                return;
+-            }
+-
+-            if (data.TranslationWeight <= 0f)
+-            {
+-                data.Translation = translation;
+-            }
+-            else
+-            {
+-                var t = weight / (data.TranslationWeight + weight);
+-                data.Translation = Vector3.Lerp(data.Translation, translation, t);
+-            }
+-
+-            data.TranslationWeight += weight;
+-        }
++        // The weight of a motion transition. Retail uses a cosine ease, which has zero speed at both ends.
++        // A duration of 0 gives the full weight.
++        internal static float TransitionWeight(double time, double duration) =>
++            duration <= 0 ? 1f : (1f - MathF.Cos(MathF.PI * Math.Clamp((float)(time / duration), 0f, 1f))) / 2f;
+ 
+         // Used for object maps
+         public bool ApplyRootMotion => _rootMotionInstance != null;
+@@ -167,14 +148,8 @@ namespace LibreLancer.Render
+         public Quaternion RootRotation => _rootMotionInstance!.RootRotation;
+ 
+         public Quaternion RootRotationAccumulator => _rootMotionInstance!.RootRotationAccumulator;
+-        public Vector3 LastTranslation;
+-        public Quaternion LastRotation;
+ 
+         private ScriptInstance? _rootMotionInstance;
+-        private float _rootMotionWeight;
+-        private bool _hasStarted;
+-        private const float DefaultPoseRotationEpsilon = 0.01f;
+-        private const float DefaultPoseTranslationEpsilon = 0.01f;
+ 
+         private class ScriptInstance
+         {
+@@ -183,11 +158,19 @@ namespace LibreLancer.Render
+             public float TimeScale;
+             public float Duration;
+             public bool Loop;
+-            public float BlendInDuration;
+-            public float BlendOutDuration;
++            // The time in seconds that the motion takes to blend in over the pose under it.
++            public float Transition;
++            // An overlay keeps the motions under it. When it ends, it blends back to them over its transition.
++            public bool Overlay;
++            // The motion has a Root object map and can move the character.
++            public bool OwnsRoot;
++            // The root of the motion moved in the last update.
++            public bool Moved;
++            // The motion reached its end. Its samples keep the values of the last update.
++            public bool Ended;
++            private double endT;
+ 
+             public RefList<ResolvedJoint> Joints = [];
+-            public DfmSkeletonManager Parent = null!;
+             public Vector3 RootTranslation = Vector3.Zero;
+             public Quaternion RootRotation = Quaternion.Identity;
+             public Quaternion RootRotationAccumulator = Quaternion.Identity;
+@@ -202,37 +185,17 @@ namespace LibreLancer.Render
+                 lastFt = StartTime = startTime;
+             }
+ 
+-            private float GetBlendWeight()
+-            {
+-                var weight = 1f;
+-                var t = (float) T;
++            public float BlendIn => TransitionWeight(T, Transition);
+ 
+-                if (BlendInDuration > 0f && t < BlendInDuration)
+-                {
+-                    weight = t / BlendInDuration;
+-                }
+-
+-                if (!Loop && Duration > 0f && BlendOutDuration > 0f)
+-                {
+-                    var blendOutStart = Duration - BlendOutDuration;
+-                    if (t > blendOutStart)
+-                    {
+-                        weight = MathF.Min(weight, (Duration - t) / BlendOutDuration);
+-                    }
+-                }
+-
+-                if (weight < 0f)
+-                {
+-                    return 0f;
+-                }
+-
+-                if (weight > 1f)
+-                {
+-                    return 1f;
+-                }
++            // The weight over the motions under the motion. An ended overlay blends back to them.
++            public float Weight => Ended && Overlay
++                ? TransitionWeight(endT, Transition) * (1 - TransitionWeight(T - endT, Transition))
++                : BlendIn;
+ 
+-                return weight;
+-            }
++            // The weight of a joint channel. When no older motion drives the channel, the motion blends from the pose
++            // of the bone at its start. When no motion had posed the bone, the motion takes it at once. Thus an ended
++            // overlay holds its last sample on such a channel.
++            public float JointWeight(in ResolvedJoint j) => j.Bottom ? (j.FromPose ? BlendIn : 1) : Weight;
+ 
+             private bool EvaluateRoot(float ft, out Quaternion rotate, out Vector3 translate)
+             {
+@@ -293,11 +256,17 @@ namespace LibreLancer.Render
+                 return false;
+             }
+ 
+-            public bool RunScript(double delta, Dictionary<BoneInstance, BoneBlendData> blendData)
++            // Advances the motion and samples its channels. An ended motion keeps its samples.
++            public void RunScript(double delta)
+             {
++                Moved = false;
+                 T += delta;
++                if (Ended)
++                {
++                    return;
++                }
++
+                 var ft = (float) (T * TimeScale) + StartTime;
+-                var blendWeight = GetBlendWeight();
+                 var running = false;
+ 
+                 for (var i = 0; i < Joints.Count; i++)
+@@ -310,26 +279,13 @@ namespace LibreLancer.Render
+                         cht = ft % ch.Duration;
+                     }
+ 
+-                    if (blendWeight > 0f)
++                    if (j.IsTranslation)
+                     {
+-                        if (!blendData.TryGetValue(j.Bone, out var data))
+-                        {
+-                            data = default;
+-                        }
+-
+-                        if (ch.HasOrientation)
+-                        {
+-                            var rot = ch.QuaternionAtTime(cht, ref j.JointMapCursor);
+-                            DfmSkeletonManager.AccumulateRotation(ref data, rot, blendWeight);
+-                        }
+-
+-                        if (ch.HasPosition)
+-                        {
+-                            var tr = ch.PositionAtTime(cht, ref j.JointMapCursor);
+-                            DfmSkeletonManager.AccumulateTranslation(ref data, tr, blendWeight);
+-                        }
+-
+-                        blendData[j.Bone] = data;
++                        j.Translation = ch.PositionAtTime(cht, ref j.JointMapCursor);
++                    }
++                    else
++                    {
++                        j.Rotation = ch.QuaternionAtTime(cht, ref j.JointMapCursor);
+                     }
+ 
+                     if (ft < ch.Duration || Loop)
+@@ -346,26 +302,31 @@ namespace LibreLancer.Render
+                         RootTranslation = (tr1 - tr0);
+                         RootRotation = (Quaternion.Inverse(rot0)) * rot1;
+                         RootRotationAccumulator = rot1;
+-
+-                        if (blendWeight > Parent._rootMotionWeight)
+-                        {
+-                            Parent._rootMotionInstance = this;
+-                            Parent._rootMotionWeight = blendWeight;
+-                        }
++                        Moved = true;
+                     }
+ 
+                     lastFt = ft;
+                 }
+ 
+-                if (Duration > 0)
++                if (Duration > 0 ? T >= Duration : !running)
+                 {
+-                    return T < Duration;
++                    Ended = true;
++                    endT = T;
+                 }
+-                else
++            }
++        }
++
++        private static bool HasRootMap(Script script)
++        {
++            for (var i = 0; i < script.ObjectMaps.Count; i++)
++            {
++                if (script.ObjectMaps[i].ParentName.Equals("Root", StringComparison.OrdinalIgnoreCase))
+                 {
+-                    return running;
++                    return true;
+                 }
+             }
++
++            return false;
+         }
+ 
+         public Dictionary<string, DfmHardpoint> Hardpoints = new(StringComparer.OrdinalIgnoreCase);
+@@ -530,69 +491,118 @@ namespace LibreLancer.Render
+         public void UpdateScripts(double delta)
+         {
+             _rootMotionInstance = null;
+-            _rootMotionWeight = 0f;
+ 
+             if (RunningScripts.Count == 0)
+             {
+-                _hasStarted = false;
+                 UpdateBounds();
+                 return;
+             }
+ 
+-            var basePose = new Dictionary<BoneInstance, BonePose>();
+-            var blendData = new Dictionary<BoneInstance, BoneBlendData>();
+-            var toRemove = new List<ScriptInstance>();
+-
+             foreach (var sc in RunningScripts)
+             {
+-                for (var i = 0; i < sc.Joints.Count; i++)
++                sc.RunScript(delta);
++            }
++
++            // The newest motion that moved its root moves the character, also during its transition.
++            for (var i = RunningScripts.Count - 1; i >= 0 && _rootMotionInstance == null; i--)
++            {
++                if (RunningScripts[i].OwnsRoot && RunningScripts[i].Moved)
+                 {
+-                    var bone = sc.Joints[i].Bone;
+-                    if (!basePose.ContainsKey(bone))
+-                    {
+-                        basePose[bone] = new BonePose(bone.Rotation, bone.Translation);
+-                    }
++                    _rootMotionInstance = RunningScripts[i];
+                 }
+             }
+ 
++            composed.Clear();
+             foreach (var sc in RunningScripts)
+             {
+-                if (!sc.RunScript(delta, blendData))
++                for (var i = 0; i < sc.Joints.Count; i++)
+                 {
+-                    toRemove.Add(sc);
++                    ref var j = ref sc.Joints[i];
++                    j.Bottom = composed.Add((j.Bone, j.IsTranslation));
++                    var w = sc.JointWeight(j);
++                    if (j.IsTranslation)
++                    {
++                        var from = j.Bottom ? j.SourceTranslation : j.Bone.Translation;
++                        j.Bone.Translation = w >= 1 ? j.Translation : Vector3.Lerp(from, j.Translation, w);
++                    }
++                    else
++                    {
++                        var from = j.Bottom ? j.SourceRotation : j.Bone.Rotation;
++                        j.Bone.Rotation = w >= 1 ? j.Rotation : Quaternion.Slerp(from, j.Rotation, w);
++                    }
++
++                    driven.Add(j.Bone);
+                 }
+             }
+ 
+-            foreach (var kvp in basePose)
++            UpdateBones();
++            posed = true;
++
++            RemoveHiddenMotions();
++            UpdateBounds();
++        }
++
++        // Removes the joint channels that have no effect now or later, from the newest motion to the oldest.
++        // - A motion that is not an overlay frees all older motions when its transition is complete. Then they lose
++        //   its channels and the root. Retail frees only the motion that the transition blends from. Thus in retail,
++        //   when a new motion replaces an overlay that has blended in, the motion under the overlay stays. When the
++        //   new motion ends, retail blends back to that motion. This code holds the last pose.
++        // - An ended motion holds its last sample. It stays only while a newer motion blends from it, while it
++        //   blends in, or while it blends back as an overlay.
++        private void RemoveHiddenMotions()
++        {
++            above.Clear();
++            var rootTaken = false;
++            for (var s = RunningScripts.Count - 1; s >= 0; s--)
+             {
+-                if (blendData.TryGetValue(kvp.Key, out var data))
++                var sc = RunningScripts[s];
++                if (rootTaken)
+                 {
+-                    var rotWeight = MathF.Min(1f, data.RotationWeight);
+-                    var trWeight = MathF.Min(1f, data.TranslationWeight);
++                    sc.OwnsRoot = false;
++                }
+ 
+-                    var newRot = rotWeight > 0f
+-                        ? Quaternion.Slerp(kvp.Value.Rotation, data.Rotation, rotWeight)
+-                        : kvp.Value.Rotation;
++                var takes = !sc.Overlay && sc.BlendIn >= 1;
++                for (var i = sc.Joints.Count - 1; i >= 0; i--)
++                {
++                    ref var j = ref sc.Joints[i];
++                    var key = (j.Bone, j.IsTranslation);
++                    var state = above.GetValueOrDefault(key);
++                    var w = sc.JointWeight(j);
++                    bool keep;
++                    if (state == Above.Taken)
++                    {
++                        keep = false;
++                    }
++                    else if (!sc.Ended)
++                    {
++                        keep = true;
++                    }
++                    else if (state != Above.None)
++                    {
++                        keep = state == Above.Partial;
++                    }
++                    else
++                    {
++                        // Nothing is over the ended motion.
++                        keep = sc.Overlay && !j.Bottom ? w > 0 : w < 1;
++                    }
+ 
+-                    var newTr = trWeight > 0f
+-                        ? Vector3.Lerp(kvp.Value.Translation, data.Translation, trWeight)
+-                        : kvp.Value.Translation;
++                    var effect = takes ? Above.Taken : !keep ? Above.None : w >= 1 ? Above.Covered : Above.Partial;
++                    if (effect > state)
++                    {
++                        above[key] = effect;
++                    }
+ 
+-                    kvp.Key.Rotation = newRot;
+-                    kvp.Key.Translation = newTr;
+-                }
+-                else
+-                {
+-                    kvp.Key.Rotation = kvp.Value.Rotation;
+-                    kvp.Key.Translation = kvp.Value.Translation;
++                    if (!keep)
++                    {
++                        sc.Joints.RemoveAt(i);
++                    }
+                 }
+-            }
+ 
+-            UpdateBones();
+-            posed = true;
++                rootTaken |= takes && sc.OwnsRoot;
++            }
+ 
+-            foreach (var sc in toRemove) RunningScripts.Remove(sc);
+-            UpdateBounds();
++            RunningScripts.RemoveAll(x => x.Joints.Count == 0 && (x.Ended || !x.OwnsRoot));
+         }
+ 
+         private void UpdateBones()
+@@ -853,8 +863,10 @@ namespace LibreLancer.Render
+             }
+         }
+ 
++        // Starts a motion over the motions that run. The motion blends in over transition seconds. Without a
++        // transition, it takes its bones at once and frees the motions under it.
+         public void StartScript(Script anmScript, float start_time, float time_scale, float duration, bool loop = false,
+-            float blendIn = 5f, float blendOut = 5f)
++            float transition = 0, bool overlay = false)
+         {
+             if (anmScript.HasRootHeight)
+             {
+@@ -866,84 +878,33 @@ namespace LibreLancer.Render
+                 Script = anmScript,
+                 TimeScale = time_scale,
+                 Duration = duration,
+-                Loop = loop
++                Loop = loop,
++                Transition = transition,
++                // Retail frees the motions under a motion that has no transition, also under an overlay.
++                Overlay = overlay && transition > 0,
++                OwnsRoot = HasRootMap(anmScript)
+             };
+-            var skipBlendIn = IsDefaultPose();
+-            inst.BlendInDuration = skipBlendIn ? 0f : blendIn;
+-            inst.BlendOutDuration = blendOut;
+-            inst.Parent = this;
+ 
+             for (var i = 0; i < anmScript.JointMaps.Count; i++)
+             {
+                 ref var jm = ref anmScript.JointMaps[i];
+-                if (BodySkinning.Bones.TryGetValue(jm.ChildName, out var bb))
+-                {
+-                    inst.Joints.Add(new ResolvedJoint(bb, i));
+-                }
+-                else if (Head != null && HeadSkinning!.Bones.TryGetValue(jm.ChildName, out var bh))
+-                {
+-                    inst.Joints.Add(new ResolvedJoint(bh, i));
+-                }
+-                else if (LeftHand != null && LeftHandSkinning!.Bones.TryGetValue(jm.ChildName, out var bl))
++                if (!FindBone(jm.ChildName, out var bone, out _))
+                 {
+-                    inst.Joints.Add(new ResolvedJoint(bl, i));
++                    continue;
+                 }
+-                else if (RightHand != null && RightHandSkinning!.Bones.TryGetValue(jm.ChildName, out var br))
+-                {
+-                    inst.Joints.Add(new ResolvedJoint(br, i));
+-                }
+-            }
+-
+-            RunningScripts.Add(inst);
+-            _hasStarted = true;
+-        }
+-
+-        private bool IsDefaultPose()
+-        {
+-            if (BodySkinning.Bones.Values.Any(bone => !IsDefaultPose(bone)))
+-            {
+-                return false;
+-            }
+ 
+-            if (HeadSkinning != null)
+-            {
+-                if (HeadSkinning.Bones.Values.Any(bone => !IsDefaultPose(bone)))
++                if (jm.Channel.HasOrientation)
+                 {
+-                    return false;
++                    inst.Joints.Add(new ResolvedJoint(bone, i, false, driven.Contains(bone)));
+                 }
+-            }
+ 
+-            if (LeftHandSkinning != null)
+-            {
+-                if (LeftHandSkinning.Bones.Values.Any(bone => !IsDefaultPose(bone)))
++                if (jm.Channel.HasPosition)
+                 {
+-                    return false;
++                    inst.Joints.Add(new ResolvedJoint(bone, i, true, driven.Contains(bone)));
+                 }
+             }
+ 
+-            if (RightHandSkinning != null)
+-            {
+-                return RightHandSkinning.Bones.Values.All(bone => IsDefaultPose(bone));
+-            }
+-
+-            return true;
+-        }
+-
+-        private static bool IsDefaultPose(BoneInstance bone)
+-        {
+-            var dot = MathF.Abs(Quaternion.Dot(bone.Rotation, Quaternion.Identity));
+-            if (dot < 1f - DefaultPoseRotationEpsilon)
+-            {
+-                return false;
+-            }
+-
+-            if (bone.Translation.LengthSquared() >
+-                DefaultPoseTranslationEpsilon * DefaultPoseTranslationEpsilon)
+-            {
+-                return false;
+-            }
+-
+-            return true;
++            RunningScripts.Add(inst);
+         }
+ 
+         public void DebugDraw(LineRenderer lines, Matrix4x4 world, DfmDrawMode mode)
+diff --git a/src/LibreLancer/Thn/Events/StartMotionEvent.cs b/src/LibreLancer/Thn/Events/StartMotionEvent.cs
+index 65f12646..2bdb867a 100644
+--- a/src/LibreLancer/Thn/Events/StartMotionEvent.cs
++++ b/src/LibreLancer/Thn/Events/StartMotionEvent.cs
+@@ -12,6 +12,14 @@ namespace LibreLancer.Thn.Events
+         public float StartTime;
+         public float TimeScale;
+         public int Flags;
++        // The time in seconds that the motion takes to blend in. Retail uses 0 when the event has no value.
++        public float TransitionTime;
++
++        // Retail event_flags: 2 loops the motion, and 128 makes it an overlay. An overlay keeps the motions under it
++        // and blends back to them when it ends. Retail uses 130 for a looping overlay. The engine does not play the
++        // flag 1 (backwards).
++        public bool Loop => (Flags & 2) != 0;
++        public bool Overlay => (Flags & 128) != 0;
+ 
+         public StartMotionEvent()
+         {
+@@ -27,6 +35,7 @@ namespace LibreLancer.Thn.Events
+             GetValue(props, "start_time", out StartTime);
+             GetValue(props, "time_scale", out TimeScale, 1f);
+             GetValue(props, "event_flags", out Flags);
++            GetValue(props, "trans_time", out TransitionTime);
+         }
+ 
+         public StartMotionEvent Clone(string target) => new()
+@@ -39,7 +48,8 @@ namespace LibreLancer.Thn.Events
+             Animation = Animation,
+             StartTime = StartTime,
+             TimeScale = TimeScale,
+-            Flags = Flags
++            Flags = Flags,
++            TransitionTime = TransitionTime
+         };
+ 
+         public override void Run(ThnScriptInstance instance)
+@@ -52,8 +62,8 @@ namespace LibreLancer.Thn.Events
+ 
+             if (obj.Object is { AnimationComponent: not null }) // Check if object has Cmp animation
+             {
+-                bool loop = (Flags == 2);
+-                obj.Object.AnimationComponent.StartAnimation(Animation, loop, StartTime, TimeScale, Duration);
++                obj.Object.AnimationComponent.StartAnimation(Animation, Loop, StartTime, TimeScale, Duration,
++                    transition: TransitionTime, overlay: Overlay);
+             }
+             else
+             {
+diff --git a/src/LibreLancer/Thn/ThnScript.cs b/src/LibreLancer/Thn/ThnScript.cs
+index 6390b414..8f1f3fb0 100644
+--- a/src/LibreLancer/Thn/ThnScript.cs
++++ b/src/LibreLancer/Thn/ThnScript.cs
+@@ -5,6 +5,7 @@
+ using System;
+ using System.Collections.Generic;
+ using System.Globalization;
++using System.Linq;
+ using System.Numerics;
+ using LibreLancer.Data.GameData;
+ using LibreLancer.Render;
+@@ -146,7 +147,9 @@ namespace LibreLancer.Thn
+                 Events.Add(e);
+             }
+ 
+-            Events.Sort((x, y) => x.Time.CompareTo(y.Time));
++            // A stable sort: events at the same time keep the file order. Thus the newest of two motions that start
++            // at the same time is the second one in the file.
++            Events = Events.OrderBy(x => x.Time).ToList();
+         }
+ 
+         private ThnEvent GetEvent(ThornTable table, string source)
+diff --git a/src/LibreLancer/World/Components/AnimationComponent.cs b/src/LibreLancer/World/Components/AnimationComponent.cs
+index 2917da18..a509b324 100644
+--- a/src/LibreLancer/World/Components/AnimationComponent.cs
++++ b/src/LibreLancer/World/Components/AnimationComponent.cs
+@@ -143,12 +143,14 @@ namespace LibreLancer.World.Components
+         }
+ 
+ 
++        // Only a character uses transition and overlay.
+         public void StartAnimation(Script script, bool loop = true, float start_time = 0, float time_scale = 1,
+-            float duration = 0, bool reverse = false)
++            float duration = 0, bool reverse = false, float transition = 0, bool overlay = false)
+         {
+             if (Parent?.RenderComponent is CharacterRenderer characterRenderer)
+             {
+-                characterRenderer.Skeleton.StartScript(script, start_time, time_scale, duration, loop);
++                characterRenderer.Skeleton.StartScript(script, start_time, time_scale, duration, loop, transition,
++                    overlay);
+                 return;
+             }
+ 
+@@ -183,11 +185,11 @@ namespace LibreLancer.World.Components
+         }
+ 
+         public void StartAnimation(string animationName, bool loop = true, float start_time = 0, float time_scale = 1,
+-            float duration = 0, bool reverse = false)
++            float duration = 0, bool reverse = false, float transition = 0, bool overlay = false)
+         {
+             if (anm.Scripts.TryGetValue(animationName, out var script))
+             {
+-                StartAnimation(script, loop, start_time, time_scale, duration, reverse);
++                StartAnimation(script, loop, start_time, time_scale, duration, reverse, transition, overlay);
+             }
+             else
+             {

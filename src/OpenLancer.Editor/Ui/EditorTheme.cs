@@ -1,0 +1,251 @@
+using System;
+using System.Diagnostics;
+using System.Numerics;
+using ImGuiNET;
+using LibreLancer.ImUI;
+
+namespace OpenLancer.Editor.Ui;
+
+/// <summary>
+/// The look of the editor: the palette tokens, the font sizes and the ImGui style.
+/// </summary>
+/// <remarks>
+/// The LibreLancer theme sets only 16 of the 58 ImGui colors. When the UI scale changes, it also restores its own
+/// style and scales it (<see cref="Theme.Apply"/>). So this class writes all 58 colors and the absolute sizes again
+/// after each scale change. It does not call ScaleAllSizes, because that would scale a second time each size that
+/// this class does not write. Editor code takes its colors only from these tokens.
+/// </remarks>
+internal static class EditorTheme
+{
+    // Surfaces, from dark to light.
+    public static readonly Vector4 Backdrop = Rgb(0x191919);
+    public static readonly Vector4 Strip = Rgb(0x282828);
+    public static readonly Vector4 Panel = Rgb(0x383838);
+    public static readonly Vector4 Toolbar = Rgb(0x3C3C3C);
+    public static readonly Vector4 Section = Rgb(0x3E3E3E);
+    public static readonly Vector4 SectionHover = Rgb(0x474747);
+    public static readonly Vector4 SectionLine = Rgb(0x1A1A1A);
+    public static readonly Vector4 Field = Rgb(0x2A2A2A);
+    public static readonly Vector4 Border = Rgb(0x232323);
+    public static readonly Vector4 InnerLine = Rgb(0x303030);
+
+    /// <summary>The hover fill of a flat button in a toolbar strip.</summary>
+    public static readonly Vector4 ToolbarHover = Rgb(0xFFFFFF, 26 / 255f);
+
+    /// <summary>No color, for example the fill of a flat button that the mouse is not over.</summary>
+    public static readonly Vector4 Transparent = Vector4.Zero;
+
+    // Text. TextDim has a contrast of at least 4.5:1 on Panel, Toolbar and Section.
+    public static readonly Vector4 Text = Rgb(0xD2D2D2);
+    public static readonly Vector4 Label = Rgb(0xC4C4C4);
+    public static readonly Vector4 TextDim = Rgb(0xA8A8A8);
+
+    /// <summary>The text of a selected item that must stand out, for example the selected Scene label.</summary>
+    public static readonly Vector4 TextBright = Rgb(0xFFFFFF);
+
+    /// <summary>The drop shadow below a glyph that draws over the scene.</summary>
+    public static readonly Vector4 Shadow = Rgb(0x000000, 150 / 255f);
+
+    // The accent and the states.
+    public static readonly Vector4 Accent = Rgb(0x3A79BB);
+    public static readonly Vector4 AccentStrong = Rgb(0x2C5D87);
+    public static readonly Vector4 AccentText = Rgb(0x75A7E6);
+    public static readonly Vector4 Pressed = Rgb(0x46607C);
+
+    /// <summary>A toggle that is on, under the mouse. It stays blue, so the hover does not hide the state.</summary>
+    public static readonly Vector4 PressedHover = Rgb(0x52708F);
+    public static readonly Vector4 SelectionUnfocused = Rgb(0x4D4D4D);
+    public static readonly Vector4 Error = Rgb(0xF0524A);
+    public static readonly Vector4 Warning = Rgb(0xF4BC02);
+
+    /// <summary>
+    /// A check that passed. The palette has it for the states of the editor, but no view of this read-only editor
+    /// shows a passed check yet.
+    /// </summary>
+    public static readonly Vector4 Success = Rgb(0x6BBF59);
+
+    // The scene.
+    public static readonly Vector4 AxisX = Rgb(0xE06C6C);
+    public static readonly Vector4 AxisY = Rgb(0x7CC46A);
+    public static readonly Vector4 AxisZ = Rgb(0x6C9BE0);
+    public static readonly Vector4 GridLine = Rgb(0x808080, 0.45f);
+
+    // Font sizes in unscaled points. Use them with ImGui.PushFont(null, size). ImDrawListPtr.AddText takes the final
+    // pixel size, so multiply the size by ImGuiHelper.Scale for it.
+    public const float CaptionSize = 13;
+    public const float BodySize = 15;
+    public const float TitleSize = 17;
+    public const float HeroSize = 22;
+
+    // This field must come after the tokens, because static fields initialize in the order of the text.
+    private static readonly Vector4[] Palette = BuildPalette();
+    private static float lastScale = -1;
+
+    /// <summary>
+    /// Writes the style when the UI scale changed. Call it each frame, right after <see cref="ImGuiHelper.NewFrame"/>,
+    /// because that call restores the LibreLancer style when the scale changes.
+    /// </summary>
+    public static void ApplyIfScaleChanged()
+    {
+        var scale = ImGuiHelper.Scale;
+        if (scale != lastScale)
+        {
+            Apply(ImGui.GetStyle(), scale);
+            lastScale = scale;
+        }
+
+        CheckColors();
+    }
+
+    /// <summary>
+    /// Pushes the menu colors. The normal hover color (white at alpha 16) is almost invisible on the popup background,
+    /// so a hovered menu item uses the selection color. Call <see cref="PopMenuColors"/> after the menu.
+    /// </summary>
+    public static void PushMenuColors() => ImGui.PushStyleColor(ImGuiCol.HeaderHovered, AccentStrong);
+
+    public static void PopMenuColors() => ImGui.PopStyleColor();
+
+    /// <summary>
+    /// Pushes the colors of flat buttons: no fill until the mouse is over a button. The toolbar strips and the small
+    /// buttons in panels use them. Call <see cref="PopFlatButtonColors"/> after the buttons.
+    /// </summary>
+    public static void PushFlatButtonColors()
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, Transparent);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ToolbarHover);
+    }
+
+    public static void PopFlatButtonColors() => ImGui.PopStyleColor(2);
+
+    private static void Apply(ImGuiStylePtr style, float scale)
+    {
+        Vector2 Size(float x, float y) => new(MathF.Truncate(x * scale), MathF.Truncate(y * scale));
+        float Length(float value) => MathF.Truncate(value * scale);
+
+        style.WindowPadding = Size(8, 8);
+        style.WindowRounding = 0;
+        style.WindowMinSize = Size(32, 32);
+        style.ChildRounding = 0;
+        style.PopupRounding = Length(4);
+        style.FramePadding = Size(6, 3);
+        style.FrameRounding = Length(3);
+        style.ItemSpacing = Size(6, 3);
+        style.ItemInnerSpacing = Size(4, 4);
+        style.CellPadding = Size(6, 2);
+        style.IndentSpacing = Length(16);
+        style.ScrollbarSize = Length(12);
+        style.ScrollbarRounding = Length(6);
+        style.GrabMinSize = Length(10);
+        style.GrabRounding = Length(3);
+        style.TabRounding = Length(3);
+        style.TabBarOverlineSize = Length(2);
+        style.ImageBorderSize = 0;
+
+        // Border sizes stay 1 px at each scale. ImGuiStyle.ScaleAllSizes does not scale them either.
+        style.WindowBorderSize = 0;
+        style.ChildBorderSize = 1;
+        style.PopupBorderSize = 1;
+        style.FrameBorderSize = 1;
+        style.TabBorderSize = 0;
+        style.TabBarBorderSize = 1;
+        style.SeparatorTextBorderSize = 1;
+
+        style.DisabledAlpha = 0.5f;
+        style.TreeLinesFlags = ImGuiTreeNodeFlags.DrawLinesNone;
+        style.SelectableTextAlign = new Vector2(0, 0.5f);
+
+        Palette.CopyTo(style.Colors);
+    }
+
+    /// <summary>
+    /// Checks in debug builds that each of the 58 ImGui color slots has its theme value. A different value means that
+    /// some code changed the style without a push and a pop, or that the LibreLancer colors came back.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private static void CheckColors()
+    {
+        var colors = ImGui.GetStyle().Colors;
+        for (var i = 0; i < Palette.Length; i++)
+        {
+            if (colors[i] != Palette[i])
+            {
+                throw new InvalidOperationException(
+                    $"The ImGui color {(ImGuiCol)i} is {colors[i]}, but the theme value is {Palette[i]}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The value for each ImGui color slot. A slot that <see cref="ColorOf"/> does not know stops the build of the
+    /// table, so the table always has all 58 colors.
+    /// </summary>
+    private static Vector4[] BuildPalette()
+    {
+        var palette = new Vector4[(int)ImGuiCol.COUNT];
+        for (var i = 0; i < palette.Length; i++)
+        {
+            palette[i] = ColorOf((ImGuiCol)i);
+        }
+
+        return palette;
+    }
+
+    private static Vector4 ColorOf(ImGuiCol slot) => slot switch
+    {
+        ImGuiCol.Text or ImGuiCol.InputTextCursor or ImGuiCol.CheckMark => Text,
+        ImGuiCol.TextDisabled => TextDim,
+        ImGuiCol.WindowBg => Panel,
+        ImGuiCol.ChildBg or ImGuiCol.BorderShadow or ImGuiCol.ResizeGrip or ImGuiCol.TableRowBg or
+            ImGuiCol.TabDimmedSelectedOverline => Transparent,
+        ImGuiCol.PopupBg => Rgb(0x2E2E2E),
+        ImGuiCol.Border or ImGuiCol.Separator or ImGuiCol.TableBorderStrong => Border,
+        ImGuiCol.FrameBg => Field,
+        ImGuiCol.FrameBgHovered or ImGuiCol.TableBorderLight => InnerLine,
+        ImGuiCol.FrameBgActive => Rgb(0x242424),
+        ImGuiCol.TitleBg or ImGuiCol.TitleBgActive => Strip,
+        ImGuiCol.TitleBgCollapsed => Strip with { W = 128 / 255f },
+        ImGuiCol.MenuBarBg => Backdrop,
+        ImGuiCol.ScrollbarBg => Rgb(0x000000, 13 / 255f),
+        ImGuiCol.ScrollbarGrab => Rgb(0x5F5F5F),
+        ImGuiCol.ScrollbarGrabHovered => Rgb(0x686868),
+        ImGuiCol.ScrollbarGrabActive => Rgb(0x7A7A7A),
+        ImGuiCol.SliderGrab => Rgb(0x999999),
+        ImGuiCol.Button => Rgb(0x585858),
+        ImGuiCol.ButtonHovered => Rgb(0x676767),
+        ImGuiCol.ButtonActive => Pressed,
+        ImGuiCol.Header or ImGuiCol.HeaderActive => AccentStrong,
+        ImGuiCol.HeaderHovered => Rgb(0xFFFFFF, 16 / 255f),
+        ImGuiCol.SeparatorHovered or ImGuiCol.ResizeGripHovered => Accent with { W = 128 / 255f },
+        ImGuiCol.SliderGrabActive or ImGuiCol.SeparatorActive or ImGuiCol.ResizeGripActive or
+            ImGuiCol.TabSelectedOverline or ImGuiCol.PlotLinesHovered or ImGuiCol.PlotHistogram or
+            ImGuiCol.DragDropTarget or ImGuiCol.NavCursor => Accent,
+        ImGuiCol.Tab or ImGuiCol.TabDimmed => Rgb(0x2D2D2D),
+        ImGuiCol.TabHovered => SectionHover,
+        // The selected tab has the toolbar color, so that it joins the toolbar strip below it.
+        ImGuiCol.TabSelected or ImGuiCol.TabDimmedSelected or ImGuiCol.TableHeaderBg => Toolbar,
+        ImGuiCol.PlotLines => Rgb(0x9C9C9C),
+        ImGuiCol.PlotHistogramHovered => Rgb(0x4F8FD1),
+        ImGuiCol.TableRowBgAlt => Rgb(0xFFFFFF, 9 / 255f),
+        ImGuiCol.TextLink => AccentText,
+        ImGuiCol.TextSelectedBg => Accent with { W = 90 / 255f },
+        ImGuiCol.TreeLines => Rgb(0x4D4D4D),
+        ImGuiCol.NavWindowingHighlight => Rgb(0xFFFFFF, 179 / 255f),
+        ImGuiCol.NavWindowingDimBg => Rgb(0x000000, 51 / 255f),
+        ImGuiCol.ModalWindowDimBg => Rgb(0x000000, 140 / 255f),
+        _ => throw new ArgumentOutOfRangeException(nameof(slot), slot, "The theme has no value for this ImGui color."),
+    };
+
+    /// <summary>A color from a hex value such as 0x3A79BB, and an alpha from 0 to 1.</summary>
+    internal static Vector4 Rgb(uint rgb, float alpha = 1) =>
+        new(((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f, alpha);
+
+    /// <summary>
+    /// The color as an ImGui ABGR value for a draw list. It rounds each channel as ImGui does. It needs no ImGui
+    /// context and ignores the style alpha.
+    /// </summary>
+    internal static uint ToAbgr(Vector4 color)
+    {
+        static uint Channel(float value) => (uint)(Math.Clamp(value, 0, 1) * 255 + 0.5f);
+        return Channel(color.W) << 24 | Channel(color.Z) << 16 | Channel(color.Y) << 8 | Channel(color.X);
+    }
+}

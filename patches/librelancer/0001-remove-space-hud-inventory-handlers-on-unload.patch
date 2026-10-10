@@ -1,0 +1,94 @@
+diff --git a/src/LibreLancer/Client/CGameSession.Space.cs b/src/LibreLancer/Client/CGameSession.Space.cs
+index 7ce17d4e..2f37e20c 100644
+--- a/src/LibreLancer/Client/CGameSession.Space.cs
++++ b/src/LibreLancer/Client/CGameSession.Space.cs
+@@ -675,7 +675,7 @@ public partial class CGameSession
+                 spaceGameplay.world.SpawnTempFx(separationEffect, effectPosition);
+                 if (isPlayer && OnUpdateInventory != null)
+                 {
+-                    uiActions.Enqueue(OnUpdateInventory);
++                    uiActions.Enqueue(InvokeUpdateInventory);
+                 }
+             }
+         });
+diff --git a/src/LibreLancer/Client/CGameSession.cs b/src/LibreLancer/Client/CGameSession.cs
+index 2758933a..d866f899 100644
+--- a/src/LibreLancer/Client/CGameSession.cs
++++ b/src/LibreLancer/Client/CGameSession.cs
+@@ -73,6 +73,8 @@ public partial class CGameSession : IClientPlayer
+     public NetBaseNpcDialog? BaseNpcDialog;
+ 
+     public Action? OnUpdateInventory;
++    // Queued as a call, not as the delegate, so that a handler removed before the queue runs is not called.
++    private void InvokeUpdateInventory() => OnUpdateInventory?.Invoke();
+     public Action? OnUpdatePlayerShip;
+     private bool paused;
+     public string? PlayerBase;
+@@ -288,7 +290,7 @@ public partial class CGameSession : IClientPlayer
+         SetSelfLoadout(lastInventory.Loadout);
+ 
+         if (OnUpdateInventory != null)
+-            uiActions.Enqueue(OnUpdateInventory);
++            uiActions.Enqueue(InvokeUpdateInventory);
+ 
+         if (spaceGameplay == null && OnUpdatePlayerShip != null)
+             uiActions.Enqueue(OnUpdatePlayerShip);
+@@ -306,7 +308,7 @@ public partial class CGameSession : IClientPlayer
+         cargo?.Count = count;
+ 
+         if (OnUpdateInventory != null)
+-            uiActions.Enqueue(OnUpdateInventory);
++            uiActions.Enqueue(InvokeUpdateInventory);
+     }
+ 
+     public void DeleteSlot(int slot)
+@@ -317,7 +319,7 @@ public partial class CGameSession : IClientPlayer
+             Items.Remove(cargo);
+ 
+         if (OnUpdateInventory != null)
+-            uiActions.Enqueue(OnUpdateInventory);
++            uiActions.Enqueue(InvokeUpdateInventory);
+     }
+ 
+     public void UpdateWeaponGroups(NetWeaponGroup[] wg)
+diff --git a/src/LibreLancer/GameStates/SpaceGameplay.Hud.cs b/src/LibreLancer/GameStates/SpaceGameplay.Hud.cs
+index abe506a8..de6a47b2 100644
+--- a/src/LibreLancer/GameStates/SpaceGameplay.Hud.cs
++++ b/src/LibreLancer/GameStates/SpaceGameplay.Hud.cs
+@@ -402,8 +402,22 @@ partial class SpaceGameplay
+             ScanHandler = handler;
+         }
+ 
+-        public void OnUpdatePlayerInventory(Closure handler) =>
+-            g.session.OnUpdateInventory += () => handler.Call();
++        private readonly System.Collections.Generic.List<Action> inventoryHandlers = [];
++
++        public void OnUpdatePlayerInventory(Closure handler)
++        {
++            Action update = () => handler.Call();
++            inventoryHandlers.Add(update);
++            g.session.OnUpdateInventory += update;
++        }
++
++        // The base UI replaces the Lua Game API, so the HUD handlers must not run after the space state ends.
++        internal void RemoveSessionHandlers()
++        {
++            foreach (var update in inventoryHandlers)
++                g.session.OnUpdateInventory -= update;
++            inventoryHandlers.Clear();
++        }
+ 
+         public void JettisonInventoryItem(UIInventoryItem item, int count)
+         {
+diff --git a/src/LibreLancer/GameStates/SpaceGameplay.cs b/src/LibreLancer/GameStates/SpaceGameplay.cs
+index 7dbf443a..20e07dd2 100644
+--- a/src/LibreLancer/GameStates/SpaceGameplay.cs
++++ b/src/LibreLancer/GameStates/SpaceGameplay.cs
+@@ -686,6 +686,7 @@ namespace LibreLancer
+ 
+         protected override void OnUnload()
+         {
++            uiApi.RemoveSessionHandlers();
+             Game.Keyboard.TextInput -= Game_TextInput;
+             Game.Keyboard.KeyDown -= Keyboard_KeyDown;
+             Game.Mouse.MouseDown -= Mouse_MouseDown;

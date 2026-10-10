@@ -1,0 +1,544 @@
+diff --git a/src/LibreLancer.Tests/AleRetailEffectTests.cs b/src/LibreLancer.Tests/AleRetailEffectTests.cs
+new file mode 100644
+index 00000000..bcfc190e
+--- /dev/null
++++ b/src/LibreLancer.Tests/AleRetailEffectTests.cs
+@@ -0,0 +1,288 @@
++using System;
++using System.IO;
++using System.Linq;
++using System.Numerics;
++using System.Runtime.CompilerServices;
++using LibreLancer.Fx;
++using LibreLancer.Render;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Utf.Ale;
++using LibreLancer.World;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// Retail particle effects, updated without a renderer. ParticleEffectInstance.Update does nothing without a pool,
++// so each instance gets a pool object that the tests never use to draw.
++public class AleRetailEffectTests
++{
++    private const double Frame = 1.0 / 60;
++    private const double PSysStep = 0.25;
++
++    private static ParticleLibrary LoadLibrary(RetailData data, string file)
++    {
++        using var stream = new MemoryStream(data.ReadDataFile(@"FX\" + file));
++        return new ParticleLibrary(null!, new AleFile(file, stream));
++    }
++
++    private static ParticleEffect LoadEffect(RetailData data, string file) => LoadLibrary(data, file).Effects.Single();
++
++    private static void SetPool(ParticleEffectInstance instance) =>
++        instance.Pool = (ParticleEffectPool)RuntimeHelpers.GetUninitializedObject(typeof(ParticleEffectPool));
++
++    private static ParticleEffectInstance Start(ParticleEffect effect)
++    {
++        var instance = new ParticleEffectInstance(effect);
++        SetPool(instance);
++        return instance;
++    }
++
++    // The position where an appearance draws a particle, as FxBasicAppearance.Draw calculates it.
++    private static Vector3 DrawnPosition(ParticleEffectInstance instance, AppearanceReference appearance, int particle)
++    {
++        ref var p = ref instance.Buffer[instance.Effect.Appearances.IndexOf(appearance), particle];
++        return Vector3.Transform(Vector3.Transform(p.Position, p.Orientation),
++            instance.NodeWorldTransforms[appearance.NodeIdx]);
++    }
++
++    private static void AssertNear(Vector3 expected, Vector3 actual, float tolerance) =>
++        Assert.True(Vector3.Distance(expected, actual) <= tolerance, $"Expected {expected}, got {actual}");
++
++    private static void AssertNear(Matrix4x4 expected, Matrix4x4 actual, float tolerance)
++    {
++        for (var row = 0; row < 4; row++)
++        {
++            for (var column = 0; column < 4; column++)
++            {
++                Assert.True(MathF.Abs(expected[row, column] - actual[row, column]) <= tolerance,
++                    $"Expected {expected}, got {actual}");
++            }
++        }
++    }
++
++    // The s002xe news camera carries the TV lines. The effect has no attachment node, so the lines stay on the camera
++    // and turn with it.
++    [Fact]
++    public void AnEffectWithoutAnAttachmentNodeDrawsAtTheEffect()
++    {
++        var effect = LoadEffect(RetailData.Open(), @"misc\rtc_Tv_Lines.ale");
++        Assert.False(effect.HasAttachmentNode);
++        var appearance = effect.Appearances.Single();
++        var instance = Start(effect);
++        var start = new Vector3(12.11f, 0.8f, -5.51f);
++        var rotation = Matrix4x4.CreateFromYawPitchRoll(0.9f, 0.45f, 0);
++
++        for (var frame = 0; frame < 30; frame++)
++        {
++            var position = start + new Vector3(0.2f * frame, 0, 0);
++            var transform = rotation * Matrix4x4.CreateTranslation(position);
++            instance.Update(Frame, transform, 0);
++
++            AssertNear(transform, instance.NodeWorldTransforms[appearance.NodeIdx], 1e-4f);
++            Assert.Equal(1, instance.CountAll());
++            AssertNear(position, DrawnPosition(instance, appearance, 0), 1e-4f);
++        }
++    }
++
++    // An engine trail has an attachment node and a root appearance. The root appearance is in world space, so the
++    // particles stay where they were emitted when the ship moves.
++    [Fact]
++    public void ARootAppearanceNextToAnAttachmentNodeStaysInWorldSpace()
++    {
++        var effect = LoadEffect(RetailData.Open(), @"engines\gf_li_smallengine01_trail.ale");
++        Assert.True(effect.HasAttachmentNode);
++        var appearance = effect.Appearances.Single(x => x.Parent == null);
++        var instance = Start(effect);
++        const float speed = 0.2f;
++
++        var position = Vector3.Zero;
++        for (var frame = 0; frame < 60; frame++)
++        {
++            position = new Vector3(speed * frame, 0, 0);
++            instance.Update(Frame, Matrix4x4.CreateTranslation(position), 1);
++            Assert.True(instance.NodeWorldTransforms[appearance.NodeIdx].IsIdentity);
++        }
++
++        var count = instance.Buffer.GetCount(effect.Appearances.IndexOf(appearance));
++        Assert.True(count >= 10, $"Only {count} trail particles");
++        var behind = Enumerable.Range(0, count).Max(i => position.X - DrawnPosition(instance, appearance, i).X);
++        // The oldest particle was emitted about 1 s ago, which is 60 frames of 0.2 m.
++        Assert.True(behind > 30 * speed, $"The oldest particle is only {behind} m behind the effect");
++    }
++
++    // Fades, flashes and the LNN logo have only initial particles. The frequency is 0.
++    [Theory]
++    [InlineData(@"misc\rtc_fadeblack_variable.ale", 30f)]
++    [InlineData(@"misc\rtc_Tv_Distortion.ale", 1f)]
++    [InlineData(@"misc\rtc_libertynewsicon.ale", 5f)]
++    public void AnEmitterEmitsItsInitialParticlesOnceWhenItStarts(string file, float lifeSpan)
++    {
++        var effect = LoadEffect(RetailData.Open(), file);
++        var appearance = effect.Appearances.IndexOf(effect.Emitters.Single().Linked!);
++        var instance = Start(effect);
++
++        instance.Update(Frame, Matrix4x4.Identity, 0);
++        Assert.Equal(1, instance.CountAll());
++        Assert.Equal(lifeSpan, instance.Buffer[appearance, 0].LifeSpan, 1e-3);
++
++        for (var frame = 0; frame < 30; frame++)
++        {
++            instance.Update(Frame, Matrix4x4.Identity, 0);
++        }
++        Assert.Equal(1, instance.CountAll());
++
++        instance.Reset();
++        instance.Update(Frame, Matrix4x4.Identity, 0);
++        Assert.Equal(1, instance.CountAll());
++    }
++
++    // The inner glow of a Rheinland engine has 2 initial particles and a stream of about 1.5 particles per second.
++    // The particles live for 2 s.
++    [Fact]
++    public void AStreamingEmitterAlsoEmitsItsInitialParticles()
++    {
++        var effect = LoadEffect(RetailData.Open(), @"engines\gf_rh_smallengine01.ale");
++        var glow = effect.Emitters.FindIndex(x => x.Emitter.NodeName == "gf_rh_smallengine01nnerglow_Cone.emt");
++        Assert.Equal(2, effect.Emitters[glow].Emitter.InitialParticles);
++        var instance = Start(effect);
++
++        instance.Update(Frame, Matrix4x4.Identity, 0);
++        Assert.Equal(2, instance.Emitters[glow].Count);
++
++        // In the next second, the stream adds one particle.
++        for (var frame = 0; frame < 60; frame++)
++        {
++            instance.Update(Frame, Matrix4x4.Identity, 0);
++        }
++        Assert.Equal(3, instance.Emitters[glow].Count);
++    }
++
++    // The Kusari thruster has 5 initial particles and a stream of 23 particles per second. A step of 0.1 s emits
++    // 2 stream particles, and their start times spread evenly over the step.
++    [Fact]
++    public void TheStreamParticlesOfOneStepSpreadTheirStartTimes()
++    {
++        var effect = LoadEffect(RetailData.Open(), @"engines\ku_longthruster.ale");
++        var appearance = effect.Appearances.IndexOf(effect.Emitters.Single().Linked!);
++        var instance = Start(effect);
++
++        instance.Update(0.1, Matrix4x4.Identity, 0);
++
++        Assert.Equal(7, instance.Buffer.GetCount(appearance));
++        var first = instance.Buffer[appearance, 5];
++        var second = instance.Buffer[appearance, 6];
++        Assert.Equal(0f, first.TimeAlive);
++        Assert.Equal(0.05f, second.TimeAlive, 1e-6);
++        // Both particles start at the emitter. The second particle has moved for 0.05 s.
++        Assert.Equal(0.05f * second.Velocity.Length(), Vector3.Distance(first.Position, second.Position), 1e-5);
++    }
++
++    // The sparks of a ship explosion are 25 initial particles. The buffer must hold all of them.
++    [Fact]
++    public void TheParticleBufferHoldsTheInitialParticles()
++    {
++        var effect = LoadEffect(RetailData.Open(), @"explosions\gf_explosion_li_ship01.ale");
++        var sparks = effect.Emitters.Single(x => x.Emitter.NodeName == "gf_explosion_li_ship01sparks_Sphere.emt");
++        Assert.Equal(25, sparks.Emitter.InitialParticles);
++        var instance = Start(effect);
++
++        instance.Update(Frame, Matrix4x4.Identity, 0);
++
++        Assert.Equal(25, instance.Buffer.GetCount(effect.Appearances.IndexOf(sparks.Linked!)));
++        Assert.Equal(25, instance.Emitters[effect.Emitters.IndexOf(sparks)].Count);
++    }
++
++    // The GrainSpout emitter stores uninitialized memory as its initial particle count, which reads as a negative
++    // number. The buffer still holds its stream: 100 particles per second for 2 s.
++    [Fact]
++    public void ANegativeInitialParticleCountDoesNotMakeTheBufferSmaller()
++    {
++        var effect = LoadLibrary(RetailData.Open(), @"misc\standardeffects.ale").Effects.Get("GrainSpout")!;
++        var spout = effect.Emitters.Single(x => x.Emitter.NodeName == "GrainSpout_Cone.emt");
++        Assert.True(spout.Emitter.InitialParticles < 0);
++
++        Assert.Equal(200, effect.ParticleCounts[effect.Appearances.IndexOf(spout.Linked!)]);
++    }
++
++    // A THN script with the PSYS entity "fx" and one START_PSYS for each (time, duration). The effect is empty, so the
++    // tests need no retail data.
++    private static (ThnScriptInstance Script, ParticleEffectRenderer Renderer) PSysScript(
++        params (float Time, float Duration)[] starts)
++    {
++        var script = new ThnScript() { Duration = 100 };
++        foreach (var (time, duration) in starts)
++        {
++            script.Events.Add(new StartPSysEvent() { Time = time, Duration = duration, Targets = ["fx"] });
++        }
++        var renderer = new ParticleEffectRenderer(new ParticleEffect(0, "fx", [], [], [])) { Active = false };
++        SetPool(renderer.Instance!);
++        var instance = new ThnScriptInstance(null!, script);
++        instance.Objects["fx"] = new ThnSceneObject()
++        {
++            Name = "fx",
++            Object = new GameObject() { RenderComponent = renderer }
++        };
++        // Cutscene.SceneSetup runs the events at T=0.
++        instance.Update(0);
++        return (instance, renderer);
++    }
++
++    // Each frame updates the script, then the effect, as a cutscene does.
++    private static void Step(ThnScriptInstance script, ParticleEffectRenderer renderer, int frames)
++    {
++        for (var frame = 0; frame < frames; frame++)
++        {
++            script.Update(PSysStep);
++            renderer.Update(PSysStep, Vector3.Zero, Matrix4x4.Identity);
++        }
++    }
++
++    // s002xe starts the one-flash TV_Distortion three times. Each START_PSYS must start the effect again.
++    [Fact]
++    public void StartPSysStartsAStoppedEffectFromItsBeginning()
++    {
++        var (script, renderer) = PSysScript((0, 1), (2, 1));
++
++        Step(script, renderer, 7);
++        Assert.False(renderer.Active);
++        Assert.Equal(0.75, renderer.Instance!.GlobalTime, 1e-9);
++
++        script.Update(PSysStep);
++        Assert.True(renderer.Active);
++        Assert.Equal(0.0, renderer.Instance.GlobalTime);
++    }
++
++    // The s072ab holo beams start again when the earlier start ends. The stop of the earlier start then comes in the
++    // same frame as the new start, and it must not stop the new start.
++    [Fact]
++    public void StartPSysRestartsAnEffectWhoseEarlierStartEndsInTheSameFrame()
++    {
++        var (script, renderer) = PSysScript((0, 1), (1, 1));
++
++        Step(script, renderer, 4);
++        Assert.True(renderer.Active);
++        Assert.Equal(PSysStep, renderer.Instance!.GlobalTime, 1e-9);
++
++        Step(script, renderer, 4);
++        Assert.False(renderer.Active);
++    }
++
++    // No retail script starts an effect again before the earlier start ends, so the retail behavior is unknown. This
++    // test keeps the chosen behavior: the effect runs on without a restart, and only the last start stops it.
++    [Fact]
++    public void StartPSysOnAnActiveEffectKeepsItRunningUntilTheLastEnd()
++    {
++        var (script, renderer) = PSysScript((0, 2), (1, 2));
++
++        Step(script, renderer, 4);
++        Assert.True(renderer.Active);
++        Assert.Equal(1.0, renderer.Instance!.GlobalTime, 1e-9);
++
++        Step(script, renderer, 4);
++        Assert.True(renderer.Active);
++
++        Step(script, renderer, 4);
++        Assert.False(renderer.Active);
++    }
++}
+diff --git a/src/LibreLancer/Fx/FxEmitter.cs b/src/LibreLancer/Fx/FxEmitter.cs
+index 249732cf..54b3b341 100755
+--- a/src/LibreLancer/Fx/FxEmitter.cs
++++ b/src/LibreLancer/Fx/FxEmitter.cs
+@@ -178,6 +178,16 @@ namespace LibreLancer.Fx
+ 
+             ref EmitterState state = ref instance.Emitters[index];
+ 
++            // Retail emits Emitter_InitialParticles once when the emitter starts. Fades and flashes have only these.
++            if (!state.InitialEmitted)
++            {
++                state.InitialEmitted = true;
++                for (var i = 0; i < InitialParticles && state.Count < maxCount; i++)
++                {
++                    Emit(reference, index, instance, ref state, sparam, lifespan, 0);
++                }
++            }
++
+             if(freq > 0)
+             {
+                 // Spawn lots of particles
+@@ -216,41 +226,47 @@ namespace LibreLancer.Fx
+                         continue;
+                     }
+ 
+-                    // Emit
+-                    ref var particle = ref instance.Buffer.Enqueue(reference.AppBufIdx, out var despawned);
+-
+-                    if (despawned != -1)
+-                    {
+-                        instance.Emitters[despawned].Count--;
+-                        Debug.Assert(instance.Emitters[despawned].Count >= 0);
+-                    }
++                    //Spread the starting time evenly among the spawned particles
++                    Emit(reference, index, instance, ref state, sparam, lifespan, (float) (count * correctionFactor));
++                }
++            }
++            else
++            {
++                state.NextEmitCount = 0;
++            }
++        }
+ 
+-                    particle.LifeSpan = lifespan;
+-                    particle.TimeAlive =  (float) (count * correctionFactor); //Spread the starting time evenly among the spawned particles
+-                    particle.EmitterIndex = index;
+-                    particle.Orientation = Quaternion.Identity;
+-                    SetParticle(instance, reference, ref particle, sparam, (float) instance.GlobalTime);
+-                    state.Count++;
++        private void Emit(EmitterReference reference, int index, ParticleEffectInstance instance,
++            ref EmitterState state, float sparam, float lifespan, float timeAlive)
++        {
++            ref var particle = ref instance.Buffer.Enqueue(reference.AppBufIdx, out var despawned);
+ 
+-                    var len = particle.Velocity.Length();
++            if (despawned != -1)
++            {
++                instance.Emitters[despawned].Count--;
++                Debug.Assert(instance.Emitters[despawned].Count >= 0);
++            }
+ 
+-                    if (!(Math.Abs(len) > float.Epsilon))
+-                    {
+-                        continue;
+-                    }
++            particle.LifeSpan = lifespan;
++            particle.TimeAlive = timeAlive;
++            particle.EmitterIndex = index;
++            particle.Orientation = Quaternion.Identity;
++            SetParticle(instance, reference, ref particle, sparam, (float) instance.GlobalTime);
++            state.Count++;
+ 
+-                    //Correct position since the time alive can be non zero (see above)
+-                    if(toEmit > 1)
+-                        particle.Position += particle.Velocity * particle.TimeAlive;
++            var len = particle.Velocity.Length();
+ 
+-                    var nr = particle.Velocity.Normalized();
+-                    particle.Normal = nr;
+-                }
+-            }
+-            else
++            if (!(Math.Abs(len) > float.Epsilon))
+             {
+-                state.NextEmitCount = 0;
++                return;
+             }
++
++            //Correct position since the time alive can be non zero (see the frequency loop in Update)
++            if (timeAlive > 0)
++                particle.Position += particle.Velocity * timeAlive;
++
++            var nr = particle.Velocity.Normalized();
++            particle.Normal = nr;
+         }
+     }
+ }
+diff --git a/src/LibreLancer/Fx/ParticleEffect.cs b/src/LibreLancer/Fx/ParticleEffect.cs
+index 604f22b2..181f05b5 100644
+--- a/src/LibreLancer/Fx/ParticleEffect.cs
++++ b/src/LibreLancer/Fx/ParticleEffect.cs
+@@ -84,6 +84,7 @@ namespace LibreLancer.Fx
+ 
+         public int NodeCount;
+         public int EmitterNodeCount;
++        public bool HasAttachmentNode;
+ 
+         //Code suggested by Callum
+         void AssignNodeIds(NodeReference item)
+@@ -102,6 +103,8 @@ namespace LibreLancer.Fx
+             NodeCount = 0;
+             foreach(var n in Tree)
+                 AssignNodeIds(n);
++            // In retail data, the attachment node is always a root node.
++            HasAttachmentNode = Tree.Exists(x => x.IsAttachmentNode);
+ 
+             ParticleCounts = new int[Appearances.Count];
+             float radius = 0;
+@@ -127,8 +130,10 @@ namespace LibreLancer.Fx
+                 if (emitter.Frequency != null &&
+                     emitter.InitLifeSpan != null)
+                 {
++                    // One retail emitter stores uninitialized memory as its count, which reads as a negative number.
+                     var max2 = (int) (Math.Ceiling(emitter.Frequency.GetMax(false) *
+-                                                   emitter.InitLifeSpan.GetMax(false)));
++                                                   emitter.InitLifeSpan.GetMax(false))) +
++                               Math.Max(0, emitter.InitialParticles);
+                     if (max2 < maxParticles)
+                         maxParticles = max2;
+                 }
+diff --git a/src/LibreLancer/Fx/ParticleEffectInstance.cs b/src/LibreLancer/Fx/ParticleEffectInstance.cs
+index 39fdcbe0..c93d13d4 100755
+--- a/src/LibreLancer/Fx/ParticleEffectInstance.cs
++++ b/src/LibreLancer/Fx/ParticleEffectInstance.cs
+@@ -24,6 +24,7 @@ namespace LibreLancer.Fx
+     {
+         public double NextEmitCount;
+         public int Count;
++        public bool InitialEmitted;
+     }
+ 
+     public class ParticleEffectInstance
+@@ -153,7 +154,13 @@ namespace LibreLancer.Fx
+             //Update transformation tree
+             foreach (NodeReference currentNodeReference in Effect.Tree)
+             {
+-                Matrix4x4 currentTransform = currentNodeReference.IsAttachmentNode ? transform : Matrix4x4.Identity;
++                // Retail puts the effect root at the effect transform at each step. The rule for an effect without
++                // an attachment node is an inference: its root nodes follow the effect in each frame, because only
++                // then do the TV overlays of the cutscenes fit the screen. With an attachment node, the other root
++                // nodes stay in world space.
++                Matrix4x4 currentTransform = currentNodeReference.IsAttachmentNode || !Effect.HasAttachmentNode
++                    ? transform
++                    : Matrix4x4.Identity;
+                 TraverseTree(currentTransform, currentNodeReference);
+             }
+ 
+diff --git a/src/LibreLancer/Render/ParticleEffectRenderer.cs b/src/LibreLancer/Render/ParticleEffectRenderer.cs
+index 86749b53..7cdeae54 100644
+--- a/src/LibreLancer/Render/ParticleEffectRenderer.cs
++++ b/src/LibreLancer/Render/ParticleEffectRenderer.cs
+@@ -42,6 +42,9 @@ namespace LibreLancer.Render
+             fx?.Reset();
+         }
+ 
++        // For tests.
++        internal ParticleEffectInstance? Instance => fx;
++
+         public override bool PrepareRender(ICamera camera, NebulaRenderer? nr, SystemRenderer sys, bool forceCull)
+         {
+             if (fx == null)
+diff --git a/src/LibreLancer/Thn/Events/StartPSysEvent.cs b/src/LibreLancer/Thn/Events/StartPSysEvent.cs
+index 8c7754e1..efcb89ad 100644
+--- a/src/LibreLancer/Thn/Events/StartPSysEvent.cs
++++ b/src/LibreLancer/Thn/Events/StartPSysEvent.cs
+@@ -2,6 +2,7 @@
+ // This file is subject to the terms and conditions defined in
+ // LICENSE, which is part of this source code package
+ 
++using System;
+ using LibreLancer.Client.Components;
+ using LibreLancer.Render;
+ using LibreLancer.Thorn;
+@@ -35,10 +36,22 @@ namespace LibreLancer.Thn.Events
+             }
+             
+             var r = (ParticleEffectRenderer)obj.Object.RenderComponent!;
++            // START_PSYS starts the effect from its beginning. s069x fires one muzzle-flare effect again for each shot.
++            // A start at or after the end of the earlier start also restarts an effect that is still active.
++            // The processors run after the events, so the stop of the earlier start can come later in this frame.
++            var start = Milliseconds(Time);
++            if (!r.Active || obj.PSysEnd <= start)
++            {
++                r.Restart();
++            }
+             r.Active = true;
+-            instance.AddProcessor(new StopPSys(r, Duration));
++            obj.PSysEnd = Milliseconds((double)Time + Duration);
++            instance.AddProcessor(new StopPSys(obj, r, Duration));
+         }
+ 
++        // Retail keeps event times in whole milliseconds.
++        private static long Milliseconds(double seconds) => (long)Math.Round(seconds * 1000);
++
+         private class StopEngine : ThnEventProcessor
+         {
+             private double time;
+@@ -70,11 +83,15 @@ namespace LibreLancer.Thn.Events
+             private double time;
+             public double Duration;
+             public ParticleEffectRenderer Fx;
++            private readonly ThnSceneObject obj;
++            private readonly long end;
+ 
+-            public StopPSys(ParticleEffectRenderer fx, double duration)
++            public StopPSys(ThnSceneObject obj, ParticleEffectRenderer fx, double duration)
+             {
++                this.obj = obj;
+                 Fx = fx;
+                 Duration = duration;
++                end = obj.PSysEnd;
+             }
+ 
+             public override bool Run(double delta)
+@@ -82,7 +99,11 @@ namespace LibreLancer.Thn.Events
+                 time += delta;
+                 if(time >= Duration)
+                 {
+-                    Fx.Active = false;
++                    // Only the last START_PSYS on the entity stops the effect.
++                    if (obj.PSysEnd == end)
++                    {
++                        Fx.Active = false;
++                    }
+                     return false;
+                 }
+                 return true;
+diff --git a/src/LibreLancer/Thn/ThnSceneObject.cs b/src/LibreLancer/Thn/ThnSceneObject.cs
+index 2a47bee6..2c2fee3c 100644
+--- a/src/LibreLancer/Thn/ThnSceneObject.cs
++++ b/src/LibreLancer/Thn/ThnSceneObject.cs
+@@ -25,6 +25,8 @@ public class ThnSceneObject
+     public bool Animating = false;
+     public bool PosFromObject = false;
+     public CEngineComponent? Engine;
++    // The end of the last START_PSYS on this entity, in whole milliseconds of script time.
++    internal long PSysEnd = long.MinValue;
+     public int MonitorIndex = 0;
+ 
+     public List<ThnAttachment> Attachments = new();

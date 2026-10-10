@@ -1,0 +1,8 @@
+<Project>
+  <!-- Kept out of the repo root so that it does not apply to the Librelancer submodule. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

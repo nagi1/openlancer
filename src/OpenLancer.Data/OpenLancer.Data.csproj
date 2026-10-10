@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\external\Librelancer\src\LibreLancer.Data\LibreLancer.Data.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenLancer.Tests" />
+    <!-- The retail proofs test the internal patch writer directly. -->
+    <InternalsVisibleTo Include="OpenLancer.DataTests" />
+  </ItemGroup>
+
+</Project>

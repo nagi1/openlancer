@@ -1,0 +1,8 @@
+{
+  "strings": {
+    "starrunner": "Starrunner"
+  },
+  "infocards": {
+    "starrunner_info": "<?xml version=\"1.0\" encoding=\"UTF-16\"?><RDL><PUSH/><TEXT>The Starrunner is a light fighter from the OpenLancer sample mod. It is fast, cheap and lightly armored.</TEXT><PARA/><POP/></RDL>"
+  }
+}

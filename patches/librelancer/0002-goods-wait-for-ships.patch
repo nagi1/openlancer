@@ -1,0 +1,14 @@
+diff --git a/src/LibreLancer.Data/GameItemDb.cs b/src/LibreLancer.Data/GameItemDb.cs
+index c6b895f9..f81a3d16 100644
+--- a/src/LibreLancer.Data/GameItemDb.cs
++++ b/src/LibreLancer.Data/GameItemDb.cs
+@@ -894,7 +894,8 @@ public class GameItemDb
+                 }
+             }
+         }, baseTask);
+-        var goodsTask = tasks.Begin(InitGoods, equipmentTask);
++        // InitGoods reads Ships to resolve ship packages, so it must wait for InitShips.
++        var goodsTask = tasks.Begin(InitGoods, equipmentTask, shipsTask);
+         var archetypesTask = tasks.Begin(InitArchetypes, loadoutsTask, debrisTask, explosionTask, fusesTask);
+         var starsTask = tasks.Begin(InitStars);
+         var astsTask = tasks.Begin(InitAsteroids, explosionTask);

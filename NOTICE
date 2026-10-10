@@ -1,0 +1,42 @@
+OpenLancer
+Copyright (c) 2026 OpenLancer contributors. Licensed under the MIT License (see LICENSE).
+
+OpenLancer is not affiliated with or endorsed by Microsoft. Freelancer is a Microsoft product.
+This repository contains no Microsoft game files. Each user supplies the game data from their own copy.
+
+Third-party software
+--------------------
+OpenLancer uses Librelancer as a git submodule (external/Librelancer). The submodule is pinned to an unmodified
+upstream commit. Before the build, tools/apply-librelancer-patches.ps1 applies the local patches in
+patches/librelancer to the submodule working tree, so the built programs contain modified Librelancer code.
+docs/UPSTREAM.md lists the patches and the reason for each one.
+  Librelancer - MIT License
+  Copyright (c) Callum McGing, Librelancer Contributors 2013-2026
+  Portions Copyright (c) Malte Rupprecht 2011-2012
+  Portions Copyright (c) Mono.Xna Team 2006
+  https://github.com/Librelancer/Librelancer
+
+Librelancer includes these projects under external/Librelancer/extern. Each keeps its own license file:
+  bepuphysics2               Apache License 2.0
+  blurgtext                  MIT License
+  crunch                     zlib License
+  imgui                      MIT License
+  lancerdecode               MIT License
+  LiteNetLib                 MIT License
+  nativefiledialog-extended  zlib License
+  SimpleMesh                 Apache License 2.0
+  SPIRV-Cross                Apache License 2.0
+  StringSquash               MIT License
+  thorncompiler              no license file at its root (check before redistribution)
+  wattlescript               BSD 3-Clause License
+
+LibreLancer.ImUI embeds these fonts. The OpenLancer editor uses them for its text and icons:
+  fa-solid-900.ttf           Font Awesome Free 5.15.4 (solid icons), SIL Open Font License 1.1
+  Roboto-Regular.ttf         Apache License 2.0
+  DroidSansFallbackFull.ttf  Apache License 2.0
+
+The Librelancer build copies native libraries next to the programs. external/Librelancer/Credits.txt has their notices:
+  FreeType                   FreeType License
+  OpenAL Soft (Windows)      GNU LGPL 2
+
+Files that OpenLancer copies from Librelancer keep their MIT headers. docs/VENDORED.md lists them.

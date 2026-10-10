@@ -1,0 +1,325 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using ImGuiNET;
+using LibreLancer;
+using LibreLancer.Data;
+using LibreLancer.Data.GameData;
+using LibreLancer.Data.GameData.Items;
+using LibreLancer.Data.GameData.World;
+using LibreLancer.ImUI;
+using OpenLancer.Data.Editing;
+using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Ui;
+
+namespace OpenLancer.Editor.Database;
+
+/// <summary>
+/// Tables of the game data. A category list at the left selects the systems, the ships, the goods, all the equipment
+/// or one type of equipment. The table at the right shows the items of the category.
+/// </summary>
+/// <remarks>
+/// The goods come from the edit view, not from the game data, so they show each edit at once. A dot marks a good that
+/// the active mod adds or changes. A good row selects its section.
+/// </remarks>
+internal sealed class DatabasePanel(EditorWindow window)
+{
+    private const string GoodsId = "goods";
+
+    // Sizes in unscaled points.
+    private const float CategoryMin = 120;
+    private const float CategoryMaxFraction = 0.4f;
+    private const float SplitterGap = 4;
+    private const float ListPadding = 4;
+    private const float FilterMinWidth = 120;
+    private const float NicknameWidth = 160;
+    private const float NameWidth = 200;
+    private const float NumberWidth = 80;
+
+    private GameDataManager? loadedData;
+    private int goodsVersion = -1;
+    private Category[] categories = [];
+    private Category? current;
+    private string filter = "";
+
+    // True when the category list must scroll to the current category, after a data load.
+    private bool revealCurrent;
+
+    /// <summary>One entry of the category list.</summary>
+    /// <param name="Id">The id that the settings keep, for example "equipment/Gun".</param>
+    /// <param name="RowKind">The kind of the rows that show, or null for all the rows of the table.</param>
+    /// <param name="Depth">The indent level in the list.</param>
+    private sealed record Category(string Id, string Name, ObjectKind Kind, DatabaseTable Table, ObjectKind? RowKind,
+        int Depth, int Count);
+
+    /// <summary>Forgets the tables of the game data. Call it when the profile closes.</summary>
+    public void Reset()
+    {
+        loadedData = null;
+        categories = [];
+        current = null;
+    }
+
+    /// <summary>Draws the items of the toolbar strip: the filter field and the row count at the right.</summary>
+    public void Toolbar()
+    {
+        // The strip draws before the body. The tables are made here, so the first frame with the data already has
+        // the count and the field width of the frames after it.
+        var table = window.Session?.GameData is { } data ? CurrentCategory(data).Table : null;
+        var scale = ImGuiHelper.Scale;
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var count = "";
+        if (table != null)
+        {
+            // The filter applies here, so the count of this frame matches the text in the field.
+            ApplyView();
+            count = filter.Length == 0
+                ? $"{DatabaseTable.Count(table.Total)} {table.Noun}"
+                : $"{DatabaseTable.Count(table.Shown)} of {DatabaseTable.Count(table.Total)}";
+        }
+
+        ImGui.PushFont(null, EditorTheme.CaptionSize);
+        var countSize = ImGui.CalcTextSize(count);
+        ImGui.PopFont();
+        var start = ImGui.GetCursorScreenPos();
+        var right = start.X + ImGui.GetContentRegionAvail().X;
+        var fieldWidth = Math.Max(FilterMinWidth * scale, right - start.X - countSize.X - 2 * spacing);
+        ToolbarItems.SearchField("dbfilter", "Filter by nickname or name", ref filter, fieldWidth);
+        if (count.Length == 0)
+        {
+            return;
+        }
+
+        // The count is smaller than the field text. It draws at its own position, centered on the field. As an item
+        // after the field, it would get the text baseline of the field and sit too low.
+        var position = new Vector2(Math.Max(start.X + fieldWidth + spacing, right - countSize.X),
+            start.Y + MathF.Truncate((ImGui.GetFrameHeight() - countSize.Y) / 2));
+        ImGui.PushFont(null, EditorTheme.CaptionSize);
+        ImGui.GetWindowDrawList().AddText(position, ImGui.GetColorU32(ImGuiCol.TextDisabled), count);
+        ImGui.PopFont();
+    }
+
+    public void Draw(GameDataManager? data)
+    {
+        if (data == null)
+        {
+            PanelStates.NoGameData(window.Session);
+            return;
+        }
+
+        CurrentCategory(data);
+        var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
+        var scale = ImGuiHelper.Scale;
+        var origin = ImGui.GetCursorScreenPos();
+        var avail = ImGui.GetContentRegionAvail();
+        var gap = MathF.Truncate(SplitterGap * scale);
+        var settings = window.Settings;
+        var maxWidth = Math.Max(CategoryMin, CategoryMaxFraction * avail.X / scale);
+        var listWidth = MathF.Truncate(Math.Clamp(settings.DatabaseCategoryWidth, CategoryMin, maxWidth) * scale);
+
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(MathF.Truncate(ListPadding * scale)));
+        var visible = ImGui.BeginChild("##categories", new Vector2(listWidth, avail.Y),
+            ImGuiChildFlags.AlwaysUseWindowPadding);
+        ImGui.PopStyleVar();
+        if (visible)
+        {
+            Categories(focused);
+        }
+
+        ImGui.EndChild();
+
+        // A line in the middle of the gap separates the list from the table. A drag on the gap moves it.
+        PixelLine.Vertical(ImGui.GetWindowDrawList(), origin.X + listWidth + gap / 2, origin.Y, origin.Y + avail.Y,
+            ImGui.GetColorU32(EditorTheme.Border));
+        var shown = listWidth / scale;
+        var value = shown;
+        if (Splitter.Draw("##split-categories", origin + new Vector2(listWidth, 0), new Vector2(gap, avail.Y), true,
+                ref value, 1, CategoryMin, maxWidth, EditorSettings.DefaultDatabaseCategoryWidth))
+        {
+            settings.Save();
+        }
+
+        if (value != shown)
+        {
+            settings.DatabaseCategoryWidth = value;
+        }
+
+        // A click in the list can change the category, so the view applies again here.
+        ApplyView();
+        var table = current!.Table;
+        ImGui.SetCursorScreenPos(origin + new Vector2(listWidth + gap, 0));
+        if (table.Shown == 0 && filter.Length > 0)
+        {
+            if (PanelStates.MessageWithLink($"No rows match '{filter}'.", "Clear filter"))
+            {
+                filter = "";
+            }
+
+            return;
+        }
+
+        table.Draw(window, focused);
+    }
+
+    /// <summary>
+    /// The category that shows. The tables and the category list are made once for each data load. The goods table is
+    /// made again after an edit, while it shows.
+    /// </summary>
+    private Category CurrentCategory(GameDataManager data)
+    {
+        if (!ReferenceEquals(data, loadedData))
+        {
+            Build(data);
+        }
+
+        if (current!.Id == GoodsId && window.Session is { } session && session.Version != goodsVersion)
+        {
+            var goods = GoodsCategory(session);
+            categories[Array.FindIndex(categories, c => c.Id == GoodsId)] = goods;
+            current = goods;
+        }
+
+        return current!;
+    }
+
+    /// <summary>The goods category: the [Good] sections of the edit view.</summary>
+    private Category GoodsCategory(EditorSession session)
+    {
+        goodsVersion = session.Version;
+        var rows = new Dictionary<SectionRef, (string Category, string Name, double Price, bool Changed)>();
+        foreach (var section in session.Edits.List(ItemFileKind.Goods))
+        {
+            if (section.Id.Type.Equals("Good", StringComparison.OrdinalIgnoreCase) && session.Edits.Get(section) is { } view)
+            {
+                var price = view.Lines("price") is [{ Values: [var value, ..] }, ..] && value.TryToSingle(out var number)
+                    ? number
+                    : double.NaN;
+                rows[section] = (First(view, "category") ?? "", session.NameOf(view), price, view.IsChanged);
+            }
+        }
+
+        var table = DatabaseTable.Create<SectionRef>("##db-goods", "goods", rows.Keys,
+        [
+            new("Nickname", s => s.Id.Key ?? "", NicknameWidth),
+            new("Name", s => rows[s].Name, NameWidth),
+            new("Category", s => rows[s].Category, 100),
+            new("Price", s => DatabaseTable.Number(rows[s].Price), NumberWidth, s => rows[s].Price),
+        ], _ => ObjectKinds.Good, marked: s => rows[s].Changed);
+        return new Category(GoodsId, "Goods", ObjectKinds.Good, table, null, 0, table.RowCount);
+    }
+
+    private static string? First(SectionView view, string name) =>
+        view.Lines(name) is [{ Values: [var value, ..] }, ..] ? FieldEdit.FormatValue(value) : null;
+
+    /// <summary>Makes the tables and the category list for newly loaded game data.</summary>
+    private void Build(GameDataManager data)
+    {
+        loadedData = data;
+        var session = window.Session!;
+        var items = data.Items;
+        var systems = DatabaseTable.Create("##db-systems", "systems", items.Systems, SystemColumns(session.Name),
+            _ => ObjectKinds.StarSystem, window.OpenSystem, "Open system");
+        var ships = DatabaseTable.Create("##db-ships", "ships", items.Ships, ShipColumns(session.Name, items),
+            _ => ObjectKinds.Ship);
+        var equipment = DatabaseTable.Create<Equipment>("##db-equipment", "equipment", items.Equipment,
+            EquipmentColumns(session.Name), ObjectKinds.Of);
+
+        var list = new List<Category>
+        {
+            new("systems", "Systems", ObjectKinds.StarSystem, systems, null, 0, systems.RowCount),
+            new("ships", "Ships", ObjectKinds.Ship, ships, null, 0, ships.RowCount),
+            GoodsCategory(session),
+        };
+        var types = equipment.Kinds.OrderBy(k => k.Kind.Label, StringComparer.OrdinalIgnoreCase).ToList();
+        list.Add(new Category("equipment", "Equipment", ObjectKinds.AnyEquipment, equipment, null, 0,
+            equipment.RowCount));
+        list.AddRange(types.Select(t =>
+            new Category($"equipment/{t.Kind.Label}", t.Kind.Label, t.Kind, equipment, t.Kind, 1, t.Count)));
+        categories = list.ToArray();
+        current = categories.FirstOrDefault(c => c.Id == window.Settings.DatabaseCategory) ?? categories[0];
+        revealCurrent = true;
+    }
+
+    /// <summary>Applies the filter and the category to the table of the category.</summary>
+    private void ApplyView() => current?.Table.SetView(filter, current.RowKind);
+
+    /// <summary>Draws the category list: one row with a glyph, a name and a count for each category.</summary>
+    private void Categories(bool focused)
+    {
+        var style = ImGui.GetStyle();
+        ListRow.PushStyle(focused);
+        var right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
+        foreach (var category in categories)
+        {
+            var min = ImGui.GetCursorScreenPos();
+            var selected = ReferenceEquals(category, current);
+            // The selection keeps its color under the mouse, so the hover does not hide it.
+            if (selected)
+            {
+                ImGui.PushStyleColor(ImGuiCol.HeaderHovered, ListRow.SelectionColor(focused));
+            }
+
+            if (ImGui.Selectable($"##{category.Id}", selected, ImGuiSelectableFlags.None,
+                    new Vector2(0, ListRow.Height)) && !selected)
+            {
+                current = category;
+                window.Settings.DatabaseCategory = category.Id;
+                window.Settings.Save();
+            }
+
+            if (selected)
+            {
+                ImGui.PopStyleColor();
+                if (revealCurrent)
+                {
+                    ImGui.SetScrollHereY(0.5f);
+                    revealCurrent = false;
+                }
+            }
+
+            ListRow.Text(min, min.X + style.FramePadding.X + category.Depth * style.IndentSpacing, right,
+                category.Kind.Icon, category.Kind.Abgr, category.Name, "", DatabaseTable.Count(category.Count));
+        }
+
+        ListRow.PopStyle();
+    }
+
+    private static Column<StarSystem>[] SystemColumns(Func<int, string> name) =>
+    [
+        new("Nickname", s => s.Nickname, NicknameWidth),
+        new("Name", s => name(s.IdsName), NameWidth),
+        new("Objects", s => DatabaseTable.Count(s.Objects.Count), NumberWidth, s => s.Objects.Count),
+        new("Zones", s => DatabaseTable.Count(s.Zones.Count), NumberWidth, s => s.Zones.Count),
+        new("Lights", s => DatabaseTable.Count(s.LightSources.Count), NumberWidth, s => s.LightSources.Count),
+        new("Local faction", s => s.LocalFaction?.Nickname ?? "", 140),
+    ];
+
+    private static Column<Ship>[] ShipColumns(Func<int, string> name, GameItemDb items) =>
+    [
+        new("Nickname", s => s.Nickname, NicknameWidth),
+        new("Name", s => name(s.IdsName), NameWidth),
+        new("Type", s => s.ShipType.ToString(), 90),
+        new("Class", s => DatabaseTable.Count(s.Class), 60, s => s.Class),
+        new("Hit points", s => DatabaseTable.Number(s.Hitpoints), NumberWidth, s => s.Hitpoints),
+        new("Mass", s => DatabaseTable.Number(s.Mass), NumberWidth, s => s.Mass),
+        new("Hold", s => DatabaseTable.Count(s.HoldSize), 60, s => s.HoldSize),
+        new("Price", s => DatabaseTable.Count(items.GetShipPrice(s)), NumberWidth, s => items.GetShipPrice(s)),
+        new("Max batteries", s => DatabaseTable.Count(s.MaxShieldBatteries), 100, s => s.MaxShieldBatteries),
+        new("Max kits", s => DatabaseTable.Count(s.MaxRepairKits), NumberWidth, s => s.MaxRepairKits),
+    ];
+
+    private static Column<Equipment>[] EquipmentColumns(Func<int, string> name) =>
+    [
+        new("Nickname", e => e.Nickname, NicknameWidth),
+        new("Name", e => name(e.IdsName), NameWidth),
+        new("Type", e => ObjectKinds.Of(e).Label, 110),
+        new("Hardpoint type", e => e.HpType ?? "", 140),
+        // Equipment without a good has no price.
+        new("Price", e => DatabaseTable.Number(Price(e)), NumberWidth, Price),
+        new("Hit points", e => DatabaseTable.Number(e.Hitpoints), NumberWidth, e => e.Hitpoints),
+        new("Volume", e => DatabaseTable.Number(e.Volume), NumberWidth, e => e.Volume),
+    ];
+
+    private static double Price(Equipment equipment) => equipment.Good?.Ini.Price ?? double.NaN;
+}

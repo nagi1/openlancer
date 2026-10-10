@@ -1,0 +1,190 @@
+diff --git a/src/LibreLancer.Tests/ThnAttachTimingTests.cs b/src/LibreLancer.Tests/ThnAttachTimingTests.cs
+new file mode 100644
+index 00000000..e999b827
+--- /dev/null
++++ b/src/LibreLancer.Tests/ThnAttachTimingTests.cs
+@@ -0,0 +1,75 @@
++using System.Numerics;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// Each frame uses the order of Cutscene._Update: the events and processors run, then each scene object updates.
++public class ThnAttachTimingTests
++{
++    private static readonly Vector3 MarkerPosition = new(10, 0, 0);
++
++    private static (ThnScriptInstance Instance, ThnSceneObject Actor, ThnSceneObject Marker) Scene(float time,
++        float duration)
++    {
++        var script = new ThnScript() { Duration = 100 };
++        script.Events.Add(new AttachEntityEvent()
++        {
++            Time = time,
++            Duration = duration,
++            Targets = ["actor", "marker"],
++            TargetType = TargetTypes.Root,
++            Flags = AttachFlags.Position | AttachFlags.Orientation
++        });
++        var instance = new ThnScriptInstance(null!, script);
++        var actor = new ThnSceneObject() { Name = "actor", Rotate = Quaternion.Identity };
++        var marker = new ThnSceneObject() { Name = "marker", Translate = MarkerPosition, Rotate = Quaternion.Identity };
++        instance.Objects[actor.Name] = actor;
++        instance.Objects[marker.Name] = marker;
++        // Cutscene.SceneSetup runs the events at T=0.
++        instance.Update(0);
++        return (instance, actor, marker);
++    }
++
++    private static void Frames(ThnScriptInstance instance, int count)
++    {
++        for (int i = 0; i < count; i++)
++        {
++            instance.Update(1);
++            foreach (var obj in instance.Objects.Values)
++            {
++                obj.Update();
++            }
++        }
++    }
++
++    [Theory]
++    [InlineData(0f)]
++    [InlineData(5f)]
++    public void AZeroDurationAttachMovesTheActorOnce(float time)
++    {
++        var (instance, actor, marker) = Scene(time, 0);
++
++        Frames(instance, 10);
++        Assert.Equal(MarkerPosition, actor.Translate);
++        Assert.Empty(actor.Attachments);
++
++        marker.Translate = new Vector3(20, 0, 0);
++        Frames(instance, 1);
++        Assert.Equal(MarkerPosition, actor.Translate);
++    }
++
++    [Fact]
++    public void ALongAttachFollowsTheMarker()
++    {
++        var (instance, actor, marker) = Scene(5, 50);
++
++        Frames(instance, 10);
++        marker.Translate = new Vector3(20, 0, 0);
++        Frames(instance, 1);
++
++        Assert.Equal(new Vector3(20, 0, 0), actor.Translate);
++        Assert.Single(actor.Attachments);
++    }
++}
+diff --git a/src/LibreLancer/Thn/Cutscene.cs b/src/LibreLancer/Thn/Cutscene.cs
+index 9f23ff51..f22b4c11 100644
+--- a/src/LibreLancer/Thn/Cutscene.cs
++++ b/src/LibreLancer/Thn/Cutscene.cs
+@@ -392,7 +392,6 @@ public class Cutscene : IDisposable
+         }
+ 
+         currentTime += delta;
+-        foreach (var obj in sceneObjects.Values) obj.Update();
+         if (text != null)
+         {
+             if (currentTime > text.Start)
+@@ -407,6 +406,8 @@ public class Cutscene : IDisposable
+             instance.Update(delta);
+         }
+ 
++        // Apply the transforms after the events of this frame, so that actors move on the same frame as a camera cut.
++        foreach (var obj in sceneObjects.Values) obj.Update();
+         camera.Update();
+         if (Renderer != null)
+         {
+diff --git a/src/LibreLancer/Thn/Events/AttachEntityEvent.cs b/src/LibreLancer/Thn/Events/AttachEntityEvent.cs
+index a4866064..2189bf97 100644
+--- a/src/LibreLancer/Thn/Events/AttachEntityEvent.cs
++++ b/src/LibreLancer/Thn/Events/AttachEntityEvent.cs
+@@ -20,10 +20,9 @@ namespace LibreLancer.Thn.Events
+      */
+     public class AttachEntityEvent : ThnEvent
+     {
+-        private class AttachEntityProcessor(float duration, ThnSceneObject child, ThnAttachment attachment) : ThnEventProcessor
++        private class AttachEntityProcessor(float duration, ThnAttachment attachment) : ThnEventProcessor
+         {
+             public float Duration = duration;
+-            public ThnSceneObject Child = child;
+             public ThnAttachment Attachment = attachment;
+ 
+             private double t;
+@@ -33,7 +32,9 @@ namespace LibreLancer.Thn.Events
+                 t += delta;
+                 if (t > Duration)
+                 {
+-                    Child.Attachments.Remove(Attachment);
++                    // The scene object applies the attachment one more time, then removes it. A zero-duration
++                    // attach that starts after T=0 must still move the child.
++                    Attachment.Expired = true;
+                     return false;
+                 }
+                 return true;
+@@ -131,7 +132,7 @@ namespace LibreLancer.Thn.Events
+                 Offset = Offset,
+             };
+             objA.Attachments.Add(attachment);
+-            instance.AddProcessor(new AttachEntityProcessor(Duration, objA, attachment));
++            instance.AddProcessor(new AttachEntityProcessor(Duration, attachment));
+         }
+     }
+ }
+diff --git a/src/LibreLancer/Thn/Events/StartPathAnimationEvent.cs b/src/LibreLancer/Thn/Events/StartPathAnimationEvent.cs
+index 905f5d42..31fe535d 100644
+--- a/src/LibreLancer/Thn/Events/StartPathAnimationEvent.cs
++++ b/src/LibreLancer/Thn/Events/StartPathAnimationEvent.cs
+@@ -53,14 +53,13 @@ namespace LibreLancer.Thn.Events
+             }
+ 
+             obj.Attachments.Add(attachment);
+-            instance.AddProcessor(new PathAnimation(obj, attachment, parent, this));
++            instance.AddProcessor(new PathAnimation(attachment, parent, this));
+         }
+ 
+-        private class PathAnimation(ThnSceneObject child, ThnAttachment attachment,
++        private class PathAnimation(ThnAttachment attachment,
+             ThnPathParent parent, StartPathAnimationEvent ev) : ThnEventProcessor
+         {
+             public StartPathAnimationEvent Event = ev;
+-            public ThnSceneObject Child = child;
+             public ThnAttachment Attachment = attachment;
+             public ThnPathParent Parent = parent;
+ 
+@@ -73,7 +72,8 @@ namespace LibreLancer.Thn.Events
+                 Parent.T = pct;
+                 if (time >= Event.Duration)
+                 {
+-                    Child.Attachments.Remove(Attachment);
++                    // The scene object applies the last path position, then removes the attachment.
++                    Attachment.Expired = true;
+                     return false;
+                 }
+                 return true;
+diff --git a/src/LibreLancer/Thn/ThnSceneObject.cs b/src/LibreLancer/Thn/ThnSceneObject.cs
+index c75cd85b..e0373fe4 100644
+--- a/src/LibreLancer/Thn/ThnSceneObject.cs
++++ b/src/LibreLancer/Thn/ThnSceneObject.cs
+@@ -99,6 +99,7 @@ public class ThnSceneObject
+         var self = GetTransform();
+         Translate = self.Position;
+         Rotate = self.Orientation;
++        Attachments.RemoveAll(x => x.Expired);
+         UpdateEngineObjects();
+     }
+ 
+@@ -148,6 +149,8 @@ public class ThnAttachment(ThnAttachParent parent)
+     public bool EntityRelative;
+     public bool LookAt;
+     public bool PathLookAt;
++    // The event has ended. ThnSceneObject.Update applies the attachment once more, then removes it.
++    public bool Expired;
+ 
+     public ThnAttachParent Parent = parent;
+ }

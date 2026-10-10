@@ -1,0 +1,471 @@
+diff --git a/src/LibreLancer.Tests/DfmEyeRigTests.cs b/src/LibreLancer.Tests/DfmEyeRigTests.cs
+new file mode 100644
+index 00000000..c744160e
+--- /dev/null
++++ b/src/LibreLancer.Tests/DfmEyeRigTests.cs
+@@ -0,0 +1,270 @@
++using System;
++using System.Linq;
++using System.Numerics;
++using LibreLancer.Render;
++using LibreLancer.Thn;
++using LibreLancer.Utf.Dfm;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// The retail eye rig of DFM heads (DfmEyeRig). The bone Eye IK Left moves the texture of the eye face groups, and
++// thus the pupils of both eyes.
++public class DfmEyeRigTests
++{
++    private const float OneDegree = MathF.PI / 180;
++    private const string TrentHead = @"CHARACTERS\HEADS\pi_pirate5_head.dfm";
++    private const string JuniHead = @"CHARACTERS\HEADS\pl_female4_head.dfm";
++    private const string ApeHead = @"CHARACTERS\HEADS\sh_male5_head.dfm";
++    private const string TenjiHead = @"CHARACTERS\HEADS\ku_tenji_head.dfm";
++    private const string TashiHead = @"CHARACTERS\HEADS\ku_tashi_head.dfm";
++
++    // The values of the retail heads: a scale of 0.4 and the limits of the eye joint (0.4 sin 30 and 0.4 sin 15).
++    private static DfmEyeRig RetailRig(float planeDistance = 1, float xScale = 0.4f, float yScale = 0.4f) =>
++        new([], 46, planeDistance, new Vector2(xScale, yScale), new Vector2(-0.2f, -0.1035f),
++            new Vector2(0.2f, 0.1035f));
++
++    private static void AssertNear(Vector2 expected, Vector2 actual, float tolerance = 1e-5f) =>
++        Assert.True(Vector2.Distance(expected, actual) <= tolerance, $"Expected {expected}, got {actual}");
++
++    private static DfmFile LoadHead(RetailData data, string path) =>
++        (DfmFile)data.Resources.GetDrawable(data.DataFilePath(path))!.Drawable;
++
++    private static string[] MovedGroups(DfmMesh mesh) =>
++        mesh.FaceGroups.Where(x => mesh.EyeRig!.Moves(x)).Select(x => x.MaterialName!).ToArray();
++
++    [Fact]
++    public void TheOffsetIsTheAxisTimesTheScaleTimesThePlaneDistance()
++    {
++        var axis = new Vector3(MathF.Sin(20 * OneDegree), -MathF.Sin(10 * OneDegree), -0.9f);
++        AssertNear(new Vector2(0.4f * axis.X, 0.4f * axis.Y), RetailRig().GetOffset(axis));
++        // X gives U and Y gives V.
++        AssertNear(new Vector2(0.04f, 0.06f), RetailRig(xScale: 0.4f, yScale: 0.3f).GetOffset(new Vector3(0.1f, 0.2f, -1)));
++        AssertNear(new Vector2(0.08f, 0.04f), RetailRig(planeDistance: 2).GetOffset(new Vector3(0.1f, 0.05f, -1)));
++    }
++
++    [Theory]
++    [InlineData(0.9f, -0.9f, 0.2f, -0.1035f)]
++    [InlineData(-0.9f, 0.9f, -0.2f, 0.1035f)]
++    [InlineData(-1f, -1f, -0.2f, -0.1035f)]
++    public void TheOffsetStopsAtTheLimits(float x, float y, float u, float v) =>
++        AssertNear(new Vector2(u, v), RetailRig().GetOffset(new Vector3(x, y, 0)));
++
++    // Retail does not move the texture when both values are 0.0001 or less. When one value is more, both apply.
++    [Fact]
++    public void ATinyOffsetIsZero()
++    {
++        Assert.Equal(Vector2.Zero, RetailRig().GetOffset(new Vector3(2e-4f, 1e-4f, -1)));
++        AssertNear(new Vector2(8e-5f, 2e-4f), RetailRig().GetOffset(new Vector3(2e-4f, 5e-4f, -1)), 1e-7f);
++    }
++
++    // Retail compares with the minimum first. Thus limits in the wrong order do not cause an error.
++    [Fact]
++    public void LimitsInTheWrongOrderDoNotCauseAnError()
++    {
++        var rig = new DfmEyeRig([], 0, 1, Vector2.One, new Vector2(0.1f), new Vector2(-0.1f));
++        AssertNear(new Vector2(0.1f, -0.1f), rig.GetOffset(new Vector3(0, 0.5f, 0)));
++    }
++
++    // A material is an eye when its name starts with "ey". The other levels of detail have no UV bone.
++    [Fact]
++    public void TheRetailHeadsMoveTheirEyeMaterials()
++    {
++        var data = RetailData.Open();
++        var trent = LoadHead(data, TrentHead);
++        Assert.Equal(new[] { "eyetealblue" }, MovedGroups(trent.Levels[0]));
++        Assert.True(trent.Levels.Count > 1);
++        Assert.All(trent.Levels.Where(x => x.Key > 0), x => Assert.Null(x.Value.EyeRig));
++
++        // "eye inside juni" has no texture, so its move cannot be seen.
++        Assert.Equal(new[] { "eyebrown_juni", "eye inside juni" }, MovedGroups(LoadHead(data, JuniHead).Levels[0]));
++
++        // This head has a UV bone but no eye material, so retail moves nothing.
++        Assert.Null(LoadHead(data, ApeHead).Levels[0].EyeRig);
++    }
++
++    // The values of pi_pirate5_head: bone 46 (Eye IK Left), scale 0.4, plane distance 1 and the limits.
++    [Fact]
++    public void TheRigHasTheValuesOfTheMesh()
++    {
++        var data = RetailData.Open();
++        var rig = LoadHead(data, TrentHead).Levels[0].EyeRig!;
++        AssertNear(new Vector2(0.1f, 0.04f), rig.GetOffset(new Vector3(0.25f, 0.1f, -1)));
++        AssertNear(new Vector2(0.19999695f, 0.10352399f), rig.GetOffset(new Vector3(1, 1, 0)));
++        AssertNear(new Vector2(-0.20000042f, -0.10352785f), rig.GetOffset(new Vector3(-1, -1, 0)));
++
++        var skeleton = data.LoadCostume("trent")!;
++        skeleton.HeadSkinning!.Bones["Eye IK Left"].IKRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.3f);
++        skeleton.HeadSkinning.Bones["Eye IK Right"].IKRotation =
++            Quaternion.CreateFromAxisAngle(Vector3.UnitY, -0.3f);
++        skeleton.HeadSkinning.UpdateBones();
++        // Only Eye IK Left moves the texture.
++        Assert.True(rig.Update(skeleton.HeadSkinning).UOffset < -0.1f);
++    }
++
++    // Some Kusari heads have negative scales, because the texture coordinates of their eyes run the other way.
++    // ThePupilsMoveTowardTheIKTarget shows that the sign keeps the pupils toward the target.
++    [Theory]
++    [InlineData(TenjiHead, -0.1f, -0.04f)]
++    [InlineData(TashiHead, 0.1f, -0.04f)]
++    public void TheRigKeepsTheSignOfEachScale(string head, float u, float v) =>
++        AssertNear(new Vector2(u, v),
++            LoadHead(RetailData.Open(), head).Levels[0].EyeRig!.GetOffset(new Vector3(0.25f, 0.1f, -1)));
++
++    // In the Cons pose, the Z axis of Eye IK Left points along -Z of Head01. Thus the eyes do not move.
++    [Fact]
++    public void TheEyesDoNotMoveInTheConsPose()
++    {
++        var skeleton = RetailData.Open().LoadCostume("trent")!;
++        skeleton.HeadSkinning!.UpdateBones();
++        var anim = skeleton.Head!.Levels[0].EyeRig!.Update(skeleton.HeadSkinning);
++        Assert.Equal((0f, 0f, 1f, 1f), (anim.UOffset, anim.VOffset, anim.UScale, anim.VScale));
++    }
++
++    // Retail takes the Z axis of the bone in the frame of its parent bone. Thus a turn of the head does not move the
++    // eyes in the head.
++    [Fact]
++    public void TheOffsetUsesTheFrameOfTheParentBone()
++    {
++        var skeleton = RetailData.Open().LoadCostume("trent")!;
++        var head = skeleton.HeadSkinning!;
++        var rig = skeleton.Head!.Levels[0].EyeRig!;
++        head.Bones["Eye IK Left"].IKRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 20 * OneDegree);
++        head.UpdateBones();
++        var anim = rig.Update(head);
++        var offset = new Vector2(anim.UOffset, anim.VOffset);
++        // A turn of +20 degrees about Y moves the Z axis (0, 0, -1) to (-sin 20, 0, -cos 20). The Cons rotation in the
++        // file is not exactly half a turn, thus the tolerance is larger.
++        AssertNear(new Vector2(-0.4f * MathF.Sin(20 * OneDegree), 0), offset, 1e-4f);
++
++        head.Bones["Head01"].Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 40 * OneDegree);
++        head.UpdateBones();
++        anim = rig.Update(head);
++        AssertNear(offset, new Vector2(anim.UOffset, anim.VOffset));
++    }
++
++    // A deferred draw keeps its offset, so each character has its own offset object.
++    [Fact]
++    public void EachCharacterHasItsOwnOffset()
++    {
++        var data = RetailData.Open();
++        var a = data.LoadCostume("trent")!;
++        var b = data.LoadCostume("trent")!;
++        Assert.Same(a.Head, b.Head);
++        a.HeadSkinning!.Bones["Eye IK Left"].IKRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.2f);
++        b.HeadSkinning!.Bones["Eye IK Left"].IKRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, -0.2f);
++        a.HeadSkinning.UpdateBones();
++        b.HeadSkinning.UpdateBones();
++
++        var rig = a.Head!.Levels[0].EyeRig!;
++        var animA = rig.Update(a.HeadSkinning);
++        var animB = rig.Update(b.HeadSkinning);
++        Assert.NotSame(animA, animB);
++        Assert.Same(animA, a.HeadSkinning.EyeOffset);
++        Assert.True(animA.UOffset < -0.05f && animB.UOffset > 0.05f, $"{animA.UOffset}, {animB.UOffset}");
++    }
++
++    // DrawBuffer gives each face group the animation of FaceGroupAnim. The eye face group gets the eye offset of the
++    // character that the mesh draws now. The other face groups get no animation.
++    [Fact]
++    public void OnlyTheEyeFaceGroupDrawsWithTheEyeOffset()
++    {
++        var data = RetailData.Open();
++        var a = data.LoadCostume("trent")!;
++        var b = data.LoadCostume("trent")!;
++        var mesh = a.Head!.Levels[0];
++        var eye = mesh.FaceGroups.Single(x => x.MaterialName == "eyetealblue");
++        Assert.True(mesh.FaceGroups.Count > 1);
++        // A mesh without skinning does not move its eyes.
++        Assert.Null(mesh.FaceGroupAnim(eye));
++
++        a.HeadSkinning!.Bones["Eye IK Left"].IKRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.2f);
++        b.HeadSkinning!.Bones["Eye IK Left"].IKRotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, -0.2f);
++        a.HeadSkinning.UpdateBones();
++        b.HeadSkinning.UpdateBones();
++        foreach (var (skinning, sign) in new[] { (a.HeadSkinning, -1f), (b.HeadSkinning, 1f) })
++        {
++            a.Head.SetSkinning(skinning);
++            var anim = mesh.FaceGroupAnim(eye);
++            Assert.NotNull(anim);
++            Assert.Same(skinning.EyeOffset, anim);
++            Assert.True(anim.UOffset * sign > 0.05f, $"The eye offset is {anim.UOffset}");
++            Assert.All(mesh.FaceGroups.Where(x => x != eye), x => Assert.Null(mesh.FaceGroupAnim(x)));
++        }
++    }
++
++    // The direction check of the whole chain: START_IK turns Eye IK Left to a target, the rig moves the texture, and
++    // the pupils move on the eye mesh toward the target. The offsets are in model space: -X is to the left of the
++    // character, +Y is up and -Z is to the front. Trent (pi_pirate5_head) has positive scales. Akiro (ku_tenji_head)
++    // and Keiko (ku_tashi_head) have negative scales.
++    [Theory]
++    [InlineData("trent", false, -0.3f, 0, -1)]
++    [InlineData("trent", false, 0.3f, 0, -1)]
++    [InlineData("trent", false, 0, 0.25f, -1)]
++    [InlineData("trent", false, 0, -0.25f, -1)]
++    [InlineData("akiro", false, -0.3f, 0, -1)]
++    [InlineData("akiro", false, 0.3f, 0, -1)]
++    [InlineData("akiro", false, 0, 0.25f, -1)]
++    [InlineData("akiro", false, 0, -0.25f, -1)]
++    [InlineData("keiko", true, -0.3f, 0, -1)]
++    [InlineData("keiko", true, 0.3f, 0, -1)]
++    [InlineData("keiko", true, 0, 0.25f, -1)]
++    [InlineData("keiko", true, 0, -0.25f, -1)]
++    public void ThePupilsMoveTowardTheIKTarget(string costume, bool female, float x, float y, float z)
++    {
++        var skeleton = female
++            ? RetailData.Open().LoadPosedCostume(costume, @"CHARACTERS\ANIMATIONS\BodyGenericFemale.anm",
++                "Sc_FMBODY_STND_IDLE_000LV_xa_05")
++            : RetailData.Open().LoadPosedCostume(costume, @"CHARACTERS\ANIMATIONS\BodyGenericMale.anm",
++                "Sc_MLBODY_STND_IDLE_000LV_xa_04");
++        var target = ThnStartIKTests.Near(skeleton, "Eye IK Left", new Vector3(x, y, z));
++        skeleton.SetIK(this, ThnStartIKTests.Goal("Eye IK Left", ThnAxis.YAxis, ThnAxis.ZAxis, target));
++        ThnStartIKTests.Frame(skeleton);
++
++        var mesh = skeleton.Head!.Levels[0];
++        var anim = mesh.EyeRig!.Update(skeleton.HeadSkinning!);
++        var offset = new Vector2(anim.UOffset, anim.VOffset);
++        Assert.True(offset.Length() > 0.04f, $"The offset {offset} is too small");
++
++        // The direction to the target in the frame of Head01, without its part along the gaze at rest (+Z).
++        var toTarget = Vector3.Transform(new Vector3(x, y, z),
++            Quaternion.Inverse(skeleton.GetBone("Head01")!.Transform.Orientation));
++        var side = Vector3.Normalize(toTarget with { Z = 0 });
++        foreach (var left in new[] { true, false })
++        {
++            var move = PupilMove(mesh, left, offset);
++            var cos = Vector3.Dot(Vector3.Normalize(move with { Z = 0 }), side);
++            Assert.True(cos > 0.9f, $"The pupil moves {move}, but the target is to {side}");
++        }
++    }
++
++    // The move of the pupil of one eye in the bind pose of the head, where Head01 has no rotation. The pupil is
++    // where uv + offset is the pupil of the texture. Thus it moves by -J * offset, with J the least-squares fit of the
++    // positions of the eye vertices to their texture coordinates.
++    private static Vector3 PupilMove(DfmMesh mesh, bool left, Vector2 offset)
++    {
++        var eye = mesh.FaceGroups.Single(x => mesh.EyeRig!.Moves(x));
++        var vertices = eye.TriangleStripIndices!.Distinct()
++            .Where(i => mesh.Points[mesh.PointIndices[i]].X > 0 == left).ToArray();
++        var positions = vertices.Select(i => mesh.Points[mesh.PointIndices[i]]).ToArray();
++        var uvs = vertices.Select(i => mesh.UV0[mesh.UV0Indices[i]]).ToArray();
++        var p0 = positions.Aggregate(Vector3.Zero, (sum, x) => sum + x) / positions.Length;
++        var uv0 = uvs.Aggregate(Vector2.Zero, (sum, x) => sum + x) / uvs.Length;
++        float uu = 0, cross = 0, vv = 0;
++        Vector3 pu = Vector3.Zero, pv = Vector3.Zero;
++        for (var i = 0; i < vertices.Length; i++)
++        {
++            var d = uvs[i] - uv0;
++            var p = positions[i] - p0;
++            uu += d.X * d.X;
++            cross += d.X * d.Y;
++            vv += d.Y * d.Y;
++            pu += p * d.X;
++            pv += p * d.Y;
++        }
++
++        var w = new Vector2(vv * offset.X - cross * offset.Y, uu * offset.Y - cross * offset.X) /
++                (uu * vv - cross * cross);
++        return -(pu * w.X + pv * w.Y);
++    }
++}
+diff --git a/src/LibreLancer/Render/DfmSkinning.cs b/src/LibreLancer/Render/DfmSkinning.cs
+index 036c005f..e193f176 100644
+--- a/src/LibreLancer/Render/DfmSkinning.cs
++++ b/src/LibreLancer/Render/DfmSkinning.cs
+@@ -21,6 +21,8 @@ namespace LibreLancer.Render
+         public BoneInstance?[] Instances;
+         public int BufferOffset;
+         public BoundingBox BoundingBox;
++        // The texture offset of the eyes of this character. DfmEyeRig sets it before each draw.
++        internal MaterialAnim? EyeOffset;
+ 
+         public DfmSkinning(DfmFile dfm)
+         {
+diff --git a/src/LibreLancer/Utf/Cmp/MaterialAnim.cs b/src/LibreLancer/Utf/Cmp/MaterialAnim.cs
+index a7b2403c..7a7efccb 100644
+--- a/src/LibreLancer/Utf/Cmp/MaterialAnim.cs
++++ b/src/LibreLancer/Utf/Cmp/MaterialAnim.cs
+@@ -11,6 +11,11 @@ namespace LibreLancer.Utf.Cmp
+ 		public int MAFlags;
+ 		public float[] MADeltas = [];
+ 
++		// An animation with no keys. The code sets its offset, for example DfmEyeRig for the eyes of a head.
++		internal MaterialAnim()
++		{
++		}
++
+ 		public MaterialAnim(IntermediateNode node)
+ 		{
+ 			foreach (var child in node.Children)
+@@ -103,5 +108,12 @@ namespace LibreLancer.Utf.Cmp
+                 vScale *= 1 + (t * vVelocityScale);
+             }
+         }
++
++        // Sets the offset. Update calculates the offset again from the keys.
++        internal void SetOffset(float u, float v)
++        {
++            uOffset = u;
++            vOffset = v;
++        }
+     }
+ }
+diff --git a/src/LibreLancer/Utf/Dfm/DfmEyeRig.cs b/src/LibreLancer/Utf/Dfm/DfmEyeRig.cs
+new file mode 100644
+index 00000000..ec876651
+--- /dev/null
++++ b/src/LibreLancer/Utf/Dfm/DfmEyeRig.cs
+@@ -0,0 +1,95 @@
++using System;
++using System.Linq;
++using System.Numerics;
++using LibreLancer.Render;
++using LibreLancer.Utf.Cmp;
++
++namespace LibreLancer.Utf.Dfm
++{
++    // The eyes of a DFM head, as retail (Deformable2.dll) moves them. The pupils are part of the eye texture. The
++    // first UV bone of the mesh moves that texture: each frame, the texture of each eye face group moves by an
++    // offset that the direction of the bone gives. In the retail heads, Eye IK Left moves both eyes. Retail does not
++    // read the UV_vertex_id and UV_default_list nodes, and the other levels of detail have no UV bone.
++    internal sealed class DfmEyeRig
++    {
++        private readonly FaceGroup[] groups;
++        private readonly int boneId;
++        private readonly float planeDistance;
++        private readonly Vector2 scale;
++        private readonly Vector2 min;
++        private readonly Vector2 max;
++
++        internal DfmEyeRig(FaceGroup[] groups, int boneId, float planeDistance, Vector2 scale, Vector2 min,
++            Vector2 max)
++        {
++            this.groups = groups;
++            this.boneId = boneId;
++            this.planeDistance = planeDistance;
++            this.scale = scale;
++            this.min = min;
++            this.max = max;
++        }
++
++        // Gives null when the mesh has no UV bone or no eye face group.
++        public static DfmEyeRig? Create(DfmMesh mesh)
++        {
++            var eyes = mesh.FaceGroups.Where(x => IsEyeMaterial(x.MaterialName)).ToArray();
++            LeafNode?[] nodes =
++                [mesh.UVPlaneDistance, mesh.BoneXToUScale, mesh.BoneYToVScale, mesh.MinDU, mesh.MaxDU, mesh.MinDV,
++                    mesh.MaxDV];
++            if (eyes.Length == 0 || mesh.UVBoneId?.Int32ArrayData is not [var bone, ..] ||
++                nodes.Any(x => x?.SingleArrayData is not { Length: > 0 }))
++            {
++                return null;
++            }
++
++            var v = nodes.Select(x => x!.SingleArrayData[0]).ToArray();
++            return new DfmEyeRig(eyes, bone, v[0], new Vector2(v[1], v[2]), new Vector2(v[3], v[5]),
++                new Vector2(v[4], v[6]));
++        }
++
++        // Retail draws a material as an eye when its name in lower case matches "^eye*", thus starts with "ey".
++        public static bool IsEyeMaterial(string? name) =>
++            name != null && name.StartsWith("ey", StringComparison.OrdinalIgnoreCase);
++
++        public bool Moves(FaceGroup group) => Array.IndexOf(groups, group) >= 0;
++
++        // Sets the texture offset of the eyes of a character from its current pose.
++        public MaterialAnim Update(DfmSkinning skinning)
++        {
++            var offset = Vector2.Zero;
++            if (boneId >= 0 && boneId < skinning.Instances.Length && skinning.Instances[boneId] is { } bone)
++            {
++                // The Z axis of the bone in the frame of its parent bone.
++                var axis = Vector3.Transform(Vector3.UnitZ, bone.LocalTransform.Orientation);
++                if (bone.Parent != null)
++                {
++                    axis = Vector3.Transform(axis, Quaternion.Inverse(bone.Parent.LocalTransform.Orientation));
++                }
++
++                offset = GetOffset(axis);
++            }
++
++            var anim = skinning.EyeOffset ??= new MaterialAnim();
++            anim.SetOffset(offset.X, offset.Y);
++            return anim;
++        }
++
++        // The offset of the texture for the Z axis of the bone. The texture coordinates of the eyes are uv + offset.
++        public Vector2 GetOffset(Vector3 axis)
++        {
++            var offset = new Vector2(axis.X, axis.Y) * scale * planeDistance;
++            // Retail does not move the texture when both values are 0.0001 or less.
++            if (MathF.Abs(offset.X) <= 1e-4f && MathF.Abs(offset.Y) <= 1e-4f)
++            {
++                return Vector2.Zero;
++            }
++
++            return new Vector2(Limit(offset.X, min.X, max.X), Limit(offset.Y, min.Y, max.Y));
++        }
++
++        // Retail compares with the minimum first. Thus a minimum that is more than the maximum does not cause an error.
++        private static float Limit(float value, float low, float high) =>
++            value < low ? low : value > high ? high : value;
++    }
++}
+diff --git a/src/LibreLancer/Utf/Dfm/DfmMesh.cs b/src/LibreLancer/Utf/Dfm/DfmMesh.cs
+index e6660ee8..6098dca1 100644
+--- a/src/LibreLancer/Utf/Dfm/DfmMesh.cs
++++ b/src/LibreLancer/Utf/Dfm/DfmMesh.cs
+@@ -9,6 +9,7 @@ using LibreLancer.Data;
+ using LibreLancer.Graphics;
+ using LibreLancer.Render;
+ using LibreLancer.Resources;
++using LibreLancer.Utf.Cmp;
+ using LibreLancer.Utf.Mat;
+ 
+ namespace LibreLancer.Utf.Dfm
+@@ -42,6 +43,9 @@ namespace LibreLancer.Utf.Dfm
+         public LeafNode? UVVertexId { get; set; }
+         public LeafNode? UVDefaultList { get; set; }
+ 
++        // The eyes of a head. Null when the mesh has no UV bone or no eye face group.
++        internal DfmEyeRig? EyeRig { get; }
++
+         private ResourceManager res = null!;
+         private VertexBuffer vertexBuffer = null!;
+         private ElementBuffer elementBuffer = null!;
+@@ -155,6 +159,8 @@ namespace LibreLancer.Utf.Dfm
+                     default: throw new Exception("Invalid node in " + root.Name + ": " + node.Name);
+                 }
+             }
++
++            EyeRig = DfmEyeRig.Create(this);
+         }
+ 
+         public void CalculateBoneBounds(Dictionary<int, DfmPart> parts)
+@@ -310,7 +316,7 @@ namespace LibreLancer.Utf.Dfm
+                 }
+                 buffer.AddCommand(
+                     mat.Render,
+-                    null,
++                    FaceGroupAnim(faceGroup),
+                     wh,
+                     light,
+                     vertexBuffer,
+@@ -326,6 +332,11 @@ namespace LibreLancer.Utf.Dfm
+             }
+         }
+ 
++        // The material animation of a face group in a draw. An eye face group moves its texture by the eye offset of
++        // the character, which this sets from the pose of the skinning. The other face groups do not move.
++        internal MaterialAnim? FaceGroupAnim(FaceGroup group) =>
++            skinning != null && EyeRig != null && EyeRig.Moves(group) ? EyeRig.Update(skinning) : null;
++
+         private DfmSkinning? skinning;
+ 
+         public void SetSkinning(DfmSkinning skinning)

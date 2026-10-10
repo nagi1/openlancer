@@ -1,0 +1,879 @@
+diff --git a/src/LibreLancer.Tests/BaseNpcPopulationTests.cs b/src/LibreLancer.Tests/BaseNpcPopulationTests.cs
+index 36fcd13d..b7ec2973 100644
+--- a/src/LibreLancer.Tests/BaseNpcPopulationTests.cs
++++ b/src/LibreLancer.Tests/BaseNpcPopulationTests.cs
+@@ -1,4 +1,5 @@
+ using System;
++using System.Collections.Generic;
+ using System.Linq;
+ using LibreLancer.Client;
+ using LibreLancer.Data;
+@@ -6,7 +7,10 @@ using LibreLancer.Data.GameData;
+ using LibreLancer.Data.GameData.World;
+ using LibreLancer.Data.Schema.GCS;
+ using LibreLancer.Data.Schema.MBases;
++using LibreLancer.Data.Schema.Missions;
+ using LibreLancer.Data.Schema.Save;
++using LibreLancer.Thn;
++using LibreLancer.Thorn;
+ using LibreLancer.World;
+ using Xunit;
+ 
+@@ -107,6 +111,135 @@ public class BaseNpcPopulationTests
+         Assert.Contains(3, counts);
+     }
+ 
++    [Fact]
++    public void ReservedSpotsAreNeverGivenToAmbientNpcs()
++    {
++        var fixedNpc = Fixture("bartender", "Zs/NPC/Bartender/01/A/Stand", "bartender");
++        var ambient = Enumerable.Range(0, 10).Select(i => new BaseNpc($"ambient{i}"));
++        var room = Room(7, [fixedNpc, ..ambient]);
++        var spots = new[]
++        {
++            new RoomNpcSpot("Zs/NPC/Bartender/01/A/Stand", false, Posture.Stand),
++            new RoomNpcSpot("Zg/NPC/mTable3/01/A/SitLow", true, Posture.SitLow),
++            new RoomNpcSpot("Zg/NPC/mFloor3/01/A/Stand", true, Posture.Stand),
++            new RoomNpcSpot("Zg/NPC/mFloor2/01/A/Stand", true, Posture.Stand)
++        };
++        // The first spot has a different letter case than its marker, as in the s003x RTC INI.
++        string[] reserved = ["Zg/NPC/mTable3/01/A/Sitlow", "Zg/NPC/mFloor3/01/A/Stand"];
++
++        var freeSpotUsed = false;
++        for (var seed = 0; seed < 200; seed++)
++        {
++            var result = BaseNpcPopulation.Select(room, spots, (_, _) => null, new Random(seed), reserved);
++
++            Assert.Contains(result, x => x.Fixed && x.Npc == fixedNpc && x.SceneSpot == "Zs/NPC/Bartender/01/A/Stand");
++            Assert.DoesNotContain(result, x => reserved.Contains(x.SceneSpot, StringComparer.OrdinalIgnoreCase));
++            freeSpotUsed |= result.Any(x => x.SceneSpot == "Zg/NPC/mFloor2/01/A/Stand");
++        }
++
++        Assert.True(freeSpotUsed);
++    }
++
++    [Fact]
++    public void FindFixtureActorsBindsTheRole()
++    {
++        var bartender = Fixture("li0101_fix_bartender", "Zs/NPC/Bartender/01/A/Stand", "bartender");
++        var dealer = Fixture("li0101_fix_weaponsdealer", "Zs/NPC/Equipment/01/A/Stand", "Equipment");
++        var trader = Fixture("li0101_fix_trader", "Zs/NPC/Trader/01/A/Stand", "trader");
++        var room = Room(0, bartender, new BaseNpc("ambient"), dealer, trader);
++        var script = Characters(
++            // Only the actor binds. The name and the template of this entity are the role of the trader.
++            Character("trader", "trader", "story_trader"),
++            Character("Char_bartender", "li_manhattan_bartender", "story_bartender"),
++            Character("Fixture_bartender", "benchmark_male", "BARTENDER"),
++            Character("Char_equipment_dealer", "li_manhattan_weaponstrader", "equipment"),
++            Character("Fixture_equipment_dealer", "li_manhattan_weaponstrader", "equipment"));
++
++        var bound = BaseNpcPopulation.FindFixtureActors(room, script);
++
++        // The match ignores the letter case. The first DEFORMABLE with the role is bound, and the second one stays
++        // free. The trader has no DEFORMABLE with its role.
++        Assert.Equal(
++            new[] { (bartender, "Fixture_bartender"), (dealer, "Char_equipment_dealer") },
++            bound.Select(x => (x.Npc, x.Entity.Name)));
++    }
++
++    [Fact]
++    public void AnRtcCharWithASpotBindsTheFixtureAtThatSpotFirst()
++    {
++        var first = Fixture("first", "Zs/NPC/Bartender/01/A/Stand", "bartender");
++        var second = Fixture("second", "Zs/NPC/Bartender/02/A/Stand", "bartender");
++        var room = Room(0, first, second);
++        var script = Characters(Character("Char_li_bartender_Fixture", "li_bartender_1", "bartender"));
++        // An actor and a spot without an npc, as in the s003x RTC INI. The letter case is different.
++        var key = new StoryChar { Actor = "Bartender", Spot = "zs/npc/bartender/02/a/stand" };
++        // A [Char] with an npc is a story character. Its spot does not bind a fixture.
++        var story = new StoryChar { Npc = "manhtn_bar", Actor = "bartender", Spot = "Zs/NPC/Bartender/02/A/Stand" };
++
++        Assert.Same(second, Assert.Single(BaseNpcPopulation.FindFixtureActors(room, script, [key])).Npc);
++        Assert.Same(first, Assert.Single(BaseNpcPopulation.FindFixtureActors(room, script, [story])).Npc);
++        Assert.Same(first, Assert.Single(BaseNpcPopulation.FindFixtureActors(room, script)).Npc);
++    }
++
++    [Fact]
++    public void AFixtureIsBoundOneTimeAtMost()
++    {
++        var bartender = Fixture("bartender", "Zs/NPC/Bartender/01/A/Stand", "bartender");
++        var room = Room(0, bartender);
++        var script = Characters(
++            Character("Char_li_bartender_Fixture", "li_bartender_1", "bartender"),
++            Character("Fixture_bartender", "li_bartender_1", "bartender"));
++        var key = new StoryChar { Actor = "bartender", Spot = "Zs/NPC/Bartender/01/A/Stand" };
++
++        // The [Char] key binds the first DEFORMABLE. The role match then does not bind the same fixture to the
++        // second DEFORMABLE, so the second one stays free.
++        var bound = Assert.Single(BaseNpcPopulation.FindFixtureActors(room, script, [key]));
++        Assert.Equal((bartender, "Char_li_bartender_Fixture"), (bound.Npc, bound.Entity.Name));
++    }
++
++    [Fact]
++    public void ABoundFixtureIsNotPlacedAtItsSpot()
++    {
++        var bartender = Fixture("bartender", "Zs/NPC/Bartender/01/A/Stand", "bartender");
++        var trader = Fixture("trader", "Zs/NPC/Trader/01/A/Stand", "trader");
++        var room = Room(1, bartender, trader, new BaseNpc("ambient"));
++        var spots = new[]
++        {
++            new RoomNpcSpot("Zs/NPC/Bartender/01/A/Stand", false, Posture.Stand),
++            new RoomNpcSpot("Zs/NPC/Trader/01/A/Stand", false, Posture.Stand),
++            new RoomNpcSpot("Zg/NPC/mFloor2/01/A/Stand", true, Posture.Stand)
++        };
++
++        var result = BaseNpcPopulation.Select(room, spots, (_, _) => null, new Random(0),
++            boundNpcs: new HashSet<BaseNpc> { bartender });
++
++        // The bartender plays a character of the cutscene, and nobody stands at his spot. The trader is not bound,
++        // so he stays at his spot.
++        Assert.DoesNotContain(result, x => x.Npc == bartender || x.SceneSpot == "Zs/NPC/Bartender/01/A/Stand");
++        Assert.Contains(result, x => x.Fixed && x.Npc == trader);
++    }
++
++    [Fact]
++    public void AmbientNpcsOnSpotsFindsAmbientNpcsButNotFixtures()
++    {
++        var bartender = Fixture("bartender", "Zs/NPC/Bartender/01/A/Stand", "bartender");
++        var onReserve = new BaseNpc("on_reserve");
++        BaseNpcAssignment[] assignments =
++        [
++            new(bartender, new RoomNpcSpot("Zs/NPC/Bartender/01/A/Stand", false, Posture.Stand), null, true, null),
++            new(onReserve, new RoomNpcSpot("Zg/NPC/mTable3/01/A/SitLow", true, Posture.SitLow), null, false, null),
++            new(new BaseNpc("free"), new RoomNpcSpot("Zg/NPC/mFloor2/01/A/Stand", true, Posture.Stand), null, false,
++                null)
++        ];
++        // The first spot has a different letter case than its marker. The fixture keeps its spot, also when an RTC
++        // reserves it.
++        string[] reserved = ["Zg/NPC/mTable3/01/A/Sitlow", "Zs/NPC/Bartender/01/A/Stand", "Zg/NPC/mFloor3/01/A/Stand"];
++
++        var found = BaseNpcPopulation.AmbientNpcsOnSpots(assignments, reserved);
++
++        Assert.Same(onReserve, Assert.Single(found).Npc);
++    }
++
+     [Fact]
+     public void OnlyOneSpawnedNpcCanOfferABribeForEachFaction()
+     {
+@@ -290,6 +423,26 @@ public class BaseNpcPopulationTests
+         VFS = null!
+     };
+ 
++    private static BaseNpc Fixture(string nickname, string spot, string role) => new(nickname)
++    {
++        Placement = new BaseNpcPlacement(spot, Script("fixed"), role)
++    };
++
++    private static ThnScript Characters(params ThnEntity[] entities)
++    {
++        var script = new ThnScript();
++        foreach (var entity in entities)
++            script.Entities.Add(entity.Name, entity);
++        return script;
++    }
++
++    private static ThnEntity Character(string name, string template, string actor) =>
++        new(new ThornTable { ["entity_name"] = name, ["type"] = EntityTypes.Deformable })
++        {
++            Template = template,
++            Actor = actor
++        };
++
+     private static BaseNpcAssignment[] FixedAssignments(params BaseNpc[] npcs)
+     {
+         return npcs.Select((npc, index) => new BaseNpcAssignment(
+diff --git a/src/LibreLancer.Tests/RetailData.cs b/src/LibreLancer.Tests/RetailData.cs
+index 28aed37d..ebe0b5b1 100644
+--- a/src/LibreLancer.Tests/RetailData.cs
++++ b/src/LibreLancer.Tests/RetailData.cs
+@@ -53,6 +53,21 @@ public class RetailData
+     // Reads a file in the DATA folder, for example a THN script.
+     public byte[] ReadDataFile(string path) => VFS.ReadAllBytes(ini.DataPath + path);
+ 
++    // The VFS path of a file in the DATA folder, for an INI parser that opens the file itself.
++    public string DataFilePath(string path) => ini.DataPath + path;
++
++    // Loads the models of the retail data, for code that gets a resource manager.
++    public ResourceManager Resources => resources;
++
++    // A body part as GameItemDb makes it. Its model loads through Resources.
++    public Data.GameData.Bodypart? GameBodypart(string nickname)
++    {
++        var part = bodyparts.FindBodypart(nickname);
++        return part?.Mesh == null
++            ? null
++            : new Data.GameData.Bodypart { Nickname = part.Nickname, Path = ini.DataPath + part.Mesh, Sex = part.Sex };
++    }
++
+     // Makes the skeleton of a costume, as ThnScriptInstance does for a DEFORMABLE entity.
+     public DfmSkeletonManager? LoadCostume(string nickname)
+     {
+diff --git a/src/LibreLancer.Tests/RoomRtcFixtureTests.cs b/src/LibreLancer.Tests/RoomRtcFixtureTests.cs
+new file mode 100644
+index 00000000..ddb8d794
+--- /dev/null
++++ b/src/LibreLancer.Tests/RoomRtcFixtureTests.cs
+@@ -0,0 +1,226 @@
++using System;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Numerics;
++using LibreLancer.Client;
++using LibreLancer.Data.GameData.World;
++using LibreLancer.Data.Schema.MBases;
++using LibreLancer.Data.Schema.Missions;
++using LibreLancer.Render;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Thorn;
++using LibreLancer.Utf.Anm;
++using LibreLancer.World;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// Binds the room fixtures of the retail mbases.ini to the characters of the retail cutscenes, as RoomGameplay does
++// when it starts a cutscene.
++public class RoomRtcFixtureTests
++{
++    // The RTC INI, then the room NPC and the THN entity that the cutscene binds. No NPC means no binding.
++    [Theory]
++    [InlineData(@"MISSIONS\M01a\M001a_s003x_Li01_01_nrml.ini", "li0101_fix_bartender", "Char_li_bartender_Fixture")]
++    [InlineData(@"MISSIONS\M03\M003_s012xb_Li01_01_nrml.ini", "li0101_fix_bartender", "Fixture_bartender")]
++    [InlineData(@"MISSIONS\M01a\M001a_s005d_Li01_01_reoffer.ini", "li0101_fix_weaponsdealer", "Char_li_equipment_dealer")]
++    [InlineData(@"MISSIONS\M07\M007_s037a_Br04_01_offer.ini", "br0401_fix_weaponsdealer", "Fixture_Equipment")]
++    [InlineData(@"MISSIONS\M02\M002_s009a_Li01_01_offer.ini", "li0101_fix_bartender", "Char_li_manhattan_bartender")]
++    [InlineData(@"MISSIONS\M05\M005_s026a_Br03_01_offer.ini", "br0301_fix_bartender", "Char_li_bartender_LtG02")]
++    [InlineData(@"MISSIONS\M06\M006_s032a_Br05_01_offer.ini", "br0501_fix_bartender", "Char_Bartender")]
++    [InlineData(@"MISSIONS\M01a\M001a_s004x_Li01_01_nrml.ini", null, null)]
++    [InlineData(@"MISSIONS\M01a\M000_s002xe_Li01_01_nrml.ini", null, null)]
++    public void AnRtcBindsTheFixtureOfItsRoom(string rtc, string? npc, string? entity)
++    {
++        var data = RetailData.Open();
++        var ini = new StoryCutsceneIni(data.DataFilePath(rtc), data.VFS);
++        var encounter = Assert.Single(ini.Encounters);
++        var room = LoadRoom(LoadMBases(data), encounter.Location![0], encounter.Location[1]);
++        var script = (encounter.Action ?? encounter.Offer)!;
++
++        var bound = BaseNpcPopulation.FindFixtureActors(room,
++            LoadCharacters(data, data.ReadDataFile(script), script), ini.Chars);
++
++        string[] expected = npc == null ? [] : [$"{npc} -> {entity}"];
++        Assert.Equal(expected, bound.Select(x => $"{x.Npc.Nickname} -> {x.Entity.Name}"));
++    }
++
++    // Cutscene.BeginScene adds a bound actor before the scripts make their entities. ConstructEntities then keeps
++    // the bound actor under the name of the entity, and the events of that entity move the bound actor.
++    [Fact]
++    public void TheEventsOfAnEntityMoveItsBoundActor()
++    {
++        var entity = Deformable("Char_li_bartender_Fixture", "bartender");
++        var script = new ThnScript() { Duration = 10 };
++        script.Entities.Add(entity.Name, entity);
++        script.Events.Add(new AttachEntityEvent()
++        {
++            Targets = [entity.Name, "marker"],
++            TargetType = TargetTypes.Root,
++            Flags = AttachFlags.Position | AttachFlags.Orientation
++        });
++        var bound = new ThnSceneObject()
++        {
++            Name = entity.Name, Rotate = Quaternion.Identity, Object = new GameObject()
++        };
++        var marker = new ThnSceneObject()
++        {
++            Name = "marker", Translate = new Vector3(1, 2, 3), Rotate = Quaternion.Identity
++        };
++        var objects = new Dictionary<string, ThnSceneObject>(StringComparer.OrdinalIgnoreCase)
++        {
++            [bound.Name] = bound,
++            [marker.Name] = marker
++        };
++        // A cutscene without a game or a world. ConstructEntities makes no object, because each entity has one.
++        var cutscene = new Cutscene(new ThnScriptContext(null), null!, null!, null, new Rectangle(0, 0, 1, 1), null!);
++        var instance = new ThnScriptInstance(cutscene, script);
++
++        // A room scene makes its objects, as Cutscene.SceneSetup does. Then the events at T=0 run, and each scene
++        // object applies its attachments.
++        instance.ConstructEntities(objects, true);
++        instance.Update(0);
++        bound.Update();
++
++        Assert.Same(bound, objects[entity.Name]);
++        Assert.Equal(marker.Translate, bound.Object!.LocalTransform.Position);
++    }
++
++    // The bound actor of li0101_fix_bartender in s003x. It has the costume and the voice of the room NPC (mbases.ini),
++    // and the name, the start pose and the floor height of the entity.
++    [Fact]
++    public void ABoundActorHasTheRoomCostumeAndThePoseOfItsEntity()
++    {
++        var data = RetailData.Open();
++        var npc = new BaseNpc("li0101_fix_bartender")
++        {
++            Body = data.GameBodypart("li_bartender_body"),
++            Head = data.GameBodypart("rh_bartender_head"),
++            Voice = "rvp101"
++        };
++        var entity = Deformable("Char_li_bartender_Fixture", "bartender");
++        entity.Template = "li_bartender_1";
++        entity.Position = new Vector3(-0.33f, 0.5f, -1.85f);
++        entity.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.5f);
++        entity.FloorHeight = 0.75f;
++
++        var actor = ThnRoomHandler.CreateBoundNpc(data.Resources, new AnmFile(), npc, entity)!;
++
++        Assert.Equal(("Char_li_bartender_Fixture", "rvp101", "bartender"), (actor.Name, actor.Voice, actor.Actor));
++        Assert.Same(entity, actor.Entity);
++        Assert.Equal((entity.Position.Value, entity.Rotation), (actor.Translate, actor.Rotate));
++        Assert.Equal(new Transform3D(entity.Position.Value, entity.Rotation), actor.Object!.LocalTransform);
++        var skeleton = Assert.IsType<CharacterRenderer>(actor.Object.RenderComponent).Skeleton;
++        Assert.Equal(0.75f, skeleton.FloorHeight);
++        Assert.NotNull(skeleton.HeadSkinning);
++        // An NPC without a body is not bound. The room places it as before.
++        Assert.Null(ThnRoomHandler.CreateBoundNpc(data.Resources, new AnmFile(), new BaseNpc("nobody"), entity));
++    }
++
++    // Only story cutscenes have a DEFORMABLE with the role of a room fixture. Thus the binding does not change the
++    // land, launch, enter and ambient scripts of the rooms, the vendor fidgets or the GCS scripts.
++    [Fact]
++    public void OnlyStoryScriptsHaveFixtureActors()
++    {
++        var data = RetailData.Open();
++        // A room with one fixture for each role in mbases.ini: bartender, trader, Equipment and ShipDealer.
++        var roles = LoadMBases(data).MBases
++            .SelectMany(x => x.Rooms)
++            .SelectMany(x => x.NPCs)
++            .Select(x => x.Action)
++            .OfType<string>()
++            .ToHashSet(StringComparer.OrdinalIgnoreCase);
++        Assert.Equal(4, roles.Count);
++        var room = new BaseRoom
++        {
++            SourceFile = "mbases.ini",
++            Npcs = roles.Select(x => new BaseNpc(x) { Placement = new BaseNpcPlacement("spot", null!, x) }).ToList()
++        };
++
++        var story = Path.Combine(data.Folder, "DATA", "SCRIPTS", "STORY") + Path.DirectorySeparatorChar;
++        var storyCharacters = 0;
++        var storyScripts = 0;
++        var storyBindings = 0;
++        var others = new List<string>();
++        foreach (var path in Directory.EnumerateFiles(data.Folder, "*.thn", SearchOption.AllDirectories))
++        {
++            var characters = LoadCharacters(data, File.ReadAllBytes(path), path);
++            var bound = BaseNpcPopulation.FindFixtureActors(room, characters);
++            if (!path.StartsWith(story, StringComparison.OrdinalIgnoreCase))
++            {
++                others.AddRange(bound.Select(x => $"{path}: {x.Entity.Name}"));
++                continue;
++            }
++
++            storyCharacters += characters.Entities.Values.Count(x => x.Actor != null && roles.Contains(x.Actor));
++            if (bound.Count > 0)
++            {
++                storyScripts++;
++                storyBindings += bound.Count;
++            }
++        }
++
++        Assert.Empty(others);
++        // 21 DEFORMABLEs in 18 story scripts have a fixture role. s005d has two with the role Equipment, and only
++        // the first one is bound.
++        Assert.Equal(21, storyCharacters);
++        Assert.Equal(18, storyScripts);
++        Assert.Equal(20, storyBindings);
++    }
++
++    private static ThnEntity Deformable(string name, string actor) =>
++        new(new ThornTable { ["entity_name"] = name, ["type"] = EntityTypes.Deformable }) { Actor = actor };
++
++    private static MBasesIni LoadMBases(RetailData data)
++    {
++        var mbases = new MBasesIni();
++        mbases.AddFile(data.DataFilePath(@"MISSIONS\mbases.ini"), data.VFS);
++        return mbases;
++    }
++
++    // The fixtures of a room, as GameItemDb places them. A room without an [MRoom] has no fixture.
++    private static BaseRoom LoadRoom(MBasesIni mbases, string baseName, string roomName)
++    {
++        var mroom = mbases.MBases
++            .Single(x => x.Nickname.Equals(baseName, StringComparison.OrdinalIgnoreCase))
++            .Rooms.SingleOrDefault(x => x.Nickname.Equals(roomName, StringComparison.OrdinalIgnoreCase));
++        return new BaseRoom
++        {
++            SourceFile = "mbases.ini",
++            Npcs = (mroom?.NPCs ?? []).Select(x => new BaseNpc(x.Npc)
++            {
++                Placement = new BaseNpcPlacement(x.StandMarker, null!, x.Action ?? "")
++            }).ToList()
++        };
++    }
++
++    // The DEFORMABLE entities of a script in file order, with their actors, as ThnScript reads them. The test does
++    // not make a ThnScript from the file, because a motion path needs the native thorncompiler.
++    private static ThnScript LoadCharacters(RetailData data, byte[] thn, string name)
++    {
++        var output = new ThornRunner(ThnScript.ThnEnv, data.ReadThornFile).DoBytes(thn, name);
++        var script = new ThnScript();
++        foreach (var table in ((ThornTable)output["entities"]).Values.Cast<ThornTable>())
++        {
++            var entity = new ThnEntity(table);
++            if (entity.Type != EntityTypes.Deformable || !table.TryGetValue("userprops", out var props))
++            {
++                continue;
++            }
++
++            foreach (var pair in ((ThornTable)props).Pairs)
++            {
++                if ("Actor".Equals(pair.Key?.ToString(), StringComparison.OrdinalIgnoreCase))
++                {
++                    entity.Actor = pair.Value?.ToString();
++                }
++            }
++
++            script.Entities[entity.Name] = entity;
++        }
++
++        return script;
++    }
++}
+diff --git a/src/LibreLancer/Client/BaseNpcPopulation.cs b/src/LibreLancer/Client/BaseNpcPopulation.cs
+index fd544e66..ab25c93a 100644
+--- a/src/LibreLancer/Client/BaseNpcPopulation.cs
++++ b/src/LibreLancer/Client/BaseNpcPopulation.cs
+@@ -6,6 +6,8 @@ using LibreLancer.Data.GameData;
+ using LibreLancer.Data.GameData.World;
+ using LibreLancer.Data.Schema.GCS;
+ using LibreLancer.Data.Schema;
++using LibreLancer.Data.Schema.Missions;
++using LibreLancer.Thn;
+ using LibreLancer.Utf.Dfm;
+ using LibreLancer.World;
+ 
+@@ -169,20 +171,26 @@ public static class BaseNpcPopulation
+         BaseRoom room,
+         IReadOnlyList<RoomNpcSpot> spots,
+         GameItemDb items,
+-        Random random)
++        Random random,
++        IEnumerable<string>? reservedSpots = null,
++        IReadOnlySet<BaseNpc>? boundNpcs = null)
+     {
+         return Select(
+             room,
+             spots,
+             (gender, posture) => items.GetGCSScripts("fidget", gender, posture).FirstOrDefault(),
+-            random);
++            random,
++            reservedSpots,
++            boundNpcs);
+     }
+ 
+     public static BaseNpcAssignment[] Select(
+         BaseRoom room,
+         IReadOnlyList<RoomNpcSpot> spots,
+         Func<FLGender, Posture, ResolvedThn?> fidgetResolver,
+-        Random random)
++        Random random,
++        IEnumerable<string>? reservedSpots = null,
++        IReadOnlySet<BaseNpc>? boundNpcs = null)
+     {
+         var assignments = new List<BaseNpcAssignment>();
+         var fixedNpcs = new Dictionary<string, BaseNpc>(StringComparer.OrdinalIgnoreCase);
+@@ -202,6 +210,10 @@ public static class BaseNpcPopulation
+             if (!fixedNpcs.TryGetValue(spot.Nickname, out var npc) || npc.Placement == null)
+                 continue;
+ 
++            // A fixture that plays a character of the cutscene (see FindFixtureActors) is not at its spot.
++            if (boundNpcs?.Contains(npc) == true)
++                continue;
++
+             assignments.Add(new BaseNpcAssignment(
+                 npc,
+                 spot,
+@@ -210,6 +222,11 @@ public static class BaseNpcPopulation
+                 SelectRandomRumor(npc, random)));
+         }
+ 
++        // Ambient NPCs do not get the spots that the RTCs of the room reserve ([Reserve] in the RTC INI).
++        // The comparison ignores the letter case, because retail writes both "Sitlow" and "SitLow".
++        if (reservedSpots != null)
++            usedSpots.UnionWith(reservedSpots);
++
+         var dynamicSpots = spots
+             .Where(x => x.Dynamic && !usedSpots.Contains(x.Nickname))
+             .ToArray();
+@@ -243,6 +260,56 @@ public static class BaseNpcPopulation
+         return assignments.ToArray();
+     }
+ 
++    // Finds the ambient NPCs that stand on one of the spots. A fixture keeps its spot, as in Select. The comparison
++    // ignores the letter case, as in Select.
++    public static BaseNpcAssignment[] AmbientNpcsOnSpots(
++        IEnumerable<BaseNpcAssignment> assignments,
++        IEnumerable<string> spots)
++    {
++        var spotSet = new HashSet<string>(spots, StringComparer.OrdinalIgnoreCase);
++        return assignments.Where(x => !x.Fixed && spotSet.Contains(x.SceneSpot)).ToArray();
++    }
++
++    // Finds the room fixtures that play characters of a cutscene. The rule comes from the retail data. The retail
++    // binary does not confirm it. A DEFORMABLE whose actor is the role of a fixture (the 4th field of the mbases
++    // fixture: bartender, trader, Equipment or ShipDealer) is that room NPC. The data shows this in three ways: some
++    // of these DEFORMABLEs have a placeholder template (benchmark_male in s037a), many are offscreen from the start,
++    // and s003x and s009b move theirs back to the stand spot of the room fixture at the end. First, a [Char] of the
++    // RTC INI with an actor and a spot, but no npc, binds the fixture at that spot. Then each fixture binds the first
++    // free DEFORMABLE with its role. An NPC or an entity is bound one time at most. The comparisons ignore the letter
++    // case.
++    public static IReadOnlyList<(BaseNpc Npc, ThnEntity Entity)> FindFixtureActors(
++        BaseRoom room,
++        ThnScript script,
++        IEnumerable<StoryChar>? chars = null)
++    {
++        var result = new List<(BaseNpc Npc, ThnEntity Entity)>();
++        var free = script.Entities.Values.Where(x => x.Type == EntityTypes.Deformable).ToList();
++
++        void Bind(BaseNpc? npc, string? actor)
++        {
++            if (npc == null || string.IsNullOrEmpty(actor) || result.Exists(x => x.Npc == npc))
++                return;
++            var entity = free.Find(x => string.Equals(x.Actor, actor, StringComparison.OrdinalIgnoreCase));
++            if (entity == null)
++                return;
++            free.Remove(entity);
++            result.Add((npc, entity));
++        }
++
++        foreach (var character in chars ?? [])
++        {
++            if (string.IsNullOrEmpty(character.Npc) && !string.IsNullOrEmpty(character.Spot))
++                Bind(room.Npcs.Find(x => string.Equals(x.Placement?.Spot, character.Spot,
++                    StringComparison.OrdinalIgnoreCase)), character.Actor);
++        }
++
++        foreach (var npc in room.Npcs)
++            Bind(npc, npc.Placement?.Action);
++
++        return result;
++    }
++
+     private static void Shuffle<T>(T[] values, Random random)
+     {
+         for (var i = values.Length - 1; i > 0; i--)
+diff --git a/src/LibreLancer/Client/ThnRoomHandler.cs b/src/LibreLancer/Client/ThnRoomHandler.cs
+index 0b16fbeb..d3b396f1 100644
+--- a/src/LibreLancer/Client/ThnRoomHandler.cs
++++ b/src/LibreLancer/Client/ThnRoomHandler.cs
+@@ -1,6 +1,7 @@
+ using System;
+ using System.Collections.Generic;
+ using System.Linq;
++using System.Numerics;
+ using System.Text.RegularExpressions;
+ using LibreLancer.Data.GameData;
+ using LibreLancer.Data.GameData.World;
+@@ -107,10 +108,60 @@ public static class ThnRoomHandler
+         Bodypart? leftHand,
+         Accessory? accessory,
+         ResolvedThn? fidgetScript)
++    {
++        var spotObj = scene!.GetObject(spot)!;
++        var thnObj = CreateNpc(resources, charAnimations, name, voice, head, body, rightHand, leftHand, accessory,
++            new Transform3D(spotObj.Translate with { Y = 0 }, spotObj.Rotate), 0);
++        scene.AddObject(thnObj);
++        if (fidgetScript != null)
++        {
++            scene.FidgetScript(fidgetScript.LoadScript(), name);
++        }
++        return thnObj;
++    }
++
++    // Makes a room NPC that plays a THN entity, for Cutscene.BeginScene. It has the costume and the voice of the room
++    // NPC, and the name, the start pose and the floor height of the entity. It has no fidget. An NPC without a body
++    // gives null.
++    public static ThnSceneObject? CreateBoundNpc(
++        ResourceManager resources,
++        AnmFile charAnimations,
++        BaseNpc npc,
++        ThnEntity entity)
++    {
++        var appearance = BaseNpcPopulation.ResolveAppearance(npc);
++        if (!appearance.HasBody)
++        {
++            return null;
++        }
++
++        var actor = CreateNpc(resources, charAnimations, entity.Name, npc.Voice, appearance.Head, appearance.Body,
++            appearance.RightHand, appearance.LeftHand, appearance.Accessory,
++            new Transform3D(entity.Position ?? Vector3.Zero, entity.Rotation), entity.FloorHeight);
++        actor.Actor = entity.Actor;
++        actor.Entity = entity;
++        return actor;
++    }
++
++    private static ThnSceneObject CreateNpc(
++        ResourceManager resources,
++        AnmFile charAnimations,
++        string name,
++        string? voice,
++        Bodypart? head,
++        Bodypart? body,
++        Bodypart? rightHand,
++        Bodypart? leftHand,
++        Accessory? accessory,
++        Transform3D start,
++        float floorHeight)
+     {
+         var skel = new DfmSkeletonManager(
+             body?.LoadModel(resources)!, head?.LoadModel(resources),
+-            leftHand?.LoadModel(resources), rightHand?.LoadModel(resources));
++            leftHand?.LoadModel(resources), rightHand?.LoadModel(resources))
++        {
++            FloorHeight = floorHeight
++        };
+         var obj = new GameObject
+         {
+             Nickname = name
+@@ -124,22 +175,15 @@ public static class ThnRoomHandler
+         var animation = new AnimationComponent(obj, charAnimations);
+         obj.AnimationComponent = animation;
+         obj.AddComponent(animation);
+-        var spotObj = scene!.GetObject(spot)!;
+-        obj.SetLocalTransform(new Transform3D(spotObj.Translate with { Y = 0 }, spotObj.Rotate));
+-        var thnObj = new ThnSceneObject
++        obj.SetLocalTransform(start);
++        return new ThnSceneObject
+         {
+             Name = name,
+-            Translate = spotObj.Translate with { Y = 0 },
+-            Rotate = spotObj.Rotate,
++            Translate = start.Position,
++            Rotate = start.Orientation,
+             Object = obj,
+             Voice = voice
+         };
+-        scene.AddObject(thnObj);
+-        if (fidgetScript != null)
+-        {
+-            scene.FidgetScript(fidgetScript.LoadScript(), name);
+-        }
+-        return thnObj;
+     }
+ 
+ }
+diff --git a/src/LibreLancer/GameStates/RoomGameplay.cs b/src/LibreLancer/GameStates/RoomGameplay.cs
+index 82ab1ce9..5d1c87a9 100644
+--- a/src/LibreLancer/GameStates/RoomGameplay.cs
++++ b/src/LibreLancer/GameStates/RoomGameplay.cs
+@@ -88,7 +88,7 @@ namespace LibreLancer
+         private double locationAnnouncementDelay = -1;
+         private readonly Dictionary<string, ThnSceneObject> baseNpcObjects =
+             new(StringComparer.OrdinalIgnoreCase);
+-        private readonly Dictionary<string, BaseNpc> baseNpcData =
++        private readonly Dictionary<string, BaseNpcAssignment> baseNpcData =
+             new(StringComparer.OrdinalIgnoreCase);
+         private readonly Dictionary<string, BaseNpcRumor?> baseNpcRumors =
+             new(StringComparer.OrdinalIgnoreCase);
+@@ -737,8 +737,7 @@ namespace LibreLancer
+                     return true;
+                 }
+ 
+-                if (!n[0].Equals(currentBase.Nickname, StringComparison.OrdinalIgnoreCase) ||
+-                    !n[1].Equals(currentRoom.Nickname, StringComparison.OrdinalIgnoreCase))
++                if (!IsInThisRoom(ct))
+                 {
+                     continue;
+                 }
+@@ -764,6 +763,19 @@ namespace LibreLancer
+             return false;
+         }
+ 
++        private bool IsInThisRoom(StoryCutsceneIni ct)
++        {
++            var location = ct.Encounters[0].Location!;
++            return location[0].Equals(currentBase.Nickname, StringComparison.OrdinalIgnoreCase) &&
++                   location[1].Equals(currentRoom.Nickname, StringComparison.OrdinalIgnoreCase);
++        }
++
++        // The spots that the active RTCs of this room reserve for their characters.
++        private IEnumerable<string> ReservedSpots() => session.ActiveCutscenes
++            .Where(ct => ct.Encounters.Count == 1 && IsInThisRoom(ct))
++            .SelectMany(ct => ct.Reserves)
++            .SelectMany(reserve => reserve.Spot);
++
+         private void NotifyAutoplayCharacterSelect(StoryCutsceneIni cutscene)
+         {
+             var encounter = cutscene.Encounters[0];
+@@ -1099,7 +1111,7 @@ namespace LibreLancer
+             foreach (var entry in baseNpcObjects)
+             {
+                 var screen = ScreenPosition(entry.Value.GetTransform().Position);
+-                if (!baseNpcData.TryGetValue(entry.Key, out var npc))
++                if (!baseNpcData.TryGetValue(entry.Key, out var assignment))
+                     continue;
+ 
+                 var dx = mX - screen.X;
+@@ -1108,7 +1120,7 @@ namespace LibreLancer
+                 if (distance < closestDistance)
+                 {
+                     closestDistance = distance;
+-                    closest = npc;
++                    closest = assignment.Npc;
+                 }
+             }
+ 
+@@ -1142,6 +1154,9 @@ namespace LibreLancer
+         private void ProcessNextCutscene()
+         {
+             var ct = toPlay.Dequeue();
++            // The RTC can become active after the room was built, for example when a mission trigger adds it as the
++            // player enters the room. Its story NPCs go to its reserved spots, so the ambient NPCs leave them first.
++            RemoveAmbientNpcs(ct.Reserves.SelectMany(reserve => reserve.Spot));
+             int position = 0;
+             int i = 0;
+ 
+@@ -1260,7 +1275,8 @@ namespace LibreLancer
+             return objects.OfType<IEnumerable<ThnScript?>>().SelectMany(obj => obj).OfType<ThnScript>();
+         }
+ 
+-        private void PopulateRoomNpcs()
++        // A bound NPC plays an actor of the cutscene, so it does not get its room spot.
++        private void PopulateRoomNpcs(IReadOnlySet<BaseNpc> boundNpcs)
+         {
+             baseNpcObjects.Clear();
+             baseNpcData.Clear();
+@@ -1286,7 +1302,9 @@ namespace LibreLancer
+                 currentRoom,
+                 spots,
+                 Game.GameData.Items,
+-                random);
++                random,
++                ReservedSpots(),
++                boundNpcs);
+ 
+             foreach (var assignment in assignments)
+             {
+@@ -1315,7 +1333,7 @@ namespace LibreLancer
+                         assignment.FidgetScript);
+ 
+                     baseNpcObjects[assignment.Npc.Nickname] = npcObject;
+-                    baseNpcData[assignment.Npc.Nickname] = assignment.Npc;
++                    baseNpcData[assignment.Npc.Nickname] = assignment;
+                     baseNpcRumors[assignment.Npc.Nickname] = assignment.SelectedRumor;
+                 }
+                 catch (Exception ex)
+@@ -1336,6 +1354,38 @@ namespace LibreLancer
+             }
+         }
+ 
++        // Removes the ambient NPCs that stand on these spots from the scene.
++        private void RemoveAmbientNpcs(IEnumerable<string> spots)
++        {
++            foreach (var assignment in BaseNpcPopulation.AmbientNpcsOnSpots(baseNpcData.Values, spots))
++            {
++                var nickname = assignment.Npc.Nickname;
++                scene!.RemoveObject(baseNpcObjects[nickname]);
++                baseNpcObjects.Remove(nickname);
++                baseNpcData.Remove(nickname);
++                baseNpcRumors.Remove(nickname);
++                baseNpcBribes.Remove(nickname);
++            }
++        }
++
++        // A room fixture that plays a THN entity. When the NPC cannot be made, the room places it at its spot.
++        private ThnSceneObject? CreateFixtureActor(BaseNpc npc, ThnEntity entity)
++        {
++            try
++            {
++                return ThnRoomHandler.CreateBoundNpc(
++                    Game.ResourceManager,
++                    Game.GameData.GetCharacterAnimations(),
++                    npc,
++                    entity);
++            }
++            catch (Exception ex)
++            {
++                FLLog.Error("NPC", ex.Message);
++                return null;
++            }
++        }
++
+         private void SetRoomCameraAndShip()
+         {
+             Debug.Assert(scene != null, nameof(scene) + " != null");
+@@ -1373,8 +1423,23 @@ namespace LibreLancer
+             waitingForFinish = sc;
+             if (hasLandingAnimation && state == ScriptState.Enter && sc != null)
+                 locationAnnouncementDelay = Math.Max(0, sc.Duration - 8);
+-            scene!.BeginScene(Scripts(sceneScripts, [sc]));
+-            PopulateRoomNpcs();
++            var boundActors = new List<ThnSceneObject>();
++            var boundNpcs = new HashSet<BaseNpc>();
++            if (sc != null)
++            {
++                var chars = state == ScriptState.Cutscene ? currentCutscene?.Chars : null;
++                foreach (var (npc, entity) in BaseNpcPopulation.FindFixtureActors(currentRoom, sc, chars))
++                {
++                    var actor = CreateFixtureActor(npc, entity);
++                    if (actor == null)
++                        continue;
++                    boundActors.Add(actor);
++                    boundNpcs.Add(npc);
++                }
++            }
++
++            scene!.BeginScene(Scripts(sceneScripts, [sc]), boundActors);
++            PopulateRoomNpcs(boundNpcs);
+             string[] ships = [];
+ 
+             if (session.Ships != null)
+diff --git a/src/LibreLancer/Thn/Cutscene.cs b/src/LibreLancer/Thn/Cutscene.cs
+index f22b4c11..f11cc8c3 100644
+--- a/src/LibreLancer/Thn/Cutscene.cs
++++ b/src/LibreLancer/Thn/Cutscene.cs
+@@ -160,10 +160,16 @@ public class Cutscene : IDisposable
+ 
+     public void BeginScene(params ThnScript[] scene) => BeginScene((IEnumerable<ThnScript>)scene);
+ 
+-    public void BeginScene(IEnumerable<ThnScript> scene)
++    public void BeginScene(IEnumerable<ThnScript> scene) => BeginScene(scene, []);
++
++    /// <summary>
++    /// Starts the scripts with bound actors. A bound actor is an object made outside the scripts, for example a
++    /// room NPC, that plays the THN entity of the same name. The scripts do not make that entity.
++    /// </summary>
++    public void BeginScene(IEnumerable<ThnScript> scene, IReadOnlyList<ThnSceneObject> boundActors)
+     {
+         var scripts = scene.ToArray();
+-        SceneSetup(scripts);
++        SceneSetup(scripts, boundActors: boundActors);
+     }
+ 
+     /// <summary>
+@@ -238,7 +244,8 @@ public class Cutscene : IDisposable
+     private ThnScriptInstance[] SceneSetup(
+         ThnScript[] scripts,
+         bool resetObjects = true,
+-        bool spawnLayerObjects = false)
++        bool spawnLayerObjects = false,
++        IReadOnlyList<ThnSceneObject>? boundActors = null)
+     {
+         if (resetObjects)
+         {
+@@ -275,6 +282,13 @@ public class Cutscene : IDisposable
+             inst.ConstructEntities(sceneObjects, spawnObjects);
+         }
+ 
++        // Add the bound actors before the scripts make their entities. ConstructEntities skips an entity whose name
++        // is in use, so the events of that entity move the bound actor.
++        foreach (var actor in boundActors ?? [])
++        {
++            AddObject(actor);
++        }
++
+         if (resetObjects)
+         {
+             foreach (var inst in instances)

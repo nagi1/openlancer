@@ -1,0 +1,419 @@
+diff --git a/src/LibreLancer.Tests/ThnCameraPropAnimTests.cs b/src/LibreLancer.Tests/ThnCameraPropAnimTests.cs
+new file mode 100644
+index 00000000..1791a297
+--- /dev/null
++++ b/src/LibreLancer.Tests/ThnCameraPropAnimTests.cs
+@@ -0,0 +1,313 @@
++using System;
++using System.Linq;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Thorn;
++using Xunit;
++using static LibreLancer.Thn.Events.StartCameraPropAnimEvent.AnimFlags;
++
++namespace LibreLancer.Tests;
++
++// START_CAMERA_PROP_ANIM without a renderer. Each frame runs the events and the processors, as Cutscene._Update does.
++public class ThnCameraPropAnimTests
++{
++    private const float Tolerance = 1e-4f;
++    // A frame of 1/64 s adds up to exact times, for example 160 frames give 2.5 s.
++    private const double Frame = 1.0 / 64;
++
++    private const string S002xe = @"SCRIPTS\STORY\s002xe_nrml_sinclair_li_01_Cityscape_01.thn";
++
++    // The FreeForm smoothstep curve.
++    private static readonly ParameterCurve Smoothstep = new(PCurveType.FreeForm, [new(0, 0, 0, 0), new(1, 1, 0, 0)]);
++
++    // The zoom curve of the news camera in s002xe at 11.281 s. It ends at 0.701923, not at 1.
++    private static readonly ParameterCurve NewsZoom = new(PCurveType.FreeForm,
++    [
++        new(0, 0, 0, 0), new(0.413462f, 0.512821f, 0, 0), new(0.666667f, 0.496795f, 0, 0), new(1, 0.701923f, 0, 0)
++    ]);
++
++    private static ThnSceneObject Camera(string name, float fovh, float aspect = 1.85f, float near = 0.4f,
++        float far = 7000) => new()
++    {
++        Name = name,
++        Camera = new ThnCameraProps() { FovH = fovh, AspectRatio = aspect, Znear = near, Zfar = far }
++    };
++
++    // A camera as ThnScriptInstance makes it from a retail CAMERA entity.
++    private static ThnSceneObject Camera(ThornTable entity)
++    {
++        var props = (ThornTable)entity["cameraprops"];
++        return Camera((string)entity["entity_name"], (float)props["fovh"], (float)props["hvaspect"],
++            (float)props["nearplane"], (float)props["farplane"]);
++    }
++
++    private static StartCameraPropAnimEvent FovAnim(float fovh, float duration, ParameterCurve? curve,
++        params string[] targets) => new()
++    {
++        Duration = duration,
++        Targets = targets,
++        SetFlags = FovH,
++        FovH = fovh,
++        ParamCurve = curve
++    };
++
++    private static ThnScriptInstance Scene(ThnSceneObject[] objects, params ThnEvent[] events)
++    {
++        var script = new ThnScript() { Duration = 100 };
++        script.Events.AddRange(events);
++        var instance = new ThnScriptInstance(null!, script);
++        foreach (var obj in objects)
++        {
++            instance.Objects[obj.Name] = obj;
++        }
++
++        // Cutscene.SceneSetup runs the events at T=0.
++        instance.Update(0);
++        return instance;
++    }
++
++    private static void Frames(ThnScriptInstance instance, int count)
++    {
++        for (int i = 0; i < count; i++)
++        {
++            instance.Update(Frame);
++        }
++    }
++
++    private static StartCameraPropAnimEvent ReadEvent(string[] targets, float duration,
++        params (string Key, float Value)[] values)
++    {
++        var targetTable = new ThornTable();
++        foreach (var target in targets)
++        {
++            targetTable.Append(target);
++        }
++
++        var cameraprops = new ThornTable();
++        foreach (var (key, value) in values)
++        {
++            cameraprops[key] = value;
++        }
++
++        var props = new ThornTable();
++        props["duration"] = duration;
++        props["cameraprops"] = cameraprops;
++        var table = new ThornTable();
++        table.Append(0f);
++        table.Append(EventTypes.StartCameraPropAnim);
++        table.Append(targetTable);
++        table.Append(props);
++        return new StartCameraPropAnimEvent(table);
++    }
++
++    // The retail event of Li_04_Trader_enter_01 at 0 s. Its keys hold the values of Camera_Zero in the order of
++    // the camera: fovh 20, near plane 0.3, far plane 1000 and aspect 1.85.
++    private static StartCameraPropAnimEvent Li04Event() => ReadEvent(["Camera_Zero", "Camera_0"], 0,
++        ("fovh", 20), ("aspect", 0.3f), ("near", 1000), ("far", 1.85f));
++
++    // The START_CAMERA_PROP_ANIM event of a retail script at a time, and the CAMERA entities of its targets.
++    private static (StartCameraPropAnimEvent Event, ThnSceneObject[] Cameras) RetailEvent(string script, float time)
++    {
++        var data = RetailData.Open();
++        var output = new ThornRunner(ThnScript.ThnEnv, data.ReadThornFile).DoBytes(data.ReadDataFile(script), script);
++        var table = ((ThornTable)output["events"]).Values.Cast<ThornTable>().Single(x =>
++            ThnTypes.Convert<EventTypes>(x[2]) == EventTypes.StartCameraPropAnim &&
++            MathF.Abs((float)x[1] - time) < 1e-3f);
++        var ev = new StartCameraPropAnimEvent(table) { Time = 0 };
++        var cameras = ((ThornTable)output["entities"]).Values.Cast<ThornTable>()
++            .Where(x => ev.Targets.Contains((string)x["entity_name"])).Select(x => Camera(x)).ToArray();
++        return (ev, cameras);
++    }
++
++    // s002xe at 11.281 s: the news camera zooms from its fovh 25 toward the fovh 10 of the second camera. The event
++    // gives the fovh 25 of the first camera, so an anim to the value of the event does not zoom.
++    [Fact]
++    public void ASecondCameraGivesTheEndValue()
++    {
++        var a = Camera("a", 25);
++        var b = Camera("b", 10);
++        var ev = FovAnim(25, 2.5f, NewsZoom, "a", "b");
++        var instance = Scene([a, b], ev);
++
++        for (int i = 1; i <= 170; i++)
++        {
++            Frames(instance, 1);
++            Assert.Equal(25 + (10 - 25) * ev.GetT((float)(i * Frame)), a.Camera!.FovH, Tolerance);
++        }
++
++        // 25 + (10 - 25) * 0.701923
++        Assert.Equal(14.4712f, a.Camera!.FovH, Tolerance);
++        Assert.Equal(10, b.Camera!.FovH);
++    }
++
++    // An event with one target animates the camera to the values of the event.
++    [Fact]
++    public void AnEventWithOneTargetAnimatesToItsOwnValues()
++    {
++        var a = Camera("a", 25);
++        var instance = Scene([a], FovAnim(10, 1, Smoothstep, "a"));
++
++        Frames(instance, 16);
++        // 3 * 0.25^2 - 2 * 0.25^3 = 0.15625
++        Assert.Equal(25 + (10 - 25) * 0.15625f, a.Camera!.FovH, Tolerance);
++        Frames(instance, 56);
++        Assert.Equal(10, a.Camera.FovH, Tolerance);
++    }
++
++    // When the second target is missing or is not a camera, the end values come from the event. 9 of the 36 retail
++    // second targets are REFERENCE cameras. A script does not make these, so they exist only when a room has them.
++    [Theory]
++    [InlineData(false)]
++    [InlineData(true)]
++    public void WithoutASecondCameraTheEventGivesTheEndValue(bool otherObject)
++    {
++        var a = Camera("a", 25);
++        ThnSceneObject[] objects = otherObject ? [a, new ThnSceneObject() { Name = "b" }] : [a];
++        var instance = Scene(objects, FovAnim(10, 1, null, "a", "b"));
++
++        Frames(instance, 32);
++        Assert.Equal(17.5f, a.Camera!.FovH, Tolerance);
++        Frames(instance, 40);
++        Assert.Equal(10, a.Camera.FovH, Tolerance);
++    }
++
++    // Retail reads the end value of the second camera in each frame. Another anim can change that value.
++    [Fact]
++    public void TheEndValueFollowsTheSecondCamera()
++    {
++        var a = Camera("a", 25);
++        var b = Camera("b", 10);
++        var instance = Scene([a, b], FovAnim(25, 1, null, "a", "b"));
++
++        Frames(instance, 32);
++        Assert.Equal(17.5f, a.Camera!.FovH, Tolerance);
++        b.Camera!.FovH = 20;
++        Frames(instance, 16);
++        // 25 + (20 - 25) * 0.75. An end value that the anim reads only at its start gives 13.75.
++        Assert.Equal(21.25f, a.Camera.FovH, Tolerance);
++    }
++
++    // The anim changes only the keys that the event sets, also when the second camera has other values.
++    [Fact]
++    public void OnlyTheKeysOfTheEventChange()
++    {
++        var a = Camera("a", 25, 1.85f, 0.25f, 7000);
++        var b = Camera("b", 10, 1.333333f, 3, 100);
++        var instance = Scene([a, b], FovAnim(25, 1, null, "a", "b"));
++
++        Frames(instance, 72);
++        Assert.Equal(10, a.Camera!.FovH, Tolerance);
++        Assert.Equal(1.85f, a.Camera.AspectRatio);
++        Assert.Equal(0.25f, a.Camera.Znear);
++        Assert.Equal(7000, a.Camera.Zfar);
++    }
++
++    // Li_04_Trader_enter_01 at 0 s: a zero-duration event that sets all four keys. In a room, Camera_0 is the
++    // camera of Li_04_Trader_hardpoint_01 (fovh 30, aspect 1.333333, near plane 1, far plane 200). The end values
++    // come from Camera_0.
++    [Fact]
++    public void AZeroDurationEventCopiesTheSecondCamera()
++    {
++        var a = Camera("Camera_Zero", 20, 1.85f, 0.3f, 1000);
++        var b = Camera("Camera_0", 30, 1.333333f, 1, 200);
++        Scene([a, b], Li04Event());
++
++        Assert.Equal(30, a.Camera!.FovH, Tolerance);
++        Assert.Equal(1.333333f, a.Camera.AspectRatio, Tolerance);
++        Assert.Equal(1, a.Camera.Znear, Tolerance);
++        Assert.Equal(200, a.Camera.Zfar, Tolerance);
++    }
++
++    // The same event when the script plays alone, for example in the THN player of LancerEdit. Camera_0 is a
++    // REFERENCE entity, so it does not exist. The camera gets the values of the event, so the near plane stays
++    // smaller than the far plane. The start values of the camera are synthetic, so that each key must change.
++    [Fact]
++    public void AZeroDurationEventWithoutTheSecondCameraSetsItsValues()
++    {
++        var a = Camera("Camera_Zero", 25, 1.333333f, 2, 500);
++        Scene([a], Li04Event());
++
++        Assert.Equal(20, a.Camera!.FovH, Tolerance);
++        Assert.Equal(0.3f, a.Camera.Znear, Tolerance);
++        Assert.Equal(1000, a.Camera.Zfar, Tolerance);
++        Assert.Equal(1.85f, a.Camera.AspectRatio, Tolerance);
++    }
++
++    // s010x at 21.375 s: a zero-duration event with one target sets its value at once. Its key aspect sets the near
++    // plane.
++    [Fact]
++    public void AZeroDurationEventWithOneTargetSetsItsValue()
++    {
++        var a = Camera("a", 30, near: 0.2f);
++        Scene([a], ReadEvent(["a"], 0, ("aspect", 2)));
++
++        Assert.Equal(2, a.Camera!.Znear, Tolerance);
++        Assert.Equal(30, a.Camera.FovH);
++        Assert.Equal(1.85f, a.Camera.AspectRatio);
++    }
++
++    // Retail events use the keys aspect, near and far (25, 4 and 4 events). Retail reads them by position, so they
++    // set the near plane, the far plane and the aspect. The engine also reads the names that a CAMERA entity uses.
++    [Theory]
++    [InlineData("aspect", "near", "far")]
++    [InlineData("nearplane", "farplane", "hvaspect")]
++    public void TheEventReadsItsKeys(string near, string far, string aspect)
++    {
++        var ev = ReadEvent(["camera"], 1, ("fovh", 20), (near, 0.3f), (far, 1000), (aspect, 1.85f));
++
++        Assert.Equal(FovH | HVAspect | NearPlane | FarPlane, ev.SetFlags);
++        Assert.Equal(20, ev.FovH);
++        Assert.Equal(0.3f, ev.NearPlane);
++        Assert.Equal(1000, ev.FarPlane);
++        Assert.Equal(1.85f, ev.HVAspect);
++    }
++
++    // s002xe at 33.277 s sets only the key aspect, which is the near plane.
++    [Fact]
++    public void AnEventSetsOnlyTheFlagsOfItsKeys()
++    {
++        var ev = ReadEvent(["camera"], 1, ("aspect", 2));
++
++        Assert.Equal(NearPlane, ev.SetFlags);
++        Assert.Equal(2, ev.NearPlane);
++    }
++
++    // s002xe at 33.277 s, from the real event and entity tables: the near plane of Cam_06_ACOH_Tr_Observing_A goes
++    // from 1 to 2. The aspect and the far plane of the camera do not change.
++    [Fact]
++    public void ARetailAspectKeyMovesTheNearPlane()
++    {
++        var (ev, cameras) = RetailEvent(S002xe, 33.277f);
++        var shot = Assert.Single(cameras);
++        Assert.Equal(1, shot.Camera!.Znear);
++
++        var instance = Scene(cameras, ev);
++        Frames(instance, (int)Math.Ceiling(ev.Duration / Frame) + 8);
++
++        Assert.Equal(2, shot.Camera.Znear, Tolerance);
++        Assert.Equal(1.85f, shot.Camera.AspectRatio, Tolerance);
++        Assert.Equal(7000, shot.Camera.Zfar, Tolerance);
++    }
++
++    // The three shots of the retail Mission 1 scripts with a two-target FOV anim on the main monitor. In each event,
++    // the fovh is the fovh of the first camera, so the shot zooms only with the value of the second camera.
++    // s002xe 11.281 s: the news camera zooms in to 25 + (10 - 25) * 0.701923. s002xe 80.861 s: Cam_13 widens to 30.
++    // s003x 80.244 s: the last bar shot widens to 25.
++    [Theory]
++    [InlineData(S002xe, 11.281f, 14.4712f)]
++    [InlineData(S002xe, 80.861f, 30)]
++    [InlineData(@"SCRIPTS\STORY\s003x_nrml_manhtn_bar_li_01_Bar_01.thn", 80.244f, 25)]
++    public void ARetailShotZoomsToTheSecondCamera(string script, float time, float fovh)
++    {
++        var (ev, cameras) = RetailEvent(script, time);
++        Assert.Equal(2, ev.Targets.Length);
++        var shot = cameras.Single(x => x.Name == ev.Targets[0]);
++        Assert.Equal(FovH, ev.SetFlags);
++        Assert.Equal(shot.Camera!.FovH, ev.FovH);
++
++        var instance = Scene(cameras, ev);
++        Frames(instance, (int)Math.Ceiling(ev.Duration / Frame) + 8);
++
++        Assert.Equal(fovh, shot.Camera.FovH, 0.01f);
++    }
++}
+diff --git a/src/LibreLancer/Thn/Events/StartCameraPropAnimEvent.cs b/src/LibreLancer/Thn/Events/StartCameraPropAnimEvent.cs
+index 81fa7d06..39110ba8 100644
+--- a/src/LibreLancer/Thn/Events/StartCameraPropAnimEvent.cs
++++ b/src/LibreLancer/Thn/Events/StartCameraPropAnimEvent.cs
+@@ -35,10 +35,17 @@ namespace LibreLancer.Thn.Events
+                     return;
+                 }
+ 
++                // Retail reads the keys of the event by position, not by name. The keys fovh, aspect, near and far go
++                // to the camera values in the order fovh, near plane, far plane and aspect. Thus aspect sets the near
++                // plane, near sets the far plane and far sets the aspect. The retail values agree: all aspect values
++                // are near planes. The names of a CAMERA entity stay as a fallback, with their own meaning.
+                 if (GetValue(cameraprops, "fovh", out FovH)) SetFlags |= AnimFlags.FovH;
+-                if (GetValue(cameraprops, "hvaspect", out HVAspect)) SetFlags |= AnimFlags.HVAspect;
+-                if (GetValue(cameraprops, "nearplane", out NearPlane)) SetFlags |= AnimFlags.NearPlane;
+-                if (GetValue(cameraprops, "farplane", out FarPlane)) SetFlags |= AnimFlags.FarPlane;
++                if (GetValue(cameraprops, "aspect", out NearPlane) || GetValue(cameraprops, "nearplane", out NearPlane))
++                    SetFlags |= AnimFlags.NearPlane;
++                if (GetValue(cameraprops, "near", out FarPlane) || GetValue(cameraprops, "farplane", out FarPlane))
++                    SetFlags |= AnimFlags.FarPlane;
++                if (GetValue(cameraprops, "far", out HVAspect) || GetValue(cameraprops, "hvaspect", out HVAspect))
++                    SetFlags |= AnimFlags.HVAspect;
+             }
+         }
+ 
+@@ -55,31 +62,43 @@ namespace LibreLancer.Thn.Events
+                 FLLog.Error("Thn", $"Entity {Targets[0]} is not a camera");
+                 return;
+             }
++            // When the second target is a camera, retail takes the end value of each key from that camera, not from
++            // the event. When the second target is missing or is not a camera, the end values come from the event.
++            ThnCameraProps? target = null;
++            if (Targets.Length > 1 && instance.Objects.TryGetValue(Targets[1], out var objB))
++            {
++                target = objB.Camera;
++            }
++
++            var anim = new CameraPropAnim()
++            {
++                Event = this,
++                Camera = obj.Camera,
++                Target = target,
++                OrigFovH = obj.Camera.FovH,
++                OrigHVAspect = obj.Camera.AspectRatio,
++                OrigNearPlane = obj.Camera.Znear,
++                OrigFarPlane = obj.Camera.Zfar
++            };
+             if (Duration > 0)
+             {
+-                instance.AddProcessor(new CameraPropAnim()
+-                {
+-                    Event = this,
+-                    Camera = obj.Camera,
+-                    OrigFovH = obj.Camera.FovH,
+-                    OrigHVAspect = obj.Camera.AspectRatio,
+-                    OrigNearPlane = obj.Camera.Znear,
+-                    OrigFarPlane = obj.Camera.Zfar
+-                });
++                instance.AddProcessor(anim);
+             }
+             else
+             {
+-                if ((SetFlags & AnimFlags.FovH) == AnimFlags.FovH) obj.Camera.FovH = FovH;
+-                if ((SetFlags & AnimFlags.HVAspect) == AnimFlags.HVAspect) obj.Camera.AspectRatio = HVAspect;
+-                if ((SetFlags & AnimFlags.NearPlane) == AnimFlags.NearPlane) obj.Camera.Znear = NearPlane;
+-                if ((SetFlags & AnimFlags.FarPlane) == AnimFlags.FarPlane) obj.Camera.Zfar = FarPlane;
++                // A zero-duration anim sets the end values at once.
++                anim.Run(0);
+             }
+         }
+ 
++        // Retail writes from + (to - from) * u for each key that the event sets. from is the value of the camera when
++        // the anim starts. u is the value of the param_curve, or the linear time without a curve. Retail reads the end
++        // values of a second camera in each frame.
+         private class CameraPropAnim : ThnEventProcessor
+         {
+             public StartCameraPropAnimEvent Event = null!;
+             public ThnCameraProps Camera = null!;
++            public ThnCameraProps? Target;
+             public float OrigFovH;
+             public float OrigHVAspect;
+             public float OrigNearPlane;
+@@ -91,13 +110,13 @@ namespace LibreLancer.Thn.Events
+                 time += delta;
+                 float t = Event.GetT((float) time);
+                 if ((Event.SetFlags & AnimFlags.FovH) == AnimFlags.FovH)
+-                    Camera.FovH = MathHelper.Lerp(OrigFovH, Event.FovH, t);
++                    Camera.FovH = MathHelper.Lerp(OrigFovH, Target?.FovH ?? Event.FovH, t);
+                 if ((Event.SetFlags & AnimFlags.HVAspect) == AnimFlags.HVAspect)
+-                    Camera.AspectRatio = MathHelper.Lerp(OrigHVAspect, Event.HVAspect, t);
++                    Camera.AspectRatio = MathHelper.Lerp(OrigHVAspect, Target?.AspectRatio ?? Event.HVAspect, t);
+                 if ((Event.SetFlags & AnimFlags.NearPlane) == AnimFlags.NearPlane)
+-                    Camera.Znear = MathHelper.Lerp(OrigNearPlane, Event.NearPlane, t);
++                    Camera.Znear = MathHelper.Lerp(OrigNearPlane, Target?.Znear ?? Event.NearPlane, t);
+                 if ((Event.SetFlags & AnimFlags.FarPlane) == AnimFlags.FarPlane)
+-                    Camera.Zfar = MathHelper.Lerp(OrigFarPlane, Event.FarPlane, t);
++                    Camera.Zfar = MathHelper.Lerp(OrigFarPlane, Target?.Zfar ?? Event.FarPlane, t);
+                 return time < Event.Duration;
+             }
+         }

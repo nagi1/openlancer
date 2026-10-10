@@ -1,0 +1,10 @@
+<Project>
+  <!-- Kept out of the repo root so that it does not apply to the Librelancer submodule. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Authors>OpenLancer contributors</Authors>
+    <Copyright>Copyright (c) OpenLancer contributors 2026</Copyright>
+  </PropertyGroup>
+</Project>

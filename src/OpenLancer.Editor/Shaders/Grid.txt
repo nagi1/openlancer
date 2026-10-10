@@ -1,0 +1,5 @@
+# MIT License - Copyright (c) Callum McGing, Librelancer Contributors 2013-2026
+# Vendored from Librelancer src/Editor/LancerEdit/Shaders/Grid.txt at commit dcbcf8080dec4a10ebe1ef28b89a0a6d122fe415.
+# docs/VENDORED.md has the Librelancer license text and the OpenLancer changes to this file.
+vertex Grid.vert.hlsl
+fragment Grid.frag.hlsl

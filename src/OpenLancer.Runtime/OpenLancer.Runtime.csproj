@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenLancer.Data\OpenLancer.Data.csproj" />
+    <ProjectReference Include="..\..\external\Librelancer\src\LibreLancer\LibreLancer.csproj" />
+    <ProjectReference Include="..\..\external\Librelancer\src\Editor\LibreLancer.ContentEdit\LibreLancer.ContentEdit.csproj" />
+  </ItemGroup>
+
+</Project>

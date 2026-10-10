@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Copies the Librelancer natives (cimgui, SDL3 and others) next to the editor. -->
+  <Import Project="..\..\external\Librelancer\src\PublishAssets\PublishAssets.projitems" Label="Shared" />
+  <!-- Compiles the editor shaders in Shaders\ and embeds each one as <name>.bin. -->
+  <Import Project="..\..\external\Librelancer\src\Shader.targets" />
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>OpenLancer.Editor</AssemblyName>
+    <!-- ImGui draw-list callbacks take pointer arguments. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\external\Librelancer\src\Editor\LibreLancer.ImUI\LibreLancer.ImUI.csproj" />
+    <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+    <!-- The editor validates a save out of process with oltool, so oltool goes next to the editor. -->
+    <ProjectReference Include="..\OpenLancer.Tools\OpenLancer.Tools.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Shader Include="Shaders\*.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The tests check the editor logic that needs no GPU, for example the workspace layout. -->
+    <InternalsVisibleTo Include="OpenLancer.Tests" />
+  </ItemGroup>
+
+</Project>

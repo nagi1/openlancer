@@ -1,0 +1,409 @@
+diff --git a/src/LibreLancer.Tests/DfmVerticalRootMotionTests.cs b/src/LibreLancer.Tests/DfmVerticalRootMotionTests.cs
+new file mode 100644
+index 00000000..f3dd33f5
+--- /dev/null
++++ b/src/LibreLancer.Tests/DfmVerticalRootMotionTests.cs
+@@ -0,0 +1,261 @@
++using System;
++using System.Linq;
++using System.Numerics;
++using LibreLancer.Render;
++using LibreLancer.Thn;
++using LibreLancer.Thn.Events;
++using LibreLancer.Utf.Anm;
++using LibreLancer.World;
++using Xunit;
++
++namespace LibreLancer.Tests;
++
++// The vertical root motion of character motions, with retail characters and animations. The model of a character
++// stands at its floor height, plus the root height of its newest motion, plus the Y of the root channel of that motion
++// at the motion time. The unit tests call UpdateScripts in each frame, as AnimationComponent does, and then
++// ThnSceneObject.Update.
++public class DfmVerticalRootMotionTests
++{
++    // s004x 20.5 s: the diplomat stands up from his chair. At 22.767 s he turns.
++    private const string StandUp = "Sc_MLBODY_CHRB_STNDCL_TRNS_270LV_XA_06";
++    private const string Turn = "Sc_MLBODY_STND_TURN_045LV_XA_04";
++    // This transition ends lower than it starts. Retail loops it in a base script.
++    private const string StandToWalk = "Sc_MLBODY_STND_WALK_TRNS_000LV_XA_01";
++    // A hand motion. It has no Root object map and no root height.
++    private const string RightHand = "Sc_MLHAND_NEUT_RGHT_000LV_A_00";
++    private const string HandMale = @"CHARACTERS\ANIMATIONS\HandMale.anm";
++    private const string S019b = @"SCRIPTS\STORY\s019b_accept_syd_li_01_Cityscape_01.thn";
++    private const string S026b = @"SCRIPTS\STORY\s026b_accept_Vance_br_02_Bar_01.thn";
++    private static readonly string[] FemaleBodies =
++        [@"CHARACTERS\ANIMATIONS\BodyGenericFemale.anm", @"CHARACTERS\ANIMATIONS\BodyStoryFemale.anm"];
++    private const double Frame = 1.0 / 60;
++    private const float Tolerance = 1e-3f;
++
++    // The animation files are large, so the tests load them one time.
++    private static readonly Lazy<(RetailData Data, AnmFile Animations)> retail = new(() =>
++    {
++        var data = RetailData.Open();
++        return (data, data.LoadAnimations(DfmMotionStackTests.GenericMale, HandMale));
++    });
++
++    private static Script Motion(string name) => retail.Value.Animations.Scripts[name];
++
++    // The diplomat of s004x, on a floor at the height 0.
++    private static (DfmSkeletonManager Skeleton, ThnSceneObject Character) Diplomat()
++    {
++        var skeleton = retail.Value.Data.LoadCostume("li_male_diplomat_1")!;
++        var character = new ThnSceneObject()
++        {
++            Name = "Char_li_diplomat",
++            Rotate = Quaternion.Identity,
++            Object = new GameObject() { RenderComponent = new CharacterRenderer(skeleton) }
++        };
++        return (skeleton, character);
++    }
++
++    private static Channel RootChannel(Script script) =>
++        script.ObjectMaps.First(x => x.ParentName.Equals("Root", StringComparison.OrdinalIgnoreCase)).Channel;
++
++    private static Vector3 RootPosition(Script script, float time)
++    {
++        var cursor = 0;
++        return RootChannel(script).PositionAtTime(time, ref cursor);
++    }
++
++    private static void AssertHeight(float expected, ThnSceneObject character, string when)
++    {
++        Assert.True(MathF.Abs(expected - character.Translate.Y) < Tolerance,
++            $"{when}: expected the height {expected}, got {character.Translate.Y}");
++    }
++
++    // Starts a motion and plays it until a time after its end. The model starts at the root height of the motion plus
++    // the Y of its root channel at the start time. In each frame, it is at the root height plus the Y at the motion
++    // time. Before each frame, the action can start other motions.
++    private static void Play(DfmSkeletonManager skeleton, ThnSceneObject character, Script script, float startTime,
++        float timeScale, float duration, float transition = 0, bool overlay = false, double after = 0.5,
++        Action<int>? beforeFrame = null)
++    {
++        skeleton.StartScript(script, startTime, timeScale, duration, false, transition, overlay);
++        character.Update();
++        AssertHeight(script.RootHeight + RootPosition(script, startTime).Y, character, $"The start of {script.Name}");
++
++        var t = 0.0;
++        var ft = startTime;
++        var ended = false;
++        var frames = (int)Math.Ceiling(duration / Frame) + (int)Math.Round(after / Frame);
++        for (var i = 0; i < frames; i++)
++        {
++            beforeFrame?.Invoke(i);
++            skeleton.UpdateScripts(Frame);
++            character.Update();
++            // The motion time, as ScriptInstance.RunScript calculates it. It stops when the motion ends.
++            if (!ended)
++            {
++                t += Frame;
++                ft = (float)(t * timeScale) + startTime;
++                ended = t >= duration;
++            }
++
++            AssertHeight(script.RootHeight + RootPosition(script, ft).Y, character, $"Frame {i} of {script.Name}");
++        }
++    }
++
++    // The whole channel, and the s004x event (start_time 2, time_scale 1.2, trans_time 0.5 and event_flags 128).
++    // The model moves up from the seated root height. Then the turn starts at the standing root height, so the model
++    // does not jump.
++    [Theory]
++    [InlineData(0f, 1f, 6.8f, 0f, false, 0.546f, 0.973f)]
++    [InlineData(2f, 1.2f, 2.256f, 0.5f, true, 0.551f, 0.960f)]
++    public void AStandUpMovesTheModelUp(float startTime, float timeScale, float duration, float transition,
++        bool overlay, float seated, float standing)
++    {
++        var (skeleton, character) = Diplomat();
++        var standUp = Motion(StandUp);
++        Assert.Equal(seated, standUp.RootHeight + RootPosition(standUp, startTime).Y, 0.002f);
++        Play(skeleton, character, standUp, startTime, timeScale, duration, transition, overlay);
++        Assert.Equal(standing, character.Translate.Y, 0.002f);
++
++        var turn = Motion(Turn);
++        Assert.True(MathF.Abs(turn.RootHeight - character.Translate.Y) < 0.02f,
++            $"The turn moves the model from {character.Translate.Y} to {turn.RootHeight}");
++        Play(skeleton, character, turn, 0, 1, 4.333f);
++    }
++
++    // A hand motion starts during the stand-up of s004x. It has no root height, so the model keeps the height of the
++    // stand-up. In s004x, the lip-sync motions of Juni start during her stand-up.
++    [Fact]
++    public void AMotionWithoutARootHeightKeepsTheHeight()
++    {
++        var (skeleton, character) = Diplomat();
++        var hand = Motion(RightHand);
++        Assert.False(hand.HasRootHeight);
++        Play(skeleton, character, Motion(StandUp), 2, 1.2f, 2.256f, 0.5f, true, beforeFrame: i =>
++        {
++            if (i == 60)
++            {
++                skeleton.StartScript(hand, 0, 1, 4, false, 0.3f);
++            }
++        });
++    }
++
++    // The stand-up of s004x starts as an overlay over a loop. The loop moves its root up and down by up to 5.5 cm. Only
++    // the stand-up, the newest motion that moves its root, moves the model. When the overlay ends, the loop moves the
++    // root again, so the test stops there.
++    [Fact]
++    public void AnOlderMotionDoesNotMoveTheModel()
++    {
++        var (skeleton, character) = Diplomat();
++        skeleton.StartScript(Motion(StandToWalk), 0, 1, 10, true);
++        for (var i = 0; i < 20; i++)
++        {
++            skeleton.UpdateScripts(Frame);
++            character.Update();
++        }
++
++        Play(skeleton, character, Motion(StandUp), 2, 1.2f, 2.256f, 0.5f, true, after: 0);
++    }
++
++    // A marker on a hardpoint of the character stays on the model while the model moves up.
++    [Fact]
++    public void AMarkerOnAHardpointMovesUpWithTheModel()
++    {
++        var (skeleton, character) = Diplomat();
++        var hardpoint = skeleton.Hardpoints["hp_head"];
++        var marker = new ThnSceneObject() { Name = "marker", Rotate = Quaternion.Identity };
++        marker.Attachments.Add(new ThnAttachment(new ThnObjectParent(character, hardpoint, null))
++        {
++            Position = true,
++            Orientation = true
++        });
++        skeleton.StartScript(Motion(StandUp), 0, 1, 6.8f);
++        skeleton.UpdateScripts(Frame);
++        character.Update();
++        marker.Update();
++        var seated = marker.Translate.Y;
++
++        for (var i = 0; i < 420; i++)
++        {
++            skeleton.UpdateScripts(Frame);
++            character.Update();
++            marker.Update();
++        }
++
++        var head = (hardpoint.Transform * character.Object!.WorldTransform).Position;
++        Assert.True(Vector3.Distance(head, marker.Translate) < 1e-4f, $"Expected {head}, got {marker.Translate}");
++        Assert.True(marker.Translate.Y - seated > 0.3f, $"The head moves up only from {seated} to {marker.Translate.Y}");
++    }
++
++    // The model follows the Y of the root channel in each cycle of a loop, also from a start time in a later cycle.
++    // The height does not drift from cycle to cycle, but the cycles add their horizontal root motion.
++    [Theory]
++    [InlineData(0f)]
++    [InlineData(1.5f)]
++    public void ALoopAddsNoVerticalRootMotionAcrossItsCycles(float startTime)
++    {
++        var (skeleton, character) = Diplomat();
++        var loop = Motion(StandToWalk);
++        var cycle = RootChannel(loop).Duration;
++        var end = RootPosition(loop, cycle);
++        Assert.True(end.Y < -0.02f, $"The cycle ends only {end.Y} m lower than it starts");
++
++        // The root position at a motion time, as ScriptInstance.EvaluateRoot calculates it.
++        Vector3 Root(float time)
++        {
++            var count = 0;
++            while (time > cycle)
++            {
++                time -= cycle;
++                count++;
++            }
++
++            return count * (end with { Y = 0 }) + RootPosition(loop, time);
++        }
++
++        const int cycles = 5;
++        skeleton.StartScript(loop, startTime, 1, cycles * cycle + 1, true);
++        character.Update();
++        AssertHeight(loop.RootHeight + Root(startTime).Y, character, "The start");
++
++        var t = 0.0;
++        var moved = Vector3.Zero;
++        var expected = Vector3.Zero;
++        for (var i = 0; i < (int)(cycles * cycle / Frame); i++)
++        {
++            skeleton.UpdateScripts(Frame);
++            character.Update();
++            Assert.True(skeleton.ApplyRootMotion, $"No root motion in frame {i}");
++            moved += skeleton.RootTranslation;
++            t += Frame;
++            var root = Root((float)t + startTime);
++            AssertHeight(loop.RootHeight + root.Y, character, $"Frame {i}");
++            expected = root - Root(startTime);
++        }
++
++        Assert.True(new Vector2(expected.X, expected.Z).Length() > 1, "The loop moves the root less than 1 m");
++        Assert.True(Vector3.Distance(expected, moved) < Tolerance, $"Expected the root motion {expected}, got {moved}");
++    }
++
++    // Retail scripts. At the time, a body motion of the character starts after a motion with a start time. Before the
++    // time, the model is at the height above the floor. When the motion starts, the model does not jump.
++    // - s026b 20.702 s: Juni sits down, from start_time 2.6. At 24.389 s, the next motion starts at its root height,
++    //   0.535 m.
++    // - s019b 56.187 s: Syd falls to the ground, from start_time 1.4. At 62.813 s, the same motion starts again at
++    //   4 s.
++    // A height that counts from the start time puts Juni 10 cm above the chair, and Syd starts again 0.77 m higher.
++    [Theory]
++    [InlineData(S026b, "Char_Juni", true, 24.389, 0.535f)]
++    [InlineData(S019b, "Char_syd", false, 62.813, 0.173f)]
++    public void TheNextMotionStartsAtTheHeightWhereTheLastMotionStopped(string script, string name, bool female,
++        double time, float height)
++    {
++        var replay = new RetailThnReplay(script, female ? FemaleBodies : RetailThnReplay.MaleBodies,
++            ev => ev is StartMotionEvent && ev.Targets[0] == name);
++        var skeleton = ((CharacterRenderer)replay[name].Object!.RenderComponent!).Skeleton;
++        replay.RunTo(time - 0.05);
++        var before = skeleton.ModelHeight - skeleton.FloorHeight;
++        Assert.True(MathF.Abs(before - height) < 0.01f, $"Before {time} s, expected the height {height}, got {before}");
++        replay.RunTo(time + 0.05);
++        var after = skeleton.ModelHeight - skeleton.FloorHeight;
++        Assert.True(MathF.Abs(after - before) < 0.02f, $"At {time} s, the model moves from {before} to {after}");
++    }
++}
+diff --git a/src/LibreLancer.Tests/ThnAttachFlagsTests.cs b/src/LibreLancer.Tests/ThnAttachFlagsTests.cs
+index 7ace813e..96f0a936 100644
+--- a/src/LibreLancer.Tests/ThnAttachFlagsTests.cs
++++ b/src/LibreLancer.Tests/ThnAttachFlagsTests.cs
+@@ -359,10 +359,17 @@ public class ThnAttachFlagsTests
+             ev.Targets[0] == "Char_Trent" || ev.Targets[0] == child);
+         var trent = replay["Char_Trent"].Object!;
+         var skeleton = ((CharacterRenderer)trent.RenderComponent!).Skeleton;
+-        // The distance from the child to the hardpoint, with the bones of the last animation update. A rigid attach
+-        // keeps it.
+-        float Distance() => Vector3.Distance(replay[child].GetTransform().Position,
+-            (skeleton.Hardpoints[hardpoint].Transform * trent.WorldTransform).Position);
++        // The distance from the child to the hardpoint, with the bones and the model height of the last animation
++        // update. A rigid attach keeps it. The vertical root motion changes the model height in the animation update,
++        // and the scene gives that height to the model in the next frame. Thus the test puts it into the model
++        // transform.
++        float Distance()
++        {
++            var model = trent.WorldTransform;
++            model.Position = model.Position with { Y = skeleton.ModelHeight };
++            return Vector3.Distance(replay[child].GetTransform().Position,
++                (skeleton.Hardpoints[hardpoint].Transform * model).Position);
++        }
+ 
+         replay.RunTo(start);
+         Assert.True(skeleton.Posed, "Trent has no pose");
+diff --git a/src/LibreLancer/Render/DfmSkeletonManager.cs b/src/LibreLancer/Render/DfmSkeletonManager.cs
+index d42960a5..0293dd75 100644
+--- a/src/LibreLancer/Render/DfmSkeletonManager.cs
++++ b/src/LibreLancer/Render/DfmSkeletonManager.cs
+@@ -20,6 +20,16 @@ namespace LibreLancer.Render
+     {
+         public float FloorHeight;
+         public float RootHeight;
++        // The Y of the root channel of the newest motion with a root height: the Y at its start time, plus the
++        // vertical root motion since then.
++        private float rootVerticalOffset;
++
++        // The height of the model: the floor height, plus the root height of the newest motion, plus the Y of its
++        // root channel. The root height is the height at the start of the channel, where the Y is 0. At this height,
++        // the feet of the animation stay on the floor. Thus a motion that stands a character up from a chair moves
++        // the model from the root height of a seated character to the root height of a standing character. A motion
++        // that starts later in its channel starts at the height of that time.
++        public float ModelHeight => FloorHeight + RootHeight + rootVerticalOffset;
+ 
+         public DfmFile? Head;
+         public DfmFile Body;
+@@ -232,7 +242,10 @@ namespace LibreLancer.Render
+ 
+                         while (cht > o.Channel.Duration)
+                         {
+-                            translate += trOne;
++                            // At each loop, the Digital Anvil engine puts the root back at the root height of the
++                            // motion. Thus a cycle adds its horizontal root motion but not its vertical root motion,
++                            // and the height does not drift.
++                            translate += trOne with { Y = 0 };
+                             rotate *= qOne;
+                             cht -= o.Channel.Duration;
+                             if (hangDetect++ > 10000)
+@@ -258,6 +271,10 @@ namespace LibreLancer.Render
+                 return false;
+             }
+ 
++            // The Y of the root channel at a motion time, with the loop rule of EvaluateRoot. 0 for a motion without
++            // a Root object map.
++            public float RootY(float ft) => EvaluateRoot(ft, out _, out var translate) ? translate.Y : 0;
++
+             // Advances the motion and samples its channels. An ended motion keeps its samples.
+             public void RunScript(double delta)
+             {
+@@ -515,6 +532,13 @@ namespace LibreLancer.Render
+                 }
+             }
+ 
++            // The vertical root motion moves the model up or down. ThnSceneObject adds the horizontal root motion and
++            // the turn.
++            if (_rootMotionInstance != null)
++            {
++                rootVerticalOffset += _rootMotionInstance.RootTranslation.Y;
++            }
++
+             composed.Clear();
+             foreach (var sc in RunningScripts)
+             {
+@@ -1016,11 +1040,6 @@ namespace LibreLancer.Render
+         public void StartScript(Script anmScript, float start_time, float time_scale, float duration, bool loop = false,
+             float transition = 0, bool overlay = false)
+         {
+-            if (anmScript.HasRootHeight)
+-            {
+-                RootHeight = anmScript.RootHeight;
+-            }
+-
+             var inst = new ScriptInstance(start_time)
+             {
+                 Script = anmScript,
+@@ -1033,6 +1052,14 @@ namespace LibreLancer.Render
+                 OwnsRoot = HasRootMap(anmScript)
+             };
+ 
++            if (anmScript.HasRootHeight)
++            {
++                RootHeight = anmScript.RootHeight;
++                // The model starts at the Y of the root channel at the start time. Thus a motion that starts again at
++                // the time where it stopped keeps the height.
++                rootVerticalOffset = inst.RootY(start_time);
++            }
++
+             for (var i = 0; i < anmScript.JointMaps.Count; i++)
+             {
+                 ref var jm = ref anmScript.JointMaps[i];
+diff --git a/src/LibreLancer/Thn/ThnSceneObject.cs b/src/LibreLancer/Thn/ThnSceneObject.cs
+index 502b42bb..bdf0a0ca 100644
+--- a/src/LibreLancer/Thn/ThnSceneObject.cs
++++ b/src/LibreLancer/Thn/ThnSceneObject.cs
+@@ -112,7 +112,7 @@ public class ThnSceneObject
+                     Rotate = accum;
+                 }
+ 
+-                Translate.Y = charRen.Skeleton.FloorHeight + charRen.Skeleton.RootHeight;
++                Translate.Y = charRen.Skeleton.ModelHeight;
+             }
+ 
+             if (HpMount == null)
+@@ -229,14 +229,14 @@ public class ThnObjectParent(ThnSceneObject obj, IRenderHardpoint? hardpoint, Ri
+     public override bool HasPose =>
+         hardpoint == null || obj.Object?.RenderComponent is not CharacterRenderer ch || ch.Skeleton.Posed;
+ 
+-    // The transform that UpdateEngineObjects gives to the model. A character stands at its floor height plus
+-    // the root height of its animation.
++    // The transform that UpdateEngineObjects gives to the model. A character stands at the model height of its
++    // skeleton.
+     private Transform3D GetModelTransform()
+     {
+         var tr = obj.GetTransform();
+         if (!obj.PosFromObject && obj.Object?.RenderComponent is CharacterRenderer ch)
+         {
+-            tr.Position = tr.Position with { Y = ch.Skeleton.FloorHeight + ch.Skeleton.RootHeight };
++            tr.Position = tr.Position with { Y = ch.Skeleton.ModelHeight };
+         }
+ 
+         if (obj.HpMount != null)
