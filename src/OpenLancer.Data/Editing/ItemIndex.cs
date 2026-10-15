@@ -44,6 +44,10 @@ public enum ItemRelation
     /// <summary>From a gun, a mine dropper or a countermeasure dropper: the section that
     /// <c>projectile_archetype</c> names.</summary>
     Munition,
+
+    /// <summary>From a package or a hull good: the <c>[Ship]</c> that it sells. A package names its hull good with
+    /// <c>hull</c>, and the hull good names the ship with <c>ship</c>.</summary>
+    Ship,
 }
 
 /// <summary>One <c>marketgood</c> line of a <c>[BaseGood]</c> section.</summary>
@@ -110,14 +114,9 @@ internal sealed class ItemIndex
     public static List<(string Path, ItemFileKind Kind)> ReadPaths(IReadOnlyList<Section> freelancerIni)
     {
         var result = new List<(string, ItemFileKind)>();
-        var dataPath = freelancerIni.Where(s => Is(s.Name, "Freelancer"))
-            .Select(s => First(s, "data path"))
-            .FirstOrDefault(p => p != null);
-        if (dataPath == null)
-            return result;
-        foreach (var entry in freelancerIni.Where(s => Is(s.Name, "Data")).SelectMany(s => s))
+        foreach (var (name, path) in DataPaths.Entries(freelancerIni))
         {
-            ItemFileKind? kind = entry.Name.ToLowerInvariant() switch
+            ItemFileKind? kind = name.ToLowerInvariant() switch
             {
                 "ships" => ItemFileKind.Ships,
                 "equipment" => ItemFileKind.Equipment,
@@ -125,7 +124,7 @@ internal sealed class ItemIndex
                 "markets" => ItemFileKind.Markets,
                 _ => null,
             };
-            if (kind != null && entry.Count > 0 && VfsPath.Normalize($@"EXE\{dataPath}\{entry[0]}") is { } path)
+            if (kind != null)
                 result.Add((path, kind.Value));
         }
         return result;
@@ -252,9 +251,14 @@ internal sealed class ItemIndex
             return item;
         if (One(ItemFileKind.Equipment, item.Nickname) is { } equipment)
             return equipment;
-        var hull = Is(Category(item), "ship") ? One(ItemFileKind.Goods, First(item.Section, "hull")) : item;
-        var ship = hull != null && Is(Category(hull), "shiphull") ? One(ItemFileKind.Ships, First(hull.Section, "ship")) : null;
-        return ship ?? item;
+        return ShipOf(item) ?? item;
+    }
+
+    /// <summary>The ship of a package or a hull good (see <see cref="ItemRelation.Ship"/>), or null.</summary>
+    private Item? ShipOf(Item good)
+    {
+        var hull = Is(Category(good), "ship") ? One(ItemFileKind.Goods, First(good.Section, "hull")) : good;
+        return hull != null && Is(Category(hull), "shiphull") ? One(ItemFileKind.Ships, First(hull.Section, "ship")) : null;
     }
 
     private List<Item> RelatedItems(Item item, ItemRelation relation)
@@ -270,6 +274,8 @@ internal sealed class ItemIndex
                 return RelatedItems(item, ItemRelation.Hull).SelectMany(h => RelatedItems(h, ItemRelation.Package)).ToList();
             case ItemRelation.Package when Is(Category(item), "shiphull") && item.Nickname != null:
                 return goods.Where(g => Is(Category(g), "ship") && Is(First(g.Section, "hull"), item.Nickname)).ToList();
+            case ItemRelation.Ship when item.Kind == ItemFileKind.Goods:
+                return ShipOf(item) is { } ship ? [ship] : [];
             case ItemRelation.Munition when item.Kind == ItemFileKind.Equipment &&
                                             First(item.Section, "projectile_archetype") is { } munition:
                 return ItemsNamed(ItemFileKind.Equipment, munition);

@@ -16,18 +16,29 @@ namespace OpenLancer.Editor.Editing;
 /// <param name="Failure">Why the validation could not run, or null.</param>
 internal sealed record ValidationResult(int Save, IReadOnlyList<Diagnostic>? Problems, string? Failure);
 
+/// <summary>The state of the last validation of a session.</summary>
+/// <param name="Save">The number of the save that the validation checks. 0 is the saved files of a session without a
+/// save that changed files.</param>
+/// <param name="Running">True while the validation runs.</param>
+/// <param name="Result">The result, or null while the validation runs and after it stopped without a result.</param>
+internal sealed record ValidationState(int Save, bool Running, ValidationResult? Result);
+
 /// <summary>
 /// Validates the saved mod out of process, with <c>oltool validate &lt;profile&gt; --active &lt;mod&gt; --json</c>
-/// (roadmap rule R4). The engine log and the material map are process-wide, so the editor does not load the data a
-/// second time itself.
+/// (roadmap rule R4). Without an active mod, the command has no <c>--active</c>, and oltool reports what all mods add
+/// to vanilla. The engine log and the material map are process-wide, so the editor does not load the data a second
+/// time itself.
 /// </summary>
 /// <remarks>
-/// One process runs at a time. A new save stops the validation of the save before it, because that result is old and
-/// the process can read files that the new save writes (review finding F16). Each result has the number of its save.
+/// <para>One process runs at a time. A new save stops the validation of the save before it, because that result is old
+/// and the process can read files that the new save writes (review finding F16). Each result has the number of its
+/// save.</para>
+/// <para>The runner keeps the state of the last validation, which the gate of Play reads (section 9.3 of the M4
+/// design). So the state has one owner, and the tests check its changes with stub programs.</para>
 /// </remarks>
 internal sealed class ValidationRunner : IDisposable
 {
-    private readonly Func<string, string, ProcessStartInfo> command;
+    private readonly Func<string, string?, ProcessStartInfo> command;
     private Process? process;
 
     // Changes when a validation starts or stops, so that the result of a stopped process is dropped.
@@ -39,20 +50,25 @@ internal sealed class ValidationRunner : IDisposable
     }
 
     /// <param name="command">Gives the program and the arguments that validate a mod of a profile, from the path of
-    /// the profile and the id of the mod. The tests give a stub program.</param>
-    internal ValidationRunner(Func<string, string, ProcessStartInfo> command) => this.command = command;
+    /// the profile and the id of the mod, or null for all mods. The tests give a stub program.</param>
+    internal ValidationRunner(Func<string, string?, ProcessStartInfo> command) => this.command = command;
 
-    /// <summary>The number of the save that the running validation checks, or null.</summary>
-    public int? RunningSave { get; private set; }
+    /// <summary>The state of the last validation, or null before the first one and after <see cref="Reset"/>.</summary>
+    public ValidationState? State { get; private set; }
 
-    /// <summary>The oltool program next to the editor. The editor project references the tool project for it.</summary>
-    private static string ToolPath => Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "oltool.exe" : "oltool");
+    /// <summary>Runs on the UI thread when a validation gives its result, after the <c>done</c> action of
+    /// <see cref="Start"/>. It does not run for a validation that stops.</summary>
+    public event Action<ValidationState>? Validated;
 
     /// <summary>Starts the validation of a save, and stops a running validation.</summary>
-    /// <param name="done">Gets the result on the UI thread. It does not run for a validation that stops.</param>
-    public void Start(string profilePath, string modId, int save, IUIThread ui, Action<ValidationResult> done)
+    /// <param name="modId">The active mod, or null for all mods of the profile.</param>
+    /// <param name="done">Gets the result on the UI thread. It does not run for a validation that stops. When the
+    /// process does not start, it runs at once.</param>
+    public void Start(string profilePath, string? modId, int save, IUIThread ui, Action<ValidationResult> done)
     {
         Stop();
+        // The state changes first, because a process that does not start gives its result at once.
+        State = new ValidationState(save, Running: true, Result: null);
         var info = command(profilePath, modId);
         info.RedirectStandardOutput = true;
         info.RedirectStandardError = true;
@@ -65,12 +81,11 @@ internal sealed class ValidationRunner : IDisposable
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException)
         {
-            done(new ValidationResult(save, null, $"{info.FileName} did not start: {e.Message}"));
+            Finish(new ValidationResult(save, null, $"{info.FileName} did not start: {e.Message}"), done);
             return;
         }
 
         process = started;
-        RunningSave = save;
         var id = ++generation;
         Task.Run(async () =>
         {
@@ -94,18 +109,30 @@ internal sealed class ValidationRunner : IDisposable
                 }
 
                 process = null;
-                RunningSave = null;
-                done(result);
+                Finish(result, done);
             });
         });
     }
 
-    /// <summary><c>oltool validate &lt;profile&gt; --active &lt;mod&gt; --json</c>.</summary>
-    private static ProcessStartInfo OltoolCommand(string profilePath, string modId)
+    private void Finish(ValidationResult result, Action<ValidationResult> done)
     {
-        var info = new ProcessStartInfo(ToolPath);
-        foreach (var argument in (string[])["validate", profilePath, "--active", modId, "--json"])
-            info.ArgumentList.Add(argument);
+        State = new ValidationState(result.Save, Running: false, result);
+        done(result);
+        Validated?.Invoke(State);
+    }
+
+    /// <summary><c>oltool validate &lt;profile&gt; --active &lt;mod&gt; --json</c>, or without <c>--active</c> when no
+    /// mod is active.</summary>
+    internal static ProcessStartInfo OltoolCommand(string profilePath, string? modId)
+    {
+        var info = new ProcessStartInfo(ProgramPaths.Oltool) { ArgumentList = { "validate", profilePath } };
+        if (modId != null)
+        {
+            info.ArgumentList.Add("--active");
+            info.ArgumentList.Add(modId);
+        }
+
+        info.ArgumentList.Add("--json");
         return info;
     }
 
@@ -130,7 +157,8 @@ internal sealed class ValidationRunner : IDisposable
         }
     }
 
-    /// <summary>Stops the running validation. Its result is dropped.</summary>
+    /// <summary>Stops the running validation. Its result is dropped, and the state keeps its save without a
+    /// result.</summary>
     public void Stop()
     {
         if (process == null)
@@ -149,7 +177,15 @@ internal sealed class ValidationRunner : IDisposable
         }
 
         process = null;
-        RunningSave = null;
+        // A process runs only after the state of its save is set.
+        State = State! with { Running = false };
+    }
+
+    /// <summary>Stops the running validation and forgets the state, for example when the profile closes.</summary>
+    public void Reset()
+    {
+        Stop();
+        State = null;
     }
 
     public void Dispose() => Stop();

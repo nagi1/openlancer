@@ -336,10 +336,15 @@ internal sealed class ConsolePanel(EditorWindow window)
         if (ImGui.Selectable("##row", isSelected, ImGuiSelectableFlags.SpanAllColumns))
         {
             selected = entry;
-            // An entry about a section selects the section, so the Inspector shows it.
+            // An entry about a section selects the section, so the Inspector shows it. An entry about a cutscene opens
+            // the cutscene and selects the element.
             if (entry.Target != null)
             {
                 window.Selection = entry.Target;
+            }
+            else if (entry.Cutscene != null)
+            {
+                window.Cutscenes.Show(entry.Cutscene);
             }
         }
         else if (ImGui.IsItemClicked(ImGuiMouseButton.Right))

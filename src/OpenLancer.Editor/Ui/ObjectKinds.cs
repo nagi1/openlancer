@@ -226,6 +226,36 @@ internal static class ObjectKinds
         _ => AnyEquipment,
     };
 
+    /// <summary>
+    /// The kinds of the entities of a cutscene, in the groups of the Timeline and the Hierarchy (section 7.3 of the M8
+    /// design). The Cutscene view draws its overlay glyphs with them.
+    /// </summary>
+    public static class Thn
+    {
+        public static readonly ObjectKind Camera = Entity("Camera", EditorIcons.Video, 0x6C9BE0);
+        public static readonly ObjectKind Monitor = Entity("Monitor", EditorIcons.Desktop, 0x6C9BE0);
+        public static readonly ObjectKind Character = Entity("Character", EditorIcons.User, 0x60D060);
+        public static readonly ObjectKind Prop = Entity("Prop", EditorIcons.CubeSolid, 0xA8A8A8);
+        public static readonly ObjectKind Light = Entity("Light", EditorIcons.Lightbulb, 0xE0C040);
+        public static readonly ObjectKind Effect = Entity("Effect", EditorIcons.Asterisk, 0xE0905A);
+        public static readonly ObjectKind Sound = Entity("Sound", EditorIcons.VolumeUp, 0xB080E0);
+        public static readonly ObjectKind Marker = Entity("Marker", EditorIcons.MapMarkerAlt, 0x50C0C0);
+        public static readonly ObjectKind Path = Entity("Motion path", EditorIcons.Route, 0xC8B560);
+        public static readonly ObjectKind Scene = Entity("Scene", EditorIcons.Image, 0x8A9BB8);
+        public static readonly ObjectKind Other = Entity("Entity", EditorIcons.QuestionCircle, 0x909090);
+
+        /// <summary>An event target that names no entity of the script.</summary>
+        public static readonly ObjectKind Missing = Entity("Not in this script", EditorIcons.ExclamationTriangle, 0x909090);
+
+        /// <summary>A cutscene script.</summary>
+        public static readonly ObjectKind Script = new("Cutscene", EditorIcons.Film, EditorTheme.Text);
+
+        /// <summary>An event of a cutscene.</summary>
+        public static readonly ObjectKind Event = new("Event", EditorIcons.Bolt, EditorTheme.Text);
+
+        private static ObjectKind Entity(string label, char icon, uint rgb) => new(label, icon, EditorTheme.Rgb(rgb), 12);
+    }
+
     private static class Zones
     {
         public static readonly ObjectKind AsteroidField = Zone("Asteroid field", EditorIcons.Meteor, 0xE0905A);

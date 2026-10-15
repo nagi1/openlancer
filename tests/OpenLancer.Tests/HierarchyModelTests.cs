@@ -3,6 +3,7 @@ using System.Linq;
 using LibreLancer.Data.GameData;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.Data.Schema.Solar;
+using OpenLancer.Editor;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Scene;
 using Xunit;
@@ -68,8 +69,15 @@ public sealed class HierarchyModelTests
     private static HierarchyModel Model(StarSystem? system = null)
     {
         system ??= System();
-        return new HierarchyModel(new SystemIndex(system, system), ids => Names.GetValueOrDefault(ids, ""));
+        return new HierarchyModel(new SystemIndex(system, system), IdText);
     }
+
+    /// <summary>The text of a key from the text id of the item, as the game data gives it when W has no edit.</summary>
+    private static string IdText(object item, string key) => Names.GetValueOrDefault(key switch
+    {
+        "tradelane_space_name" => ((SystemObject)item).TradelaneSpaceName,
+        _ => EditorSession.NameIds(item),
+    }, "");
 
     private static HierarchyNode Group(HierarchyModel model, string id) => model.Root.Children.Single(c => c.Id == id);
 
@@ -202,7 +210,7 @@ public sealed class HierarchyModelTests
     public void OpensTheParentsOfAnItemSoThatItsRowShows()
     {
         var model = Model();
-        var ring = model.Index.ObjectsByNickname["lane_2"];
+        var ring = model.Index!.ObjectsByNickname["lane_2"];
         Assert.Equal(-1, model.IndexOf(ring));
 
         Assert.True(model.Reveal(ring));
@@ -218,7 +226,7 @@ public sealed class HierarchyModelTests
         var model = Model();
         model.SetSearch("t:gate");
 
-        Assert.False(model.Reveal(model.Index.ObjectsByNickname["planet1"]));
+        Assert.False(model.Reveal(model.Index!.ObjectsByNickname["planet1"]));
         Assert.False(model.Reveal(new SystemObject { Nickname = "elsewhere" }));
     }
 
@@ -244,5 +252,83 @@ public sealed class HierarchyModelTests
             model.SetSearch($"t:{word}");
             Assert.Equal(count, model.Root.Matches);
         }
+    }
+
+    /// <summary>
+    /// The names come from the text function, which reads W (section 14 of the design): the system row shows the
+    /// <c>strid_name</c> of the system, an item its <c>ids_name</c>, for example a placeholder name of the active mod,
+    /// and a lane the <c>tradelane_space_name</c> of its end rings.
+    /// </summary>
+    [Fact]
+    public void TheNamesComeFromTheTextFunction()
+    {
+        var system = System();
+        string Text(object item, string key) => (item, key) switch
+        {
+            (StarSystem, "strid_name") => "New New York",
+            (SystemObject { Nickname: "station1" }, "ids_name") => "Water depot",
+            (SystemObject { Nickname: "lane_1" }, "tradelane_space_name") => "Manhattan",
+            (SystemObject { Nickname: "lane_3" }, "tradelane_space_name") => "Freeport 1",
+            _ => IdText(item, key),
+        };
+
+        var model = new HierarchyModel(new SystemIndex(system, system), Text);
+
+        Assert.Equal("New New York", model.Root.Name);
+        Assert.Equal("Water depot", model.NodeOf(system.Objects.Single(o => o.Nickname == "station1"))!.Name);
+        Assert.Equal("Manhattan -> Freeport 1", Group(model, "lanes").Children.Single().Name);
+        model.SetSearch("water");
+        Assert.Equal(1, model.Root.Matches);
+    }
+
+    /// <summary>
+    /// A tree of the same system that the names or the index make again keeps the open groups and the search of the
+    /// tree before it. A tree of another system starts with closed groups and no search.
+    /// </summary>
+    [Fact]
+    public void ATreeOfTheSameSystemKeepsTheOpenGroupsAndTheSearch()
+    {
+        var system = System();
+        var model = new HierarchyModel(new SystemIndex(system, system), IdText);
+        model.SetOpen(Group(model, "stations"), true);
+        model.SetSearch("t:lane");
+        model.SetOpen(Group(model, "lanes"), false);
+
+        var again = new HierarchyModel(new SystemIndex(system, system), (item, key) => "x" + IdText(item, key), model);
+
+        Assert.Equal("t:lane", again.Search);
+        Assert.False(again.IsOpen(Group(again, "lanes")));
+        again.SetSearch("");
+        Assert.True(again.IsOpen(Group(again, "stations")));
+        Assert.Equal("xNew York", again.Root.Name);
+
+        var other = System();
+        var fresh = new HierarchyModel(new SystemIndex(other, other), IdText, model);
+        Assert.Equal("", fresh.Search);
+        Assert.False(fresh.IsOpen(Group(fresh, "stations")));
+    }
+
+    /// <summary>
+    /// The panel keeps its tree until the index of the scene or a name changes. A new name of an item, for example a
+    /// rename before the save, builds the tree again with the new name, and the tree keeps its open groups.
+    /// </summary>
+    [Fact]
+    public void TheTreeBuildsAgainOnlyForANewIndexOrANewName()
+    {
+        var system = System();
+        var index = new SystemIndex(system, system);
+        var model = HierarchyModel.For(index, 1, IdText, null);
+        model.SetOpen(Group(model, "stations"), true);
+
+        Assert.Same(model, HierarchyModel.For(index, 1, (item, key) => "x" + IdText(item, key), model));
+
+        var renamed = HierarchyModel.For(index, 2, (item, key) => "x" + IdText(item, key), model);
+        Assert.NotSame(model, renamed);
+        Assert.Equal("xNew York", renamed.Root.Name);
+        Assert.True(renamed.IsOpen(Group(renamed, "stations")));
+
+        var reindexed = HierarchyModel.For(new SystemIndex(system, system), 2, IdText, renamed);
+        Assert.NotSame(renamed, reindexed);
+        Assert.Equal("New York", reindexed.Root.Name);
     }
 }

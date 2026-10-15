@@ -157,6 +157,7 @@ public sealed class ItemEditsTests
 
         var result = session.Save();
         Assert.True(result.Saved, string.Join("\n", result.Problems));
+        session.Dispose();
         var reopened = ws.Session("act");
         Assert.Equal(["$str:gun1"], Firsts(reopened, Gun("gun1"), "ids_name"));
         Assert.Equal("Both", reopened.Text(new StringPlaceholder(StringKind.String, "gun1")));

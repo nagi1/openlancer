@@ -34,3 +34,5 @@ out/
 *.thn
 *.sur
 *.wmv
+# A THN patch of a mod holds only keys and changed values (decision D70). tools/content_scan.py checks it.
+!**/patches/**/*.thn

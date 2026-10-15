@@ -19,6 +19,9 @@ public static class VfsPath
     /// </summary>
     public static string? Normalize(string path)
     {
+        // Most paths are in the normal form already, for example the path of each section reference.
+        if (IsNormal(path))
+            return path;
         var parts = new List<string>();
         foreach (var part in path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries))
         {
@@ -34,6 +37,27 @@ public static class VfsPath
             parts.Add(part);
         }
         return string.Join('\\', parts);
+    }
+
+    /// <summary>True when a path has the normal form: no <c>/</c>, no empty part, and no <c>.</c> or <c>..</c>
+    /// part.</summary>
+    private static bool IsNormal(string path)
+    {
+        var start = 0;
+        for (var i = 0; i <= path.Length; i++)
+        {
+            if (i < path.Length && path[i] != '\\')
+            {
+                if (path[i] == '/')
+                    return false;
+                continue;
+            }
+            var length = i - start;
+            if (length == 0 || path[start] == '.' && (length == 1 || length == 2 && path[start + 1] == '.'))
+                return false;
+            start = i + 1;
+        }
+        return true;
     }
 
     /// <summary>

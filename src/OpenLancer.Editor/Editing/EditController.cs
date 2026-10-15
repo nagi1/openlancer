@@ -1,15 +1,33 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using LibreLancer;
 using LibreLancer.Data;
+using LibreLancer.Data.Schema;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Editing;
+
+/// <summary>What a save did. Play reads it (section 9.2 of the M4 design).</summary>
+/// <param name="Saved">True when the save saved, also when it changed no file. False when it wrote nothing, for
+/// example after an error, or when files of the mod changed outside the editor.</param>
+/// <param name="Number">The number of the save, or 0 when it changed no file.</param>
+/// <param name="Incomplete">True when the save journal holds the save, because a file did not move into place.</param>
+internal sealed record SaveOutcome(bool Saved, int Number, bool Incomplete)
+{
+    public static readonly SaveOutcome NotSaved = new(false, 0, false);
+
+    /// <summary>The outcome of a save that gave <paramref name="result"/>.</summary>
+    /// <param name="number">The number that the session gave the save (see <see cref="EditorSession.Saved"/>).</param>
+    public static SaveOutcome Of(SaveResult result, int number) => new(result.Saved, number, result.Incomplete);
+}
 
 /// <summary>
 /// Runs the edits of the open profile and the saves, and what follows a save: the Console report, the reload of the
@@ -33,10 +51,26 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     private readonly ValidationRunner validation = new();
     private bool reloadQueued;
 
-    // The number of a save of the session that is not complete, or 0. The next save completes it first.
-    private int incompleteSave;
-
     private ConsoleLog Log => window.Log;
+
+    /// <summary>The state of the last validation of the session, or null before the first one.</summary>
+    public ValidationState? Validation => validation.State;
+
+    /// <summary>Runs on the UI thread when a validation of the session gives its result, after its Console
+    /// lines.</summary>
+    public event Action<ValidationState>? Validated
+    {
+        add => validation.Validated += value;
+        remove => validation.Validated -= value;
+    }
+
+    /// <summary>The number of a save of the session that is not complete, or 0. The next save completes it first. Play
+    /// reads it, because the game can hold parts of such a save (decision D59).</summary>
+    public int IncompleteSave { get; private set; }
+
+    /// <summary>The text for a save in the Console: "save 2", or "the saved files" for 0, the saved files of a session
+    /// without a save that changed files.</summary>
+    public static string SaveText(int save) => save > 0 ? $"save {save}" : "the saved files";
 
     /// <summary>
     /// Runs an edit as one entry of the edit history. When the editor takes no edits, or the edit does not apply,
@@ -125,24 +159,30 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// reload of the game data and the validation. When files of the mod changed outside the editor, a dialog asks to
     /// overwrite them.
     /// </summary>
-    public void Save() => Save(overwrite: false, leave: null);
+    /// <returns>What the save did. A save of the Overwrite dialog comes later and is not part of it.</returns>
+    public SaveOutcome Save() => Save(overwrite: false, leave: null);
 
     /// <param name="overwrite">True to replace the files of the active mod that changed outside the editor.</param>
     /// <param name="leave">The action that ends the session after the save, for example a close of the profile, or
     /// null. It runs when the save leaves no unsaved edits, also after the Overwrite dialog. The game data then does
     /// not load again, and no validation runs.</param>
-    private void Save(bool overwrite, Action? leave)
+    private SaveOutcome Save(bool overwrite, Action? leave)
     {
         if (window.Session is not { Edits.ActiveMod: { } mod } session)
         {
-            return;
+            return SaveOutcome.NotSaved;
         }
 
         // A mod in the OpenLancer repo needs the confirmation of the session before a save (decision D5).
         if (session.NoEditReason is { } reason)
         {
             Log.Add(ConsoleSeverity.Warning, Source, reason);
-            return;
+            return SaveOutcome.NotSaved;
+        }
+
+        if (!CanSave(session.Edits, session.GameData?.Items.Ini.Graphs, problem => Log.Add(problem)))
+        {
+            return SaveOutcome.NotSaved;
         }
 
         // The oltool process of an earlier validation reads the files of the mod. So it stops before a save of the edits
@@ -156,7 +196,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         catch (InvalidOperationException e)
         {
             Log.Add(ConsoleSeverity.Warning, Source, e.Message);
-            return;
+            return SaveOutcome.NotSaved;
         }
 
         var changedFiles = result.Saved && result.Written.Count + result.Deleted.Count > 0;
@@ -168,21 +208,64 @@ internal sealed class EditController(EditorWindow window) : IDisposable
 
         if (!result.Saved && result.ChangedOnDisk.Count > 0)
         {
-            // Cancel is the first choice, so Enter does not discard the changes of the files.
             var files = string.Join("\n", result.ChangedOnDisk.Select(f => Path.GetRelativePath(mod.Folder, f)));
             window.Choice.Show("Files changed outside the editor",
                 $"Something outside the editor changed these files of mod '{mod.Id}' after the editor read them:\n\n" +
                 $"{files}\n\nReplace them with the edits? Their changes are then lost.",
-                [new Choice("Cancel", () => { }), new Choice("Overwrite", () => Save(overwrite: true, leave))]);
+                OverwriteChoices(() => Save(overwrite: true, leave)));
         }
 
+        var outcome = SaveOutcome.Of(result, number);
         if (result.Saved && leave != null)
         {
             leave();
-            return;
+            return outcome;
         }
 
         FollowUp(session, result, number, stopped);
+        return outcome;
+    }
+
+    /// <summary>
+    /// Runs the checks before a save and gives each problem to <paramref name="log"/>. Returns false when a check finds
+    /// an error: then the save must write nothing. Each light of an edited star system file must name an attenuation
+    /// curve that the engine can load (decision D34, see <see cref="SceneChecks.Curves"/>). Without loaded game data,
+    /// the check cannot run. Then a warning tells it when the session edited a system file, and the save goes on.
+    /// </summary>
+    /// <param name="graphs">The graphs of the loaded game data, or null while no game data is loaded.</param>
+    internal static bool CanSave(EditSession edits, GraphIni? graphs, Action<Diagnostic> log)
+    {
+        var problems = SaveChecks(edits, graphs);
+        foreach (var problem in problems)
+        {
+            log(problem);
+        }
+
+        return problems.All(p => p.Severity != DiagnosticSeverity.Error);
+    }
+
+    /// <summary>The problems of the checks before a save (see <see cref="CanSave"/>).</summary>
+    private static IReadOnlyList<Diagnostic> SaveChecks(EditSession edits, GraphIni? graphs)
+    {
+        if (graphs == null)
+        {
+            return edits.EditedPaths.Any(edits.IsSystemFile)
+                ? [Diagnostic.Warning(Source, "The game data is not loaded, so the editor cannot check the attenuation " +
+                                              "curves of the lights before the save. The save goes on.")]
+                : [];
+        }
+
+        var curves = SceneChecks.Curves(edits, graphs);
+        return curves.Count == 0
+            ? []
+            :
+            [
+                ..curves,
+                Diagnostic.Error(Source, $"The save wrote nothing: {curves.Count} " +
+                                         $"{(curves.Count == 1 ? "light names" : "lights name")} an attenuation curve " +
+                                         "that the engine cannot load, and each later load of the profile would stop " +
+                                         "with an error. Correct the atten_curve lines, then save again."),
+            ];
     }
 
     /// <summary>
@@ -196,7 +279,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     {
         if (result.Incomplete)
         {
-            incompleteSave = number;
+            IncompleteSave = number;
             Log.Add(ConsoleSeverity.Warning, Source,
                 $"Save {number} is not complete. The game data does not load again, and the validation does not run. " +
                 "Correct the problem of the file, then save again.");
@@ -204,10 +287,10 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
 
         // A save after an incomplete save completed the files of that save first.
-        var completed = result.Saved ? incompleteSave : 0;
+        var completed = result.Saved ? IncompleteSave : 0;
         if (result.Saved)
         {
-            incompleteSave = 0;
+            IncompleteSave = 0;
         }
 
         if (number == 0 && completed > 0)
@@ -242,15 +325,11 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
 
         window.Choice.Show("Unsaved edits", $"The mod '{mod.Id}' has unsaved edits. Save them before {what}?",
-        [
-            new Choice("Save", () => Save(overwrite: false, leave: action)),
-            new Choice("Discard", () =>
+            LeaveChoices(() => Save(overwrite: false, leave: action), () =>
             {
                 Discard(session);
                 action();
-            }),
-            new Choice("Cancel", () => { }),
-        ]);
+            }));
     }
 
     /// <summary>Shows the dialog for the recovery file of an earlier session, when the active mod has one.</summary>
@@ -270,11 +349,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         window.Choice.Show("Unsaved edits of an earlier session",
             $"An earlier session of the editor closed with unsaved edits of mod '{mod.Id}'. Restore them? Until you " +
             "restore or discard them, the editor takes no edits for the mod." + repo,
-        [
-            new Choice("Restore", () => Restore(session)),
-            new Choice("Discard", () => Discard(session)),
-            new Choice("Later", () => { }),
-        ]);
+            RecoveryChoices(() => Restore(session), () => Discard(session)));
     }
 
     private void Restore(EditorSession session)
@@ -301,8 +376,73 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         window.Choice.Show("The unsaved edits do not apply",
             "The files of the mod changed after the earlier session wrote its unsaved edits, so the edits do not apply. " +
             "The Console shows the files. Discard the edits?",
-            [new Choice("Discard", () => Discard(session)), new Choice("Later", () => { })]);
+            NotAppliedChoices(() => Discard(session)));
     }
+
+    // The first choice of a dialog is its default button, so Enter clicks it (see ChoiceDialog). Each dialog of the
+    // edits puts the choice that loses no work first.
+
+    /// <summary>The choices of the dialog for files of the active mod that changed outside the editor. Cancel is the
+    /// first choice, so Enter does not discard the changes of the files.</summary>
+    internal static IReadOnlyList<Choice> OverwriteChoices(Action overwrite) =>
+        [new Choice("Cancel", () => { }), new Choice("Overwrite", overwrite)];
+
+    /// <summary>The choices of the dialog for unsaved edits before an action that ends the session. Save is the first
+    /// choice, so Enter keeps the edits.</summary>
+    internal static IReadOnlyList<Choice> LeaveChoices(Action save, Action discard) =>
+        [new Choice("Save", save), new Choice("Discard", discard), new Choice("Cancel", () => { })];
+
+    /// <summary>The choices of the dialog for the recovery file of an earlier session. Restore is the first choice, so
+    /// Enter keeps the edits.</summary>
+    internal static IReadOnlyList<Choice> RecoveryChoices(Action restore, Action discard) =>
+        [new Choice("Restore", restore), new Choice("Discard", discard), new Choice("Later", () => { })];
+
+    /// <summary>The choices of the dialog for a recovery file whose edits do not apply. Later is the first choice, so
+    /// Enter keeps the recovery file.</summary>
+    internal static IReadOnlyList<Choice> NotAppliedChoices(Action discard) =>
+        [new Choice("Later", () => { }), new Choice("Discard", discard)];
+
+    /// <summary>
+    /// The commit of the field of a text key, for example <c>ids_name</c> (see <see cref="CommitGesture"/>). It gives
+    /// the section a new text of the active mod (see <see cref="ItemEdits.SetText"/>). When other sections of the item
+    /// show the same text, for example a gun and its good, a dialog asks first whether they get the new text too
+    /// (review finding F12).
+    /// </summary>
+    /// <remarks>An end that is not interactive, for example when the window closes, cannot show the dialog. Then only
+    /// this section gets the new text, as with the choice "Only this one", which changes the least. The recovery file
+    /// then keeps the edit.</remarks>
+    /// <param name="execute">Makes the edit and runs it, as <see cref="Execute(Func{EditCommand})"/> does.</param>
+    /// <param name="ask">Shows a dialog: its title, its message and its choices.</param>
+    internal static Func<string, bool, string?> TextKeyCommit(EditSession edits, FieldBinding field, StringKind kind,
+        Action<Func<EditCommand>> execute, Action<string, string, IReadOnlyList<Choice>> ask) =>
+        (text, interactive) =>
+        {
+            var value = kind == StringKind.Infocard ? ItemEdits.ToInfocard(text) : text;
+            if (value.Trim().Length == 0)
+            {
+                return "a text cannot be empty. To remove the line, use the INI rows of the section.";
+            }
+
+            void Set(IReadOnlyList<SectionRef>? also) =>
+                execute(() => ItemEdits.SetText(edits, field.Section, field.Name, value, also));
+
+            var shared = interactive ? ItemEdits.SharedText(edits, field.Section, field.Name) : [];
+            if (shared.Count == 0)
+            {
+                Set(null);
+                return null;
+            }
+
+            ask("The same text",
+                $"These sections of the item show the same text as {field.Section.Id}: " +
+                $"{string.Join(", ", shared.Select(s => s.Id.ToString()))}. Give them the new text too?",
+            [
+                new Choice("All of them", () => Set(shared)),
+                new Choice("Only this one", () => Set(null)),
+                new Choice("Cancel", () => { }),
+            ]);
+            return null;
+        };
 
     /// <summary>Deletes the recovery file: the unsaved edits of an earlier session, or of this session.</summary>
     private void Discard(EditorSession session)
@@ -321,7 +461,8 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// <summary>
     /// Writes the recovery file a moment after the last edit. Call it each frame.
     /// </summary>
-    /// <param name="editing">True while a field edit is open. The file waits for its end.</param>
+    /// <param name="editing">True while a field edit or a drag of the gizmo is open (see
+    /// <see cref="EditorWindow.IsEditing"/>). The file waits for its end.</param>
     public void Update(bool editing)
     {
         if (window.Session is { RecoveryOutdated: true } session && !editing &&
@@ -406,62 +547,88 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
     }
 
-    private void Validate(EditorSession session, int save)
+    /// <summary>
+    /// Validates the saved files as they are now, with the number of the last save of the session. Play calls it when
+    /// no validation of that save exists or runs, and never for a save that is not complete (sections 9.3 and 12.1 of
+    /// the M4 design). A running validation stops.
+    /// </summary>
+    public void ValidateNow()
     {
-        if (validation.RunningSave is { } running)
+        if (window.Session is { } session)
         {
-            Log.Add(ConsoleSeverity.Info, ValidationSource, $"The validation of save {running} stopped. Save {save} replaces it.");
+            Validate(session, session.Saves);
         }
-
-        Log.Add(ConsoleSeverity.Info, ValidationSource, $"Validating save {save}...");
-        validation.Start(session.Profile.FilePath, session.Edits.ActiveMod!.Id, save, window,
-            result => Validated(session, result));
     }
 
-    private void Validated(EditorSession session, ValidationResult result)
+    /// <summary>Starts the validation of a save. Without an active mod, it validates what all mods add.</summary>
+    private void Validate(EditorSession session, int save)
+    {
+        if (validation.State is { Running: true } running)
+        {
+            Log.Add(ConsoleSeverity.Info, ValidationSource,
+                $"The validation of {SaveText(running.Save)} stopped. {Capital(SaveText(save))} replaces it.");
+        }
+
+        Log.Add(ConsoleSeverity.Info, ValidationSource, $"Validating {SaveText(save)}...");
+        validation.Start(session.Profile.FilePath, session.Edits.ActiveMod?.Id, save, window,
+            result => ValidationDone(session, result));
+    }
+
+    /// <summary>Writes the result to the Console. The runner then raises <see cref="Validated"/>.</summary>
+    private void ValidationDone(EditorSession session, ValidationResult result)
     {
         if (window.Session != session)
         {
             return;
         }
 
+        var save = SaveText(result.Save);
         if (result.Problems is not { } problems)
         {
-            Log.Add(ConsoleSeverity.Error, ValidationSource, $"The validation of save {result.Save} could not run: {result.Failure}");
-            return;
+            Log.Add(ConsoleSeverity.Error, ValidationSource, $"The validation of {save} could not run: {result.Failure}");
         }
-
-        var errors = problems.Count(p => p.Severity == DiagnosticSeverity.Error);
-        var warnings = problems.Count - errors;
-        Log.Add(errors > 0 ? ConsoleSeverity.Error : ConsoleSeverity.Info, ValidationSource, errors > 0
-            ? $"Validation of save {result.Save} failed: {errors} errors and {warnings} warnings that the mod adds."
-            : $"Validation OK for save {result.Save}: no errors, {warnings} warnings that the mod adds.");
-        foreach (var problem in problems)
+        else
         {
-            Log.Add(problem, $"Save {result.Save}: ");
+            var errors = problems.Count(p => p.Severity == DiagnosticSeverity.Error);
+            var warnings = problems.Count - errors;
+            var adds = session.Edits.ActiveMod == null ? "that the mods add" : "that the mod adds";
+            Log.Add(errors > 0 ? ConsoleSeverity.Error : ConsoleSeverity.Info, ValidationSource, errors > 0
+                ? $"Validation of {save} failed: {errors} errors and {warnings} warnings {adds}."
+                : $"Validation OK for {save}: no errors, {warnings} warnings {adds}.");
+            foreach (var problem in problems)
+            {
+                Log.Add(problem, $"{Capital(save)}: ");
+            }
         }
     }
+
+    private static string Capital(string text) => char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>Stops the running validation before a save. Returns the number of its save, or null when none
     /// ran.</summary>
     private int? StopValidation()
     {
-        if (validation.RunningSave is not { } running)
+        if (validation.State is not { Running: true } running)
         {
             return null;
         }
 
+        // The validation stops without a result. Usually a validation of the next save, or of the same files again,
+        // follows. A save that is not complete or that throws starts none, and the gate and the reload trigger of Play
+        // handle that (sections 9.3 and 12.1 of the M4 design).
         validation.Stop();
-        Log.Add(ConsoleSeverity.Info, ValidationSource, $"The validation of save {running} stopped before the next save.");
-        return running;
+        Log.Add(ConsoleSeverity.Info, ValidationSource,
+            $"The validation of {SaveText(running.Save)} stopped before the next save.");
+        return running.Save;
     }
 
-    /// <summary>Stops the validation of the session, for example when the profile closes.</summary>
+    /// <summary>Stops the validation of the session and forgets its state, for example when the profile
+    /// closes.</summary>
     public void Stop()
     {
-        validation.Stop();
+        validation.Reset();
         reloadQueued = false;
-        incompleteSave = 0;
+        IncompleteSave = 0;
     }
 
     public void Dispose() => validation.Dispose();

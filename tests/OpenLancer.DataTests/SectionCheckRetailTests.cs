@@ -1,29 +1,26 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
-using OpenLancer.Data.Ini;
-using OpenLancer.Data.Mods;
-using OpenLancer.Runtime.Strings;
 using Xunit;
 
 namespace OpenLancer.DataTests;
 
 /// <summary>
 /// Retail proof of the fast checks (<c>EditSession.Check</c>): the engine reads each retail section of the item files,
-/// so the checks find no error in them. The rules of the checks come from the generated parsers by hand, so this proof
-/// finds a rule that is too strict, for example a color that needs four values.
+/// of universe.ini and of the star system files, so the checks find no error in them. The rules of the checks come
+/// from the generated parsers by hand, so this proof finds a rule that is too strict, for example a color that needs
+/// four values.
 /// </summary>
-public sealed class SectionCheckRetailTests(ITestOutputHelper output)
+public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
 {
     /// <summary>
     /// The warnings of the retail item files, by section type and message, with their count. Each one is a real
     /// property of the retail data, for example a key that the engine does not read.
     /// </summary>
-    private static readonly Dictionary<string, int> KnownWarnings = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, int> KnownItemWarnings = new(StringComparer.Ordinal)
     {
         ["[collisiongroup] the engine does not know the key '------------------------------------------'. It ignores the line."] = 1,
         ["[countermeasure] 'force_gun_ori' has 2 lines. The engine reads only the last line."] = 3,
@@ -34,59 +31,107 @@ public sealed class SectionCheckRetailTests(ITestOutputHelper output)
         ["[simple] the engine does not know the key 'MinSpecLOD'. It ignores the line."] = 1,
     };
 
+    /// <summary>
+    /// The warnings of universe.ini and of the retail system files, as <see cref="KnownItemWarnings"/> gives them. Each
+    /// trade lane zone has a string in its integer key <c>lane_id</c>, for example <c>br01_2</c>. The engine reads it
+    /// as -1 and logs nothing. One row counts these warnings, with <c>&lt;text&gt;</c> in place of the string.
+    /// </summary>
+    private static readonly Dictionary<string, int> KnownSystemWarnings = new(StringComparer.Ordinal)
+    {
+        ["[background] 'nebulae' has 2 lines. The engine reads only the last line."] = 1,
+        ["[lightsource] the engine does not know the key 'behavior'. It ignores the line."] = 1,
+        ["[lightsource] the engine does not know the key 'color_curve'. It ignores the line."] = 2,
+        ["[object] 'behavior' has 2 lines. The engine reads only the last line."] = 3,
+        ["[object] 'ids_info' has 2 lines. The engine reads only the last line."] = 11,
+        ["[object] 'pilot' has 2 lines. The engine reads only the last line."] = 1,
+        ["[object] 'tradelane_space_name' has 2 lines. The engine reads only the last line."] = 2,
+        ["[object] the engine does not know the key '260800'. It ignores the line."] = 6,
+        ["[object] the engine does not know the key 'info_card'. It ignores the line."] = 1,
+        ["[object] the engine does not know the key 'info_card_ids'. It ignores the line."] = 1,
+        ["[object] the engine does not know the key 'info_ids'. It ignores the line."] = 4,
+        ["[systeminfo] the engine does not know the key 'name'. It ignores the line."] = 31,
+        ["[zone] 'ids_info' has 2 lines. The engine reads only the last line."] = 2,
+        ["[zone] 'mission_type' has 2 lines. The engine reads only the last line."] = 1,
+        ["[zone] the engine does not know the key 'pacedust'. It ignores the line."] = 3,
+        ["[zone] the engine does not know the key 'spacedusr_maxparticles'. It ignores the line."] = 1,
+        ["[zone] the engine does not know the key 'spacedust _maxparticles'. It ignores the line."] = 5,
+        ["[zone] the engine does not know the key 'spacedust_masparticles'. It ignores the line."] = 2,
+        ["[zone] the engine does not know the key 'spacedust_maxdust'. It ignores the line."] = 3,
+        ["[zone] the engine reads '<text>' in a 'lane_id' line as the integer -1."] = 91,
+    };
+
     [Fact]
     public void TheRetailSectionsOfTheItemFilesHaveNoError()
     {
         var baseFolder = GameDataPaths.RequireBase();
-        var root = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"));
-        try
-        {
-            var profilePath = Path.Combine(root, "profiles", "retail.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(profilePath)!);
-            File.WriteAllText(profilePath, JsonSerializer.Serialize(new { @base = baseFolder, mods = Array.Empty<string>() }));
-            var session = EditSession.Open(ModProfile.Load(profilePath), null, DllStringResourceWriter.Instance);
-            var fs = session.EditView.CreateFileSystem();
-            var paths = Enum.GetValues<ItemFileKind>().SelectMany(session.List).Select(r => r.Path)
-                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        using var workspace = new RetailWorkspace(baseFolder, "check");
+        var session = workspace.Open();
+        var paths = Enum.GetValues<ItemFileKind>().SelectMany(session.List).Select(r => r.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-            var sections = 0;
-            var errors = new List<string>();
-            var warnings = new SortedDictionary<string, int>(StringComparer.Ordinal);
-            foreach (var path in paths)
+        var (sections, warnings) = CheckAll(session, paths);
+
+        // The proof reads the sections of all item files, so it cannot pass because it checks nothing.
+        Assert.Equal(16, paths.Count);
+        Assert.True(sections > 2000, $"{sections} sections");
+        Assert.Equal(KnownItemWarnings, warnings);
+    }
+
+    [Fact]
+    public void TheRetailSectionsOfTheSystemFilesHaveNoError()
+    {
+        var baseFolder = GameDataPaths.RequireBase();
+        using var workspace = new RetailWorkspace(baseFolder, "check");
+        var session = workspace.Open();
+        var paths = RetailChecks.SystemFiles(session);
+
+        var (sections, warnings) = CheckAll(session, paths);
+
+        // universe.ini and 53 system files.
+        Assert.Equal(54, paths.Count);
+        Assert.Equal(10_979, sections);
+        Assert.Equal(KnownSystemWarnings, warnings);
+    }
+
+    /// <summary>
+    /// Runs the fast checks on each section of the files, and asserts that they give no error. Returns the number of
+    /// sections and the warnings by section type and message, with their count.
+    /// </summary>
+    private (int Sections, SortedDictionary<string, int> Warnings) CheckAll(EditSession session, IReadOnlyList<string> paths)
+    {
+        var sections = 0;
+        var errors = new List<string>();
+        var warnings = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (var path in paths)
+        {
+            foreach (var target in session.Sections(path))
             {
-                var document = IniDocument.Parse(path, fs.ReadAllBytes(path));
-                foreach (var id in SectionIdentity.Identify(document.Sections))
+                sections++;
+                foreach (var problem in session.Check(target))
                 {
-                    sections++;
-                    foreach (var problem in session.Check(new SectionRef(path, id)))
+                    if (problem.Severity == DiagnosticSeverity.Error)
                     {
-                        if (problem.Severity == DiagnosticSeverity.Error)
-                            errors.Add($"{path}: {problem.Message}");
-                        else
-                        {
-                            // The section type and the message without the section in front.
-                            var message = problem.Message[(problem.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..];
-                            var label = $"[{id.Type.ToLowerInvariant()}] {message}";
-                            warnings[label] = warnings.GetValueOrDefault(label) + 1;
-                        }
+                        errors.Add($"{path}: {problem.Message}");
+                        continue;
                     }
+                    // The section type and the message without the section in front.
+                    var message = problem.Message[(problem.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..];
+                    var label = $"[{target.Id.Type.ToLowerInvariant()}] {EngineString().Replace(message, "${start}<text>")}";
+                    warnings[label] = warnings.GetValueOrDefault(label) + 1;
                 }
             }
+        }
 
-            output.WriteLine($"{paths.Count} files, {sections} sections");
-            foreach (var error in errors)
-                output.WriteLine("error: " + error);
-            foreach (var (label, count) in warnings)
-                output.WriteLine($"warning ({count}): {label}");
-            // The proof reads the sections of all item files, so it cannot pass because it checks nothing.
-            Assert.Equal(16, paths.Count);
-            Assert.True(sections > 2000, $"{sections} sections");
-            Assert.Empty(errors);
-            Assert.Equal(KnownWarnings, warnings);
-        }
-        finally
-        {
-            Directory.Delete(root, true);
-        }
+        output.WriteLine($"{paths.Count} files, {sections} sections");
+        foreach (var error in errors)
+            output.WriteLine("error: " + error);
+        foreach (var (label, count) in warnings)
+            output.WriteLine($"warning ({count}): {label}");
+        Assert.Empty(errors);
+        return (sections, warnings);
     }
+
+    /// <summary>The string in the message of a string that the engine reads as an integer.</summary>
+    [GeneratedRegex("(?<start>^the engine reads ')[^']*")]
+    private static partial Regex EngineString();
 }

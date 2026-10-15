@@ -3,16 +3,18 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Mods;
 
 /// <summary>
-/// A mod folder: <c>mod.json</c>, entry-level INI patches, whole files and text.
+/// A mod folder: <c>mod.json</c>, entry-level INI patches, cutscene patches, whole files and text.
 /// </summary>
 /// <remarks>
 /// Layout (docs/MOD_FORMAT.md):
 /// <c>patches/&lt;install path&gt;.ini</c> patches the file at that path.
+/// <c>patches/&lt;install path&gt;.thn</c> patches the cutscene script at that path.
 /// <c>files/&lt;install path&gt;</c> adds or replaces the file at that path.
 /// <c>strings.json</c> holds the text that patches refer to with <c>$str:key</c> and <c>$ifc:key</c>.
 /// </remarks>
@@ -46,6 +48,12 @@ public sealed class Mod
 
     internal ModStrings Strings { get; }
 
+    /// <summary>
+    /// True when the journal of a save of the editor exists now: the save runs, or it stopped after its commit point.
+    /// Some files of the mod can then be from before the save. Each read checks the disk.
+    /// </summary>
+    public bool HasPendingSave => SaveTransaction.HasJournal(Folder);
+
     /// <exception cref="ModLoadException">The mod folder is not valid.</exception>
     public static Mod Load(string folder)
     {
@@ -55,8 +63,9 @@ public sealed class Mod
         var patches = MapFolder(folder, PatchesFolder);
         foreach (var (target, file) in patches)
         {
-            if (!target.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
-                throw new ModLoadException(file, "A patch must be an .ini file.");
+            if (!target.EndsWith(".ini", StringComparison.OrdinalIgnoreCase) &&
+                !target.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
+                throw new ModLoadException(file, "A patch must be an .ini file or a .thn file.");
         }
 
         return new Mod(manifest, folder, patches, MapFolder(folder, FilesFolder),
@@ -104,7 +113,7 @@ internal sealed class ModStrings
 
     public IReadOnlyDictionary<string, string> Infocards { get; }
 
-    public static ModStrings Load(string path) => File.Exists(path) ? Parse(path, File.ReadAllText(path)) : Empty;
+    public static ModStrings Load(string path) => File.Exists(path) ? Parse(path, SharedFile.ReadAllText(path)) : Empty;
 
     /// <param name="path">The file, for messages.</param>
     /// <param name="text">The text of the file.</param>

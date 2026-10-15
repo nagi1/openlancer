@@ -11,7 +11,11 @@ using LibreLancer.Render;
 using LibreLancer.Render.Cameras;
 using LibreLancer.Resources;
 using LibreLancer.World;
+using OpenLancer.Data;
+using OpenLancer.Data.Editing;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Scene;
 
@@ -39,20 +43,29 @@ internal sealed class SceneView : IDisposable
 
     private readonly EditorWindow window;
     private readonly LookAtCamera camera = new() { GameFOV = true };
+
+    // The camera of the starsphere pass: the view of the scene camera with a near plane of its own.
+    private readonly LookAtCamera sky = new();
     private readonly SceneCamera controller = new();
     private readonly Dictionary<SystemObject, GameObject> objects = [];
     private readonly SceneOverlay overlay;
     private readonly SystemPicker picker;
     private readonly GridRenderer grid;
     private readonly AxisGizmo gizmo = new();
+    private readonly ScenePicker scenePicker;
+    private readonly TransformGizmo transform;
     private SystemRenderer? renderer;
     private GameWorld? world;
     private GameResourceManager? resources;
     private ZoneRenderer? zoneRenderer;
+    private SceneSync? sync;
 
     // The item under the mouse in this frame. Its zone volume shows also when the Zones toggle is off.
     private object? hovered;
     private Vector2 dragStart;
+
+    // The scene button was active in the last frame: an orbit, a pan, a fly or a click is in progress.
+    private bool buttonActive;
     private Vector3 systemCenter;
     private float systemRadius;
 
@@ -61,10 +74,15 @@ internal sealed class SceneView : IDisposable
         this.window = window;
         overlay = new SceneOverlay(window, objects);
         picker = new SystemPicker(window);
+        scenePicker = new ScenePicker(gizmo, overlay.Markers, objects);
+        transform = new TransformGizmo(window, (session, item) => item is SectionRef section
+            ? (GizmoTarget.Of(session.Edits, section, session.NoEditReason, out var reason), reason)
+            : (null, null), GizmoSteps.System);
         grid = new GridRenderer(window.RenderContext);
     }
 
-    /// <summary>The mouse and keyboard controls of the view, for the help popover and the status bar.</summary>
+    /// <summary>The mouse and keyboard controls of the view and the gizmo, for the help popover and the status
+    /// bar.</summary>
     public static readonly (string Input, string Action)[] Controls =
     [
         ("Right mouse drag", "Look around"),
@@ -77,6 +95,10 @@ internal sealed class SceneView : IDisposable
         ("Click", "Select"),
         ("Click an axis end", "Look along the axis"),
         ("F", "Focus on the selection"),
+        ("W, E and R", "Move, rotate or scale tool of the gizmo, when the selected item takes it"),
+        ("X", "Local or World axes of a move or a turn. A scale always uses Local"),
+        ("Ctrl, while dragging a handle", "Snap when the snap is off, or do not snap when it is on"),
+        ("Esc or right click, while dragging a handle", "Cancel the drag"),
     ];
 
     public StarSystem? System { get; private set; }
@@ -84,13 +106,48 @@ internal sealed class SceneView : IDisposable
     /// <summary>The shared data of the open system, or null when no system is open.</summary>
     public SystemIndex? Index { get; private set; }
 
+    /// <summary>A number that changes when a name of an item of the open system changes, so that the Hierarchy reads
+    /// the names again.</summary>
+    public int NamesVersion { get; private set; }
+
     public Vector3 CameraPosition => controller.Position;
+
+    /// <summary>The turn of the camera (see <see cref="SceneCamera.Orientation"/>).</summary>
+    public Quaternion CameraOrientation => controller.Orientation;
+
+    /// <summary>True while a drag of the gizmo is open (see <see cref="TransformGizmo.IsDragging"/>).</summary>
+    public bool IsDragging => transform.IsDragging;
 
     /// <summary>The fly speed of the camera, in world units per second.</summary>
     public float CameraSpeed => controller.Speed;
 
     /// <summary>The kind of an item. A zone of the open system gets the kind of its role.</summary>
     public ObjectKind? KindOf(object? item) => Index?.KindOf(item) ?? ObjectKinds.Of(item);
+
+    /// <summary>The section of W that an object, a zone or a light of the open system shows, or null.</summary>
+    public SectionRef? SectionOf(object item) => sync?.SectionOf(item);
+
+    /// <summary>Why the scene does not show the W state of a section of the open system, for example a missing archetype
+    /// or an unknown attenuation curve. Empty when it shows it.</summary>
+    public IReadOnlyList<Diagnostic> Problems(SectionRef section) => sync?.Problems(section) ?? [];
+
+    /// <summary>Ends an open drag of the gizmo with the line of its last frame (a forced end, see
+    /// <see cref="TransformGizmo.End"/>).</summary>
+    public void EndDrag() => transform.End();
+
+    /// <summary>True while W has changes that the scene did not apply yet. The scene applies them at its next flush (see
+    /// <see cref="SceneSync.Flush"/>).</summary>
+    public bool IsBehind => sync?.IsBehind == true;
+
+    /// <summary>
+    /// The shapes of the open system for the start of Play from camera (see <see cref="SpawnPoint.Shapes"/>). They have
+    /// the unsaved edits that the scene shows. Null when the open system is not the system with that nickname.
+    /// </summary>
+    public IReadOnlyList<SpawnShape>? SpawnShapes(string system) =>
+        System?.Nickname.Equals(system, StringComparison.OrdinalIgnoreCase) == true
+            ? SpawnPoint.Shapes(objects, System.Zones,
+                item => window.Session?.ItemName(item) is { Length: > 0 } name ? name : item.Nickname)
+            : null;
 
     /// <summary>True when the item is part of the open system, so that the camera can focus on it.</summary>
     public bool Contains(object item) => item switch
@@ -101,19 +158,27 @@ internal sealed class SceneView : IDisposable
         _ => false,
     };
 
-    public void Open(StarSystem source, GameDataManager data, GameResourceManager resources)
+    /// <summary>
+    /// Opens a system of the game data of a session. The scene shows a clone of the system, with the unsaved edits of
+    /// W, and it follows each later change of W.
+    /// </summary>
+    public void Open(StarSystem source, EditorSession session)
     {
         Close();
+        var data = session.GameData!;
+        var resources = session.Resources;
         var system = source.Clone();
         this.resources = resources;
-        renderer = new SystemRenderer(camera, resources, window);
+        // The engine starsphere pass uses the near plane of the scene camera, which is too far at the whole-system view.
+        // So the view draws the starsphere in its own pass (DrawBackground).
+        renderer = new SystemRenderer(camera, resources, window) { DrawStarsphere = false };
         world = new GameWorld(renderer, null, resources, null, true);
         data.LoadAllSystem(system);
         world.LoadSystem(system, resources, null, false, false);
         renderer.LoadLights(system);
         renderer.LoadStarspheres(system);
         renderer.LoadZones(system.AsteroidFields, system.Nebulae);
-        renderer.OpaqueHook = DrawGrid;
+        renderer.OpaqueHook = DrawBackground;
         renderer.PhysicsHook = DrawHelpers;
         zoneRenderer = new ZoneRenderer(window.RenderContext, resources);
         foreach (var obj in world.Objects)
@@ -126,6 +191,7 @@ internal sealed class SceneView : IDisposable
 
         System = system;
         Index = new SystemIndex(system, source);
+        sync = new SceneSync(window, session, data.Items, resources, system, world, renderer, objects, IndexChanged);
         var center = system.Objects.Count == 0
             ? Vector3.Zero
             : system.Objects.Aggregate(Vector3.Zero, (sum, o) => sum + o.Position) / system.Objects.Count;
@@ -141,13 +207,15 @@ internal sealed class SceneView : IDisposable
     /// </summary>
     public void Close()
     {
+        // A drag ends before the scene stops following W, so that W keeps the line of its last frame.
+        transform.End();
+        sync?.Dispose();
+        sync = null;
         objects.Clear();
         overlay.Reset();
         picker.Reset();
         world?.Dispose();
-        // SystemRenderer.Dispose does not dispose the asteroid field meshes. Only LoadZones disposes them, so an empty
-        // load frees their vertex buffers before the renderer goes.
-        renderer?.LoadZones(null, null);
+        // With local patch 0022, the renderer also frees the meshes of the asteroid fields.
         renderer?.Dispose();
         zoneRenderer?.Dispose();
         world = null;
@@ -155,6 +223,7 @@ internal sealed class SceneView : IDisposable
         zoneRenderer = null;
         resources = null;
         hovered = null;
+        buttonActive = false;
         System = null;
         Index = null;
     }
@@ -202,6 +271,8 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
+        // Flush A: the changes of W since the last frame, before this frame reads the scene.
+        sync!.Flush();
         ImGuiHelper.AnimatingElement();
         var avail = ImGui.GetContentRegionAvail();
         var width = Math.Max(64, (int)avail.X);
@@ -211,37 +282,84 @@ internal sealed class SceneView : IDisposable
         // The 3D scene draws inside the ImGui draw list, at the position of this window.
         ImGui.GetWindowDrawList().AddCallback((_, _) => DrawWorld((int)origin.X, (int)origin.Y, width, height),
             IntPtr.Zero);
-        ImGui.InvisibleButton("##scene", new Vector2(width, height),
-            ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight | ImGuiButtonFlags.MouseButtonMiddle);
-        var sceneHovered = ImGui.IsItemHovered();
-        var active = ImGui.IsItemActive();
-        controller.HandleInput(window.Keyboard, sceneHovered, active, elapsed);
-        controller.Apply(camera, width, height);
+
+        // The frame order of section 10.2 of the design. First the drag of the gizmo ends, cancels or clears. Then the
+        // gizmo or the scene button gets the mouse.
         var size = new Vector2(width, height);
-        overlay.Update(camera, origin, size, Index);
-        gizmo.Update(camera.View, origin, size);
-        Pick(origin, width, height);
-        if (sceneHovered && !ImGui.GetIO().WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F))
+        transform.BeginFrame(SelectedSection());
+        var owner = transform.Owner(buttonActive);
+        bool sceneHovered = false, active = false, activated = false, deactivated = false;
+        if (owner == SceneMouse.Button)
+        {
+            ImGui.InvisibleButton("##scene", size,
+                ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight |
+                ImGuiButtonFlags.MouseButtonMiddle);
+            sceneHovered = ImGui.IsItemHovered();
+            active = ImGui.IsItemActive();
+            activated = ImGui.IsItemActivated();
+            deactivated = ImGui.IsItemDeactivated();
+        }
+        else
+        {
+            // A Dummy takes no click, so ImGuizmo can start its drag (ImGuizmo.cpp:1615-1621). The scene window does
+            // not move under the drag, because its root window has NoMove.
+            ImGui.Dummy(size);
+        }
+
+        buttonActive = active;
+        var viewKeys = GizmoInput.ReadsViewKeys(owner, sceneHovered, ImGui.IsWindowHovered(),
+            ImGui.IsMouseHoveringRect(origin, origin + size));
+        controller.HandleInput(window.Keyboard, viewKeys, active, elapsed);
+        controller.Apply(camera, sky, width, height);
+        var projection = new SceneProjection(camera, origin, size, ImGuiHelper.Scale);
+        overlay.Update(projection, Index);
+        gizmo.Update(projection);
+        Pick(projection, Index, activated, deactivated);
+        if (viewKeys && !ImGui.GetIO().WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F))
         {
             Focus(window.Selection);
         }
 
-        // No hover while the camera moves, so that the markers that pass under the mouse do not flash. The axis
-        // widget is on top, so a marker below it gets no hover.
+        transform.Keys(ImGui.IsWindowHovered() || ImGui.IsWindowFocused());
+
+        // No hover while the camera moves or the gizmo has the mouse, so that the markers that pass under the mouse do
+        // not flash. The axis widget is on top, so a marker below it gets no hover.
         var mouse = ImGui.GetMousePos();
         var hoverMouse = sceneHovered && !active ? mouse : (Vector2?)null;
-        hovered = hoverMouse is { } point && gizmo.HitTest(point) == null ? overlay.HitTest(point) : null;
+        hovered = hoverMouse is { } point && gizmo.HitTest(point) == null ? overlay.Markers.HitTest(point) : null;
         overlay.Draw(hovered, gizmo.Bounds);
+        // The gizmo draws over the markers and the labels. A handle over the axis widget wins over the widget.
+        transform.Draw(camera, projection);
         var drawList = ImGui.GetWindowDrawList();
         drawList.PushClipRect(origin, origin + size, true);
         gizmo.Draw(drawList, hoverMouse);
         drawList.PopClipRect();
 
+        // Flush B: the changes of this frame so far, before the renderer starts its worker tasks. So a step of a drag
+        // moves the item in the same frame.
+        sync.Flush();
         renderer.DrawNebulae = window.Settings.ShowNebulae;
-        renderer.DrawStarsphere = window.Settings.ShowStarsphere;
         renderer.BackgroundOverride = System.BackgroundColor;
         renderer.SystemLighting.Ambient = new Color4(System.AmbientColor, 1);
         world.RenderUpdate(elapsed);
+    }
+
+    /// <summary>
+    /// A change of W changed what the index or the names of the open system read (see
+    /// <see cref="ISceneHost.IndexChanged"/>).
+    /// </summary>
+    private void IndexChanged(SceneEffect effects)
+    {
+        if ((effects & (SceneEffect.Roles | SceneEffect.Lanes)) != 0)
+        {
+            Index = new SystemIndex(System!, Index!.Source);
+        }
+
+        if ((effects & SceneEffect.Label) != 0)
+        {
+            overlay.ResetLabels();
+            NamesVersion++;
+        }
     }
 
     /// <summary>A view toggle of the toolbar strip, for one setting.</summary>
@@ -272,8 +390,8 @@ internal sealed class SceneView : IDisposable
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var item = ToolbarItems.IconWidth + spacing;
         // The system list gets the space that the other items leave, between its minimum and maximum width. The other
-        // items are Frame system, the view toggles, the help button and a separator.
-        var others = (ViewOptions.Length + 2) * item + 1 + 2 * spacing;
+        // items are Frame system, the gizmo items, the view toggles, the help button and two separators.
+        var others = (ViewOptions.Length + TransformGizmo.ToolbarItemCount + 2) * item + 2 * (1 + spacing) + spacing;
         var scale = ImGuiHelper.Scale;
         picker.Draw(Math.Clamp(ImGui.GetContentRegionAvail().X - others, SystemPicker.MinWidth * scale,
             SystemPicker.MaxWidth * scale));
@@ -283,6 +401,10 @@ internal sealed class SceneView : IDisposable
             FrameSystem();
         }
 
+        ImGui.SameLine();
+        ToolbarItems.Separator();
+        ImGui.SameLine();
+        transform.Toolbar(SelectedSection());
         ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
@@ -339,7 +461,7 @@ internal sealed class SceneView : IDisposable
         ImGui.SameLine();
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() +
                             Math.Max(0, ImGui.GetContentRegionAvail().X - ToolbarItems.IconWidth));
-        if (ToolbarItems.Button("help", EditorIcons.QuestionCircle, "Camera controls"))
+        if (ToolbarItems.Button("help", EditorIcons.QuestionCircle, "Scene controls"))
         {
             ImGui.OpenPopup("##controls");
         }
@@ -354,10 +476,10 @@ internal sealed class SceneView : IDisposable
         }
     }
 
-    /// <summary>Draws the camera controls as a table of inputs and actions.</summary>
+    /// <summary>Draws the controls of the view and the gizmo as a table of inputs and actions.</summary>
     private static void ControlsTable()
     {
-        ImGui.Text("Camera controls");
+        ImGui.Text("Scene controls");
         ImGui.Separator();
         if (!ImGui.BeginTable("##controls", 2, ImGuiTableFlags.SizingFixedFit))
         {
@@ -377,38 +499,32 @@ internal sealed class SceneView : IDisposable
     }
 
     /// <summary>
-    /// A click without a drag selects the object under the mouse. A marker wins over a model. A click on empty space
-    /// clears the selection.
+    /// A click without a drag selects what <see cref="ScenePicker"/> finds under the mouse, and a click on empty space
+    /// clears the selection. A click on an axis end of the axis widget looks at the scene from that side.
     /// </summary>
-    private void Pick(Vector2 origin, int width, int height)
+    /// <param name="activated">The scene button became active in this frame.</param>
+    /// <param name="deactivated">The scene button stopped being active in this frame.</param>
+    private void Pick(SceneProjection projection, SystemIndex index, bool activated, bool deactivated)
     {
-        if (ImGui.IsItemActivated() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+        if (activated && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
             dragStart = ImGui.GetMousePos();
         }
 
-        if (!ImGui.IsItemDeactivated() || !ImGui.IsMouseReleased(ImGuiMouseButton.Left) || ImGui.GetIO().KeyAlt ||
+        if (!deactivated || !ImGui.IsMouseReleased(ImGuiMouseButton.Left) || ImGui.GetIO().KeyAlt ||
             Vector2.Distance(dragStart, ImGui.GetMousePos()) > 4)
         {
             return;
         }
 
-        // The axis widget is on top of the markers. A click on an axis end looks at the scene from that side.
-        if (gizmo.HitTest(ImGui.GetMousePos()) is { } axis)
+        var pick = scenePicker.Pick(projection, ImGui.GetMousePos(), index, window.Settings.ShowZones);
+        if (pick.Axis is { } axis)
         {
             controller.LookAlong(-axis);
             return;
         }
 
-        if (overlay.HitTest(ImGui.GetMousePos()) is { } marker)
-        {
-            window.Selection = marker;
-            return;
-        }
-
-        var mouse = ImGui.GetMousePos() - origin;
-        var hit = world!.GetSelection(camera, null!, mouse.X, mouse.Y, width, height);
-        window.Selection = hit?.SystemObject;
+        window.Selection = pick.Item;
     }
 
     private void DrawWorld(int x, int y, int width, int height)
@@ -436,11 +552,13 @@ internal sealed class SceneView : IDisposable
     }
 
     /// <summary>
-    /// Draws the grid. The renderer calls this after the opaque objects and before the transparent objects, so planets
-    /// hide the grid and nebulae tint it.
+    /// Draws the starsphere, then the grid. The renderer calls this after the opaque objects and before the transparent
+    /// objects, at the place of its own starsphere pass. So planets hide the grid and the starsphere, and nebulae tint
+    /// them.
     /// </summary>
-    private void DrawGrid()
+    private void DrawBackground()
     {
+        StarspherePass.Draw(renderer!, sky, window.Settings.ShowStarsphere);
         if (window.Settings.ShowGrid)
         {
             grid.Draw(window.RenderContext, camera, GridColor, AxisXColor, AxisZColor);
@@ -542,10 +660,8 @@ internal sealed class SceneView : IDisposable
             var highlighted = IsHighlighted(zone);
             if (showZones || highlighted)
             {
-                // The path runs along the axis of the cylinder, through its center.
-                var half = Vector3.TransformNormal(new Vector3(0, zone.Size.Y / 2, 0), zone.RotationMatrix);
-                lines.DrawLine(zone.Position - half, zone.Position + half,
-                    highlighted ? PatrolHighlightColor : PatrolColor);
+                var (start, end) = SystemIndex.PathLine(zone);
+                lines.DrawLine(start, end, highlighted ? PatrolHighlightColor : PatrolColor);
             }
         }
 
@@ -627,10 +743,16 @@ internal sealed class SceneView : IDisposable
         }
     }
 
+    /// <summary>The section of the selected item when it is an object, a zone or a light of the open system, or
+    /// null.</summary>
+    private SectionRef? SelectedSection() =>
+        window.Selection is (SystemObject or Zone or LightSource) and var item && Contains(item)
+            ? SectionOf(item)
+            : null;
+
     private float Radius(SystemObject obj) =>
-        objects.TryGetValue(obj, out var go) && go.RenderComponent is ModelRenderer { Model: { } model }
-            ? Math.Max(model.GetRadius(), 50)
-            : 500;
+        ScenePicker.Radius(objects.TryGetValue(obj, out var go) &&
+                           go.RenderComponent is ModelRenderer { Model: { } model } ? model : null);
 
     public void Dispose()
     {

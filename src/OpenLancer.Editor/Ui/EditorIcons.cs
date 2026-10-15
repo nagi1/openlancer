@@ -46,6 +46,7 @@ internal static class EditorIcons
     public const char DoorOpen = Icons.Quit;
     public const char ArrowLeft = Icons.ArrowLeft;
     public const char ArrowRight = Icons.ArrowRight;
+    public const char SyncAlt = Icons.SyncAlt;
 
     // Glyphs that the LibreLancer list does not have.
     public const char Sun = '\uf185';
@@ -98,4 +99,31 @@ internal static class EditorIcons
     public const char Store = '\uf54e';
     public const char Pen = '\uf304';
     public const char Tags = '\uf02c';
+    public const char ArrowsAlt = '\uf0b2';
+    public const char ExpandAlt = '\uf424';
+    public const char CaretDown = '\uf0d7';
+    public const char CaretRight = '\uf0da';
+    public const char Play = '\uf04b';
+    public const char Stop = '\uf04d';
+
+    // The Preview controls of a cutscene have the circle icons, so they do not look like the Play of the game (section
+    // 7.7 of the M8 design).
+    public const char PlayCircle = '\uf144';
+    public const char PauseCircle = '\uf28b';
+    public const char StopCircle = '\uf28d';
+    public const char StepBackward = '\uf048';
+    public const char StepForward = '\uf051';
+    public const char History = '\uf1da';
+
+    // The entity types of a cutscene, and the tools of the Timeline and the Cutscene view.
+    public const char User = '\uf007';
+    public const char VolumeUp = '\uf028';
+    public const char Desktop = '\uf108';
+    public const char Image = '\uf03e';
+    public const char Filter = '\uf0b0';
+    public const char SearchPlus = '\uf00e';
+    public const char SearchMinus = '\uf010';
+    public const char ArrowsAltH = '\uf337';
+    public const char Eye = '\uf06e';
+    public const char Link = '\uf0c1';
 }

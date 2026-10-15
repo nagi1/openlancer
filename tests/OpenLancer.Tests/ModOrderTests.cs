@@ -63,6 +63,11 @@ public sealed class ModOrderTests
     [InlineData("DATA/Ships//x.ini", @"DATA\Ships\x.ini")]
     [InlineData(@".\EXE\.\a.dll", @"EXE\a.dll")]
     [InlineData(@"..\outside.ini", null)]
+    [InlineData(@"DATA\UNIVERSE\SYSTEMS\LI01\li01.ini", @"DATA\UNIVERSE\SYSTEMS\LI01\li01.ini")]
+    [InlineData(@"\DATA\x.ini\", @"DATA\x.ini")]
+    [InlineData(@"DATA\..\x.ini", "x.ini")]
+    [InlineData(@"DATA\.cache\..x\x.", @"DATA\.cache\..x\x.")]
+    [InlineData("", "")]
     public void NormalizesEnginePaths(string path, string? expected)
     {
         Assert.Equal(expected, VfsPath.Normalize(path));

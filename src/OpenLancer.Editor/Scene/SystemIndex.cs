@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Editor.Ui;
 
@@ -99,9 +100,16 @@ internal sealed class SystemIndex
     public IReadOnlyList<Zone> VolumeZones { get; }
 
     /// <summary>
-    /// The patrol path zones with a cylinder shape. The Scene shows each one as a line along its axis.
+    /// The patrol path zones with a cylinder shape. The Scene shows each one as its <see cref="PathLine"/>.
     /// </summary>
     public IReadOnlyList<Zone> PatrolPaths { get; }
+
+    /// <summary>The line of a patrol path: the axis of its cylinder, through its center.</summary>
+    public static (Vector3 Start, Vector3 End) PathLine(Zone zone)
+    {
+        var half = Vector3.TransformNormal(new Vector3(0, zone.Size.Y / 2, 0), zone.RotationMatrix);
+        return (zone.Position - half, zone.Position + half);
+    }
 
     /// <summary>All other zones. The Scene shows each one as a diamond marker.</summary>
     public IReadOnlyList<Zone> MarkerZones { get; }

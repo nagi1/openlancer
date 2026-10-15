@@ -15,8 +15,15 @@
   <ItemGroup>
     <ProjectReference Include="..\..\external\Librelancer\src\LibreLancer\LibreLancer.csproj" />
     <ProjectReference Include="..\..\src\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
-    <!-- OltoolValidateTests runs oltool from the test folder. -->
+    <!-- The oltool tests run oltool from the test folder. -->
     <ProjectReference Include="..\..\src\OpenLancer.Tools\OpenLancer.Tools.csproj" />
+    <!-- The retail proofs of the cutscene editor send each kind of edit of the editor through its command path. -->
+    <ProjectReference Include="..\..\src\OpenLancer.Editor\OpenLancer.Editor.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The retail move proofs script ImGuizmo with the formulas of the unit tests. -->
+    <Compile Include="..\OpenLancer.Tests\ImGuizmoResults.cs" Link="ImGuizmoResults.cs" />
   </ItemGroup>
 
   <ItemGroup>

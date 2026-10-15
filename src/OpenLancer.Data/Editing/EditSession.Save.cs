@@ -7,6 +7,7 @@ using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Strings;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data.Editing;
 
@@ -26,7 +27,10 @@ public sealed partial class EditSession
     /// <remarks>
     /// <list type="number">
     /// <item>For each file that a command changed, the writer makes the patch and checks it. A file whose patch
-    /// does not change keeps its text (rule P2). A patch without sections deletes its file (P4).</item>
+    /// does not change keeps its text (rule P2). A patch without sections deletes its file (P4). A cutscene gives a
+    /// THN patch, or its whole file when the active mod has one. The save evaluates the text of each cutscene and
+    /// checks that it gives W. It writes no whole cutscene file into a mod in the OpenLancer repo (decision
+    /// D70).</item>
     /// <item>Any problem stops the save: a patch that the writer cannot write, a text placeholder that the text of
     /// the mod does not have (S8), a patch line of a text key that holds the id of a text of a mod as a number (S8),
     /// a strings.json with comments (F13). When the text changes, the save checks the
@@ -81,7 +85,7 @@ public sealed partial class EditSession
         var writes = plan.Where(p => !p.SameAsDisk).ToList();
         if (writes.Count > 0)
         {
-            var stale = inputs.Changed(plan.Where(p => p.Document != null).Select(p => p.Document!.Path), profileNow, active);
+            var stale = inputs.Changed(plan.Where(p => p.Source != null).Select(p => p.Source!.Path), profileNow, active);
             if (stale.Count > 0)
                 return Stale(stale, problems);
         }
@@ -129,6 +133,12 @@ public sealed partial class EditSession
         var plan = new List<PlannedFile>();
         foreach (var path in touched.Order(StringComparer.OrdinalIgnoreCase))
         {
+            if (cutscenes.TryGetValue(path, out var cutscene))
+            {
+                if (PlanCutscene(cutscene, active, activeNow, problems) is { } planned)
+                    plan.Add(planned);
+                continue;
+            }
             var document = documents[path];
             var patch = document.ChangedPatch();
             if (patch == null)
@@ -159,7 +169,7 @@ public sealed partial class EditSession
         if (!text.SameAs(savedText))
         {
             // The new text is the text of each placeholder of the mod, also in the files that the save keeps.
-            var written = plan.Select(p => p.Document!.Path).ToHashSet(VfsPath.Comparer);
+            var written = plan.Select(p => p.Source!.Path).ToHashSet(VfsPath.Comparer);
             problems.AddRange(MissingText(activeNow, written));
             var path = Path.Combine(active.Folder, Mod.StringsFile);
             try
@@ -172,6 +182,51 @@ public sealed partial class EditSession
             }
         }
         return plan;
+    }
+
+    /// <summary>
+    /// The file that the edits of a cutscene change: the THN patch, or the whole file when the active mod replaces the
+    /// cutscene with one. Null when the file does not change, or when the save cannot write it. A problem then tells
+    /// why.
+    /// </summary>
+    /// <param name="activeNow">The active mod as it is on disk now.</param>
+    private PlannedFile? PlanCutscene(ThnDocument cutscene, Mod active, Mod activeNow, List<Diagnostic> problems)
+    {
+        var path = cutscene.Path;
+        if (cutscene.ChangedFile() is not { } file)
+            return null;
+        if (cutscene.IsWholeFile && RepoCheck.RepoRoot(active.Folder) is { } repo)
+        {
+            problems.Add(Diagnostic.Error(path, $"The mod '{active.Id}' is in the OpenLancer repo {repo}. The editor writes " +
+                                                "no whole cutscene file into it, because the content scan cannot tell such a " +
+                                                "file from a copy of a retail script (decision D70)."));
+            return null;
+        }
+        if ((file.Problem ?? cutscene.SaveProblem(file)) is { } problem)
+        {
+            problems.Add(Diagnostic.Error(path, problem));
+            return null;
+        }
+        var (folder, files, other) = cutscene.IsWholeFile
+            ? (Mod.FilesFolder, activeNow.Files, activeNow.Patches)
+            : (Mod.PatchesFolder, activeNow.Patches, activeNow.Files);
+        if (other.ContainsKey(path))
+        {
+            problems.Add(Diagnostic.Error(path, $"The active mod now has another kind of file for {path}. Open the " +
+                                                "profile again."));
+            return null;
+        }
+        var root = Path.Combine(active.Folder, folder);
+        var target = files.GetValueOrDefault(path) ?? Path.Combine(root, LocalPath(path));
+        if (!PathRules.IsInside(target, root))
+        {
+            problems.Add(Diagnostic.Error(path, $"The file {target} is not in the folder {root}."));
+            return null;
+        }
+        if (cutscene.DropsComments && file.Text != null)
+            problems.Add(Diagnostic.Warning(target, "The save writes this THN patch in canonical form. It keeps the " +
+                                                    "comments at the top of the file and drops the other comments."));
+        return new PlannedFile(new FileChange(target, file.ToBytes()), cutscene.SourceHash, cutscene);
     }
 
     /// <summary>
@@ -208,15 +263,21 @@ public sealed partial class EditSession
         }
         foreach (var file in plan)
         {
-            if (file.Document == null)
-            {
-                textHash = file.Change.Content == null ? null : ContentHash.Of(file.Change.Content);
-                continue;
-            }
             // W becomes what the saved file gives, so it equals the state that a reload gives (F14).
-            var diagnostics = new List<Diagnostic>();
-            documents[file.Document.Path] = file.Document.Reopen(active.Id, file.Change.Path, file.Change.Content, diagnostics);
-            problems.AddRange(diagnostics.Where(IsError).Select(d => d with { Severity = DiagnosticSeverity.Warning }));
+            switch (file.Source)
+            {
+                case null:
+                    textHash = file.Change.Content == null ? null : ContentHash.Of(file.Change.Content);
+                    break;
+                case EditDocument document:
+                    var diagnostics = new List<Diagnostic>();
+                    documents[document.Path] = document.Reopen(active.Id, file.Change.Path, file.Change.Content, diagnostics);
+                    problems.AddRange(diagnostics.Where(IsError).Select(d => d with { Severity = DiagnosticSeverity.Warning }));
+                    break;
+                case ThnDocument cutscene:
+                    cutscenes[cutscene.Path] = cutscene.Reopen(file.Change.Content, file.Change.Path);
+                    break;
+            }
         }
         savedText = text;
         history.MarkSaved();
@@ -328,8 +389,8 @@ public sealed partial class EditSession
 
     /// <summary>One file of a save.</summary>
     /// <param name="KnownHash">The hash of the file when the session read it, or null when it did not exist.</param>
-    /// <param name="Document">The document of a patch file, or null for strings.json.</param>
-    private sealed record PlannedFile(FileChange Change, string? KnownHash, EditDocument? Document)
+    /// <param name="Source">The INI document or the cutscene of the file, or null for strings.json.</param>
+    private sealed record PlannedFile(FileChange Change, string? KnownHash, IEditFile? Source)
     {
         /// <summary>True when the file on disk already has the new content, so it needs no write.</summary>
         public bool SameAsDisk { get; } = Change.Content == null

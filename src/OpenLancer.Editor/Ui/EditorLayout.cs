@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
@@ -56,15 +57,18 @@ internal sealed class EditorPanelGroup(string id, IReadOnlyList<EditorPanel> tab
 
     /// <summary>The panel of the selected tab in the last frame.</summary>
     internal EditorPanel? Shown { get; set; }
+
+    /// <summary>True when the group, or a window in it, had the focus in its last draw.</summary>
+    internal bool Focused { get; set; }
 }
 
 /// <summary>
 /// The workspace between the menu bar and the status bar, in the Unity default layout. The Inspector is on the right at
-/// full height. The left area has the Hierarchy and the Scene on top and the bottom tab group below them. The backdrop
-/// shows in the gaps between the panels, and a drag on a gap moves the panel edge. The ImGui build has no docking, so
-/// the layout has a fixed shape.
+/// full height. The left area has the Hierarchy and the center tab group (the Scene and the Cutscene) on top and the
+/// bottom tab group below them. The backdrop shows in the gaps between the panels, and a drag on a gap moves the panel
+/// edge. The ImGui build has no docking, so the layout has a fixed shape.
 /// </summary>
-internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarchy, EditorPanel scene,
+internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarchy, EditorPanelGroup center,
     EditorPanel inspector, EditorPanelGroup bottom)
 {
     // Sizes in unscaled points.
@@ -93,14 +97,13 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     private const ImGuiTabItemFlags NoCloseButton = (ImGuiTabItemFlags)(1 << 20);
 
     private readonly EditorPanelGroup hierarchyGroup = new(hierarchy.Id, [hierarchy]);
-    private readonly EditorPanelGroup sceneGroup = new(scene.Id, [scene]);
     private readonly EditorPanelGroup inspectorGroup = new(inspector.Id, [inspector]);
 
-    // The Scene has the focus when the editor starts, as in Unity.
-    private bool focusScene = true;
+    // The center group, with the Scene, has the focus when the editor starts, as in Unity.
+    private bool focusCenter = true;
 
-    // The panel whose tab must become the selected tab of its group. The tab clears it when it applies it.
-    private string? selectRequest;
+    // The panels whose tabs must become the selected tabs of their groups. A tab clears its request when it applies it.
+    private readonly HashSet<string> selectRequests = [];
 
     /// <summary>The panel sizes of one frame in pixels, and the splitter limits in unscaled points.</summary>
     /// <param name="LeftWidth">The width of the area left of the Inspector.</param>
@@ -108,8 +111,20 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     internal readonly record struct Sizes(float Gap, float HierarchyWidth, float InspectorWidth, float BottomHeight,
         float LeftWidth, float TopHeight, float HierarchyMax, float InspectorMax, float BottomMax);
 
-    /// <summary>Makes the tab of a panel the selected tab of its group, when its tab bar draws next.</summary>
-    public void Show(string panelId) => selectRequest = panelId;
+    /// <summary>Makes the tab of a panel the selected tab of its group, when its tab bar draws next. Panels of other
+    /// groups can show in the same frame.</summary>
+    public void Show(string panelId) => selectRequests.Add(panelId);
+
+    /// <summary>
+    /// True when the panel shows in its group and the group has the focus: the user clicked in it last. A group draws
+    /// its header before the body of its panel, so the body reads the focus of the same frame.
+    /// </summary>
+    public bool IsFocused(string panelId) => Groups.Any(g => g.Focused && g.Shown?.Id == panelId);
+
+    /// <summary>True when the panel is the selected tab of its group in the last draw.</summary>
+    public bool IsShown(string panelId) => Groups.Any(g => g.Shown?.Id == panelId);
+
+    private EditorPanelGroup[] Groups => [hierarchyGroup, center, bottom, inspectorGroup];
 
     /// <summary>
     /// Draws the workspace. Returns true when the user releases a splitter, so that the caller saves the settings.
@@ -132,13 +147,13 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
         ImGui.PopStyleVar();
 
         DrawGroup(hierarchyGroup, position, new Vector2(s.HierarchyWidth, s.TopHeight), false);
-        DrawGroup(sceneGroup, position + new Vector2(s.HierarchyWidth + s.Gap, 0),
-            new Vector2(s.LeftWidth - s.HierarchyWidth - s.Gap, s.TopHeight), focusScene);
+        DrawGroup(center, position + new Vector2(s.HierarchyWidth + s.Gap, 0),
+            new Vector2(s.LeftWidth - s.HierarchyWidth - s.Gap, s.TopHeight), focusCenter);
         DrawGroup(bottom, position + new Vector2(0, s.TopHeight + s.Gap), new Vector2(s.LeftWidth, s.BottomHeight),
             false);
         DrawGroup(inspectorGroup, position + new Vector2(s.LeftWidth + s.Gap, 0),
             new Vector2(s.InspectorWidth, size.Y), false);
-        focusScene = false;
+        focusCenter = false;
 
         // A splitter starts a drag from the size that shows. It changes the value only while the user drags it, and
         // then the new value goes into the settings.
@@ -217,6 +232,7 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
         var visible = ImGui.BeginChild(group.ChildId, Vector2.Max(size, Vector2.One), ImGuiChildFlags.None,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         ImGui.PopStyleColor();
+        group.Focused = visible && ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
         if (visible)
         {
             var scale = ImGuiHelper.Scale;
@@ -247,7 +263,7 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
 
         // Outside docking, ImGui draws the overline of the selected tab on each tab bar. So the overline shows only
         // when the focus is in this panel.
-        var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
+        var focused = group.Focused;
         if (!focused)
         {
             ImGui.PushStyleColor(ImGuiCol.TabSelectedOverline, EditorTheme.Transparent);
@@ -306,10 +322,9 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
         }
 
         var flags = NoCloseButton;
-        if (panel.Id == selectRequest)
+        if (selectRequests.Remove(panel.Id))
         {
             flags |= ImGuiTabItemFlags.SetSelected;
-            selectRequest = null;
         }
 
         var open = true;

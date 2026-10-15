@@ -17,6 +17,8 @@
     <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
     <!-- The editor validates a save out of process with oltool, so oltool goes next to the editor. -->
     <ProjectReference Include="..\OpenLancer.Tools\OpenLancer.Tools.csproj" />
+    <!-- Play runs the game in its own process, so the play program goes next to the editor. -->
+    <ProjectReference Include="..\OpenLancer.Play\OpenLancer.Play.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,6 +28,8 @@
   <ItemGroup>
     <!-- The tests check the editor logic that needs no GPU, for example the workspace layout. -->
     <InternalsVisibleTo Include="OpenLancer.Tests" />
+    <!-- The retail proofs of the cutscene editor use the edits of the Timeline and the Inspector. -->
+    <InternalsVisibleTo Include="OpenLancer.DataTests" />
   </ItemGroup>
 
 </Project>

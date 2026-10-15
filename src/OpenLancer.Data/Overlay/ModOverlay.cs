@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using LibreLancer.Data.Ini;
 using LibreLancer.Data.IO;
 using OpenLancer.Data.Editing;
@@ -9,6 +10,7 @@ using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Strings;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data.Overlay;
 
@@ -17,8 +19,9 @@ namespace OpenLancer.Data.Overlay;
 /// </summary>
 /// <remarks>
 /// For each changed path, the mods apply in load order: a mod's whole file replaces the content so far, and
-/// a mod's patch changes it. Text from all mods goes into one generated resource DLL, which the overlay adds to
-/// the <c>[Resources]</c> section of <c>EXE\freelancer.ini</c>.
+/// a mod's patch changes it. An INI patch changes the sections of an INI file, and a THN patch changes the tree of a
+/// cutscene script (see <see cref="ThnPatch"/>). Text from all mods goes into one generated resource DLL, which the
+/// overlay adds to the <c>[Resources]</c> section of <c>EXE\freelancer.ini</c>.
 /// </remarks>
 public sealed class ModOverlay
 {
@@ -31,11 +34,9 @@ public sealed class ModOverlay
     /// <summary>The merged document of each path that a mod patches, or null when they are not kept.</summary>
     private readonly IReadOnlyDictionary<string, IniDocument>? documents;
 
-    private ModOverlay(string baseFolder, IReadOnlyList<Mod> mods, OverlayLayer layer,
-        IReadOnlyList<Diagnostic> diagnostics, StringIds stringIds, PatchLedger ledger,
-        IReadOnlyDictionary<string, IniDocument>? documents)
+    private ModOverlay(IReadOnlyList<Mod> mods, OverlayLayer layer, IReadOnlyList<Diagnostic> diagnostics,
+        StringIds stringIds, PatchLedger ledger, IReadOnlyDictionary<string, IniDocument>? documents)
     {
-        BaseFolder = baseFolder;
         Mods = mods;
         this.layer = layer;
         Diagnostics = diagnostics;
@@ -44,7 +45,8 @@ public sealed class ModOverlay
         this.documents = documents;
     }
 
-    public string BaseFolder { get; }
+    /// <summary>The full path of the base folder.</summary>
+    public string BaseFolder => layer.BaseFolder;
 
     /// <summary>The mods in load order.</summary>
     public IReadOnlyList<Mod> Mods { get; }
@@ -55,6 +57,11 @@ public sealed class ModOverlay
 
     /// <summary>The files that the mods add or change. All other files come from the base folder.</summary>
     public IReadOnlyCollection<OverlayFile> Files => layer.Files;
+
+    /// <summary>The install paths of the cutscene scripts (<c>.thn</c>) of <see cref="Files"/>: the whole files and the
+    /// merged patches of the mods. The validation checks these cutscenes (section 9 of the M8 design).</summary>
+    public IReadOnlyList<string> CutscenePaths =>
+        [.. layer.Files.Select(f => f.Path).Where(p => p.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))];
 
     public StringIds StringIds { get; }
 
@@ -70,16 +77,44 @@ public sealed class ModOverlay
     /// </remarks>
     public FileSystem CreateFileSystem() => new(new SysFolderQuickInit(BaseFolder), layer);
 
-    public static ModOverlay Build(string baseFolder, IReadOnlyList<Mod> modsInOrder, IStringResourceWriter stringWriter) =>
-        Build(baseFolder, modsInOrder, stringWriter, keepDocuments: false);
+    /// <summary>
+    /// Makes a file system of <see cref="CreateFileSystem"/> show the files of this overlay. The base folder provider
+    /// stays. A running game keeps the file system object of its start, so a hot reload gives it the files of a new
+    /// overlay in this way.
+    /// </summary>
+    /// <remarks>
+    /// The replace is one reference write in the list of providers. <see cref="FileSystem.Open"/> reads that list with an
+    /// index loop, so a reader on another thread sees the old files or the new files, never a mix of the two lists.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException"><paramref name="live"/> is not a file system of
+    /// <see cref="CreateFileSystem"/> of an overlay of the same base folder.</exception>
+    public void Replace(FileSystem live)
+    {
+        if (live.FileProviders is not [_, OverlayLayer old] || !SameFolder(old.BaseFolder, BaseFolder))
+            throw new InvalidOperationException(
+                $"The file system does not show an overlay of the base folder {BaseFolder}, so it cannot take the files " +
+                "of this overlay.");
+        live.FileProviders[1] = layer;
+    }
+
+    private static bool SameFolder(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(a), Path.TrimEndingDirectorySeparator(b),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    /// <param name="stringWriter">Writes the text DLL of the mods.</param>
+    /// <param name="thn">Reads the cutscene scripts and their patches, or null when the caller cannot run the engine
+    /// VM. Without it, each THN patch is an error.</param>
+    public static ModOverlay Build(string baseFolder, IReadOnlyList<Mod> modsInOrder, IStringResourceWriter stringWriter,
+        IThnEvaluator? thn) =>
+        Build(baseFolder, modsInOrder, stringWriter, thn, keepDocuments: false);
 
     /// <param name="keepDocuments">True to keep the merged document of each patched path for
     /// <see cref="Document"/>.</param>
     internal static ModOverlay Build(string baseFolder, IReadOnlyList<Mod> modsInOrder,
-        IStringResourceWriter stringWriter, bool keepDocuments)
+        IStringResourceWriter stringWriter, IThnEvaluator? thn, bool keepDocuments)
     {
         baseFolder = Path.GetFullPath(baseFolder);
-        var builder = new Builder(baseFolder, modsInOrder, keepDocuments);
+        var builder = new Builder(baseFolder, modsInOrder, thn, keepDocuments);
         return builder.Run(stringWriter);
     }
 
@@ -89,7 +124,7 @@ public sealed class ModOverlay
     /// </summary>
     internal static int StringsDllIndex(string baseFolder, IReadOnlyList<Mod> modsInOrder)
     {
-        var builder = new Builder(Path.GetFullPath(baseFolder), modsInOrder, keepDocuments: false);
+        var builder = new Builder(Path.GetFullPath(baseFolder), modsInOrder, thn: null, keepDocuments: false);
         builder.MergeFreelancerIni();
         return builder.DllIndex();
     }
@@ -115,11 +150,12 @@ public sealed class ModOverlay
         return fs.FileExists(path) ? IniDocument.Parse(path, fs.ReadAllBytes(path)) : null;
     }
 
-    private sealed class Builder(string baseFolder, IReadOnlyList<Mod> mods, bool keepDocuments)
+    private sealed class Builder(string baseFolder, IReadOnlyList<Mod> mods, IThnEvaluator? thn, bool keepDocuments)
     {
         private readonly FileSystem baseFs = FileSystem.FromPath(baseFolder);
         private readonly List<Diagnostic> diagnostics = [];
         private readonly PatchLedger ledger = new();
+        private readonly ThnLedger thnLedger = new();
         private readonly Dictionary<string, OverlayFile> results = new(VfsPath.Comparer);
         private readonly Dictionary<string, IniDocument>? documents = keepDocuments ? new(VfsPath.Comparer) : null;
 
@@ -132,7 +168,7 @@ public sealed class ModOverlay
 
             if (paths.Contains(StringsDllPath, VfsPath.Comparer))
                 diagnostics.Add(Diagnostic.Error(StringsDllPath, "This path is reserved for the generated text DLL."));
-            foreach (var mod in mods.Where(m => SaveTransaction.HasJournal(m.Folder)))
+            foreach (var mod in mods.Where(m => m.HasPendingSave))
             {
                 diagnostics.Add(Diagnostic.Warning(Path.Combine(mod.Folder, SaveTransaction.FolderName),
                     $"A save of the editor in mod '{mod.Id}' is not complete, so some files of the mod can be from " +
@@ -152,7 +188,7 @@ public sealed class ModOverlay
                     stringWriter.Write(stringIds.Strings, stringIds.Infocards));
             }
 
-            return new ModOverlay(baseFolder, mods, new OverlayLayer(results.Values), diagnostics, stringIds, ledger,
+            return new ModOverlay(mods, new OverlayLayer(baseFolder, results.Values), diagnostics, stringIds, ledger,
                 documents);
         }
 
@@ -161,6 +197,11 @@ public sealed class ModOverlay
         /// </summary>
         private void Merge(string path, StringIds? stringIds)
         {
+            if (path.EndsWith(".thn", StringComparison.OrdinalIgnoreCase) && mods.Any(m => m.Patches.ContainsKey(path)))
+            {
+                MergeCutscene(path);
+                return;
+            }
             OverlayFile? current = null;
             IniDocument? document = null;
             // The mods whose changes are in the content so far.
@@ -169,10 +210,7 @@ public sealed class ModOverlay
             {
                 if (mod.Files.TryGetValue(path, out var file))
                 {
-                    var lost = producers.Where(p => p != mod.Id).ToList();
-                    if (lost.Count > 0)
-                        diagnostics.Add(Diagnostic.Warning(file,
-                            $"Mod '{mod.Id}' replaces {path}. The changes of {string.Join(", ", lost.Select(p => $"mod '{p}'"))} are lost."));
+                    WarnLostChanges(path, file, mod, producers);
                     ledger.RecordFile(path, mod.Id);
                     current = OverlayFile.FromDisk(path, file);
                     document = ResolveFilePlaceholders(path, file, mod, stringIds);
@@ -218,6 +256,117 @@ public sealed class ModOverlay
         }
 
         /// <summary>
+        /// Applies every mod's whole file and THN patch of a cutscene script, in load order (see <see cref="ThnPatch"/>).
+        /// The evaluator reads the content so far into a tree, each patch changes the tree, and the canonical writer
+        /// writes the result as Lua text. The engine reads text as it reads bytecode (ThornRuntime.cs:49-59).
+        /// </summary>
+        /// <remarks>A patch with an error does not apply, and the tree stays as the mods before it leave it. The native
+        /// compiler of the evaluator is not re-entrant, so the paths merge one after another. Each problem has the
+        /// cutscene as its place, so that a click in the Console opens it.</remarks>
+        private void MergeCutscene(string path)
+        {
+            var place = new ThnLocation(path);
+            void Add(Diagnostic problem) => diagnostics.Add(problem with { Cutscene = place });
+            OverlayFile? current = null;
+            // The tree of the content so far, after it is read. It is null after a whole file.
+            ThnScriptModel? tree = null;
+            var patched = false;
+            var ids = ThnElementId.Counter();
+            var producers = new List<string>();
+            foreach (var mod in mods)
+            {
+                if (mod.Files.TryGetValue(path, out var file))
+                {
+                    WarnLostChanges(path, file, mod, producers);
+                    thnLedger.RecordFile(path);
+                    current = OverlayFile.FromDisk(path, file);
+                    tree = null;
+                    patched = false;
+                    producers = [mod.Id];
+                }
+                if (!mod.Patches.TryGetValue(path, out var patchFile))
+                    continue;
+                if (!producers.Contains(mod.Id))
+                    producers.Add(mod.Id);
+                if (thn == null)
+                {
+                    Add(Diagnostic.Error(patchFile, "This tool cannot merge cutscene patches."));
+                    continue;
+                }
+
+                tree ??= LoadCutscene(path, current, patchFile, ids, Add);
+                if (tree == null)
+                    continue;
+                ThnPatch patch;
+                try
+                {
+                    patch = ThnPatch.Read(SharedFile.ReadAllBytes(patchFile), patchFile, thn);
+                }
+                catch (ThnPatchException e)
+                {
+                    foreach (var problem in e.Problems)
+                        Add(Diagnostic.Error(patchFile, problem));
+                    continue;
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    Add(Diagnostic.Error(patchFile, e.Message));
+                    continue;
+                }
+                var result = patch.Apply(tree, thn.Symbols, ids);
+                foreach (var error in result.Errors)
+                    Add(Diagnostic.Error(patchFile, error));
+                foreach (var warning in result.Warnings)
+                    Add(Diagnostic.Warning(patchFile, warning));
+                if (result.Model == null)
+                    continue;
+                foreach (var warning in thnLedger.Record(path, mod.Id, result))
+                    Add(Diagnostic.Warning(patchFile, warning));
+                tree = result.Model;
+                patched = true;
+            }
+
+            if (patched)
+                results[path] = OverlayFile.Generated(path, Encoding.ASCII.GetBytes(ThnWriter.Write(tree!.ToGlobals())));
+            else if (current != null)
+                results[path] = current;
+        }
+
+        /// <summary>Reads the cutscene that a patch changes: the whole file of a mod, or else the base file. Returns null
+        /// after an error.</summary>
+        /// <param name="add">Adds a problem of the cutscene.</param>
+        private ThnScriptModel? LoadCutscene(string path, OverlayFile? current, string patchFile, Func<ThnElementId> ids,
+            Action<Diagnostic> add)
+        {
+            if (current == null && !baseFs.FileExists(path))
+            {
+                add(Diagnostic.Error(patchFile, $"The file to patch, {path}, does not exist."));
+                return null;
+            }
+            var source = current?.DiskPath ?? path;
+            try
+            {
+                var bytes = current != null ? current.ReadAllBytes() : baseFs.ReadAllBytes(path);
+                return ThnScriptModel.From(thn!.Evaluate(bytes, source), ids);
+            }
+            catch (Exception e) when (e is ThnEvaluationException or FormatException or IOException or UnauthorizedAccessException)
+            {
+                add(Diagnostic.Error(source, "Cannot read the cutscene to patch: " + e.Message));
+                return null;
+            }
+        }
+
+        /// <summary>Warns that the whole file of a mod discards the changes of the mods before it.</summary>
+        /// <param name="producers">The mods whose changes are in the content so far.</param>
+        private void WarnLostChanges(string path, string file, Mod mod, List<string> producers)
+        {
+            var lost = producers.Where(p => p != mod.Id).ToList();
+            if (lost.Count > 0)
+                diagnostics.Add(Diagnostic.Warning(file,
+                    $"Mod '{mod.Id}' replaces {path}. The changes of {string.Join(", ", lost.Select(p => $"mod '{p}'"))} are lost."));
+        }
+
+        /// <summary>
         /// Parses a whole INI file of a mod and resolves its text placeholders. Returns null when the file is not
         /// an INI file or has no placeholders, so that it is served unchanged.
         /// </summary>
@@ -228,7 +377,7 @@ public sealed class ModOverlay
             IniDocument document;
             try
             {
-                document = IniDocument.Parse(file, File.ReadAllBytes(file));
+                document = IniDocument.Parse(file, SharedFile.ReadAllBytes(file));
             }
             catch (Exception e)
             {

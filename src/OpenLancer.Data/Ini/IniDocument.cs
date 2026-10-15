@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Ini;
 
@@ -45,7 +46,9 @@ internal sealed class IniDocument
         return new IniDocument(path, isBinary, sections);
     }
 
-    public static IReadOnlyList<Section> ParseFile(string path) => Parse(path, File.ReadAllBytes(path)).Sections;
+    /// <summary>Parses a file of a mod. The read lets the editor save the file at the same time (see
+    /// <see cref="SharedFile"/>).</summary>
+    public static IReadOnlyList<Section> ParseFile(string path) => Parse(path, SharedFile.ReadAllBytes(path)).Sections;
 
     /// <summary>
     /// A deep copy: new sections and new entries. The copy shares the values, because a value cannot change.

@@ -16,34 +16,40 @@ using LibreLancer.Resources;
 using LibreLancer.Shaders;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Database;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Strings;
+using OpenLancer.Runtime.Thn;
 
 namespace OpenLancer.Editor;
 
 /// <summary>
-/// The OpenLancer editor window: a menu bar, the workspace panels (Hierarchy, Scene, Inspector, and Database and
-/// Console at the bottom) and a status bar. While no profile is open, the Welcome screen replaces the panels.
+/// The OpenLancer editor window: a menu bar, the workspace panels (Hierarchy, Scene and Cutscene, Inspector, and
+/// Database, Console, Timeline and Cutscenes at the bottom) and a status bar. While no profile is open, the Welcome
+/// screen replaces the panels.
 /// </summary>
-/// <remarks>The edits of the active mod and their menus are in <c>EditorWindow.Editing.cs</c>.</remarks>
+/// <remarks>The edits of the active mod and their menus are in <c>EditorWindow.Editing.cs</c>. Play is in
+/// <c>EditorWindow.Play.cs</c> and <see cref="PlayMenu"/>.</remarks>
 internal sealed partial class EditorWindow : Game
 {
     private const string AppTitle = "OpenLancer Editor";
     private const string DefaultSystem = "li01";
 
     /// <summary>The Console source of the messages of the editor itself.</summary>
-    private const string EditorSource = "Editor";
+    internal const string EditorSource = "Editor";
     private static readonly FileDialogFilters ProfileFilters = new(new FileFilter("OpenLancer profile", "json"));
     private static readonly float[] UiScales = [1, 1.25f, 1.5f, 1.75f, 2];
 
-    private readonly string? startProfile;
+    private readonly EditorOptions options;
     private ImGuiHelper gui = null!;
     private EditorLayout layout = null!;
     private ConsolePanel console = null!;
@@ -52,6 +58,11 @@ internal sealed partial class EditorWindow : Game
     private DatabasePanel database = null!;
     private WelcomeScreen welcome = null!;
     private StatusBar statusBar = null!;
+    private CutsceneView cutsceneView = null!;
+    private TimelinePanel timeline = null!;
+    private CutsceneBrowser cutsceneBrowser = null!;
+    private CutsceneBench? bench;
+    private readonly PlayMenu playMenu;
 
     // The time since the last frame. The Scene panel reads it while the layout draws.
     private double frameElapsed;
@@ -60,11 +71,16 @@ internal sealed partial class EditorWindow : Game
     private List<string> menuProfiles = [];
     private HashSet<string> missingRecentProfiles = [];
 
-    /// <param name="startProfile">The profile file to open at the start, or null.</param>
-    public EditorWindow(string? startProfile) : base(1600, 900, true)
+    /// <param name="options">The command line.</param>
+    public EditorWindow(EditorOptions options) : base(1600, 900, true)
     {
-        this.startProfile = startProfile;
+        this.options = options;
+        // The bench must not change the settings of the user, so it does not read or write them.
+        Settings = options.Bench ? EditorSettings.Transient() : EditorSettings.Load();
+        Cutscenes = new CutsceneWorkspace(this);
         Edits = new EditController(this);
+        Play = new PlayController(this, PlayProcess.Command, () => playClock.Elapsed);
+        playMenu = new PlayMenu(this);
         // The window gets this title when it is made. The shaders compile before the first frame, and the window
         // must not show the engine name during that time.
         Title = AppTitle;
@@ -73,19 +89,37 @@ internal sealed partial class EditorWindow : Game
     public EditorSession? Session { get; private set; }
     public SceneView Scene { get; private set; } = null!;
 
-    public EditorSettings Settings { get; } = EditorSettings.Load();
+    /// <summary>The open cutscene and its preview.</summary>
+    public CutsceneWorkspace Cutscenes { get; }
+
+    public EditorSettings Settings { get; }
+
+    /// <summary>The exit code of the process: 1 after a bench with a failed script, else 0.</summary>
+    public int ExitCode { get; set; }
 
     /// <summary>The messages of the Console.</summary>
     public ConsoleLog Log { get; } = new();
 
     /// <summary>
-    /// The selected item: a system object, zone, light, ship, equipment, system, or a section of an item file
-    /// (<see cref="SectionRef"/>).
+    /// The selected item: a system object, zone, light, ship, equipment, system, a section of an item file
+    /// (<see cref="SectionRef"/>), or the open cutscene or an element of it (<see cref="CutsceneRoot"/> and
+    /// <see cref="OpenLancer.Data.Thn.ThnRef"/>). The Scene and the Cutscene tab each keep their own selection while the
+    /// other one shows (see <see cref="CutsceneWorkspace.FollowCenterTab"/>).
     /// </summary>
     public object? Selection { get; set; }
 
+    /// <summary>
+    /// True while the Cutscene tab is the shown tab of the center group. The Hierarchy then shows the open cutscene
+    /// (section 7.4 of the M8 design). It is set at the start of each frame.
+    /// </summary>
+    public bool CutsceneMode { get; private set; }
+
     /// <summary>The edits of the open profile, the saves and what follows a save.</summary>
     public EditController Edits { get; }
+
+    /// <summary>True while a field edit of the Inspector, a drag of a gizmo, a drag on the Timeline or a drag of a curve
+    /// point is open. Undo, redo, save, the recovery file and the model loads of the scene wait for its end.</summary>
+    public bool IsEditing => inspector.IsEditing || Scene.IsDragging || timeline.IsDragging || cutsceneView.IsDragging;
 
     /// <summary>The dialog for the questions of the editor, for example Save, Discard or Cancel.</summary>
     public ChoiceDialog Choice { get; } = new();
@@ -125,10 +159,18 @@ internal sealed partial class EditorWindow : Game
         inspector = new InspectorPanel(this);
         database = new DatabasePanel(this);
         console = new ConsolePanel(this);
+        cutsceneView = new CutsceneView(this, Cutscenes);
+        timeline = new TimelinePanel(this, Cutscenes);
+        cutsceneBrowser = new CutsceneBrowser(this, Cutscenes);
         layout = new EditorLayout(Settings,
             new EditorPanel("hierarchy", "Hierarchy", EditorIcons.List, hierarchy.Draw, hierarchy.Toolbar),
-            new EditorPanel("scene", "Scene", EditorIcons.Globe, () => Scene.Draw(frameElapsed), Scene.Toolbar,
-                padding: false),
+            new EditorPanelGroup("center",
+            [
+                new EditorPanel("scene", "Scene", EditorIcons.Globe, () => Scene.Draw(frameElapsed), Scene.Toolbar,
+                    padding: false),
+                new EditorPanel(CutsceneView.PanelId, "Cutscene", EditorIcons.Film,
+                    () => cutsceneView.Draw(frameElapsed), cutsceneView.Toolbar, padding: false),
+            ]),
             new EditorPanel("inspector", "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
                 padding: false),
             new EditorPanelGroup("bottom",
@@ -137,22 +179,61 @@ internal sealed partial class EditorWindow : Game
                     database.Toolbar, padding: false),
                 new EditorPanel("console", "Console", EditorIcons.Terminal, console.Draw, console.Toolbar,
                     padding: false, badges: console.Badges),
+                new EditorPanel(TimelinePanel.PanelId, "Timeline", EditorIcons.Stream, timeline.Draw, timeline.Toolbar,
+                    padding: false),
+                new EditorPanel(CutsceneBrowser.PanelId, "Cutscenes", EditorIcons.Film, cutsceneBrowser.Draw,
+                    cutsceneBrowser.Toolbar, padding: false),
             ]));
         statusBar = new StatusBar(this);
         welcome = new WelcomeScreen(this);
 
+        if (options.Bench)
+        {
+            StartBench();
+            return;
+        }
+
+        // A wrong command line opens no profile, so that the Welcome screen shows the problem.
+        if (options.Problem is { } problem)
+        {
+            OpenError = problem;
+            Log.Add(ConsoleSeverity.Error, EditorSource, problem);
+            return;
+        }
+
         // The profile of the command line opens first, then the newest recent profile. Without either, the Welcome
         // screen shows.
         var newest = Settings.RecentProfiles.Count > 0 ? Settings.RecentProfiles[0].Path : null;
-        var path = startProfile ?? (File.Exists(newest) ? newest : null);
+        var path = options.Profile ?? (File.Exists(newest) ? newest : null);
         if (path != null)
         {
             OpenProfile(path);
         }
     }
 
+    /// <summary>
+    /// Starts the preview bench: it opens the profile of the command line without an active mod, so the bench takes no
+    /// lock and writes no file of a mod.
+    /// </summary>
+    private void StartBench()
+    {
+        bench = new CutsceneBench(this, Cutscenes, options.BenchCutscenes);
+        if (options.Profile == null)
+        {
+            FLLog.Error(CutsceneBench.Component, "The bench needs a profile file on the command line.");
+            return;
+        }
+
+        var full = Path.GetFullPath(options.Profile);
+        Settings.SetActiveMod(full, null);
+        OpenProfile(full);
+    }
+
     protected override void Cleanup()
     {
+        // The game shows the data of this window, so it ends with the window (decision D48).
+        Play.SessionEnding(windowClose: true);
+        Play.Dispose();
         // After a crash in Load, the ImGui context can be missing.
         if (gui != null)
         {
@@ -161,11 +242,15 @@ internal sealed partial class EditorWindow : Game
 
         Settings.Save();
         // Without local patch 0017, the window closes without a question. So the unsaved edits go into the recovery
-        // file, and the next open of the mod offers to restore them (decision D8). An open field edit ends first, so
-        // that the file keeps it. When no unsaved edits remain, for example after an undo, the write deletes the file.
+        // file, and the next open of the mod offers to restore them (decision D8). An open field edit or drag ends
+        // first, so that the file keeps it. When no unsaved edits remain, for example after an undo, the write deletes
+        // the file.
         if (Session is { } session)
         {
             inspector.EndEdit();
+            Scene.EndDrag();
+            timeline.EndDrag();
+            cutsceneView.EndDrag();
             if (session.RecoveryOutdated)
             {
                 Edits.WriteRecovery(session);
@@ -173,6 +258,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         Edits.Dispose();
+        Cutscenes.Dispose();
         Scene.Dispose();
         Session?.Dispose();
     }
@@ -194,6 +280,19 @@ internal sealed partial class EditorWindow : Game
 
     /// <summary>Sets the Hierarchy search, for example "t:zone" to show the zones of the open system.</summary>
     public void ShowInHierarchy(string search) => hierarchy.SetSearch(search);
+
+    /// <summary>Makes the tab of a panel the selected tab of its group.</summary>
+    public void ShowPanel(string panelId) => layout.Show(panelId);
+
+    /// <summary>True when a panel shows in its group and the group has the focus.</summary>
+    public bool IsFocused(string panelId) => layout.IsFocused(panelId);
+
+    /// <summary>Shows an entity of the open cutscene in the Free mode of the Cutscene tab.</summary>
+    public void FrameInCutscene(ThnRef entity)
+    {
+        layout.Show(CutsceneView.PanelId);
+        cutsceneView.Frame(entity);
+    }
 
     /// <summary>
     /// Shows the Console tab and selects an entry in it. The Console is part of the workspace, which shows only while
@@ -237,12 +336,15 @@ internal sealed partial class EditorWindow : Game
 
         CloseNow();
         OpenError = null;
+        // The edit session holds the lock of the active mod. A path that does not give it to a new EditorSession
+        // disposes it, so that the lock does not stay until the garbage collector runs.
+        EditSession? edits = null;
         try
         {
             var full = Path.GetFullPath(path);
             var profile = ModProfile.Load(full);
             var active = Settings.ActiveModOf(full, profile.Mods.Select(m => m.Id).ToList());
-            var edits = EditSession.Open(profile, active, DllStringResourceWriter.Instance);
+            edits = EditSession.Open(profile, active, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
             foreach (var d in edits.OpenProblems.Concat(edits.EditView.Diagnostics))
             {
                 Log.Add(d);
@@ -262,9 +364,12 @@ internal sealed partial class EditorWindow : Game
             var repo = edits.ActiveMod == null ? null : RepoCheck.RepoRoot(edits.ActiveMod.Folder);
             var session = new EditorSession(edits, new GameResourceManager(this, fileSystem), repo);
             Session = session;
+            edits = null;
             Log.Add(ConsoleSeverity.Info, EditorSource,
                 $"Opened profile {profile.Name} ({profile.Mods.Count} mods). " +
-                (edits.ActiveMod == null ? "No mod is active, so the profile is read-only. " : $"Active mod: {edits.ActiveMod.Id}. ") +
+                (session.Edits.ActiveMod is not { } activeMod
+                    ? "No mod is active, so the profile is read-only. "
+                    : $"Active mod: {activeMod.Id}. ") +
                 "Loading game data...");
             ModWarnings(session);
             Edits.OfferRecovery();
@@ -291,6 +396,10 @@ internal sealed partial class EditorWindow : Game
             OpenError = e.Message;
             Log.Add(ConsoleSeverity.Error, EditorSource, e.Message);
         }
+        finally
+        {
+            edits?.Dispose();
+        }
     }
 
     /// <summary>
@@ -313,9 +422,16 @@ internal sealed partial class EditorWindow : Game
         }
 
         Edits.Stop();
+        // The game shows the data of one profile and one active mod, so it cannot follow another session (decision
+        // D48). A change of the active mod and a new mod open the profile again, so they close it here too.
+        Play.SessionEnding(windowClose: false);
         // The panels forget the game data of the profile, so that it does not stay in memory while no profile is
         // open. The panels do not draw while the Welcome screen shows, so they cannot do this themselves.
         Scene.Close();
+        Cutscenes.Reset();
+        cutsceneView.Reset();
+        timeline.Reset();
+        cutsceneBrowser.Reset();
         hierarchy.Reset();
         inspector.Reset();
         database.Reset();
@@ -327,7 +443,7 @@ internal sealed partial class EditorWindow : Game
 
     public void OpenSystem(StarSystem system)
     {
-        if (Session?.GameData is not { } data)
+        if (Session?.GameData == null)
         {
             return;
         }
@@ -340,9 +456,8 @@ internal sealed partial class EditorWindow : Game
         }
 
         Selection = null;
-        Scene.Open(system, data, Session.Resources);
-        Log.Add(ConsoleSeverity.Info, EditorSource,
-            $"Opened system {Session.Name(system.IdsName)} ({system.Nickname}).");
+        Scene.Open(system, Session);
+        Log.Add(ConsoleSeverity.Info, EditorSource, $"Opened system {Session.ItemName(system)} ({system.Nickname}).");
     }
 
     private void DataLoaded(EditorSession session, GameDataManager data)
@@ -356,7 +471,8 @@ internal sealed partial class EditorWindow : Game
         Log.Add(ConsoleSeverity.Info, EditorSource,
             $"Game data loaded: {data.Items.Systems.Count()} systems, {data.Items.Ships.Count()} ships, " +
             $"{data.Items.Equipment.Count()} equipment.");
-        if (data.Items.Systems.Get(DefaultSystem) is { } system)
+        // The bench measures the preview alone, so it opens no system.
+        if (!options.Bench && data.Items.Systems.Get(DefaultSystem) is { } system)
         {
             OpenSystem(system);
         }
@@ -376,6 +492,7 @@ internal sealed partial class EditorWindow : Game
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;
+        CutsceneFrame(elapsed);
         var position = new Vector2(0, menuHeight);
         var size = new Vector2(Width, Height - menuHeight - statusHeight);
         if (Session == null)
@@ -390,7 +507,10 @@ internal sealed partial class EditorWindow : Game
         statusBar.Draw(new Vector2(0, Height - statusHeight), Width);
         DrawDialogs();
         Shortcuts();
-        Edits.Update(inspector.IsEditing);
+        Edits.Update(IsEditing);
+        // After the layout, so that a click on Play gets the edit of a field that the click ended (section 9.1).
+        Play.Update(IsEditing, DialogOpen);
+        bench?.Update();
 
         ImGui.PopFont();
         gui.Render(RenderContext);
@@ -413,6 +533,22 @@ internal sealed partial class EditorWindow : Game
     }
 
     /// <summary>
+    /// The cutscene part of a frame, before the panels draw, with the tabs that showed in the last frame: the
+    /// selection follows the center tab, and while the Cutscene tab or the Timeline shows, the preview reads its keys
+    /// and runs its clock. So the Timeline plays the preview also while the Scene tab shows.
+    /// </summary>
+    private void CutsceneFrame(double elapsed)
+    {
+        CutsceneMode = Session != null && layout.IsShown(CutsceneView.PanelId);
+        Cutscenes.FollowCenterTab(CutsceneMode);
+        if (CutsceneMode || layout.IsShown(TimelinePanel.PanelId))
+        {
+            Cutscenes.Keys(IsFocused(CutsceneView.PanelId) || IsFocused(TimelinePanel.PanelId));
+            Cutscenes.Frame(elapsed);
+        }
+    }
+
+    /// <summary>
     /// "OpenLancer Editor - sample [proof]* - New York (Li01)", without the parts that are not open. The brackets name
     /// the active mod, and the star shows unsaved edits.
     /// </summary>
@@ -427,7 +563,7 @@ internal sealed partial class EditorWindow : Game
 
         if (Scene.System is { } system)
         {
-            var name = Session?.Name(system.IdsName);
+            var name = Session?.ItemName(system);
             title += string.IsNullOrEmpty(name) ? $" - {system.Nickname}" : $" - {name} ({system.Nickname})";
         }
 
@@ -456,12 +592,19 @@ internal sealed partial class EditorWindow : Game
             ImGui.EndMenu();
         }
 
+        if (ImGui.BeginMenu("Play"))
+        {
+            playMenu.Menu();
+            ImGui.EndMenu();
+        }
+
         if (ImGui.BeginMenu("View"))
         {
             ViewMenu();
             ImGui.EndMenu();
         }
 
+        playMenu.Buttons();
         EditorTheme.PopMenuColors();
         var height = ImGui.GetWindowHeight();
         ImGui.EndMainMenuBar();

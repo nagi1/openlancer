@@ -9,6 +9,7 @@ An OpenLancer mod changes the game data without a change to the base files. A pr
   mod.json                     required
   strings.json                 optional: text for names and infocards
   patches/<install path>.ini   entry-level changes to an INI file
+  patches/<install path>.thn   changes to a cutscene script (see "Cutscenes")
   files/<install path>         a file that the mod adds or replaces
   .olsave/                     the editor's save folder (see "The editor"). The merge ignores it.
 ```
@@ -37,7 +38,7 @@ An install path is relative to the game root, for example `DATA/EQUIPMENT/goods.
 
 ## Patches
 
-A patch file is a text INI file. Each section in it changes one section of the target file.
+A patch of an INI file is a text INI file. Each section in it changes one section of the target file. For a patch of a cutscene script, see "Cutscenes".
 
 ### How a patch section finds its target
 
@@ -178,11 +179,115 @@ Freelancer also shows a string id in `ids_info` as an infocard with plain text, 
 
 A file in `files/` adds a new file, or replaces the file at the same install path. Patches of later mods apply to the replaced file. A replacement discards the changes of the mods that load before it, and the merge reports a warning that names them. Put new assets under `DATA/MODS/<mod id>/` so that they do not collide with other mods.
 
+## Cutscenes
+
+A cutscene script (`.thn`) is a Lua 3.2 script. The retail scripts are bytecode. The engine also reads Lua text, so a mod gives its cutscene changes as text. A mod changes a cutscene in one of two ways:
+
+- `patches/<install path>.thn` is a THN patch. It holds only the changed values. Use it to change a retail cutscene or a cutscene of another mod.
+- `files/<install path>` is a whole script as Lua text. Use it for a new cutscene, under `DATA/MODS/<mod id>/CUTSCENES/`. Do not copy a retail script into a mod.
+
+The merge reads the script as the mods before the patch leave it, and applies each THN patch in load order. Then it writes the result as canonical Lua text. `oltool thn` prints that text, and `oltool deploy` writes it into the deploy folder. The cutscene editor shows each cutscene, and it saves the edits of a lower cutscene as a THN patch (see [CUTSCENES.md](CUTSCENES.md)).
+
+### Values
+
+| Lua text | Value |
+|---|---|
+| `20`, `-1.5`, `1E-07` | A number. The engine stores it as a 32-bit float. |
+| `"Cam_02"` | A text. Write `\"`, `\\` and `\n` for a quote, a backslash and a line end. |
+| `Y`, `N` | True and false. |
+| `CAMERA`, `SET_CAMERA`, `LIT_DYNAMIC` | A name of the THN environment. |
+| `{ 1, 2, 3 }`, `{ fovh = 20 }` | A table: a list part, a record part, or both, for example `{ 1, 2; key = 3 }`. |
+
+- THN content is ASCII. The merge refuses a patch with other characters.
+- `-0` becomes `0`. A number that is not finite is an error, for example `1e39`, which the engine reads as infinity. NaN has no text.
+- A name stays a name, and a number stays a number. The engine reads `type = 3` and `type = CAMERA` as the same type.
+
+### The THN patch
+
+```lua
+-- My mod: a wider Trent shot, and a later cut to the medics.
+ol_thn_patch = 1
+entities = {
+	{ ol_match = "Cam_02_Intro_Trent_A", ol_set = { ["cameraprops.fovh"] = 20 } }
+}
+events = {
+	{ ol_match = { 25.75, SET_CAMERA, { "Cam_Monitor_s002xe", "Cam_03_ACOH_Trent_Medics_A" } }, ol_set = { time = 27 } }
+}
+```
+
+This patch is `patches/DATA/SCRIPTS/STORY/s002xe_nrml_sinclair_li_01_Cityscape_01.thn`. It makes the first Trent shot of the Manhattan intro wider, and the cut to the medics 1.25 s later.
+
+| Global | Meaning |
+|---|---|
+| `ol_thn_patch = 1` | Required. The version of the THN patch format. It is the first statement. Only comments (`--`) and empty lines can come before it. |
+| `duration = <seconds>` | Optional. The new length of the script. |
+| `entities = { ... }` | The entity entries, in order. |
+| `events = { ... }` | The event entries, in order. |
+
+| Entry | Meaning |
+|---|---|
+| `{ ol_match = <key>, ol_set = { [path] = value, ... }, ol_remove = { path, ... } }` | Changes one element. `ol_set` and `ol_remove` are optional. The removes run before the sets, so an entry can move a key to the end of its record. |
+| `{ ol_match = <key>, ol_delete = Y }` | Deletes one element. |
+| `{ ol_new = <table> }` | Adds an element at the end of its list. For an event, the table is `{ time, TYPE, { targets }, { props } }`. |
+| `ol_nth = n, ol_count = m` | Use them in an entry whose key repeats in the script. The element is the n-th of the m elements with that key. Without them, the key must be unique. |
+
+A key finds an element:
+
+- An entity key is the entity name, for example `ol_match = "Cam_02"`. Letter case does not matter, because the engine compares names without it. An entity without a name has the key `""`.
+- An event key is `{ time, type, { targets } }`, as the script has them. The time must be the same number. The type compares by its number, so `SET_CAMERA` and its number are the same type. The targets compare by their text and their order.
+
+A path names a value of the element:
+
+- A path is a text of record keys joined with `.`, for example `"cameraprops.fovh"` or `"spatialprops.pos"`.
+- An event has four slots: `time`, `type`, `targets` and `props`, for example `"time"` or `"props.duration"`. Only `props` holds keys. A patch cannot remove `time`, `type` or `targets`.
+- A path ends at a value. A list, for example `pos = { 1, 2, 3 }`, is one value. An empty table is a record, so a path can go into an empty `psysprops`.
+- A set of a new key adds the key at the end of its record. A set also makes each missing record on its path. For example, `"props.duration"` makes the props of a `SET_CAMERA` event, which has none.
+
+### How the merge applies a THN patch
+
+1. All keys find their elements in the script before the patch. Then the removes, the sets and the deletes run. Then the new elements go at the end of their lists, in patch order. So a delete does not move a later match.
+2. A key that finds no element is an error. So is a key whose number of elements differs from `ol_count`. The error names the file, the entry and the key. Any error stops the whole patch, and the script stays as the mods before it leave it.
+3. A set into a value that is not a record is an error. A remove of a missing key is a warning.
+4. When two mods change the same path, or one path is in the value of the other, the later mod wins. This is also true when two mods set `duration`. The merge reports a warning that names both mods.
+5. A rename sets `entity_name`. The next patch in load order then uses the new name.
+6. An unknown `ol_` key is an error. A key or a global that the format does not have is an error too.
+7. A lower mod can delete or add an element with a key, or change the key of an element. A later entry with `ol_nth` for that key can then name another element, also when the count stays the same. The merge reports a warning that names both mods and the key, and the patch applies. Check the result.
+
+An edit can give an event the time, the type and the targets of another event, for example a move of an event onto the start of the next motion of the same character. The key of these events then repeats. A patch of a later mod that names one of them without `ol_nth` then fails with rule 2, and that mod must save its patch again in the editor. Duplicate in the editor puts its copies after their sources, so a copy does not repeat the key of its source.
+
+The engine runs the events of one time in their order in the script. A new event goes at the end of the list, so it runs after the other events of its time. To run an event before them, delete those events and add them again as new events after it. Do not do this when one of those events has a key that repeats, because the `ol_nth` of a later mod can then name another event.
+
+A whole file of a later mod replaces the script and discards the patches before it, as for INI files. A tool that cannot run the engine VM cannot merge a THN patch. It reports "This tool cannot merge cutscene patches." THN patches are part of format version 1. An older OpenLancer refuses a mod with a THN patch: "A patch must be an .ini file."
+
+### The validation of cutscenes
+
+`oltool validate` checks each cutscene script that the mods add or change: each whole file and each merged patch. It reports the errors that the merged script has and that the lower data does not have. An error is a value that stops the engine, so the cutscene does not play, or a text that breaks the rules of this format:
+
+- The script does not compile, or it holds a number that is not finite.
+- A script text has a character outside ASCII, also in a comment. The engine runs the script, but its VM reads each text as ASCII.
+- `duration` is not a number, or `entities` or `events` is not a table.
+- An entity has no text `entity_name`, or a `type` that the engine cannot read.
+- An event has no number time, no type with an event class of the engine, or no table of text targets. Or the props of an event are not a table.
+- A key holds a value of another kind than the engine reads. An entity reads its keys with casts: `cameraprops.fovh = "20"` stops the engine, because the engine reads a number there. An event reads its props with conversions, which also take a text with a number or a THN name, for example `time_scale = "2"`.
+- An entity with `lightprops` has no light type or no `spatialprops.pos`. A `path_data` text is not a path that the engine reads.
+- An event has fewer targets than its type reads: two for SET_CAMERA, ATTACH_ENTITY and START_PATH_ANIMATION, and one for most other types. The second target of SET_CAMERA names an entity of the script that is not a CAMERA. The second target of START_PATH_ANIMATION names an entity of the script without `pathprops.path_data`.
+- The scene cannot build an entity:
+  - a LIGHT without `lightprops`, or a SCENE without an `ambient` color.
+  - a COMPOUND with a template, but without a known `userprops.category`, or with a solar, a ship, a room or a cart that does not exist.
+  - a DEFORMABLE without `userprops.Actor`, with a costume that does not exist.
+
+The scene does not make a REFERENCE entity, or an entity that a later entity with the same name hides. So the checks of the scene skip these entities, and a target with the name of such an entity names an object of another script of the scene. `flags` gives REFERENCE also as a name of another group, because the engine casts the name to its number: `flags = CAMERA` is 3, which is REFERENCE and LIT_DYNAMIC. A room fills in the `$terrain_*` templates with the terrain of its base, so the check reads the template of each base that plays the script. The game makes no COMPOUND of a script that only `[Trigger] Act_CallThorn` lines name, because it plays such a script in space with the objects of the mission. So the checks of a COMPOUND skip such a script.
+
+The check does not know the objects of the other scripts of a room. So a target that names no entity of the script is not an error, also for SET_CAMERA and START_PATH_ANIMATION. The engine stops when no script of the scene has that name.
+
+A THN patch that does not apply is a merge error. Each problem of a cutscene has its place: the cutscene, the element with its key and the path of the value. A click on the problem in the Console of the editor opens the cutscene and selects the element. When an edit after the save moved the element, the key finds it. When the key names no element or more than one element, the click selects the cutscene.
+
 ## Rules
 
-- INI content in a mod must be ASCII. Text in `strings.json` can use any characters.
+- INI content and THN content in a mod must be ASCII. Text in `strings.json` can use any characters.
 - Do not copy vanilla files or vanilla sections into a mod. Change only the entries that you need.
 - `tools/content_scan.py` rejects retail file types and files that are byte-identical to retail files. It cannot find decoded INI text or copied sections, so follow the rule above yourself.
+- The scan accepts a `.thn` file only as a THN patch: ASCII text below the `patches/` folder of a mod (the `patches/` folder next to its `mod.json`) whose first statement after its comments is `ol_thn_patch = 1`. A `.thn` file below `files/` fails the scan, also in a folder with the name `patches`.
 
 ## Profiles
 
@@ -208,25 +313,78 @@ The files of a mod in the OpenLancer repo, for example `samples/mods/ol-sample`,
 
 ### Edits in the Inspector
 
-The Inspector edits ships, equipment, goods, the other sections of the item files, and the market lines of the active mod. A field shows each line of a key on its own text line, with the values separated by `, `. The editor reads the text as the merge reads a patch line, so a value gets the type that a save and a reload give it (see "Value types in binary files"). For example, in a binary file, `true` that replaces the text `TRUE` stays `TRUE`, and `200` that replaces a float is a float. An empty field removes the key.
+The Inspector edits ships, equipment, goods, the other sections of the item files, the market lines, and the objects, zones and lights of the open star system and the sections that set the fields of a system. The edits go into the active mod. A field shows each line of a key on its own text line, with the values separated by `, `. The editor reads the text as the merge reads a patch line, so a value gets the type that a save and a reload give it (see "Value types in binary files"). For example, in a binary file, `true` that replaces the text `TRUE` stays `TRUE`, and `200` that replaces a float is a float. An empty field removes the key.
 
 The editor checks the text against the type that the engine reads: a number, a whole number, `true` or `false`, a name of a list, or the number of values of a vector or a color. The editor refuses text that a patch line cannot hold, for example a value with `;` or with characters outside ASCII.
 
 Each field edit is one entry of the edit history (Edit > Undo, `Ctrl+Z`, and Redo, `Ctrl+Y` or `Ctrl+Shift+Z`). Each of the X, Y and Z fields of a vector is a field of its own. A field that ends with the text it started with is no edit. So it keeps the line of the patch. Escape ends a field and cancels its edit.
 
-Each change of the text shows at once. While a field is active, it stays in its place, also when its text adds or removes the key. After the field ends, the key moves to its list, for example from "Unset keys" to "Keys".
+Each change of the text shows at once. While a field is active, it stays in its place, also when its text adds or removes the key. After the field ends, the key moves to its list, for example from "Unset keys" to "Keys". Two kinds of field change the data only when the field ends: the text of a key that holds a text id, for example a name, and a market line.
 
 A blue label marks a value that the active mod sets. The tooltip of the label names the layer that sets the value: the base data, a mod that loads before the active mod, or the active mod. A lock tells why a row cannot change, for example the key of a section, or a section that format version 1 cannot patch.
 
-Revert, in the menu of a row or in the item menu, puts back the lines of the lower layer: the base data with the mods that load before the active mod. The next save then writes no line for them. A section that the active mod adds has no lower lines, so it has no Revert. A key of a group of lines that belong together (see "Lines that belong together") reverts only with its whole section.
+Revert, in the menu of a row or in the item menu, puts back the lines of the lower layer: the base data with the mods that load before the active mod. The next save then writes no line for them. A section that the active mod adds has no lower lines, so it has no Revert. A key of a group of lines that belong together (see "Lines that belong together") reverts only with its whole section. When the active mod sets the `file` of a `[system]` of `universe.ini`, the Revert of the whole item is not available, because the revert would move the contents of the system to another file.
 
 "Sold at" lists the market lines that sell a good. The lines of a lower layer are read-only, because format version 1 cannot change them. "Add to base" adds a line to a `[BaseGood]` of that base that the active mod adds. Without one, a new `[BaseGood]` goes into the market file in which the base sells goods of the same category, else into the first market file of the base. The editor refuses a base that already sells the good in a market file.
 
+### Edits in the Scene
+
+The Scene edits the objects, zones and lights of the open star system. Click an item in the Scene or in the Hierarchy to select it. The Scene, the Hierarchy and the Inspector then show the same item. You can select one item at a time. The gizmo on the selected item has three tools, and each tool changes one key of the section of the item:
+
+| Tool | Key | Items |
+|---|---|---|
+| Move (`W`) | `pos` | objects, zones and lights |
+| Rotate (`E`) | `rotate` | objects and zones |
+| Scale (`R`) | `size` | zones |
+
+- The engine reads no rotation and no size for a light, and no size for an object. The tooltip of a tool button tells why the tool is not available.
+- `X` changes between Local and World: a move or a turn along the axes of the item, or along the world axes. A scale always uses the axes of the item. A turn is about one axis.
+- The scale handles are the values of `size` that the shape uses. A sphere has its radius, and a cylinder has its radius and its height. An ellipsoid, a box and a ring have three values. A scale changes only these values. When the zone has no `size` line, a scale writes all the values of the shape.
+- Scale is not available for an ellipsoid, a box or a ring with two values in `size`. The engine then gives one axis the size 0. Give the line three values first. Scale is also not available when a value that the shape uses is 0 or less.
+- A key does what its toolbar button does. So `W`, `E` and `R` select only a tool that the item takes, and `X` does nothing for the scale tool. The keys work while the mouse is over the Scene or the Scene has the focus, and no text field is active. They do not work during a drag, or with `Ctrl` or `Alt`. While the right mouse button is down, `W`, `A`, `S`, `D`, `Q` and `E` fly the camera.
+
+The Snap button of the Scene toolbar (a magnet) makes a drag move by steps. The default steps are 100 for a move, 15 degrees for a turn and 100 for a size. The Snap steps menu next to it changes the steps. `Ctrl` during a drag snaps when the snap is off, and does not snap when it is on. A move snaps along the axes of its space, so a snapped Local move of a turned item can give fractions in `pos`. A snapped size is never below 1.
+
+One drag is one entry of the edit history. The item moves at once, and the Inspector shows the new line. The drag ends when the left mouse button goes up, also over another panel. `Esc` or the right mouse button cancels the drag, and the item goes back. Undo, redo, save and the recovery file wait until the drag ends. A drag that ends where it started is no edit.
+
+A move or a turn changes only the selected item. The zones, the trade lane paths and the other objects that belong to the item stay in place, for example the docking ring of a planet. The editor cannot add or delete an item of a system, or change its nickname, yet.
+
+The numbers that a drag writes:
+
+- The drag writes only its key. The other lines of the section stay as they are, and so does each value of the line that the drag does not change.
+- A changed value is an integer when it is a whole number from -16777216 to 16777216 and it replaces an integer or no value. Each other changed value is a float, also a whole number that replaces a float, for example `200.0`. `-0` becomes `0`.
+- A changed angle of `rotate` rounds to 0.001 degree. Each rotation has two sets of angles. The drag takes the set that is nearest to the angles before the drag, from -180 to 180 degrees.
+
+For example, a snapped move of `Li01_14_depot_water` by 1,000 along the world X axis writes `pos = -37675, 0, -27705`. The save then writes `patches/DATA/Universe/Systems/Li01/Li01.ini` with the `nickname` line and the `pos` line of the depot.
+
+The Scene shows each edit of an item or of a section of the system in the next frame. This includes a drag, an edit in the Inspector, an undo, a redo and a restore of the unsaved edits of an earlier session. A key that loads a model, for example `archetype` or `loadout`, shows after the field or the drag ends. While the game data loads again after a save, it shows after the load. A new name shows in the label, the Hierarchy, the window title and the system list before the save. The unsaved edits stay in the Scene when you open another system and then open the system again. When the Scene cannot show the state of a section, it keeps the last valid state of the item. The Inspector and the Console tell why. For example, the game drops an object whose `archetype` does not exist, and the editor keeps its last model.
+
+In these cases a section is read-only. The gizmo does not show, and the lock of each row tells why.
+
+- Two sections of the same type in the file have the same nickname, for example the eight `[LightSource]` sections `light_lair_core_lower` of St02c. A patch cannot find one of them.
+- The section has no key, for example `[Archetype]` of a system file.
+- The active mod replaces the system file as a whole file.
+- The editor takes no edits for the mod, for example when another editor has the mod open.
+
+These keys are locked, and the other keys of the section take edits:
+
+- The key of the section, for example `nickname`.
+- The `encounter`, `faction` and `faction_weight` lines of a `[Zone]` (see "Lines that belong together").
+- The `file` of a `[system]` of `universe.ini`, because a change moves all the contents of the system.
+
+The gizmo also does not show when a line that it reads has an error, for example a `pos` line with text. Correct the line in the Inspector first.
+
+### Cutscenes in the editor
+
+The Cutscenes tab lists the cutscene scripts, and the Cutscene tab previews one. The Timeline tab and the Inspector show and edit its entities and events. A save writes a THN patch for each changed cutscene (see "Cutscenes" and "What stays in a patch file"). See [CUTSCENES.md](CUTSCENES.md).
+
 ### After a save
 
-`Ctrl+S` saves the edits of the active mod. The Console lists the files that the save wrote and deleted, with the number of the save, or the problems that stopped it. After a save that changed files, the game data loads again in the background, and `oltool validate --active <mod> --json` checks the save in its own process. One validation runs at a time. The oltool process reads the files of the mod, so a save of new edits stops the validation of the save before it, before the save moves files. When that save then changes no file, the stopped validation starts again. The Console labels each result with the number of its save.
+`Ctrl+S` saves the edits of the active mod. The Console lists the files that the save wrote and deleted, with the number of the save, or the problems that stopped it. After a save that changed files, the game data loads again in the background, and `oltool validate --active <mod> --json` checks the save in its own process. One validation runs at a time. The oltool process reads the files of the mod, so a save of new edits stops the validation of the save before it, before the save moves files. When that save then changes no file, the stopped validation starts again. The Console labels each result with the number of its save. A click on a problem of a cutscene opens the cutscene and selects the element of the problem (see "The validation of cutscenes").
 
 When a file does not move into place, for example because a program uses it, the save is not complete. The game data then does not load again, and no validation runs. The next save completes the files first. Then the game data loads again, and the validation runs.
+
+While the game of Play runs, a save whose validation finds no errors also reloads the game. See [PLAY.md](PLAY.md).
 
 ### What stays in a patch file
 
@@ -237,6 +395,8 @@ When a file does not move into place, for example because a program uses it, the
 - When a patch has no sections after the edits, the editor deletes the file and its empty folders below `patches/`.
 
 The editor writes an integer as a decimal number. In a patch for a binary file, it writes a hash in its signed form, for example `-1980013182`. A float always has a `.` or an exponent, for example `100.0`, so that the merge reads it as a float. A boolean is `true` or `false`.
+
+The editor writes a THN patch in canonical form (see "Cutscenes"). It keeps the comment block at the top of the file. It drops the other comments, and the Console tells it. A path that the patch sets or removes stays in the patch also when its value equals the value of a lower mod, until an edit or a revert of that path. When the patch sets a whole record, for example `cameraprops`, an edit of a value in it keeps the whole record in the patch, with the new value. A revert of a value in it takes only that value out of the patch: the other values of the record stay in the patch, each with its own path. A THN patch whose content the edits do not change keeps its bytes. When the active mod has a whole file for a cutscene, the editor writes the whole file as canonical Lua text.
 
 ### Sections in which the line order counts
 
@@ -250,7 +410,7 @@ A save writes all changed files of the mod, or none of them:
 
 1. The editor makes each patch and checks that the merge gives the edited data from it. Any problem stops the save before it writes a file.
 2. The editor writes the new files to the `.olsave/` folder of the mod. Then it writes the journal, `.olsave/journal`: each move and delete, the hash of each file before the save, and the hash of its new content.
-3. The editor moves each new file into place, deletes the files to delete, and then deletes the journal.
+3. The editor moves each new file into place, deletes the files to delete, and then deletes the journal. Each move replaces its file in one step. oltool and the game of Play read mod files so that a move can replace a file while they read it. When another program writes a mod file in place at that moment, their read of the file fails, so they never read a part of it.
 
 When the editor stops after step 2, it completes the moves when it opens the profile again. Do not delete `.olsave/` while the journal is in it. Open the profile in the editor once, so that the editor completes the save. Until then, `oltool build`, `validate` and `deploy` show a warning for the mod.
 
@@ -263,8 +423,12 @@ A save also stops in these cases:
 - A patch or a whole INI file of the mod uses a text placeholder that the mod's `strings.json` does not have after the save. When the save changes `strings.json`, it checks each patch and whole INI file of the mod, also the files that it does not write.
 - A patch line of a key that holds a text id holds the id of a text of a mod as a number. The id comes from the position of the text in the generated DLL, so it changes when a mod adds text. Copy this text into the mod and use its placeholder.
 - A file that the save writes is a folder now, a folder of its path is a file, or the file is read-only.
+- The active mod is in the OpenLancer repo, and the save would write a whole cutscene file into it. The content scan cannot tell such a file from a copy of a retail script. A THN patch is allowed.
+- A light of a star system file that the session edited names an attenuation curve (`atten_curve`) that the engine cannot load: no graph has the name, more than one graph has it, or the graph has no points. The engine stops with an error when it loads such a light, so each later load of the profile would fail. The Console names the light, the curve and the file. While no game data is loaded, the editor cannot check the curves, and the Console tells it before the save.
 
-While the editor has unsaved edits, it keeps them in `.olsave/recovery.json`: a moment after each edit, and when the window closes. When the window closes, an active field ends first, so that the file keeps its edit. When no unsaved edits remain, for example after an undo, the editor deletes the file. A close of the profile, a change of the active mod and File > Exit ask first: Save, Discard or Cancel. After a save, the action continues, also when the save needed your confirmation to overwrite a file. The close button of the window cannot ask, so the next open of the mod offers to restore the edits. The editor restores them only when the files of the mod did not change after it wrote the recovery file. Until you restore or discard them, the editor does not take new edits for the mod. So a second recovery file is never necessary.
+While the editor has unsaved edits, it keeps them in `.olsave/recovery.json`: a moment after each edit, and when the window closes. When the window closes, an active field ends first, so that the file keeps its edit. The window cannot ask then, so a new text goes only to the section of the field, also when other sections of the item show the same text. When no unsaved edits remain, for example after an undo, the editor deletes the file. A close of the profile, a change of the active mod and File > Exit ask first: Save, Discard or Cancel. After a save, the action continues, also when the save needed your confirmation to overwrite a file. The close button of the window cannot ask, so the next open of the mod offers to restore the edits. The editor restores them only when the files of the mod did not change after it wrote the recovery file. Until you restore or discard them, the editor does not take new edits for the mod. So a second recovery file is never necessary.
+
+One editor at a time edits a mod. While an editor has a mod open as the active mod, it holds a lock on `.olsave/lock`, and `.olsave/lock.json` names its process and the time it opened the mod. A second editor on the same mod shows the data, but it takes no edits and does not save. Its Console names the first editor. The second editor does not change the save files or the recovery file of the first editor. A crash can leave the two lock files, but they do not block the next editor.
 
 ### strings.json and profile files
 
@@ -306,16 +470,19 @@ A boolean line without a value, for example `separable =` of a `[CollisionGroup]
 | Command | Effect |
 |---|---|
 | `oltool build <profile.json>` | Merge the mods. Show the changed files and the merge problems. |
-| `oltool validate <profile.json> [--active <mod id>] [--json]` | Merge, then report the data problems that the mods add to vanilla. With `--active`, report only the problems that this mod adds to the mods that load before it, without the later mods. With `--json`, write only a JSON list of `{"severity", "source", "message"}` to stdout. |
+| `oltool validate <profile.json> [--active <mod id>] [--json]` | Merge, then report the data problems that the mods add to vanilla. With `--active`, report only the problems that this mod adds to the mods that load before it, without the later mods. With `--json`, write only a JSON list of `{"severity", "source", "message"}` to stdout. A problem of a cutscene also has `"cutscene": {"path", "kind", "index", "value", "key"}`: the install path, `entity` or `event` and the place of the element in its list from 0, the path of the value, and the key of the element as `ol_match` writes it. Without a kind, the problem is about the whole script. |
 | `oltool deploy <profile.json>` | Validate, then write the merged data to `<profile name>/` next to the profile, and write `<profile name>.lancer.ini`. |
 | `oltool ini <profile.json\|folder> <install path>` | Print a merged INI file as text. Binary INI files are decoded. |
 | `oltool dump <profile.json\|folder> <out.json>` | Write a sorted JSON dump of the data that the engine resolves. |
-| `oltool thn <profile.json\|folder> <install path>` | Print a cutscene script (`.thn`) as readable Lua text. |
+| `oltool thn <profile.json\|folder> <install path>` | Print a cutscene script (`.thn`) as canonical Lua text. The script comes from the merged view, so the text shows the changes of the mods. |
+| `oltool thn roundtrip <profile.json\|folder> [<install path>]` | Check the canonical text of each `.thn` file of the source, or of one file. The text must give the same tables, with exact numbers and the same key order, and the text of the result must be the same text. Each problem names the first value that differs. |
 | `oltool verify-base <folder>` | Check that a folder is the unchanged, read-only retail data. |
 
 Exit codes: 0 = OK, 1 = the data has problems, 2 = the command could not run.
 
 Start the game on a deployed profile: `lancer.exe <profiles folder>\<profile name>.lancer.ini`.
+
+Play in the editor needs no deploy. The game of Play reads the mods through the overlay, and it writes its settings and saves to `<profile name>.play/` next to the profile. See [PLAY.md](PLAY.md).
 
 The deploy folder is managed by `oltool`. A deploy deletes files in it that are not in the merged view. Do not keep your own files there. To protect other data, the deploy stops before it writes anything when:
 

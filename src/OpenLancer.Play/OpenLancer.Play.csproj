@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Copies the Librelancer natives (SDL3 and others) and dll.config files next to the game. -->
+  <Import Project="..\..\external\Librelancer\src\PublishAssets\PublishAssets.projitems" Label="Shared" />
+
+  <PropertyGroup>
+    <!-- A console program, as lancer is. The editor starts it without a console window and reads its output. -->
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

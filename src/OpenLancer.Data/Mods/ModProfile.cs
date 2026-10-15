@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Mods;
 
@@ -39,6 +40,33 @@ public sealed class ModProfile
     /// <summary>The mods in load order. A later mod wins over an earlier one.</summary>
     public IReadOnlyList<Mod> Mods { get; }
 
+    /// <summary>The place of a mod in <see cref="Mods"/>, or -1 when the profile has no mod with the id.</summary>
+    public int IndexOf(string modId)
+    {
+        for (var i = 0; i < Mods.Count; i++)
+        {
+            if (Mods[i].Id == modId)
+                return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// The mods of the edit view (decision D2): the mods up to the active mod and the active mod, in load order. When
+    /// <paramref name="activeModId"/> is null, all mods. The editor, <c>oltool validate --active</c> and Play show
+    /// this view.
+    /// </summary>
+    /// <exception cref="ArgumentException">The profile has no mod with the id.</exception>
+    public IReadOnlyList<Mod> ModsThrough(string? activeModId)
+    {
+        if (activeModId == null)
+            return Mods;
+        var index = IndexOf(activeModId);
+        if (index < 0)
+            throw new ArgumentException($"The profile {Name} has no mod '{activeModId}'.", nameof(activeModId));
+        return Mods.Take(index + 1).ToList();
+    }
+
     /// <exception cref="ModLoadException">The profile, a mod, or the mod order is not valid.</exception>
     public static ModProfile Load(string path)
     {
@@ -49,7 +77,7 @@ public sealed class ModProfile
         ProfileJson? json;
         try
         {
-            json = JsonSerializer.Deserialize<ProfileJson>(File.ReadAllText(path), JsonOptions);
+            json = JsonSerializer.Deserialize<ProfileJson>(SharedFile.ReadAllText(path), JsonOptions);
         }
         catch (JsonException e)
         {

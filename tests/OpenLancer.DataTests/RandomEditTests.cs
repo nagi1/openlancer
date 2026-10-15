@@ -15,6 +15,7 @@ using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Validation;
 using OpenLancer.Runtime.Strings;
+using OpenLancer.Runtime.Thn;
 using Xunit;
 
 namespace OpenLancer.DataTests;
@@ -87,7 +88,7 @@ public sealed class RandomEditTests(ITestOutputHelper output)
 
         foreach (var mods in layers)
         {
-            var lower = ModOverlay.Build(baseFolder, mods, DllStringResourceWriter.Instance, keepDocuments: true);
+            var lower = ModOverlay.Build(baseFolder, mods, DllStringResourceWriter.Instance, thn: null, keepDocuments: true);
             Assert.False(lower.HasErrors, string.Join("\n", lower.Diagnostics));
             var requiredTargets = paths.SelectMany(p => lower.Document(p)!.Sections).SelectMany(s => s)
                 .Where(e => RequiredReferences.Contains(e.Name, StringComparer.OrdinalIgnoreCase))
@@ -166,8 +167,10 @@ public sealed class RandomEditTests(ITestOutputHelper output)
                 edited.Add((file, patch));
             }
 
-            var withPatches = ModOverlay.Build(baseFolder, [.. lowerMods, Mod.Load(patches)], DllStringResourceWriter.Instance);
-            var withFiles = ModOverlay.Build(baseFolder, [.. lowerMods, Mod.Load(wholeFiles)], DllStringResourceWriter.Instance);
+            var withPatches = ModOverlay.Build(baseFolder, [.. lowerMods, Mod.Load(patches)], DllStringResourceWriter.Instance,
+                ThornEvaluator.Instance);
+            var withFiles = ModOverlay.Build(baseFolder, [.. lowerMods, Mod.Load(wholeFiles)], DllStringResourceWriter.Instance,
+                ThornEvaluator.Instance);
             run.Failures.AddRange(withPatches.Diagnostics.Concat(withFiles.Diagnostics)
                 .Where(d => d.Severity == DiagnosticSeverity.Error).Select(d => $"Round {run.Rounds}: {d}"));
 

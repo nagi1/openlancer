@@ -45,8 +45,10 @@ internal sealed class LayerInputs
         baseFs = new FileSystem(new SysFolderQuickInit(baseFolder));
         layer = LayerFingerprint(baseFolder, lower, active);
         text = TextFingerprint(baseFolder, lower);
+        // The merge reads the INI files and the cutscene scripts that a lower mod changes.
         var changed = lower.SelectMany(m => m.Patches.Keys.Concat(m.Files.Keys)).Distinct(VfsPath.Comparer);
-        foreach (var path in changed.Where(p => p.EndsWith(".ini", StringComparison.OrdinalIgnoreCase)))
+        foreach (var path in changed.Where(p => p.EndsWith(".ini", StringComparison.OrdinalIgnoreCase) ||
+                                               p.EndsWith(".thn", StringComparison.OrdinalIgnoreCase)))
             paths[path] = Fingerprint(path, lower);
     }
 
@@ -67,7 +69,7 @@ internal sealed class LayerInputs
     /// <param name="active">The active mod of the session.</param>
     public List<string> Changed(IEnumerable<string> pathsToCheck, ModProfile profileNow, Mod active)
     {
-        var index = profileNow.Mods.Select(m => m.Id).ToList().IndexOf(active.Id);
+        var index = profileNow.IndexOf(active.Id);
         var lowerNow = profileNow.Mods.Take(Math.Max(index, 0)).ToList();
         if (index < 0 || LayerFingerprint(profileNow.BaseFolder, lowerNow, profileNow.Mods[index]) != layer)
             return [profileNow.FilePath];

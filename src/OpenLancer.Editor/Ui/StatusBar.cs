@@ -8,13 +8,14 @@ using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
 
 namespace OpenLancer.Editor.Ui;
 
 /// <summary>
 /// The status bar at the bottom of the window. Segments at the right show the load task, the profile, the system, the
-/// selection, the camera and the frame rate. A thin line separates them, and each one has a tooltip with the full
+/// game of Play, the selection, the camera and the frame rate. A thin line separates them, and each one has a tooltip with the full
 /// text. The left part shows the newest warning or error of the Console.
 /// </summary>
 /// <remarks>
@@ -55,6 +56,7 @@ internal sealed class StatusBar(EditorWindow window)
     // The segments of the last frame, and the things that they show.
     private (EditorSession? Session, Segment? Task, Segment? Profile) profileSegments;
     private (StarSystem? System, Segment? Segment) systemSegment;
+    private (string? Text, Segment? Segment) playSegment;
     private (object? Item, SystemIndex? Index, Segment? Segment) selectionSegment;
     private ((long X, long Y, long Z, long Speed) Values, Segment? Segment) cameraSegment;
     private Segment frameRateSegment = new(EditorIcons.TachometerAlt, "", "", MinWidthText: FrameRateWidthText);
@@ -131,6 +133,18 @@ internal sealed class StatusBar(EditorWindow window)
             segments.Add(systemSegment.Segment);
         }
 
+        var play = window.Play;
+        var playText = play.StatusText;
+        if (playText != playSegment.Text)
+        {
+            playSegment = (playText, playText == null ? null : PlaySegment(playText, play.Status));
+        }
+
+        if (playSegment.Segment != null)
+        {
+            segments.Add(playSegment.Segment);
+        }
+
         var selection = window.Selection;
         if (selection != selectionSegment.Item || scene.Index != selectionSegment.Index)
         {
@@ -186,10 +200,18 @@ internal sealed class StatusBar(EditorWindow window)
 
     private Segment SystemSegment(StarSystem system)
     {
-        var name = window.Session?.Name(system.IdsName) is { Length: > 0 } systemName ? systemName : system.Nickname;
+        var name = window.Session?.ItemName(system) is { Length: > 0 } systemName ? systemName : system.Nickname;
         var text = $"{name} ({system.Nickname})";
         return new Segment(EditorIcons.Map, text, $"System: {text}\nFile: {system.SourceFile}");
     }
+
+    /// <summary>The segment of the game of Play (section 11.3 of the M4 design). A game that does not respond has a
+    /// warning glyph.</summary>
+    private static Segment PlaySegment(string text, PlayStatus status) => status == PlayStatus.NotResponding
+        ? new Segment(EditorIcons.ExclamationTriangle, text,
+            "The game of Play does not respond. Stop or Shift+F5 ends its process.", EditorTheme.Warning)
+        : new Segment(EditorIcons.Play, text, $"{text}\nStop or Shift+F5 ends the game.",
+            status == PlayStatus.Running ? EditorTheme.Success : null);
 
     /// <summary>The segment of the selected item, or null when nothing is selected.</summary>
     private Segment? SelectionSegment(object? selection)

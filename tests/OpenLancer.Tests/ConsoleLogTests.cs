@@ -1,5 +1,7 @@
 using System.Linq;
 using LibreLancer;
+using OpenLancer.Data;
+using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Logs;
 using Xunit;
 
@@ -30,6 +32,22 @@ public sealed class ConsoleLogTests
         Assert.Equal((ConsoleLog.EngineSource, "no prefix here"), ConsoleLog.ParseEngineLine("no prefix here"));
         Assert.Equal((ConsoleLog.EngineSource, "[Warning: 22:48:12] no component"),
             ConsoleLog.ParseEngineLine("[Warning: 22:48:12] no component"));
+    }
+
+    /// <summary>A diagnostic keeps its place in a cutscene, so a click on the entry opens the element.</summary>
+    [Fact]
+    public void ADiagnosticKeepsItsPlaceInACutscene()
+    {
+        var log = new ConsoleLog();
+        var place = new ThnLocation(@"DATA\x.thn", ThnElementKind.Event, 2, "props.duration");
+
+        var entry = log.Add(Diagnostic.Error(@"DATA\x.thn", "m") with { Cutscene = place }, "Save 1: ");
+
+        Assert.Equal((ConsoleSeverity.Error, @"DATA\x.thn", "Save 1: m", place),
+            (entry.Severity, entry.Source, entry.Message, entry.Cutscene));
+        Assert.Null(entry.Target);
+        Assert.Null(log.Add(Diagnostic.Warning("s", "m")).Cutscene);
+        Assert.Equal(1, log.Count(ConsoleSeverity.Error));
     }
 
     [Fact]
@@ -125,5 +143,64 @@ public sealed class ConsoleLogTests
 
         Assert.Equal(["first", "first", "first", "second"], log.Entries.Select(e => e.Message));
         Assert.Equal(ConsoleSeverity.Error, log.Entries[2].Severity);
+    }
+
+    /// <summary>
+    /// The skip of an action covers only the lines of the action. FLLog gives its lines to the UI thread later, so the
+    /// lines that are on the way when the action starts, for example the lines of a system load, show as before.
+    /// </summary>
+    [Fact]
+    public void TheSkipOfAnActionCoversOnlyTheLinesOfTheAction()
+    {
+        var log = new ConsoleLog();
+        var ui = new QueuedUIThread();
+        log.AddEngineLine("[Warning: 22:48:12] Ini: load", LogSeverity.Warning);
+        log.AddEngineLine("[Warning: 22:48:12] Ini: model", LogSeverity.Warning);
+        // A line of the load that is on the way to the UI thread.
+        ui.QueueUIThread(() => log.AddEngineLine("[Warning: 22:49:00] Ini: load", LogSeverity.Warning));
+
+        log.SkipKnownEngineLinesOf(() =>
+        {
+            ui.QueueUIThread(() => log.AddEngineLine("[Warning: 22:49:00] Ini: model", LogSeverity.Warning));
+            ui.QueueUIThread(() => log.AddEngineLine("[Warning: 22:49:00] Ini: new", LogSeverity.Warning));
+        }, ui, () => false);
+        ui.RunQueued();
+        log.AddEngineLine("[Warning: 22:50:00] Ini: model", LogSeverity.Warning);
+
+        Assert.Equal(["load", "model", "load", "new", "model"], log.Entries.Select(e => e.Message));
+        Assert.False(log.SkipKnownEngineLines);
+    }
+
+    [Fact]
+    public void AGameLineIsAWarningOrAnErrorOfFLLog()
+    {
+        Assert.Equal((ConsoleSeverity.Warning, "Ini", "a: b"), ConsoleLog.ParseGameLine("[Warning: 22:48:12] Ini: a: b"));
+        Assert.Equal((ConsoleSeverity.Error, "Game", "e"), ConsoleLog.ParseGameLine("[Error: 22.48.12] Game: e"));
+        Assert.Null(ConsoleLog.ParseGameLine("[Info: 22:48:12] Game: info"));
+        Assert.Null(ConsoleLog.ParseGameLine("[Debug: 22:48:12] Game: debug"));
+        Assert.Null(ConsoleLog.ParseGameLine("[Warning: 22:48:12] no component"));
+        Assert.Null(ConsoleLog.ParseGameLine("    Channels       = 2"));
+    }
+
+    /// <summary>
+    /// Decision D57: the game of Play loads the same data as the editor. The Console adds a line of the game only when
+    /// it did not add the same engine line before, also when the line of the game came first.
+    /// </summary>
+    [Fact]
+    public void AGameLineShowsOnlyWhenTheConsoleDidNotAddTheSameEngineLine()
+    {
+        var log = new ConsoleLog();
+        log.AddEngineLine("[Warning: 22:48:12] Ini: known", LogSeverity.Warning);
+
+        log.AddGameLine(ConsoleLog.ParseGameLine("[Warning: 23:00:00] Ini: known")!.Value, "Play");
+        log.AddGameLine(ConsoleLog.ParseGameLine("[Error: 23:00:00] Ini: known")!.Value, "Play");
+        log.AddGameLine(ConsoleLog.ParseGameLine("[Warning: 23:00:00] Ship: new")!.Value, "Play");
+        log.AddGameLine(ConsoleLog.ParseGameLine("[Warning: 23:00:01] Ship: new")!.Value, "Play");
+        log.SkipKnownEngineLines = true;
+        log.AddEngineLine("[Warning: 23:00:02] Ship: new", LogSeverity.Warning);
+
+        Assert.Equal([("Ini", "known"), ("Play", "Ini: known"), ("Play", "Ship: new")],
+            log.Entries.Select(e => (e.Source, e.Message)));
+        Assert.Equal(ConsoleSeverity.Error, log.Entries[1].Severity);
     }
 }

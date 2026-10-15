@@ -68,12 +68,15 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
 
         var edited = text;
         ImGui.SetNextItemWidth(width);
-        ImGui.InputText("##values", ref edited, (uint)Encoding.UTF8.GetByteCount(edited) + 256);
-        ImGui.SetItemTooltip("rank, reputation, min, max, preserve, price multiplier");
-        if (ImGui.IsItemDeactivatedAfterEdit() && edited != text)
+        var changed = ImGui.InputText("##values", ref edited, (uint)Encoding.UTF8.GetByteCount(edited) + 256);
+        // The edit runs when the field ends, also when the window closes, as the other text fields do.
+        grid.CommitField(MarketEdits.LineKey(line), changed, text, edited, (values, _) =>
         {
-            window.Edits.Execute(() => MarketEdits.SetLine(session.Edits, line, edited));
-        }
+            // Edits.Execute writes a problem of the edit to the Console, so the commit returns no error.
+            window.Edits.Execute(() => MarketEdits.SetLine(session.Edits, line, values));
+            return null;
+        });
+        ImGui.SetItemTooltip("rank, reputation, min, max, preserve, price multiplier");
 
         ImGui.SameLine(0, spacing);
         if (ToolbarItems.Button("remove", EditorIcons.TrashAlt, $"Stop selling it at {line.Base}"))

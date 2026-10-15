@@ -21,7 +21,7 @@ namespace OpenLancer.Data.Editing;
 internal sealed record DocumentState(
     ImmutableList<Section> Working,
     ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>> Pins,
-    ImmutableHashSet<SectionIdentity> Deleted);
+    ImmutableHashSet<SectionIdentity> Deleted) : IFileState;
 
 /// <summary>
 /// One INI file in the editor: B, the document that the merge gives to the active mod's patch, and W, the working
@@ -46,7 +46,7 @@ internal sealed record DocumentState(
 /// <para>Edits never change a section or an entry in place. They put new sections into the list, so an old
 /// <see cref="DocumentState"/> stays valid.</para>
 /// </remarks>
-internal sealed class EditDocument
+internal sealed class EditDocument : IEditFile
 {
     private static readonly ImmutableHashSet<string> NoPins = ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -89,6 +89,8 @@ internal sealed class EditDocument
 
     /// <summary>The state of W now. <see cref="Restore"/> puts back a state that this property gave.</summary>
     public DocumentState State => state;
+
+    IFileState IEditFile.State => state;
 
     /// <summary>The state when the document opened: the state that the loaded patch gives.</summary>
     public DocumentState Initial { get; }
@@ -210,6 +212,8 @@ internal sealed class EditDocument
 
     /// <summary>Puts back a state that <see cref="State"/> gave, to undo or redo an edit.</summary>
     public void Restore(DocumentState restored) => Change(restored);
+
+    void IEditFile.Restore(IFileState restored) => Restore((DocumentState)restored);
 
     /// <summary>Writes the patch that changes B into W.</summary>
     public PatchText Write() => Write(state);

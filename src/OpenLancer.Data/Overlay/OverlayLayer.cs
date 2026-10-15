@@ -31,9 +31,12 @@ public sealed class OverlayFile
 
     public static OverlayFile FromDisk(string path, string diskPath) => new(path, null, diskPath);
 
-    public Stream OpenRead() => content != null ? new MemoryStream(content, false) : File.OpenRead(DiskPath!);
+    /// <summary>Opens the content. A mod file is read from the disk at each call, with the sharing of
+    /// <see cref="SharedFile"/>, so the editor can save it while the game reads it.</summary>
+    public Stream OpenRead() => content != null ? new MemoryStream(content, false) : SharedFile.OpenRead(DiskPath!);
 
-    public byte[] ReadAllBytes() => content ?? File.ReadAllBytes(DiskPath!);
+    /// <summary>The content. A mod file is read from the disk at each call, as <see cref="OpenRead"/> reads it.</summary>
+    public byte[] ReadAllBytes() => content ?? SharedFile.ReadAllBytes(DiskPath!);
 }
 
 /// <summary>
@@ -52,8 +55,10 @@ internal sealed class OverlayLayer : IFileProvider
     private readonly Dictionary<string, HashSet<string>> folderFiles = new(VfsPath.Comparer);
     private readonly Dictionary<string, HashSet<string>> folderFolders = new(VfsPath.Comparer);
 
-    public OverlayLayer(IEnumerable<OverlayFile> overlayFiles)
+    /// <param name="baseFolder">The full path of the base folder under this layer.</param>
+    public OverlayLayer(string baseFolder, IEnumerable<OverlayFile> overlayFiles)
     {
+        BaseFolder = baseFolder;
         files = overlayFiles.ToDictionary(f => f.Path, VfsPath.Comparer);
         foreach (var path in files.Keys)
         {
@@ -62,6 +67,10 @@ internal sealed class OverlayLayer : IFileProvider
                 Child(folderFolders, VfsPath.Parent(folder), folder);
         }
     }
+
+    /// <summary>The full path of the base folder that the files of this layer change. A file system that shows this
+    /// layer shows that base folder under it.</summary>
+    public string BaseFolder { get; }
 
     public IReadOnlyCollection<OverlayFile> Files => files.Values;
 

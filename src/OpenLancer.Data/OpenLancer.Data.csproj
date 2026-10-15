@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- AtomicFile.MoveOver calls the Windows rename through LibraryImport, which generates unsafe code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\external\Librelancer\src\LibreLancer.Data\LibreLancer.Data.csproj" />
   </ItemGroup>

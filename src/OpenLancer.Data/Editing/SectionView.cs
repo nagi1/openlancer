@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Ini;
 using OpenLancer.Data.Strings;
 
 namespace OpenLancer.Data.Editing;
@@ -54,12 +55,25 @@ public sealed record KeySchema(string Name, Type? ClrType, bool Multiline, bool 
 
     /// <summary>How the engine reads a <see cref="System.Numerics.Vector3"/> line with one or two values.</summary>
     public Vec3Mode Mode { get; init; }
+
+    /// <summary>
+    /// The upstream field that the key sets, or null for a key that an entry handler reads. Two keys with one field
+    /// are two names of one value, for example <c>ambient_color</c> and <c>ambient</c> of an <c>[Object]</c>. Each
+    /// line of either name sets the field, so the last line of the two names wins.
+    /// </summary>
+    public string? Field { get; init; }
 }
 
 /// <summary>What an edit, an undo or a redo changed.</summary>
 /// <param name="Sections">The sections that changed. A deleted or renamed section has its old reference too.</param>
-/// <param name="Structural">True when a section was added, deleted or renamed.</param>
-public sealed record EditChange(IReadOnlyList<SectionRef> Sections, bool Structural);
+/// <param name="Structural">True when a section was added, deleted or renamed, or when the change does not list its
+/// sections. A restore of unsaved edits lists no section.</param>
+/// <param name="Text">True when the text of the active mod changed. A change of the text alone lists no section, also
+/// when a section shows that text through a placeholder.</param>
+/// <param name="Cutscenes">The install paths of the cutscene scripts that changed, in normal form (see
+/// <c>VfsPath.Normalize</c>). A change of a cutscene alone lists no section.</param>
+public sealed record EditChange(IReadOnlyList<SectionRef> Sections, bool Structural, bool Text,
+    IReadOnlyList<string> Cutscenes);
 
 /// <summary>The result of <see cref="EditSession.Save"/>.</summary>
 /// <param name="Saved">True when the save wrote its files, so the session has no unsaved edits now. False when the
@@ -116,4 +130,13 @@ public sealed class SectionView
     /// <summary>The lines of one name, in file order. The name compares without letter case.</summary>
     public IReadOnlyList<EntryView> Lines(string name) =>
         Entries.Where(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    /// <summary>
+    /// True when the name belongs to a group of names whose lines belong together, for example <c>encounter</c>,
+    /// <c>faction</c> and <c>faction_weight</c> of a <c>[Zone]</c>. The engine attaches each line of a later name of
+    /// the group to the last line before it. So an edit of the lines of one name alone can give lines to another
+    /// owner.
+    /// </summary>
+    public bool IsLinked(string name) =>
+        SectionKeys.LinkedGroups(Type).Any(g => g.Contains(name, StringComparer.OrdinalIgnoreCase));
 }

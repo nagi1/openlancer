@@ -53,7 +53,7 @@ public sealed class EditSessionSaveTests
         Assert.Equal("[Good]\r\nnickname = g2\r\nprice = 250\r\n", File.ReadAllText(Act(ws, @"patches\DATA\EQUIPMENT\Goods.ini")));
         Assert.Equal("[Gun]\r\nnickname = gun1\r\ndamage = 11\r\n", File.ReadAllText(PatchOf(ws, WeaponsPath)));
         Assert.Equal(2, result.Written.Count);
-        Assert.False(Directory.Exists(Act(ws, SaveTransaction.FolderName)));
+        Assert.Empty(TestWorkspace.SaveFiles(Act(ws)));
         Assert.False(session.IsDirty);
     }
 
@@ -197,6 +197,7 @@ public sealed class EditSessionSaveTests
             session.Execute(command);
         AssertSaved(session.Save());
 
+        session.Dispose();
         var reopened = split.Session("act");
         Assert.Equal(["$str:g3"], Values(reopened, Good("g3"), "ids_name"));
         Assert.Equal("Gun three", reopened.Text(new StringPlaceholder(StringKind.String, "g3")));

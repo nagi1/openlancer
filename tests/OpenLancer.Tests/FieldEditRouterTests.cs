@@ -1,5 +1,10 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Strings;
+using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Inspector;
 using Xunit;
@@ -9,8 +14,8 @@ using static OpenLancer.Tests.ItemWorkspace;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The field edits of the bound text fields without the GPU. Each test replays, frame by frame, the events that ImGui
-/// gives for the widgets. The Inspector rows also keep their places while an edit is open.
+/// The field edits of the text fields without the GPU. Each test replays, frame by frame, the events that ImGui gives
+/// for the widgets. The Inspector rows also keep their places while an edit is open.
 /// </summary>
 public sealed class FieldEditRouterTests
 {
@@ -34,6 +39,10 @@ public sealed class FieldEditRouterTests
     private static readonly FieldEvents Escaped = new(Activated: false, Active: false, Changed: true,
         Deactivated: true, Cancelled: true);
 
+    // A key and a click outside the field in one frame: ImGui changes the text, then ends the field.
+    private static readonly FieldEvents TypedAndEnded = new(Activated: false, Active: false, Changed: true,
+        Deactivated: true, Cancelled: false);
+
     [Fact]
     public void EachAxisOfAVectorKeepsItsTextWhenTheUserMovesDirectlyToTheNextAxis()
     {
@@ -44,7 +53,7 @@ public sealed class FieldEditRouterTests
         var router = new FieldEditRouter(warnings.Add);
         FieldBinding Torque() => Bind(session, Ship("s1"), "steering_torque");
         void Axis(uint id, int index, FieldEvents events, string value, int frame) =>
-            router.Route(session, id, Torque(), events, start => FieldEdit.WithValue(start.Text, index, value), frame);
+            Route(router, session, id, Torque(), events, start => FieldEdit.WithValue(start, index, value), frame);
 
         // Frame 1: the user clicks X. Frame 2: the user types 5.
         Axis(X, 0, Activated, "1", 1);
@@ -74,7 +83,8 @@ public sealed class FieldEditRouterTests
         var session = ws.Session("act");
         var router = new FieldEditRouter(_ => { });
         FieldBinding Mass() => Bind(session, Ship("s1"), "mass");
-        void Field(FieldEvents events, string text, int frame) => router.Route(session, X, Mass(), events, _ => text, frame);
+        void Field(FieldEvents events, string text, int frame) =>
+            Route(router, session, X, Mass(), events, _ => text, frame);
 
         Field(Activated, "120", 1);
         Field(Typed, "130", 2);
@@ -100,8 +110,8 @@ public sealed class FieldEditRouterTests
         using var ws = Layers();
         var session = ws.Session("act");
         var router = new FieldEditRouter(_ => { });
-        router.Route(session, X, Bind(session, Ship("s1"), "mass"), Activated, _ => "", 1);
-        router.Route(session, X, Bind(session, Ship("s1"), "mass"), Typed, _ => "150", 2);
+        Route(router, session, X, Bind(session, Ship("s1"), "mass"), Activated, _ => "", 1);
+        Route(router, session, X, Bind(session, Ship("s1"), "mass"), Typed, _ => "150", 2);
 
         router.EndLost(3);
         Assert.NotNull(router.Open);
@@ -119,17 +129,17 @@ public sealed class FieldEditRouterTests
         var session = ws.Session("act");
         var warnings = new List<string>();
         var router = new FieldEditRouter(warnings.Add);
-        router.Route(session, X, Bind(session, Ship("s1"), "mass"), Activated, _ => "", 1);
-        router.Route(session, X, Bind(session, Ship("s1"), "mass"), Typed, _ => "13x", 2);
-        Assert.Contains("is not a number", router.ErrorOf(Bind(session, Ship("s1"), "mass")));
-        Assert.Null(router.ErrorOf(Bind(session, Ship("s1"), "hold_size")));
+        Route(router, session, X, Bind(session, Ship("s1"), "mass"), Activated, _ => "", 1);
+        Route(router, session, X, Bind(session, Ship("s1"), "mass"), Typed, _ => "13x", 2);
+        Assert.Contains("is not a number", router.ErrorOf(Bind(session, Ship("s1"), "mass").FieldKey));
+        Assert.Null(router.ErrorOf(Bind(session, Ship("s1"), "hold_size").FieldKey));
 
-        router.Route(session, Y, Bind(session, Ship("s1"), "hold_size"), Activated, _ => "", 3);
+        Route(router, session, Y, Bind(session, Ship("s1"), "hold_size"), Activated, _ => "", 3);
 
         var warning = Assert.Single(warnings);
         Assert.StartsWith("'mass' did not change:", warning);
         Assert.Equal("120", Bind(session, Ship("s1"), "mass").Text);
-        Assert.Equal("hold_size", router.Open!.Binding.Name);
+        Assert.Equal("hold_size", router.Open!.Key.Name);
     }
 
     [Fact]
@@ -138,15 +148,15 @@ public sealed class FieldEditRouterTests
         using var ws = Layers();
         var session = ws.Session("act");
         var router = new FieldEditRouter(_ => { });
-        router.Route(session, X, Bind(session, Ship("s1"), "mass"), Activated, _ => "", 1);
+        Route(router, session, X, Bind(session, Ship("s1"), "mass"), Activated, _ => "", 1);
 
         // The rows moved, and the active widget now draws the row of another key.
-        router.Route(session, X, Bind(session, Ship("s1"), "hold_size"), Typed, _ => "9", 2);
+        Route(router, session, X, Bind(session, Ship("s1"), "hold_size"), Typed, _ => "9", 2);
 
         // The text of that widget goes to neither key.
         Assert.Empty(Bind(session, Ship("s1"), "hold_size").Lines);
         Assert.Equal("120", Bind(session, Ship("s1"), "mass").Text);
-        Assert.Equal("mass", router.Open!.Binding.Name);
+        Assert.Equal("mass", router.Open!.Key.Name);
     }
 
     [Fact]
@@ -162,7 +172,7 @@ public sealed class FieldEditRouterTests
         Assert.Equal(["custom_key"], before.Unknown);
 
         // An unset key gets a value. The first character adds the key.
-        using (var gesture = new FieldGesture(session, Bind(session, ship, "hold_size")))
+        using (var gesture = new LineGesture(session, Bind(session, ship, "hold_size")))
         {
             gesture.Change("1");
 
@@ -171,14 +181,14 @@ public sealed class FieldEditRouterTests
             // The lists of another section do not wait for the edit.
             var good = Good(GoodsPath, "s1_hull");
             Assert.Equal(Lists(SchemaPage.Layout(session, good, null)), Lists(SchemaPage.Layout(session, good, gesture)));
-            Assert.Null(gesture.End(keep: true));
+            Assert.Null(gesture.End(keep: true, interactive: true));
         }
 
         // A set key and a key that the engine does not read become empty before the user types the new value.
         foreach (var name in (string[])["mass", "custom_key"])
         {
             var start = SchemaPage.Layout(session, ship, null);
-            using var gesture = new FieldGesture(session, Bind(session, ship, name));
+            using var gesture = new LineGesture(session, Bind(session, ship, name));
             gesture.Change("");
             Assert.Empty(session.Get(ship)!.Lines(name));
 
@@ -196,15 +206,284 @@ public sealed class FieldEditRouterTests
         var session = ws.Session("act");
         var ship = Ship("s1");
         session.Execute(EditCommand.SetLinesFromText(ship, "custom_key", ["5"]));
-        using var gesture = new FieldGesture(session, Bind(session, ship, "custom_key"));
+        using var gesture = new LineGesture(session, Bind(session, ship, "custom_key"));
 
         gesture.Change("");
 
         var view = session.Get(ship)!;
-        Assert.NotNull(new PropertyGrid.BoundSection(session, ship, view, "custom_key").Field("custom_key"));
+        Assert.NotNull(new PropertyGrid.BoundSection(session, ship, view, view, "custom_key").Field("custom_key"));
         // Without the edit, a key that neither the schema nor the section has is not bound.
-        Assert.Null(new PropertyGrid.BoundSection(session, ship, view, null).Field("custom_key"));
+        Assert.Null(new PropertyGrid.BoundSection(session, ship, view, view, null).Field("custom_key"));
     }
+
+    /// <summary>
+    /// A text key changes the text of the active mod when its field ends (step 0 A). While the field is active, the
+    /// edit changes nothing, but it is open, so the history, the save and the recovery file wait. The window close ends
+    /// the field without a question: the gun alone gets the new text ("Only this one"), and the recovery file keeps
+    /// it.
+    /// </summary>
+    [Fact]
+    public void AWindowCloseCommitsTheLastTextOfATextKeyWithoutTheSharedTextDialog()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+        var router = new FieldEditRouter(_ => { });
+        var name = Bind(session, Gun("gun1"), "ids_name");
+        var asked = new List<string>();
+        var commit = TextKeyCommit(session, name, (_, message, _) => asked.Add(message));
+        void Field(FieldEvents events, string text, int frame) =>
+            Commit(router, X, name.FieldKey, events, "", text, commit, frame);
+
+        Field(Activated, "", 1);
+        Field(Typed, "Ion", 2);
+        Field(Typed, "Ion Gun", 3);
+        Assert.NotNull(router.Open);
+        Assert.Equal(["300"], Firsts(session, Gun("gun1"), "ids_name"));
+
+        // EditorWindow.Cleanup ends the field (PropertyGrid.EndEdit).
+        router.EndAtClose();
+
+        Assert.Null(router.Open);
+        Assert.Empty(asked);
+        Assert.Equal(["$str:gun1"], Firsts(session, Gun("gun1"), "ids_name"));
+        Assert.Equal("Ion Gun", session.Text(new StringPlaceholder(StringKind.String, "gun1")));
+        Assert.Equal(["300"], Firsts(session, Good(WeaponGoodsPath, "gun1"), "ids_name"));
+        Assert.Empty(session.WriteRecovery());
+        Assert.Contains("Ion Gun", File.ReadAllText(RecoveryFile.PathOf(ws.ModFolder("act"))));
+    }
+
+    /// <summary>
+    /// The "same text" dialog shows only for an end by the user. The gun and its good show one text. "All of them"
+    /// gives both the new text, and "Only this one" gives it to the gun alone. An empty text changes nothing.
+    /// </summary>
+    [Fact]
+    public void TheSharedTextDialogShowsOnlyForAnInteractiveEnd()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+        var name = Bind(session, Gun("gun1"), "ids_name");
+        var warnings = new List<string>();
+        var router = new FieldEditRouter(warnings.Add);
+        var dialogs = new List<(string Title, string Message, IReadOnlyList<Choice> Choices)>();
+        var commit = TextKeyCommit(session, name, (title, message, choices) => dialogs.Add((title, message, choices)));
+        void Field(FieldEvents events, string text, int frame) =>
+            Commit(router, X, name.FieldKey, events, "", text, commit, frame);
+
+        // Enter, Tab or a click outside the field.
+        Field(Activated, "", 1);
+        Field(Typed, "Ion Gun", 2);
+        Field(Ended, "Ion Gun", 3);
+
+        var (title, message, choices) = Assert.Single(dialogs);
+        Assert.Equal("The same text", title);
+        Assert.Equal("These sections of the item show the same text as [Gun] nickname = gun1: " +
+                     "[Good] nickname = gun1. Give them the new text too?", message);
+        Assert.Equal(["All of them", "Only this one", "Cancel"], choices.Select(c => c.Label));
+        Assert.Equal(["300"], Firsts(session, Gun("gun1"), "ids_name"));
+        choices[0].Action();
+        Assert.Equal(["$str:gun1"], Firsts(session, Gun("gun1"), "ids_name"));
+        Assert.Equal(["$str:gun1"], Firsts(session, Good(WeaponGoodsPath, "gun1"), "ids_name"));
+        session.Undo();
+        choices[1].Action();
+        Assert.Equal(["$str:gun1"], Firsts(session, Gun("gun1"), "ids_name"));
+        Assert.Equal(["300"], Firsts(session, Good(WeaponGoodsPath, "gun1"), "ids_name"));
+        Assert.Empty(warnings);
+
+        Field(Activated, "", 4);
+        Field(Typed, " ", 5);
+        Field(Ended, " ", 6);
+
+        Assert.Single(dialogs);
+        Assert.Equal("'ids_name' did not change: a text cannot be empty. To remove the line, use the INI rows of the " +
+                     "section.", Assert.Single(warnings));
+        Assert.Equal("Ion Gun", session.Text(new StringPlaceholder(StringKind.String, "gun1")));
+    }
+
+    [Fact]
+    public void EscapeDiscardsTheTextOfACommitField()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+        var router = new FieldEditRouter(_ => { });
+        var commits = new List<(string Text, bool Interactive)>();
+        var key = Bind(session, Gun("gun1"), "ids_name").FieldKey;
+        void Field(FieldEvents events, string text, int frame) =>
+            Commit(router, X, key, events, "Gun", text, Record(commits), frame);
+
+        Field(Activated, "Gun", 1);
+        Field(Typed, "Ion Gun", 2);
+        Field(Escaped, "Gun", 3);
+
+        Assert.Null(router.Open);
+        Assert.Empty(commits);
+        // A later end has nothing to commit.
+        router.EndAtClose();
+        Assert.Empty(commits);
+    }
+
+    /// <summary>A commit field whose widget does not draw, for example after a change of the selection, commits its
+    /// last text one frame later, one time. A field that ends with its start text commits nothing.</summary>
+    [Fact]
+    public void ALostCommitFieldCommitsItsLastTextOneTime()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+        var router = new FieldEditRouter(_ => { });
+        var commits = new List<(string Text, bool Interactive)>();
+        var key = Bind(session, Gun("gun1"), "ids_name").FieldKey;
+        void Field(FieldEvents events, string text, int frame) =>
+            Commit(router, X, key, events, "Gun", text, Record(commits), frame);
+
+        Field(Activated, "Gun", 1);
+        Field(Typed, "Ion Gun", 2);
+        router.EndLost(3);
+        Assert.NotNull(router.Open);
+        router.EndLost(4);
+        router.EndLost(5);
+        router.EndAtClose();
+
+        Assert.Equal([("Ion Gun", true)], commits);
+
+        Field(Activated, "Gun", 6);
+        Field(Typed, "Gu", 7);
+        Field(Typed, "Gun", 8);
+        Field(Ended, "Gun", 9);
+        Assert.Single(commits);
+    }
+
+    /// <summary>A commit gesture runs its commit action one time at most, also when it ends again or is
+    /// disposed.</summary>
+    [Fact]
+    public void ACommitGestureCommitsOneTime()
+    {
+        var commits = new List<(string Text, bool Interactive)>();
+        var key = new FieldKey(Gun("gun1"), "ids_name", FieldKey.AllLines);
+        using var gesture = new CommitGesture(key, "Gun", Record(commits));
+
+        gesture.Change("Ion Gun");
+        Assert.Null(gesture.End(keep: true, interactive: true));
+        gesture.Change("Other");
+        gesture.End(keep: true, interactive: false);
+        gesture.Dispose();
+
+        Assert.Equal([("Ion Gun", true)], commits);
+        Assert.Null(gesture.Error);
+    }
+
+    /// <summary>
+    /// ImGui can change the text in the frame in which the field ends, for example when a key and a click outside the
+    /// field come in one frame. The end keeps that text, for a field of lines and for a commit field.
+    /// </summary>
+    [Fact]
+    public void TheEndOfAFieldKeepsTheChangeOfItsLastFrame()
+    {
+        using var ws = Layers();
+        var session = ws.Session("act");
+        var router = new FieldEditRouter(_ => { });
+        FieldBinding Mass() => Bind(session, Ship("s1"), "mass");
+        void Field(FieldEvents events, string text, int frame) =>
+            Route(router, session, X, Mass(), events, _ => text, frame);
+
+        Field(Activated, "120", 1);
+        Field(Typed, "13", 2);
+        Field(TypedAndEnded, "135", 3);
+
+        Assert.Null(router.Open);
+        Assert.Equal("135", Mass().Text);
+        session.Undo();
+        Assert.Equal("120", Mass().Text);
+
+        var commits = new List<(string Text, bool Interactive)>();
+        var name = new FieldKey(Ship("s1"), "ids_name", FieldKey.AllLines);
+        Commit(router, Y, name, Activated, "Ship", "Ship", Record(commits), 4);
+        Commit(router, Y, name, Typed, "Ship", "Ship ", Record(commits), 5);
+        Commit(router, Y, name, TypedAndEnded, "Ship", "Ship 1", Record(commits), 6);
+
+        Assert.Null(router.Open);
+        Assert.Equal([("Ship 1", true)], commits);
+    }
+
+    /// <summary>Escape puts back the start text in the frame in which the field ends. That change is not a step of the
+    /// edit, so the edit view goes back to its start state in one change.</summary>
+    [Fact]
+    public void EscapePutsBackTheEditViewInOneChange()
+    {
+        using var ws = Layers();
+        var session = ws.Session("act");
+        var router = new FieldEditRouter(_ => { });
+        FieldBinding Mass() => Bind(session, Ship("s1"), "mass");
+        void Field(FieldEvents events, string text, int frame) =>
+            Route(router, session, X, Mass(), events, _ => text, frame);
+        Field(Activated, "120", 1);
+        Field(Typed, "130", 2);
+        var changes = 0;
+        session.Changed += _ => changes++;
+
+        Field(Escaped, "120", 3);
+
+        Assert.Equal(1, changes);
+        Assert.Null(router.Open);
+        Assert.Equal("120", Mass().Text);
+        Assert.False(session.CanUndo);
+    }
+
+    /// <summary>
+    /// Each market line is its own key, so the widget of one line cannot change another line of the same section. The
+    /// window close commits the last text of the line.
+    /// </summary>
+    [Fact]
+    public void TheFieldOfAMarketLineCommitsOnlyItsOwnLine()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+        session.Execute(MarketEdits.AddToBase(session, "eng1", "b1", MarketEdits.DefaultValues("equipment")));
+        session.Execute(MarketEdits.AddToBase(session, "s1_hull", "b1", MarketEdits.DefaultValues("equipment")));
+        var router = new FieldEditRouter(_ => { });
+        MarketLine Line(string good) => session.MarketLines(good).Single(l => l.Base == "b1");
+        void Field(MarketLine line, FieldEvents events, string text, int frame) =>
+            Commit(router, X, MarketEdits.LineKey(line), events, MarketEdits.ValuesText(line), text, (values, _) =>
+            {
+                session.Execute(MarketEdits.SetLine(session, line, values));
+                return null;
+            }, frame);
+        Assert.Equal(Line("eng1").Section, Line("s1_hull").Section);
+        Assert.NotEqual(MarketEdits.LineKey(Line("eng1")), MarketEdits.LineKey(Line("s1_hull")));
+
+        Field(Line("eng1"), Activated, "0, -1, 10, 10, 0, 1", 1);
+        Field(Line("eng1"), Typed, "0, -1, 20, 20, 0, 1", 2);
+        // The rows moved, and the active widget now draws the other line.
+        Field(Line("s1_hull"), Typed, "0, -1, 99, 99, 0, 1", 3);
+        router.EndAtClose();
+
+        Assert.Equal("0, -1, 20, 20, 0, 1", MarketEdits.ValuesText(Line("eng1")));
+        Assert.Equal("0, -1, 10, 10, 0, 1", MarketEdits.ValuesText(Line("s1_hull")));
+    }
+
+    /// <summary>Routes the events of a widget that changes the lines of a bound key, as the Inspector does.</summary>
+    private static void Route(FieldEditRouter router, EditSession session, uint id, FieldBinding field,
+        FieldEvents events, Func<string, string> text, int frame) =>
+        router.Route(id, field.FieldKey, events, () => new LineGesture(session, field), text, frame);
+
+    /// <summary>Routes the events of a widget whose edit runs when it ends, as <see cref="PropertyGrid.CommitField"/>
+    /// does.</summary>
+    private static void Commit(FieldEditRouter router, uint id, FieldKey key, FieldEvents events, string start,
+        string text, Func<string, bool, string?> commit, int frame) =>
+        router.Route(id, key, events, () => new CommitGesture(key, start, commit), _ => text, frame);
+
+    /// <summary>A commit that records each text with its interactive flag, and runs no edit.</summary>
+    private static Func<string, bool, string?> Record(List<(string Text, bool Interactive)> commits) =>
+        (text, interactive) =>
+        {
+            commits.Add((text, interactive));
+            return null;
+        };
+
+    /// <summary>The commit of a text key, as <see cref="PropertyGrid"/> makes it, with the session in place of the
+    /// editor.</summary>
+    /// <param name="ask">Gets the title, the message and the choices of a dialog.</param>
+    private static Func<string, bool, string?> TextKeyCommit(EditSession session, FieldBinding field,
+        Action<string, string, IReadOnlyList<Choice>> ask) =>
+        EditController.TextKeyCommit(session, field, StringKind.String, make => session.Execute(make()), ask);
 
     /// <summary>The key lists as one text, so that a failed test shows the lists.</summary>
     private static string Lists(SchemaPage.KeyLists lists) =>

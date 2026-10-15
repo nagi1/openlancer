@@ -28,6 +28,14 @@ public sealed class EditSessionRecoveryTests
         return session;
     }
 
+    /// <summary>The window closes: the editor writes the recovery file, then the session releases the lock of the
+    /// mod.</summary>
+    private static void Close(EditSession session)
+    {
+        Assert.Empty(session.WriteRecovery());
+        session.Dispose();
+    }
+
     [Fact]
     public void AnOpenRestoresTheUnsavedEditsOfTheRecoveryFile()
     {
@@ -35,7 +43,7 @@ public sealed class EditSessionRecoveryTests
         Assert.True(Edit(direct).Save().Saved);
         using var ws = Workspace();
         var before = TestWorkspace.Files(ws.ModFolder("act"));
-        Assert.Empty(Edit(ws).WriteRecovery());
+        Close(Edit(ws));
         var recovery = RecoveryFile.PathOf(ws.ModFolder("act"));
         Assert.True(File.Exists(recovery));
 
@@ -68,7 +76,7 @@ public sealed class EditSessionRecoveryTests
     public void AnOldRecoveryFileIsNotRestored()
     {
         using var ws = Workspace();
-        Assert.Empty(Edit(ws).WriteRecovery());
+        Close(Edit(ws));
         var recovery = RecoveryFile.PathOf(ws.ModFolder("act"));
         var recoveryBytes = File.ReadAllBytes(recovery);
         File.WriteAllText(Path.Combine(ws.ModFolder("act"), "patches", GoodsPath), "[Good]\r\nnickname = g1\r\nprice = 125\r\n");
@@ -85,7 +93,7 @@ public sealed class EditSessionRecoveryTests
 
         session.DiscardRecovery();
         Assert.False(File.Exists(recovery));
-        Assert.False(Directory.Exists(Path.GetDirectoryName(recovery)));
+        Assert.Empty(TestWorkspace.SaveFiles(ws.ModFolder("act")));
         session.Execute(Set(Good("g2"), "price", new Int32Value(1)));
         Assert.Empty(session.WriteRecovery());
         Assert.True(File.Exists(recovery));
@@ -99,7 +107,7 @@ public sealed class EditSessionRecoveryTests
     public void ASessionTakesNoEditsUntilTheUserDecidesOnTheRecoveryFile()
     {
         using var ws = Workspace();
-        Assert.Empty(Edit(ws).WriteRecovery());
+        Close(Edit(ws));
         var recoveryBytes = File.ReadAllBytes(RecoveryFile.PathOf(ws.ModFolder("act")));
 
         var session = ws.Session("act");
@@ -127,7 +135,7 @@ public sealed class EditSessionRecoveryTests
         using var ws = Workspace();
         var first = ws.Session("act");
         first.Execute(EditCommand.SetText(StringKind.String, "k", "A"));
-        Assert.Empty(first.WriteRecovery());
+        Close(first);
         File.WriteAllText(Path.Combine(ws.ModFolder("act"), "strings.json"), "{ \"strings\": { \"z\": \"Z\" } }");
 
         var session = ws.Session("act");

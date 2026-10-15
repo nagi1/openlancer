@@ -1,0 +1,29 @@
+diff --git a/src/LibreLancer/FreelancerGame.cs b/src/LibreLancer/FreelancerGame.cs
+index a6709c3b..225f68a8 100644
+--- a/src/LibreLancer/FreelancerGame.cs
++++ b/src/LibreLancer/FreelancerGame.cs
+@@ -88,7 +88,7 @@ namespace LibreLancer
+             Config.Settings.RenderContext = RenderContext;
+             Config.Settings.Validate();
+             // Cache
+-            var vfs = FileSystem.FromPath(_cfg.FreelancerPath);
++            var vfs = _cfg.CustomFileSystem?.Invoke() ?? FileSystem.FromPath(_cfg.FreelancerPath);
+ 			ResourceManager = new GameResourceManager(this, vfs);
+ 			// Init Audio
+ 			FLLog.Info("Audio", "Initialising Audio");
+diff --git a/src/LibreLancer/GameConfig.cs b/src/LibreLancer/GameConfig.cs
+index c5be1dc5..bbc89cc8 100644
+--- a/src/LibreLancer/GameConfig.cs
++++ b/src/LibreLancer/GameConfig.cs
+@@ -29,6 +29,11 @@ namespace LibreLancer
+         [XmlIgnore]
+ 		public Func<FreelancerGame, GameState>? CustomState;
+ 
++        // A host can give the game its file system, for example a mod overlay. When it is null, the game reads
++        // freelancer_path.
++        [XmlIgnore]
++        public Func<Data.IO.FileSystem>? CustomFileSystem;
++
+         public event Action<GameConfig>? Saved;
+         private Func<string> filePath;
+ 

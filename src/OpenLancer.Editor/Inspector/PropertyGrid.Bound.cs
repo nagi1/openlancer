@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Text;
 using ImGuiNET;
 using LibreLancer.ImUI;
+using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Editing;
@@ -20,10 +21,14 @@ namespace OpenLancer.Editor.Inspector;
 /// </summary>
 /// <remarks>
 /// <para>Numbers and text edit as text with invariant parsing, so a float value stays exact. A bool gets a checkbox,
-/// an enum a list and a vector three fields. A text key, for example <c>ids_name</c>, edits the text of the active
-/// mod.</para>
-/// <para>Each text field is one edit of the history: the edit starts when the field becomes active, each change shows
-/// at once, and the edit ends when the field ends. Escape cancels the edit (see <see cref="FieldEditRouter"/>).</para>
+/// an enum a list, a vector three fields, and the size of a zone one labeled field for each value. A text key, for
+/// example <c>ids_name</c>, edits the text of the active mod.</para>
+/// <para>A page draws the rows of the values of other files, for example the model of an archetype, in a
+/// <c>Bind(null)</c> scope. A reference row shows the lines of its key with the button that selects the item. Below a
+/// row, a problem of the scene shows, for example an archetype that does not exist.</para>
+/// <para>Each text field is one edit of the history: the edit starts when the field becomes active, and the edit ends
+/// when the field ends. Each change of the lines of a key shows at once. The text of a text key changes when the field
+/// ends. Escape cancels the edit (see <see cref="FieldEditRouter"/>).</para>
 /// <para>While a field edit is open, its row keeps the widgets that it had at the start of the edit, and a bound row
 /// has the ImGui id of its key. So the active widget stays with its key when the edit changes the rows.</para>
 /// <para>Each bound row has marks: a blue bar and a blue label when the active mod sets the value, a warning glyph
@@ -40,14 +45,26 @@ internal sealed partial class PropertyGrid
     private readonly FieldEditRouter fieldEdits =
         new(message => window.Log.Add(Logs.ConsoleSeverity.Warning, EditController.Source, message));
 
+    private static readonly HashSet<string> NoKeys = [];
+
+    // The keys that bound rows showed in the frame shownFrame, by section.
+    private readonly Dictionary<SectionRef, HashSet<string>> shown = [];
+    private int shownFrame = -1;
+
     private (EditorSession? Session, int Version, FieldGesture? Edit) boundVersion;
     private BoundSection? bound;
+
+    // The width that the value widgets of a bound row leave free at their right, for the button of a reference.
+    private float reserve;
 
     /// <summary>True while a field edit is open. The edit history and the save wait for its end.</summary>
     public bool IsEditing => fieldEdits.Open != null;
 
     /// <summary>The open field edit, or null.</summary>
     public FieldGesture? OpenEdit => fieldEdits.Open;
+
+    /// <summary>True in a scope that a section of the edit view binds (see <see cref="Bind"/>).</summary>
+    public bool IsBound => bound != null;
 
     /// <summary>
     /// Binds the rows of a scope to a section of the edit view. Null ends the binding for the scope, for example for
@@ -59,6 +76,60 @@ internal sealed partial class PropertyGrid
         bound = section == null ? null : Section(section);
         return new BindScope(this, previous);
     }
+
+    /// <summary>
+    /// True when the page shows the rows of the keys. In a bound scope, that is when the section has a line of one of
+    /// the keys (see <see cref="Shows(SectionView, bool, string[])"/>). Without a bound section, the answer is
+    /// <paramref name="unbound"/>, for example because the game data sets the value.
+    /// </summary>
+    public bool Shows(bool unbound, params string[] keys) => Shows(Layout, unbound, keys);
+
+    /// <summary>
+    /// True when a page shows the rows of the keys. With a section to lay out from, that is when the section has a line
+    /// of one of the keys, and never from the values of the scene or the game data. While a field edit of the section
+    /// is open, that section is the section at the start of the edit. So no row comes or goes while a field edit is
+    /// open: a row stays while its own edit removes its last line, and a key in "More keys" stays there while its edit
+    /// changes the scene item (see <see cref="SectionExtras"/>).
+    /// </summary>
+    /// <param name="layout">The section that a bound page lays out its rows from (see <see cref="LayoutView"/>), or
+    /// null without a bound section.</param>
+    /// <param name="unbound">The answer without a bound section.</param>
+    internal static bool Shows(SectionView? layout, bool unbound, params string[] keys) =>
+        layout == null ? unbound : keys.Any(k => layout.Lines(k).Count > 0);
+
+    /// <summary>The section that the rows of the bound scope lay out from (see <see cref="LayoutView"/>), or null
+    /// without a bound section.</summary>
+    internal SectionView? Layout => bound?.Layout;
+
+    /// <summary>The name of a key that a section can also set with an alias, for the row of the key: the name of the
+    /// last line of either name in the bound section, or the key (see <see cref="LastName"/>).</summary>
+    public string KeyOrAlias(string key, string alias) => Layout is { } layout ? LastName(layout, key, alias) : key;
+
+    /// <summary>
+    /// Of a key and its alias, the name of the last line of either name in the section, or the key when the section has
+    /// a line of neither. Each line of either name sets the value, so the engine uses the last line, and a row of the
+    /// value edits that line.
+    /// </summary>
+    /// <param name="layout">The section that the page lays out its rows from, so the name stays while a field edit is
+    /// open.</param>
+    internal static string LastName(SectionView layout, string key, string alias) =>
+        layout.Entries.LastOrDefault(e => e.Name.Equals(key, StringComparison.OrdinalIgnoreCase) ||
+                                          e.Name.Equals(alias, StringComparison.OrdinalIgnoreCase)) is { } last &&
+        last.Name.Equals(alias, StringComparison.OrdinalIgnoreCase)
+            ? alias
+            : key;
+
+    /// <summary>The keys of a section that bound rows showed in this frame, with the schema names of the keys.</summary>
+    public IReadOnlySet<string> Shown(SectionRef section) =>
+        shownFrame == ImGui.GetFrameCount() && shown.TryGetValue(section, out var keys) ? keys : NoKeys;
+
+    /// <summary>
+    /// The section that a page lays out its rows from: the section at the start of an open line edit of it, or the
+    /// section of the edit view. So the rows of a page stay while the edit changes the lines.
+    /// </summary>
+    /// <param name="open">The open field edit, or null.</param>
+    internal static SectionView? LayoutView(EditSession edits, SectionRef section, FieldGesture? open) =>
+        (open is LineGesture edit && edit.Key.Owner.Equals(section) ? edit.StartSection : null) ?? edits.Get(section);
 
     /// <summary>The end of a <see cref="Bind"/> scope.</summary>
     internal readonly struct BindScope(PropertyGrid grid, BoundSection? previous) : IDisposable
@@ -81,8 +152,8 @@ internal sealed partial class PropertyGrid
     public void EndLostEdit() => fieldEdits.EndLost(ImGui.GetFrameCount());
 
     /// <summary>Ends an open field edit and keeps its text. Call it when the window closes, so that the recovery file
-    /// keeps the edit.</summary>
-    public void EndEdit() => fieldEdits.End(keep: true);
+    /// keeps the edit (see <see cref="FieldEditRouter.EndAtClose"/>).</summary>
+    public void EndEdit() => fieldEdits.EndAtClose();
 
     /// <summary>The binding of a key of the current scope, or null when the row is not bound.</summary>
     private FieldBinding? Binding(string? iniKey) => iniKey == null ? null : bound?.Field(iniKey);
@@ -108,8 +179,10 @@ internal sealed partial class PropertyGrid
         if (!boundSections.TryGetValue(section, out var result))
         {
             var view = session.Edits.Get(section);
-            var editing = open != null && open.Binding.Section.Equals(section) ? open.Binding.Name : null;
-            result = view == null ? null : new BoundSection(session.Edits, section, view, editing);
+            var editing = open != null && open.Key.Owner.Equals(section) ? open.Key.Name : null;
+            result = view == null
+                ? null
+                : new BoundSection(session.Edits, section, view, LayoutView(session.Edits, section, open) ?? view, editing);
             boundSections[section] = result;
         }
 
@@ -121,7 +194,11 @@ internal sealed partial class PropertyGrid
     /// draws as before.
     /// </summary>
     /// <param name="unset">The value that the engine uses when no line sets the key, as text.</param>
-    private bool BoundRow(string label, string? iniKey, string unset)
+    /// <param name="labels">Gives the labels of the values of a line with a number of values, or null when a line with
+    /// that number of values gets one text field. Null for the default: X, Y and Z for a vector of three values.</param>
+    /// <param name="follow">The button that selects the item of a reference, or null for no button.</param>
+    private bool BoundRow(string label, string? iniKey, string unset,
+        Func<int, IReadOnlyList<ComponentLabel>?>? labels = null, Follow? follow = null)
     {
         if (Binding(iniKey) is not { } field)
         {
@@ -134,6 +211,8 @@ internal sealed partial class PropertyGrid
         // While a field edit of the key is open, the row draws the widgets of the key at the start of the edit. So the
         // active widget stays, also when the edit changes the number of lines.
         var shape = fieldEdits.StartOf(field) ?? field;
+        var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+        reserve = follow == null ? 0 : ToolbarItems.IconWidth + spacing;
         if (field.Key?.TextKind is { } kind)
         {
             TextKeyField(field, kind, reason);
@@ -141,7 +220,7 @@ internal sealed partial class PropertyGrid
         else if (reason != null)
         {
             // A read-only field has one line, so a bar separates the lines of the key.
-            Field(field.Text.Replace("\n", " | "), hint: field.Lines.Count == 0 ? hint : "None");
+            Field(field.Text.Replace("\n", " | "), FillWidth, field.Lines.Count == 0 ? hint : "None");
         }
         else if (field.Key?.ClrType == typeof(bool) && shape.Lines.Count <= 1)
         {
@@ -151,19 +230,100 @@ internal sealed partial class PropertyGrid
         {
             EnumField(field, type, hint);
         }
-        else if (field.Key is { ClrType: var vector, Multiline: false } && vector == typeof(Vector3) &&
-                 shape.Lines.Count == 1 && FieldEdit.Values(shape.Text).Length == 3)
+        else if (shape.Lines.Count == 1 &&
+                 (labels ?? DefaultLabels(field.Key))?.Invoke(FieldEdit.Values(shape.Text).Length) is { } components)
         {
-            // An edit of an axis keeps three values: the schema allows at most three, and an empty value is not valid.
-            VectorField(field);
+            // An edit of one value keeps the number of values, because an empty value is not valid.
+            ComponentField(field, components);
         }
         else
         {
             TextField(field, shape.Lines.Count, hint);
         }
 
+        reserve = 0;
+        if (follow is { } button)
+        {
+            ImGui.SameLine(0, spacing);
+            FollowButton(button);
+        }
+
+        RowProblems(field);
         EndRow();
+        NoteShown(field);
         return true;
+    }
+
+    /// <summary>The labels of the values of a line of a key without its own labels: X, Y and Z for a line of three
+    /// values of a vector.</summary>
+    internal static Func<int, IReadOnlyList<ComponentLabel>?>? DefaultLabels(KeySchema? key) =>
+        key is { Multiline: false } && key.ClrType == typeof(Vector3) ? count => count == 3 ? AxisLabels : null : null;
+
+    /// <summary>
+    /// The bits that the chips or the checkboxes of a flags key show: in a bound scope, the value of the lines of the
+    /// key in W, else <paramref name="unbound"/>. So they follow an edit of the value row at once, also for a key that
+    /// the scene does not apply, for example <c>visit</c> of a system.
+    /// </summary>
+    private ulong FlagBits(string? iniKey, ulong unbound) =>
+        Binding(iniKey) is { } field && LineBits(field.Lines) is { } bits ? bits : unbound;
+
+    /// <summary>
+    /// The bits of a flags key as the engine reads its lines: the first value of the last line as a whole number, or 0
+    /// without a line. Null when that value is not a whole number. Then the check of the section fails, and the row
+    /// shows the value of the scene or the game data.
+    /// </summary>
+    internal static ulong? LineBits(IReadOnlyList<EntryView> lines) =>
+        lines.Count == 0 ? 0
+        : lines[^1].Values is [var value, ..] && value.TryToInt32(out var number) ? unchecked((ulong)(long)number)
+        : null;
+
+    /// <summary>The width argument of a value widget that fills the cell, less the width of a reference button.</summary>
+    private float FillWidth => reserve > 0 ? -reserve : -1;
+
+    /// <summary>Notes that a bound row of the key showed in this frame (see <see cref="Shown"/>).</summary>
+    private void NoteShown(FieldBinding field)
+    {
+        var frame = ImGui.GetFrameCount();
+        if (frame != shownFrame)
+        {
+            shown.Clear();
+            shownFrame = frame;
+        }
+
+        if (!shown.TryGetValue(field.Section, out var keys))
+        {
+            keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            shown[field.Section] = keys;
+        }
+
+        keys.Add(field.Name);
+    }
+
+    /// <summary>
+    /// The problems of the scene below a row of their key, for example an archetype that does not exist or an unknown
+    /// attenuation curve (see <see cref="Runtime.Scene.SceneApplier.Problems"/>).
+    /// </summary>
+    private void RowProblems(FieldBinding field)
+    {
+        foreach (var problem in window.Scene.Problems(field.Section))
+        {
+            if (field.Name.Equals(problem.Key, StringComparison.OrdinalIgnoreCase))
+            {
+                ProblemText(problem);
+            }
+        }
+    }
+
+    /// <summary>A problem of the scene as a warning, without the section at the start of its message.</summary>
+    internal static void ProblemText(Diagnostic problem)
+    {
+        var prefix = problem.Target == null ? null : $"{problem.Target.Id}: ";
+        var message = prefix != null && problem.Message.StartsWith(prefix, StringComparison.Ordinal)
+            ? problem.Message[prefix.Length..]
+            : problem.Message;
+        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Warning);
+        ImGui.TextWrapped($"{EditorIcons.ExclamationTriangle} {message}");
+        ImGui.PopStyleColor();
     }
 
     /// <summary>A text field for the lines of a key: one line, or a field with more lines for a key that the engine
@@ -174,12 +334,12 @@ internal sealed partial class PropertyGrid
         var text = field.Text;
         var multiline = field.Key?.Multiline == true || startLines > 1;
         bool changed;
-        ImGui.SetNextItemWidth(-1);
+        ImGui.SetNextItemWidth(FillWidth);
         if (multiline)
         {
             var lines = Math.Clamp(field.Lines.Count + 1, 2, MultilineRows);
             var height = lines * ImGui.GetTextLineHeight() + 2 * ImGui.GetStyle().FramePadding.Y;
-            changed = ImGui.InputTextMultiline("##value", ref text, Capacity(text), new Vector2(-1, height));
+            changed = ImGui.InputTextMultiline("##value", ref text, Capacity(text), new Vector2(FillWidth, height));
         }
         else
         {
@@ -190,18 +350,18 @@ internal sealed partial class PropertyGrid
         FieldError(field);
     }
 
-    /// <summary>Three fields with an X, Y and Z prefix. Each field edits one value of the line. Each field is its own
-    /// field edit.</summary>
-    private void VectorField(FieldBinding field)
+    /// <summary>One field for each value of the line, each with its label in front of it. Each field edits one value
+    /// of the line, and each field is its own field edit.</summary>
+    private void ComponentField(FieldBinding field, IReadOnlyList<ComponentLabel> labels)
     {
-        AxisFields(FieldEdit.Values(field.Text), (index, text, width) =>
+        ComponentFields(FieldEdit.Values(field.Text), labels, (index, text, width) =>
         {
             var value = text;
             ImGui.SetNextItemWidth(width);
             var changed = ImGui.InputText("##value", ref value, Capacity(value));
             // The other values come from the line at the start of the edit.
-            Route(field, changed, start => FieldEdit.WithValue(start.Text, index, value));
-        });
+            Route(field, changed, start => FieldEdit.WithValue(start, index, value));
+        }, reserve);
         FieldError(field);
     }
 
@@ -225,7 +385,7 @@ internal sealed partial class PropertyGrid
 
     private void EnumField(FieldBinding field, Type type, string hint)
     {
-        ImGui.SetNextItemWidth(-1);
+        ImGui.SetNextItemWidth(FillWidth);
         var preview = field.Lines.Count == 0 ? hint : field.Text;
         EditorTheme.PushMenuColors();
         if (ImGui.BeginCombo("##value", preview))
@@ -247,37 +407,38 @@ internal sealed partial class PropertyGrid
 
     /// <summary>
     /// A key that holds a text id, for example <c>ids_name</c>: the field shows the text and edits the text of the
-    /// active mod. The edit runs when the field ends, because it reads the text of the mod when it starts.
+    /// active mod. The edit runs when the field ends, because it reads the text of the mod when it is made (see
+    /// <see cref="CommitGesture"/>).
     /// </summary>
     private void TextKeyField(FieldBinding field, StringKind kind, string? reason)
     {
         var (text, id) = ShownText(field, kind);
         var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
         var idWidth = id.Length == 0 ? 0 : ImGui.CalcTextSize(id).X + spacing;
-        var width = Math.Max(1, ImGui.GetContentRegionAvail().X - idWidth);
-        var edited = text;
+        var width = Math.Max(1, ImGui.GetContentRegionAvail().X - idWidth - reserve);
         if (reason != null)
         {
             Field(text.Replace('\n', ' '), width, field.Lines.Count == 0 ? "Not set" : "No text for this id");
         }
-        else if (kind == StringKind.Infocard)
-        {
-            var height = MultilineRows * ImGui.GetTextLineHeight() + 2 * ImGui.GetStyle().FramePadding.Y;
-            ImGui.InputTextMultiline("##value", ref edited, Capacity(edited), new Vector2(width, height));
-        }
         else
         {
-            ImGui.SetNextItemWidth(width);
-            ImGui.InputTextWithHint("##value", "Not set", ref edited, Capacity(edited));
-        }
-
-        if (reason == null)
-        {
-            ImGui.SetItemTooltip("The text of the active mod. A new text gets a key in the strings.json of the mod.");
-            if (ImGui.IsItemDeactivatedAfterEdit() && edited != text)
+            var edited = text;
+            bool changed;
+            if (kind == StringKind.Infocard)
             {
-                window.SetItemText(field, kind == StringKind.Infocard ? ItemEdits.ToInfocard(edited) : edited);
+                var height = MultilineRows * ImGui.GetTextLineHeight() + 2 * ImGui.GetStyle().FramePadding.Y;
+                changed = ImGui.InputTextMultiline("##value", ref edited, Capacity(edited), new Vector2(width, height));
             }
+            else
+            {
+                ImGui.SetNextItemWidth(width);
+                changed = ImGui.InputTextWithHint("##value", "Not set", ref edited, Capacity(edited));
+            }
+
+            CommitField(field.FieldKey, changed, text, edited, EditController.TextKeyCommit(window.Session!.Edits,
+                field, kind, make => window.Edits.Execute(make),
+                (title, message, choices) => window.Choice.Show(title, message, choices)));
+            ImGui.SetItemTooltip("The text of the active mod. A new text gets a key in the strings.json of the mod.");
         }
 
         if (id.Length > 0)
@@ -309,20 +470,35 @@ internal sealed partial class PropertyGrid
             : ("", id);
     }
 
-    /// <summary>Gives the events of the widget that drew last to the field edits.</summary>
-    /// <param name="text">Gives the text of the key after a change, from the key at the start of the edit.</param>
-    private void Route(FieldBinding field, bool changed, Func<FieldBinding, string> text)
+    /// <summary>
+    /// Gives the events of the widget that drew last to the field edits, for a field whose edit runs when the field
+    /// ends (see <see cref="CommitGesture"/>).
+    /// </summary>
+    /// <param name="start">The text of the field when it is not active.</param>
+    /// <param name="text">The text of the widget in this frame.</param>
+    /// <param name="commit">Runs the edit with the last text. Its second argument is false when the editor cannot ask
+    /// a question. It returns why the text cannot be the value, or null.</param>
+    public void CommitField(FieldKey key, bool changed, string start, string text, Func<string, bool, string?> commit) =>
+        Route(key, changed, () => new CommitGesture(key, start, commit), _ => text);
+
+    /// <summary>Gives the events of the widget that drew last to the field edits, for a field that changes the lines
+    /// of a bound key (see <see cref="LineGesture"/>).</summary>
+    /// <param name="text">Gives the text of the key after a change, from the text at the start of the edit.</param>
+    private void Route(FieldBinding field, bool changed, Func<string, string> text) =>
+        Route(field.FieldKey, changed, () => new LineGesture(window.Session!.Edits, field), text);
+
+    private void Route(FieldKey key, bool changed, Func<FieldGesture> begin, Func<string, string> text)
     {
         var deactivated = ImGui.IsItemDeactivated();
         var events = new FieldEvents(ImGui.IsItemActivated(), ImGui.IsItemActive(), changed, deactivated,
             deactivated && ImGui.IsKeyPressed(ImGuiKey.Escape, false));
-        fieldEdits.Route(window.Session!.Edits, ImGui.GetItemID(), field, events, text, ImGui.GetFrameCount());
+        fieldEdits.Route(ImGui.GetItemID(), key, events, begin, text, ImGui.GetFrameCount());
     }
 
     /// <summary>The error of the open edit of a field, below the field.</summary>
     private void FieldError(FieldBinding field)
     {
-        if (fieldEdits.ErrorOf(field) is { } error)
+        if (fieldEdits.ErrorOf(field.FieldKey) is { } error)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Error);
             ImGui.TextWrapped(error);
@@ -415,11 +591,16 @@ internal sealed partial class PropertyGrid
     private static uint Capacity(string text) => (uint)(Encoding.UTF8.GetByteCount(text) + 1024);
 
     /// <summary>One section of the edit view with the bindings of its keys, for one edit version.</summary>
+    /// <param name="layout">The section that the page lays out its rows from (see <see cref="LayoutView"/>).</param>
     /// <param name="editing">The key of the open field edit of the section, or null. It stays bound when the edit
     /// removes its last line, so that its field stays until the edit ends.</param>
-    internal sealed class BoundSection(EditSession session, SectionRef section, SectionView view, string? editing)
+    internal sealed class BoundSection(EditSession session, SectionRef section, SectionView view, SectionView layout,
+        string? editing)
     {
         private readonly Dictionary<string, FieldBinding?> fields = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>The section that the page lays out its rows from.</summary>
+        public SectionView Layout => layout;
 
         /// <summary>The binding of a key, or null when neither the schema nor the section has the key, and no field
         /// edit of the key is open.</summary>

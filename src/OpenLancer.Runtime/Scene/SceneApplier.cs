@@ -1,0 +1,688 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using LibreLancer;
+using LibreLancer.Data;
+using LibreLancer.Data.GameData.World;
+using LibreLancer.Resources;
+using LibreLancer.World;
+using OpenLancer.Data;
+using OpenLancer.Data.Editing;
+using OpenLancer.Data.IO;
+using Universe = LibreLancer.Data.Schema.Universe;
+
+namespace OpenLancer.Runtime.Scene;
+
+/// <summary>
+/// Applies W to the open scene: the clone of a star system that the scene shows, its world objects and its renderer
+/// (through <see cref="ISceneHost"/>). Each change of W shows in the scene, also an undo, a redo and a restore of
+/// unsaved edits, and the scene keeps the unsaved edits across a system change.
+/// </summary>
+/// <remarks>
+/// <para><see cref="Note"/> only records a change. <see cref="Run"/> applies the recorded changes. The editor calls
+/// <see cref="Run"/> at two points of the frame where no worker task of the renderer reads the zones (flush A and flush
+/// B, section 3 of the design).</para>
+/// <para>A run compares each recorded section of W with the view that it applied last. The effects of the changed keys
+/// (see <see cref="SceneFields"/>) run in this order. First, for each section: Transform, then Data, Light and
+/// Environment, which copy the values into the scene item. Then, one time for all sections: the moved zones, one
+/// <see cref="ISceneHost.IndexChanged"/> and the lights. So the index reads the new values. The effects that load
+/// models (see <see cref="SceneFields.Deferred"/>) run last, and only when no edit is open and no reload runs.</para>
+/// <para>A restore of unsaved edits lists no section, and a structural change of a section of the system adds, deletes
+/// or renames an item. Then the run catches up the whole system (see <see cref="CatchUp"/>).</para>
+/// <para>W keeps the text placeholder of a text of the active mod, for example <c>ids_name = $str:li01_depot</c>. An
+/// unsaved text has no id, and the id of a saved text depends on all texts of the mod. So a built item never gives the
+/// scene an id for a placeholder: each text id field whose W line holds a placeholder keeps the value of the scene item.
+/// The editor reads each name from W.</para>
+/// <para>When the checks give an error for a section, or the engine cannot build its item, the scene keeps the last
+/// valid state of the item, and <see cref="Problems"/> tells why.</para>
+/// <para>The applier uses the <see cref="GameItemDb"/> of the data that the system came from for the life of the open
+/// system, so a compare never mixes the items of two loads. Use it on the UI thread only.</para>
+/// </remarks>
+public sealed class SceneApplier
+{
+    /// <summary>The effects that change what the index of the scene reads.</summary>
+    private const SceneEffect IndexEffects = SceneEffect.Label | SceneEffect.Roles | SceneEffect.Lanes;
+
+    private readonly EditSession session;
+    private readonly GameItemDb items;
+    private readonly ResourceManager resources;
+    private readonly StarSystem system;
+    private readonly GameWorld world;
+    private readonly IReadOnlyDictionary<SystemObject, GameObject> objects;
+    private readonly ISceneHost host;
+
+    /// <summary>The <c>[system]</c> section of the system in <c>universe.ini</c>, or null.</summary>
+    private readonly SectionRef? universe;
+
+    /// <summary>The zones of the asteroid fields and the nebulae. The renderer reads their size only when it builds a
+    /// field (AsteroidFieldRenderer.cs:45).</summary>
+    private readonly HashSet<Zone> volumeZones;
+
+    private readonly Dictionary<SectionRef, object> itemOf = [];
+    private readonly Dictionary<object, SectionRef> sectionOf = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The lines of each section as the scene shows them. A section without an entry has an unknown state, so
+    /// each of its keys counts as changed.</summary>
+    private readonly Dictionary<SectionRef, IReadOnlyList<EntryView>> applied = [];
+
+    private readonly Dictionary<SectionRef, Dictionary<Step, Diagnostic>> problems = [];
+
+    /// <summary>The problems that the host got, so that it gets each problem once.</summary>
+    private readonly HashSet<Diagnostic> reported = [];
+
+    private readonly HashSet<SectionRef> noted = [];
+    private readonly Dictionary<object, SceneEffect> deferred = new(ReferenceEqualityComparer.Instance);
+    private bool catchUpNoted;
+    private bool textNoted;
+
+    // The effects of the current run that apply once, after the sections.
+    private bool zonesMoved;
+    private bool lightsChanged;
+    private SceneEffect indexChanges;
+
+    /// <param name="items">The game data that <paramref name="system"/> came from.</param>
+    /// <param name="resources">The resources of the world, for a model that loads again.</param>
+    /// <param name="system">The clone of the system that the scene shows. The applier changes it.</param>
+    /// <param name="world">The world of the scene, with <paramref name="system"/> loaded.</param>
+    /// <param name="objects">The world object of each object of <paramref name="system"/>.</param>
+    public SceneApplier(EditSession session, GameItemDb items, ResourceManager resources, StarSystem system,
+        GameWorld world, IReadOnlyDictionary<SystemObject, GameObject> objects, ISceneHost host)
+    {
+        this.session = session;
+        this.items = items;
+        this.resources = resources;
+        this.system = system;
+        this.world = world;
+        this.objects = objects;
+        this.host = host;
+        SystemPath = session.SystemPath(system.Nickname);
+        universe = session.SystemSection(system.Nickname);
+        // The system comes from the data of the last load, and W can hold newer edits. So the first run catches up,
+        // also when the editor does not call CatchUp.
+        catchUpNoted = true;
+        volumeZones = new HashSet<Zone>(
+            system.AsteroidFields.Select(f => f.Zone).Concat(system.Nebulae.Select(n => n.Zone)).OfType<Zone>(),
+            ReferenceEqualityComparer.Instance);
+    }
+
+    /// <summary>The install path of the file of the system in W, or null when W has none. Then the applier does
+    /// nothing.</summary>
+    public string? SystemPath { get; }
+
+    /// <summary>True when the applier has changes or effects that it did not apply yet.</summary>
+    public bool HasPending => catchUpNoted || textNoted || noted.Count > 0 || deferred.Count > 0;
+
+    /// <summary>
+    /// The section of W that a scene item shows: the section of an object, a zone or a light of the system, or the
+    /// <c>[system]</c> section in <c>universe.ini</c> for the system. Null for another item, and for an item whose
+    /// section W does not have. The catch-up finds the sections of the items, so call <see cref="CatchUp"/> first.
+    /// </summary>
+    public SectionRef? SectionOf(object item) => item is StarSystem other
+        ? other.Nickname.Equals(system.Nickname, StringComparison.OrdinalIgnoreCase) ? universe : null
+        : sectionOf.GetValueOrDefault(item);
+
+    /// <summary>The scene item that a section of W sets: an object, a zone, a light, or the system for a section of the
+    /// fields of the system. Null for another section.</summary>
+    public object? ItemOf(SectionRef section) =>
+        itemOf.GetValueOrDefault(section) ?? (KindOf(section) is { } kind && IsSystemKind(kind) ? system : null);
+
+    /// <summary>Why the scene does not show the W state of a section, for example a missing archetype or an unknown
+    /// attenuation curve. Empty when it shows it.</summary>
+    public IReadOnlyList<Diagnostic> Problems(SectionRef section) =>
+        problems.TryGetValue(section, out var steps) ? steps.Values.ToList() : [];
+
+    /// <summary>
+    /// Builds each section of the system in W with the engine code, compares the item with the scene item, and applies
+    /// the differences. So the scene shows the unsaved edits after a system opens, after a change that lists no section,
+    /// and after a structural change of the system. The deferred effects run when they can. The first <see cref="Run"/> of a new applier does this too.
+    /// Call it after the world loads the system, so that the first frame shows W.
+    /// </summary>
+    /// <returns>The number of sections whose scene item differed from W.</returns>
+    public int CatchUp()
+    {
+        var differences = CatchUpSections();
+        Finish();
+        return differences;
+    }
+
+    /// <summary>Records a change of W. Nothing changes in the scene until <see cref="Run"/>.</summary>
+    public void Note(EditChange change)
+    {
+        var sections = change.Sections.Where(s => KindOf(s) != null).ToList();
+        // A restore of unsaved edits, and its undo and redo, list no section. A structural change of a section of the
+        // system adds, deletes or renames an item, so the catch-up finds the section of each item again. A structural
+        // change of another file, for example a new item from a template, changes nothing that the scene shows, because
+        // the applier keeps the game data that the system came from. A change that lists only the text or cutscenes
+        // changes no section.
+        var listsOtherChanges = change.Text || change.Cutscenes.Count > 0;
+        if (change.Sections.Count == 0 ? change.Structural || !listsOtherChanges : change.Structural && sections.Count > 0)
+            catchUpNoted = true;
+        textNoted |= change.Text;
+        noted.UnionWith(sections);
+    }
+
+    /// <summary>Applies the changes that <see cref="Note"/> recorded, then the deferred effects when they can
+    /// run.</summary>
+    public void Run()
+    {
+        if (catchUpNoted)
+            CatchUpSections();
+        foreach (var section in noted)
+            ApplyChanges(section);
+        noted.Clear();
+        // A change of a text changes the names that W gives through a placeholder. It lists no section.
+        if (textNoted)
+            indexChanges |= SceneEffect.Label;
+        textNoted = false;
+        Finish();
+    }
+
+    /// <summary>The scene section of a section of the system file or of the <c>[system]</c> of the system, or null for
+    /// another section.</summary>
+    private SceneSection? KindOf(SectionRef section)
+    {
+        if (universe != null && section.Equals(universe))
+            return SceneSection.UniverseSystem;
+        return SystemPath != null && VfsPath.Comparer.Equals(section.Path, SystemPath)
+            ? SceneFields.SectionOf(section.Id.Type, universe: false)
+            : null;
+    }
+
+    /// <summary>True for a section that sets the fields of the system.</summary>
+    private static bool IsSystemKind(SceneSection kind) =>
+        kind is not (SceneSection.Object or SceneSection.Zone or SceneSection.LightSource);
+
+    /// <summary>The sections of the system file and the <c>[system]</c> of the system, in file order.</summary>
+    private IEnumerable<SectionRef> Sections() =>
+        (SystemPath == null ? [] : session.Sections(SystemPath)).Concat(universe == null ? [] : [universe]);
+
+    /// <summary>Finds the section of each object, zone and light of the system. The k-th item with a nickname is the
+    /// section with that nickname and the ordinal k, because the engine keeps the file order
+    /// (GameItemDb.cs:1466-1676).</summary>
+    private void Map()
+    {
+        itemOf.Clear();
+        sectionOf.Clear();
+        var byKind = new Dictionary<SceneSection, Dictionary<string, List<object>>>
+        {
+            [SceneSection.Object] = ByNickname(system.Objects),
+            [SceneSection.Zone] = ByNickname(system.Zones),
+            [SceneSection.LightSource] = ByNickname(system.LightSources),
+        };
+        foreach (var section in Sections())
+        {
+            if (KindOf(section) is { } kind && byKind.TryGetValue(kind, out var byNickname) &&
+                section.Id.Key is { } key && byNickname.TryGetValue(key, out var list) && section.Id.Ordinal < list.Count)
+            {
+                var item = list[section.Id.Ordinal];
+                itemOf[section] = item;
+                sectionOf[item] = section;
+            }
+        }
+    }
+
+    private static Dictionary<string, List<object>> ByNickname(IEnumerable<NicknameItem> list)
+    {
+        var result = new Dictionary<string, List<object>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in list)
+        {
+            if (!result.TryGetValue(item.Nickname, out var same))
+                result[item.Nickname] = same = [];
+            same.Add(item);
+        }
+        return result;
+    }
+
+    /// <summary>The catch-up of <see cref="CatchUp"/>, without the effects that apply once.</summary>
+    private int CatchUpSections()
+    {
+        catchUpNoted = false;
+        noted.Clear();
+        applied.Clear();
+        problems.Clear();
+        Map();
+        var differences = 0;
+        var systemSections = new List<SectionRef>();
+        foreach (var section in Sections())
+        {
+            if (KindOf(section) is not { } kind || session.Get(section) is not { } view)
+                continue;
+            if (IsSystemKind(kind))
+            {
+                systemSections.Add(section);
+                continue;
+            }
+            if (!itemOf.TryGetValue(section, out var item))
+            {
+                NotShown(section, kind);
+                continue;
+            }
+            bool? differs = item switch
+            {
+                SystemObject obj => CatchUpObject(section, view, obj),
+                Zone zone => CatchUpZone(section, view, zone),
+                _ => CatchUpLight(section, view, (LightSource)item),
+            };
+            if (differs == null)
+                continue;
+            differences += differs.Value ? 1 : 0;
+            applied[section] = view.Entries;
+        }
+        if (BuildSystem() is { } built)
+        {
+            if (!SceneBuild.SameSystem(built, system))
+            {
+                differences++;
+                CopySystem(built);
+            }
+            foreach (var section in systemSections)
+                applied[section] = session.Get(section)!.Entries;
+        }
+        if (differences > 0)
+            indexChanges |= IndexEffects;
+        return differences;
+    }
+
+    /// <returns>True when the object differed, false when it equals W, and null when W does not build.</returns>
+    private bool? CatchUpObject(SectionRef section, SectionView view, SystemObject obj)
+    {
+        if (BuildObject(section, view, obj) is not { } built)
+            return null;
+        if (SceneBuild.SameObject(built, obj))
+            return false;
+        // Only these fields change the model or the components of the world object (GameWorld.cs:100-178).
+        var reinit = !ReferenceEquals(built.Archetype, obj.Archetype) || !ReferenceEquals(built.Loadout, obj.Loadout) ||
+                     !ReferenceEquals(built.Star, obj.Star) || !built.Spin.Equals(obj.Spin) ||
+                     !SceneBuild.SameDock(built.Dock, obj.Dock);
+        SceneBuild.CopyObject(built, obj);
+        MoveWorldObject(obj);
+        if (reinit)
+            Defer(obj, SceneEffect.Reinit);
+        return true;
+    }
+
+    /// <returns>True when the zone differed, false when it equals W, and null when W does not build.</returns>
+    private bool? CatchUpZone(SectionRef section, SectionView view, Zone zone)
+    {
+        if (BuildZone(section, view, zone) is not { } built)
+            return null;
+        if (built.ZonesEqual(zone))
+            return false;
+        if (volumeZones.Contains(zone) && (built.Shape != zone.Shape || !built.Size.Equals(zone.Size)))
+            Defer(system, SceneEffect.Volume);
+        CopyZone(built, zone);
+        zonesMoved = true;
+        return true;
+    }
+
+    /// <returns>True when the light differed, false when it equals W, and null when W does not build.</returns>
+    private bool? CatchUpLight(SectionRef section, SectionView view, LightSource light)
+    {
+        if (BuildLight(section, view) is not { } built)
+            return null;
+        if (SceneBuild.SameLight(built, light))
+            return false;
+        light.Light = built.Light;
+        light.AttenuationCurveName = built.AttenuationCurveName;
+        lightsChanged = true;
+        return true;
+    }
+
+    /// <summary>Applies the keys of a section that changed since the scene applied it last.</summary>
+    private void ApplyChanges(SectionRef section)
+    {
+        if (KindOf(section) is not { } kind)
+            return;
+        if (session.Get(section) is not { } view)
+        {
+            // A later milestone adds and deletes sections.
+            applied.Remove(section);
+            problems.Remove(section);
+            return;
+        }
+        var effects = applied.TryGetValue(section, out var before)
+            ? SceneLines.ChangedKeys(before, view.Entries).Aggregate(SceneEffect.None, (all, key) => all | SceneFields.Effect(kind, key))
+            : SceneFields.All(kind);
+        if (effects != SceneEffect.None &&
+            !(IsSystemKind(kind) ? ApplySystem(effects) : ApplyItem(section, kind, view, effects)))
+            return;
+        // The scene now shows the lines of W, also when W went back to the state that the scene shows.
+        applied[section] = view.Entries;
+        problems.Remove(section);
+    }
+
+    /// <summary>Applies the effects of the changed keys of an object, a zone or a light.</summary>
+    /// <returns>False when an effect could not apply. The scene then keeps the last valid state of the item, and the
+    /// next change of the section applies the changes again.</returns>
+    private bool ApplyItem(SectionRef section, SceneSection kind, SectionView view, SceneEffect effects)
+    {
+        if (!itemOf.TryGetValue(section, out var item))
+        {
+            NotShown(section, kind);
+            return false;
+        }
+        var ok = (effects & SceneEffect.Transform) == 0 || ApplyTransform(section, kind, view, item);
+        switch (item)
+        {
+            case SystemObject obj when (effects & SceneEffect.Data) != 0:
+                if (BuildObject(section, view, obj) is { } builtObject)
+                {
+                    SceneBuild.CopyObject(builtObject, obj);
+                    if ((effects & SceneEffect.Reinit) != 0)
+                        Defer(obj, SceneEffect.Reinit);
+                }
+                else
+                    ok = false;
+                break;
+            case Zone zone:
+                if ((effects & SceneEffect.Volume) != 0 && ok && volumeZones.Contains(zone))
+                    Defer(system, SceneEffect.Volume);
+                if ((effects & SceneEffect.Data) != 0)
+                {
+                    if (BuildZone(section, view, zone) is { } builtZone)
+                        CopyZone(builtZone, zone);
+                    else
+                        ok = false;
+                }
+                break;
+            case LightSource light when (effects & SceneEffect.Light) != 0:
+                if (BuildLight(section, view) is { } builtLight)
+                {
+                    light.Light = builtLight.Light;
+                    light.AttenuationCurveName = builtLight.AttenuationCurveName;
+                    lightsChanged = true;
+                }
+                else
+                    ok = false;
+                break;
+        }
+        indexChanges |= effects & IndexEffects;
+        return ok;
+    }
+
+    /// <summary>
+    /// Sets the transform of an item from the fast values of its lines, without a parse, so a drag costs no parse
+    /// (section 7.6 of the design). A check error of a line that the fast values read keeps the last transform.
+    /// </summary>
+    private bool ApplyTransform(SectionRef section, SceneSection kind, SectionView view, object item)
+    {
+        if (SceneBuild.TransformError(session.Check(section), kind) is { } error)
+        {
+            SetProblem(section, Step.Transform, KeptProblem(section, error));
+            return false;
+        }
+        ClearProblem(section, Step.Transform);
+        var position = SceneBuild.Position(SceneLines.Last(view, "pos"));
+        switch (item)
+        {
+            case SystemObject obj:
+                obj.Position = position;
+                obj.Rotation = SceneBuild.ObjectRotation(SceneLines.Last(view, "rotate"));
+                MoveWorldObject(obj);
+                break;
+            case Zone zone:
+                var shape = SceneBuild.ZoneShape(SceneLines.Last(view, "shape"));
+                var rotation = SceneBuild.ZoneRotation(SceneLines.Last(view, "rotate"), out var radians);
+                SetTransform(zone, position, rotation, radians, shape,
+                    SceneBuild.ZoneSize(SceneLines.Last(view, "size"), shape));
+                zonesMoved = true;
+                break;
+            case LightSource light:
+                light.Light.Position = position;
+                lightsChanged = true;
+                break;
+        }
+        return true;
+    }
+
+    /// <summary>Builds the fields of the system again and copies them into the scene system.</summary>
+    private bool ApplySystem(SceneEffect effects)
+    {
+        if ((effects & (SceneEffect.Data | SceneEffect.Label | SceneEffect.Environment | SceneEffect.Starsphere)) == 0)
+            return true;
+        if (BuildSystem() is not { } built)
+            return false;
+        CopySystem(built);
+        indexChanges |= effects & IndexEffects;
+        return true;
+    }
+
+    /// <summary>The object that the engine builds from W, or null with a problem when it builds none.</summary>
+    /// <param name="clone">The scene object, whose text ids the built object keeps for a placeholder.</param>
+    private SystemObject? BuildObject(SectionRef section, SectionView view, SystemObject clone)
+    {
+        if (Parse<Universe.SystemObject>(section, Universe.SystemObject.TryParse) is not { } ini)
+            return null;
+        if (SceneBuild.Object(items, system.Nickname, ini, out var problem) is not { } built)
+        {
+            SetProblem(section, Step.Build, Problem(section, problem!, "archetype"));
+            return null;
+        }
+        ClearProblem(section, Step.Build);
+        if (SceneLines.HoldsPlaceholder(view, "ids_name"))
+            built.IdsName = clone.IdsName;
+        if (SceneLines.HoldsPlaceholder(view, "ids_info"))
+            built.IdsInfo = clone.IdsInfo;
+        if (SceneLines.HoldsPlaceholder(view, "tradelane_space_name"))
+            built.TradelaneSpaceName = clone.TradelaneSpaceName;
+        return built;
+    }
+
+    /// <summary>The zone that the engine builds from W, or null with a problem when it builds none.</summary>
+    /// <param name="clone">The scene zone, whose text ids the built zone keeps for a placeholder.</param>
+    private Zone? BuildZone(SectionRef section, SectionView view, Zone clone)
+    {
+        if (Parse<Universe.Zone>(section, Universe.Zone.TryParse) is not { } ini)
+            return null;
+        ClearProblem(section, Step.Build);
+        var built = SceneBuild.Zone(ini);
+        if (SceneLines.HoldsPlaceholder(view, "ids_name"))
+            built.IdsName = clone.IdsName;
+        if (SceneLines.HoldsPlaceholder(view, "ids_info"))
+            built.IdsInfo = clone.IdsInfo;
+        return built;
+    }
+
+    /// <summary>The light that the engine builds from W, or null with a problem when it builds none, for example for an
+    /// unknown attenuation curve.</summary>
+    private LightSource? BuildLight(SectionRef section, SectionView view)
+    {
+        if (Parse<Universe.LightSource>(section, Universe.LightSource.TryParse) is not { } ini)
+            return null;
+        if (SceneBuild.Light(items, ini, out var problem) is not { } built)
+        {
+            SetProblem(section, Step.Build, Problem(section, problem!, "atten_curve"));
+            return null;
+        }
+        ClearProblem(section, Step.Build);
+        return built;
+    }
+
+    /// <summary>
+    /// The fields of the system that the engine builds from W, or null with a problem when it builds none. A section
+    /// with a check error keeps the last state of the whole system, because the build would leave the section out.
+    /// </summary>
+    private StarSystem? BuildSystem()
+    {
+        foreach (var section in Sections())
+        {
+            if (KindOf(section) is not { } kind || !IsSystemKind(kind))
+                continue;
+            if (FirstError(section) is { } error)
+            {
+                SetProblem(section, Step.Build, KeptProblem(section, error));
+                return null;
+            }
+            ClearProblem(section, Step.Build);
+        }
+        if (SceneBuild.ParseSystem(session, system.Nickname) is not { } ini)
+            return null;
+        var built = SceneBuild.StarSystem(items, ini);
+        if (universe != null && session.Get(universe) is { } view)
+        {
+            if (SceneLines.HoldsPlaceholder(view, "strid_name"))
+                built.IdsName = system.IdsName;
+            if (SceneLines.HoldsPlaceholder(view, "ids_info"))
+                built.IdsInfo = system.IdsInfo;
+        }
+        return built;
+    }
+
+    /// <summary>Parses a section of W, or gives null with a problem that names the first check error.</summary>
+    private T? Parse<T>(SectionRef section, SectionParser<T> parser) where T : class
+    {
+        if (session.Parse(section, parser) is { } value)
+            return value;
+        if (FirstError(section) is { } error)
+            SetProblem(section, Step.Build, KeptProblem(section, error));
+        return null;
+    }
+
+    private Diagnostic? FirstError(SectionRef section) =>
+        session.Check(section).FirstOrDefault(p => p.Severity == DiagnosticSeverity.Error);
+
+    /// <summary>Copies the fields of the system and the colors. The renderer loads changed starspheres later.</summary>
+    private void CopySystem(StarSystem built)
+    {
+        if (!SceneBuild.SameStarspheres(built, system))
+            Defer(system, SceneEffect.Starsphere);
+        SceneBuild.CopySystem(built, system);
+    }
+
+    /// <summary>
+    /// Copies the values of a built zone into a scene zone. <see cref="Zone.CopyTo"/> copies the shape data but not the
+    /// outlines that the zone keeps from its last shape, and the transform setters clear them.
+    /// </summary>
+    private static void CopyZone(Zone built, Zone zone)
+    {
+        built.CopyTo(zone);
+        SetTransform(zone, built.Position, built.RotationMatrix, built.RotationAngles, built.Shape, built.Size);
+    }
+
+    private static void SetTransform(Zone zone, Vector3 position, Matrix4x4 rotation, Vector3 radians, ShapeKind shape,
+        Vector3 size)
+    {
+        zone.Position = position;
+        zone.RotationMatrix = rotation;
+        zone.RotationAngles = radians;
+        zone.Shape = shape;
+        zone.Size = size;
+    }
+
+    /// <summary>Gives the world object of an object the position and rotation of the object. The physics body moves
+    /// too (GameObject.cs:256-281).</summary>
+    private void MoveWorldObject(SystemObject obj)
+    {
+        if (objects.TryGetValue(obj, out var gameObject))
+            gameObject.SetLocalTransform(new Transform3D(obj.Position, obj.Rotation));
+    }
+
+    /// <summary>Records the problem of a section that has no scene item: the engine dropped its object, or the system
+    /// loaded without the section.</summary>
+    private void NotShown(SectionRef section, SceneSection kind)
+    {
+        var (message, key) = ("The scene does not show this section, because the system loaded without it. Save, then " +
+                              "open the system again.", (string?)null);
+        if (kind == SceneSection.Object)
+        {
+            // Parse records the check error.
+            if (Parse<Universe.SystemObject>(section, Universe.SystemObject.TryParse) is not { } ini)
+                return;
+            // The engine drops an object without a valid archetype (GameItemDb.cs:2660-2664).
+            if (SceneBuild.Object(items, system.Nickname, ini, out var dropped) == null)
+                (message, key) = (dropped!, "archetype");
+        }
+        SetProblem(section, Step.Build, Problem(section, message, key));
+    }
+
+    private void Defer(object item, SceneEffect effect) => deferred[item] = deferred.GetValueOrDefault(item) | effect;
+
+    /// <summary>The effects that apply once after the sections, then the deferred effects and the problems.</summary>
+    private void Finish()
+    {
+        if (zonesMoved)
+        {
+            // The zone lookup of the world keeps the bounds of each zone.
+            world.Zones?.UpdatePositions();
+            host.ZonesMoved();
+        }
+        if (indexChanges != SceneEffect.None)
+            host.IndexChanged(indexChanges);
+        if (lightsChanged)
+            host.LightsChanged(system);
+        zonesMoved = false;
+        lightsChanged = false;
+        indexChanges = SceneEffect.None;
+        RunDeferred();
+        ReportProblems();
+    }
+
+    /// <summary>Runs the effects that load models, when no edit is open and no reload runs.</summary>
+    private void RunDeferred()
+    {
+        if (deferred.Count == 0 || host.EditOpen || !host.CanLoadModels)
+            return;
+        var effects = deferred.ToList();
+        deferred.Clear();
+        foreach (var (item, effect) in effects)
+        {
+            if (item is SystemObject obj && objects.TryGetValue(obj, out var gameObject))
+            {
+                // The object holds the W values (Data), so the model, the loadout, the star and the dock come from W,
+                // as LancerEdit SetArchetypeLoadout does it (SystemEditorTab.cs:714-724). InitObject also loads the model
+                // and sets the transform of the object.
+                world.InitObject(gameObject, true, obj, resources, null, false);
+                continue;
+            }
+            if ((effect & SceneEffect.Volume) != 0)
+                host.VolumesChanged(system);
+            if ((effect & SceneEffect.Starsphere) != 0)
+                host.StarspheresChanged(system);
+        }
+    }
+
+    /// <summary>Gives each new problem to the host once, when no edit is open. A problem that goes and comes back is
+    /// new again.</summary>
+    private void ReportProblems()
+    {
+        if (host.EditOpen || problems.Count == 0 && reported.Count == 0)
+            return;
+        var current = problems.Values.SelectMany(s => s.Values).ToHashSet();
+        foreach (var problem in current)
+        {
+            if (reported.Add(problem))
+                host.ProblemFound(problem);
+        }
+        reported.IntersectWith(current);
+    }
+
+    private void SetProblem(SectionRef section, Step step, Diagnostic problem)
+    {
+        if (!problems.TryGetValue(section, out var steps))
+            problems[section] = steps = [];
+        steps[step] = problem;
+    }
+
+    private void ClearProblem(SectionRef section, Step step)
+    {
+        if (problems.TryGetValue(section, out var steps) && steps.Remove(step) && steps.Count == 0)
+            problems.Remove(section);
+    }
+
+    private static Diagnostic Problem(SectionRef section, string message, string? key) =>
+        new(DiagnosticSeverity.Warning, section.Path, $"{section.Id}: {message}") { Target = section, Key = key };
+
+    /// <summary>The problem of a section whose W state the scene does not show because of a check error.</summary>
+    private static Diagnostic KeptProblem(SectionRef section, Diagnostic error) =>
+        Problem(section, error.Key == null
+            ? "The scene shows the last valid state of this section. Correct the error first."
+            : $"The scene shows the last valid state of this section. Correct the error of '{error.Key}' first.", error.Key);
+
+    /// <summary>The step of an apply that a problem comes from. A step that applies clears its problem.</summary>
+    private enum Step
+    {
+        Transform,
+        Build,
+    }
+}

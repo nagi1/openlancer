@@ -25,8 +25,9 @@ public sealed class SchemaCatalogTests
     public void AKeyHasTheRulesOfTheGeneratedParser()
     {
         // A field of a base class, the key entry, and the type of one line of a multiline list.
-        Assert.Equal(new KeySchema("nickname", typeof(string), false, false, 1, true, null), Key(typeof(EquipmentIni), "gun", "nickname"));
-        Assert.Equal(new KeySchema("material_library", typeof(string), true, false, 1, false, null),
+        Assert.Equal(new KeySchema("nickname", typeof(string), false, false, 1, true, null) { Field = "Nickname" },
+            Key(typeof(EquipmentIni), "gun", "nickname"));
+        Assert.Equal(new KeySchema("material_library", typeof(string), true, false, 1, false, null) { Field = "MaterialLibrary" },
             Key(typeof(EquipmentIni), "gun", "material_library"));
         Assert.Equal(typeof(float[]), Key(typeof(EquipmentIni), "gun", "lodranges").ClrType);
         Assert.Equal(StringKind.String, Key(typeof(EquipmentIni), "gun", "ids_name").TextKind);
@@ -40,6 +41,21 @@ public sealed class SchemaCatalogTests
         Assert.True(Key(typeof(ShiparchIni), "ship", "da_archetype").Required);
         // A [BaseGood] has no key entry.
         Assert.False(Key(typeof(MarketsIni), "basegood", "base").IsKeyEntry);
+    }
+
+    /// <summary>
+    /// Two names of one field set one value, so they share the field. Two names of one entry handler do not share a
+    /// field: the handler reads each line, for example a faction line and a faction_weight line add two spawns.
+    /// </summary>
+    [Fact]
+    public void TheNamesOfOneFieldShareTheField()
+    {
+        Assert.Equal("AmbientColor", Key(typeof(StarSystem), "object", "ambient_color").Field);
+        Assert.Equal("AmbientColor", Key(typeof(StarSystem), "object", "ambient").Field);
+        Assert.Equal("Spacedust", Key(typeof(StarSystem), "dust", "dust").Field);
+        Assert.Equal("Spacedust", Key(typeof(StarSystem), "dust", "spacedust").Field);
+        Assert.Null(Key(typeof(StarSystem), "zone", "faction").Field);
+        Assert.Null(Key(typeof(StarSystem), "zone", "faction_weight").Field);
     }
 
     [Fact]
@@ -89,7 +105,7 @@ public sealed class SchemaCatalogTests
         {
             Id = new SectionIdentity("CollisionGroup", null, new SectionIdentity("Ship", "s1")),
         }, "obj"));
-        // The editor knows the schema of the item files only.
+        // The freelancer.ini of this workspace names no universe, so universe.ini has no schema.
         Assert.Empty(session.Schema(new SectionRef(@"DATA\UNIVERSE\universe.ini", new SectionIdentity("System", "li01"))));
     }
 
@@ -127,15 +143,21 @@ public sealed class SchemaCatalogTests
             "Error: a 'hp_type' line needs 2 values or more, not 1. The engine ignores the line.",
             "Error: the key 'da_archetype' is missing. The engine does not load the section without it.",
         ], problems.Select(p => $"{p.Severity}: {p.Message[(p.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}"));
+        // Each problem names the key of its lines, so a caller can find the problems of one key.
+        Assert.Equal(["mass", "type", "steering_torque", "linear_drag", "colour", "hp_type", "da_archetype"],
+            problems.Select(p => p.Key));
         // A section that the engine reads without a problem.
         Assert.Empty(session.Check(ItemWorkspace.Gun("gun1")));
         Assert.Empty(session.Check(ItemWorkspace.Gun("nothing")));
     }
 
-    /// <summary>A text file reads an integer from a string that starts with a number, but a binary file does not. The
-    /// checks use the strict rule of a binary file for each number.</summary>
+    /// <summary>
+    /// The engine reads a string as an integer and logs nothing. A text file reads the number at the start of the
+    /// string. So the engine loads the line, and the checks give a warning that names the integer. (SectionParseTests
+    /// has the binary form.)
+    /// </summary>
     [Fact]
-    public void TheFastChecksReadIntegersAsABinaryFileDoes()
+    public void TheFastChecksNameTheIntegerThatTheEngineReadsFromAString()
     {
         using var ws = ItemWorkspace.Create();
         ws.WriteBase(ItemWorkspace.GoodsPath, "[Good]\nnickname = g1\nprice = 5x\nids_name = 2.5");
@@ -143,7 +165,8 @@ public sealed class SchemaCatalogTests
 
         var problem = Assert.Single(session.Check(ItemWorkspace.Good(ItemWorkspace.GoodsPath, "g1")));
 
-        Assert.EndsWith("the engine cannot read '5x' in a 'price' line as an integer.", problem.Message);
+        Assert.Equal(DiagnosticSeverity.Warning, problem.Severity);
+        Assert.EndsWith("the engine reads '5x' in a 'price' line as the integer 5.", problem.Message);
     }
 
     /// <summary>
@@ -169,5 +192,6 @@ public sealed class SchemaCatalogTests
             "Warning: 'ids_info' holds the id of an infocard, but '$str:gun1' is a string. The engine can show no text for it.",
             "Error: '$str:nothing' is not in the strings.json of mod 'act'. Add the text, or change the value.",
         ], session.Check(gun).Select(p => $"{p.Severity}: {p.Message[(p.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}"));
+        Assert.Equal(["ids_info", "ids_name"], session.Check(gun).Select(p => p.Key));
     }
 }

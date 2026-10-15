@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -15,8 +14,6 @@ namespace OpenLancer.DataTests;
 /// </summary>
 public sealed class OltoolValidateTests
 {
-    private static string ToolPath => Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "oltool.exe" : "oltool");
-
     [Fact]
     public void TheActiveModGetsOnlyTheProblemsThatItAdds()
     {
@@ -34,7 +31,7 @@ public sealed class OltoolValidateTests
                 mods = new[] { GameDataPaths.SampleMod("ol-sample"), lower, active },
             }));
 
-            var (exit, output, errors) = Run("validate", profile, "--active", "act", "--json");
+            var (exit, output, errors) = Oltool.Run("validate", profile, "--active", "act", "--json");
 
             Assert.True(exit == 1, errors);
             var problems = ValidationJson.Read(output);
@@ -44,11 +41,11 @@ public sealed class OltoolValidateTests
             Assert.DoesNotContain(problems, p => p.Message.Contains("ol_starrunner", StringComparison.OrdinalIgnoreCase));
 
             // The sample mod adds no problem to the base data. The later mod does not count.
-            var (sampleExit, sampleOutput, sampleErrors) = Run("validate", profile, "--active", "ol-sample", "--json");
+            var (sampleExit, sampleOutput, sampleErrors) = Oltool.Run("validate", profile, "--active", "ol-sample", "--json");
             Assert.True(sampleExit == 0, sampleErrors);
             Assert.DoesNotContain(ValidationJson.Read(sampleOutput), p => p.Severity == DiagnosticSeverity.Error);
 
-            var (missing, missingOutput, missingErrors) = Run("validate", profile, "--active", "none", "--json");
+            var (missing, missingOutput, missingErrors) = Oltool.Run("validate", profile, "--active", "none", "--json");
             Assert.Equal(2, missing);
             Assert.Equal("", missingOutput.Trim());
             Assert.Contains("has no mod 'none'", missingErrors);
@@ -73,27 +70,5 @@ public sealed class OltoolValidateTests
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
-    }
-
-    private static (int Exit, string Output, string Errors) Run(params string[] arguments)
-    {
-        Assert.True(File.Exists(ToolPath), $"{ToolPath} is not in the test folder.");
-        var info = new ProcessStartInfo(ToolPath)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        foreach (var argument in arguments)
-            info.ArgumentList.Add(argument);
-        using var process = Process.Start(info)!;
-        var output = process.StandardOutput.ReadToEndAsync();
-        var errors = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(TimeSpan.FromMinutes(5)))
-        {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException("oltool did not end.");
-        }
-        return (process.ExitCode, output.Result, errors.Result);
     }
 }

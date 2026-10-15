@@ -6,4 +6,10 @@
     <ProjectReference Include="..\..\external\Librelancer\src\Editor\LibreLancer.ContentEdit\LibreLancer.ContentEdit.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The tests use internal members. For example, they give PlayView a text writer that saves a mod during the
+         build, they call PlaySave.Equip with synthetic data, and they give CutsceneClock a fake time. -->
+    <InternalsVisibleTo Include="OpenLancer.Tests" />
+  </ItemGroup>
+
 </Project>

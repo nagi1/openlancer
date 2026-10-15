@@ -17,6 +17,7 @@ using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Validation;
 using OpenLancer.Runtime.Strings;
+using OpenLancer.Runtime.Thn;
 using OpenLancer.Runtime.Validation;
 using Xunit;
 
@@ -39,6 +40,7 @@ namespace OpenLancer.DataTests;
 public sealed class EditorEndToEndTests(ITestOutputHelper output)
 {
     private const string ModId = "proof";
+    private const string ModName = "Proof";
     private const string SampleId = "ol-sample";
     private const string GunNickname = "proof_gun01";
     private const string ShipNickname = "proof_elite";
@@ -107,7 +109,8 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     public void TheEngineLoadsTheNewItemsFromADeployOfTheSavedMod(bool overTheSample)
     {
         var baseFolder = GameDataPaths.RequireBase();
-        using var workspace = new ProofWorkspace(baseFolder, overTheSample);
+        using var workspace = new RetailWorkspace(baseFolder, ModId, ModName,
+            overTheSample ? [GameDataPaths.SampleMod(SampleId)] : null);
         var session = workspace.Open();
         // The sample mod sets the price of lf_hull (retail 6,600). The edit view shows that price and its origin, because
         // B is the document that the merge of the lower mods gives (decision D2, review finding F4).
@@ -132,13 +135,13 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
         foreach (var file in result.Written.Order(StringComparer.Ordinal))
             output.WriteLine($"--- {Path.GetRelativePath(workspace.ModFolder, file)}\n{File.ReadAllText(file)}");
 
-        // The deploy writes the folder that lancer.exe reads: <profile folder>\proof.
+        // The deploy writes the folder that lancer.exe reads: <profile folder>\retail.
         var profile = ModProfile.Load(workspace.ProfilePath);
-        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance);
+        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
         Assert.Empty(overlay.Diagnostics);
         var deploy = ProfileDeployer.Deploy(overlay, profile);
         var fs = FileSystem.FromPath(deploy.Folder);
-        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), fs);
+        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), fs, overlay.CutscenePaths);
         foreach (var problem in problems)
             output.WriteLine(problem.ToString());
         Assert.DoesNotContain(problems, p => p.Severity == DiagnosticSeverity.Error);
@@ -185,8 +188,8 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     public void AReplayOfTheEditsGivesTheSameFiles()
     {
         var baseFolder = GameDataPaths.RequireBase();
-        using var first = new ProofWorkspace(baseFolder);
-        using var second = new ProofWorkspace(baseFolder);
+        using var first = new RetailWorkspace(baseFolder, ModId, ModName);
+        using var second = new RetailWorkspace(baseFolder, ModId, ModName);
 
         foreach (var workspace in new[] { first, second })
         {
@@ -226,7 +229,7 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     public void AFileThatFailsTheSelfCheckStopsTheWholeSave()
     {
         var baseFolder = GameDataPaths.RequireBase();
-        using var workspace = new ProofWorkspace(baseFolder);
+        using var workspace = new RetailWorkspace(baseFolder, ModId, ModName);
         var objList = new SectionRef(@"DATA\MISSIONS\M02\m02.ini", new SectionIdentity("ObjList", "avoid"));
         var handWritten = Path.Combine(workspace.ModFolder, Mod.PatchesFolder, objList.Path);
         Directory.CreateDirectory(Path.GetDirectoryName(handWritten)!);
@@ -285,7 +288,7 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     public void AnUndoOfAllEditsAndASaveLeaveOnlyTheManifest()
     {
         var baseFolder = GameDataPaths.RequireBase();
-        using var workspace = new ProofWorkspace(baseFolder);
+        using var workspace = new RetailWorkspace(baseFolder, ModId, ModName);
         var manifest = Files(workspace.ModFolder);
         var session = workspace.Open();
         Edit(session);
@@ -483,7 +486,10 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
             .Select(p => (p.Name, p.Value.GetString())).ToArray();
     }
 
-    /// <summary>The files below a folder: the relative path to the content as hex.</summary>
+    /// <summary>
+    /// The files below a folder: the relative path to the content as hex. The lock files of an open session in the
+    /// <c>.olsave</c> folder of a mod are not content of the mod, so the result leaves them out.
+    /// </summary>
     /// <param name="exclude">A folder whose files the result leaves out, or null.</param>
     private static SortedDictionary<string, string> Files(string folder, string? exclude = null)
     {
@@ -491,6 +497,9 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
         foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
         {
             if (exclude != null && !Path.GetRelativePath(exclude, file).StartsWith("..", StringComparison.Ordinal))
+                continue;
+            if (Path.GetFileName(Path.GetDirectoryName(file)) == SaveTransaction.FolderName &&
+                Path.GetFileName(file) is ModLock.FileName or ModLock.InfoName)
                 continue;
             result[Path.GetRelativePath(folder, file)] = Convert.ToHexString(File.ReadAllBytes(file));
         }
@@ -500,46 +509,4 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     /// <param name="Gun">The new <c>[Gun]</c>.</param>
     /// <param name="GunGood">The good of the new gun.</param>
     private sealed record ProofItems(SectionRef Gun, SectionRef GunGood);
-
-    /// <summary>
-    /// A temporary folder with a profile of the retail data and a new mod in it, made with the calls of the editor's
-    /// Mod > New mod. The profile can have a copy of the sample mod before the new mod.
-    /// </summary>
-    private sealed class ProofWorkspace : IDisposable
-    {
-        public ProofWorkspace(string baseFolder, bool overTheSample = false)
-        {
-            Root = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"));
-            ProfilePath = Path.Combine(Root, "profiles", "proof.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(ProfilePath)!);
-            var lower = new List<string>();
-            if (overTheSample)
-                lower.Add(Copy(GameDataPaths.SampleMod(SampleId), Path.Combine(Root, "mods", SampleId)));
-            File.WriteAllText(ProfilePath, JsonSerializer.Serialize(new { @base = baseFolder, mods = lower }));
-            ModFolder = ModWorkspace.CreateMod(Path.Combine(Root, "mods"), ModId, "Proof");
-            ModWorkspace.AddToProfile(ProfilePath, ModFolder);
-        }
-
-        public string Root { get; }
-
-        public string ProfilePath { get; }
-
-        public string ModFolder { get; }
-
-        public EditSession Open() => EditSession.Open(ModProfile.Load(ProfilePath), ModId, DllStringResourceWriter.Instance);
-
-        public void Dispose() => Directory.Delete(Root, true);
-
-        /// <summary>Copies the files of a folder into a new folder, and returns the new folder.</summary>
-        private static string Copy(string source, string target)
-        {
-            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-            {
-                var copy = Path.Combine(target, Path.GetRelativePath(source, file));
-                Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
-                File.Copy(file, copy);
-            }
-            return target;
-        }
-    }
 }

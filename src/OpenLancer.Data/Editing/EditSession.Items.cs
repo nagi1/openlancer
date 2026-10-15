@@ -1,7 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using LibreLancer.Data.Ini;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Data.Strings;
 
 namespace OpenLancer.Data.Editing;
 
@@ -10,7 +13,7 @@ public sealed partial class EditSession
     private ItemIndex? items;
 
     /// <summary>The item files of the edit view: the ship, equipment, goods and market files.</summary>
-    internal ItemIndex Items => items ??= new ItemIndex(ReadItemPaths(), path => TryDocument(path, out var d) ? d : null);
+    internal ItemIndex Items => items ??= new ItemIndex(ItemIndex.ReadPaths(ReadFreelancerIni()), OpenDocument);
 
     /// <summary>
     /// The section of the files of a kind with a nickname, or null when no section has it, or when more than one
@@ -31,7 +34,8 @@ public sealed partial class EditSession
 
     /// <summary>
     /// The keys that the engine reads in a section, in declaration order. The list is empty when the editor does not
-    /// know the schema of the section. In format version 1, the editor knows the schema of the item files only.
+    /// know the schema of the section. The editor knows the schema of the item files, of <c>universe.ini</c> and of
+    /// the star system files.
     /// </summary>
     public IReadOnlyList<KeySchema> Schema(SectionRef target) => SchemaOf(target)?.Keys ?? [];
 
@@ -41,25 +45,40 @@ public sealed partial class EditSession
 
     /// <summary>
     /// The fast checks of a section: an unknown key, a missing required key, a key with one value given two times,
-    /// a line with too few values, a value that the engine cannot read as the type of its key, a text placeholder of
-    /// the wrong kind or without text, and a nickname that another section of the same kind of file also has. The
-    /// list is empty when the edit view has no such section, or when the editor does not know its schema.
+    /// a line with too few values, a value that the engine cannot read as the type of its key, a string that the
+    /// engine reads as another integer, a text placeholder of the wrong kind or without text, and, in the item files,
+    /// a nickname that another section of the same kind of file also has. The list is empty when the edit view has no
+    /// such section, or when the editor does not know its schema. Each problem has the section as its
+    /// <see cref="Diagnostic.Target"/>. A problem of the lines of a key also has the key as its
+    /// <see cref="Diagnostic.Key"/>.
     /// </summary>
-    public IReadOnlyList<Diagnostic> Check(SectionRef target)
+    public IReadOnlyList<Diagnostic> Check(SectionRef target) =>
+        SchemaOf(target) is { } schema && TryFind(target, out var document, out var index)
+            ? Check(target, schema, document, index)
+            : [];
+
+    /// <summary>The checks of <see cref="Check(SectionRef)"/> for a section whose schema and document the caller
+    /// has.</summary>
+    private List<Diagnostic> Check(SectionRef target, SectionSchema schema, EditDocument document, int index)
     {
-        if (SchemaOf(target) is not { } schema || !TryFind(target, out var document, out var index))
-            return [];
         var section = document.Working[index];
-        var problems = SectionChecks.Check(schema, section, target);
-        if (ActiveMod != null)
+        var problems = SectionChecks.Check(schema, section, target, document.IsBinary);
+        if (ActiveMod != null && HasPlaceholder(section))
         {
             // The save refuses a placeholder without text (rule S8).
-            problems.AddRange(section.SelectMany(MissingPlaceholders).Distinct().Select(p =>
-                Diagnostic.Error(target.Path, $"{target.Id}: {MissingTextMessage(p)}") with { Target = target }));
+            foreach (var lines in section.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                problems.AddRange(lines.SelectMany(MissingPlaceholders).Distinct().Select(p =>
+                    Diagnostic.Error(target.Path, $"{target.Id}: {MissingTextMessage(p)}") with
+                    {
+                        Target = target,
+                        Key = lines.Key,
+                    }));
+            }
         }
-        var kind = Items.KindOf(target.Path)!.Value;
         var key = target.Id.Key;
-        if (key != null && !SectionKeys.IsChild(target.Id.Type) && Items.Named(kind, key) is { Count: > 1 } same)
+        if (Items.KindOf(target.Path) is { } kind && key != null && !SectionKeys.IsChild(target.Id.Type) &&
+            Items.Named(kind, key) is { Count: > 1 } same)
         {
             problems.Add(Diagnostic.Warning(target.Path,
                 $"{target.Id}: {same.Count} sections of the {kind.ToString().ToLowerInvariant()} files have this " +
@@ -72,15 +91,36 @@ public sealed partial class EditSession
     }
 
     private SectionSchema? SchemaOf(SectionRef target) =>
-        Items.KindOf(target.Path) is { } kind ? SchemaCatalog.Section(ItemIndex.SchemaOf(kind), target.Id.Type) : null;
+        Items.KindOf(target.Path) is { } kind
+            ? SchemaCatalog.Section(ItemIndex.SchemaOf(kind), target.Id.Type)
+            : Systems.SchemaOf(target.Path, target.Id.Type);
 
-    /// <summary>The item files that the <c>freelancer.ini</c> of the edit view lists.</summary>
-    private List<(string Path, ItemFileKind Kind)> ReadItemPaths()
+    /// <summary>True when a value of a line of the section is a text placeholder. Most sections have no placeholder,
+    /// so the check of rule S8 can skip them. This is important for the catch-up of a system in the scene, which
+    /// checks each section of the system.</summary>
+    private static bool HasPlaceholder(Section section)
+    {
+        foreach (var entry in section)
+        {
+            for (var i = 0; i < entry.Count; i++)
+            {
+                if (StringPlaceholder.TryParse(entry[i], out _))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>The sections of the <c>freelancer.ini</c> of the edit view, or none when it has no such file.</summary>
+    private IReadOnlyList<Section> ReadFreelancerIni()
     {
         var fs = EditView.CreateFileSystem();
         if (!fs.FileExists(ModOverlay.FreelancerIniPath))
             return [];
         var bytes = fs.ReadAllBytes(ModOverlay.FreelancerIniPath);
-        return ItemIndex.ReadPaths(IniDocument.Parse(ModOverlay.FreelancerIniPath, bytes).Sections);
+        return IniDocument.Parse(ModOverlay.FreelancerIniPath, bytes).Sections;
     }
+
+    /// <summary>The document of an install path, or null when the edit view has no such INI file.</summary>
+    private EditDocument? OpenDocument(string path) => TryDocument(path, out var document) ? document : null;
 }

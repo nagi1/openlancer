@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data;
 
@@ -18,6 +19,13 @@ public sealed record Diagnostic(DiagnosticSeverity Severity, string Source, stri
 {
     /// <summary>The section that the problem is about, or null.</summary>
     public SectionRef? Target { get; init; }
+
+    /// <summary>The key of the lines of <see cref="Target"/> that the problem is about, or null when the problem is not
+    /// about one key. Compare it without letter case.</summary>
+    public string? Key { get; init; }
+
+    /// <summary>The place in a cutscene that the problem is about, or null.</summary>
+    public ThnLocation? Cutscene { get; init; }
 
     public static Diagnostic Error(string source, string message) => new(DiagnosticSeverity.Error, source, message);
 

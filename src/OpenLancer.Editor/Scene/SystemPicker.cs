@@ -10,7 +10,8 @@ namespace OpenLancer.Editor.Scene;
 
 /// <summary>
 /// The system list in the Scene toolbar strip. It opens a system of the loaded game data. The filter field at the top
-/// of the list matches the name and the nickname. Enter opens the first match.
+/// of the list matches the name and the nickname. Enter opens the first match. The names come from W (see
+/// <see cref="EditorSession.ItemName"/>), so the list builds again when the edit view or the text changes.
 /// </summary>
 internal sealed class SystemPicker(EditorWindow window)
 {
@@ -19,18 +20,20 @@ internal sealed class SystemPicker(EditorWindow window)
     public const float MinWidth = 120;
 
     private readonly FilterList<StarSystem> list = new();
-    private GameDataManager? listData;
 
-    // The preview text of the closed combo, for the system in previewSystem.
-    private StarSystem? previewSystem;
+    // The game data and the version of the session that the list shows.
+    private (GameDataManager? Data, int Version) listState;
+
+    // The preview text of the closed combo, for the system and the version of the session in previewState.
+    private (StarSystem? System, int Version) previewState;
     private string previewText = "";
 
     /// <summary>Forgets the list of the game data. Call it when the profile closes.</summary>
     public void Reset()
     {
-        listData = null;
+        listState = default;
         list.Entries = [];
-        previewSystem = null;
+        previewState = default;
         previewText = "";
     }
 
@@ -38,17 +41,19 @@ internal sealed class SystemPicker(EditorWindow window)
     /// <param name="width">The width of the combo, in pixels.</param>
     public void Draw(float width)
     {
-        var data = window.Session?.GameData;
-        if (!ReferenceEquals(data, listData))
+        var session = window.Session;
+        var data = session?.GameData;
+        var version = session?.Version ?? 0;
+        if (IsStale(listState, data, version))
         {
-            list.Entries = data == null ? [] : Entries(data.Items.Systems, ids => window.Session!.Name(ids));
-            listData = data;
+            list.Entries = data == null ? [] : Entries(data.Items.Systems, session!.ItemName);
+            listState = (data, version);
         }
 
         var current = window.Scene.System;
-        if (!ReferenceEquals(current, previewSystem))
+        if (IsStale(previewState, current, version))
         {
-            previewSystem = current;
+            previewState = (current, version);
             previewText = current == null ? "" : $"{EditorIcons.Map}  {Name(current)} ({current.Nickname})";
         }
 
@@ -81,10 +86,18 @@ internal sealed class SystemPicker(EditorWindow window)
     }
 
     /// <summary>The systems, sorted by name and then by nickname.</summary>
-    internal static FilterEntry<StarSystem>[] Entries(IEnumerable<StarSystem> systems, Func<int, string> name) =>
+    /// <param name="name">The name of a system, or an empty string when it has none.</param>
+    internal static FilterEntry<StarSystem>[] Entries(IEnumerable<StarSystem> systems, Func<StarSystem, string> name) =>
         FilterList<StarSystem>.Sorted(systems.Select(s =>
-            new FilterEntry<StarSystem>(s, name(s.IdsName) is { Length: > 0 } n ? n : s.Nickname, s.Nickname,
-                EditorIcons.Map)));
+            new FilterEntry<StarSystem>(s, name(s) is { Length: > 0 } n ? n : s.Nickname, s.Nickname, EditorIcons.Map)));
+
+    /// <summary>
+    /// True when the list or the preview must build again: it shows other game data or another system, or an older
+    /// version of the session. A new version can bring a new name of a system.
+    /// </summary>
+    /// <param name="shown">The game data or the system, and the version of the session, that it shows.</param>
+    internal static bool IsStale<T>((T? Item, int Version) shown, T? item, int version) where T : class =>
+        !ReferenceEquals(shown.Item, item) || shown.Version != version;
 
     private static bool IsCurrent(FilterEntry<StarSystem> entry, StarSystem current) =>
         current.Nickname.Equals(entry.Nickname, StringComparison.OrdinalIgnoreCase);
@@ -98,5 +111,5 @@ internal sealed class SystemPicker(EditorWindow window)
     }
 
     private string Name(StarSystem system) =>
-        window.Session?.Name(system.IdsName) is { Length: > 0 } name ? name : system.Nickname;
+        window.Session?.ItemName(system) is { Length: > 0 } name ? name : system.Nickname;
 }

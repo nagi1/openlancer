@@ -1,0 +1,1625 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Numerics;
+using System.Threading;
+using LibreLancer.Data.GameData.World;
+using LibreLancer.World;
+using OpenLancer.Data;
+using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Play;
+using OpenLancer.Runtime.Play;
+using Xunit;
+
+namespace OpenLancer.Tests;
+
+/// <summary>
+/// Play in the editor (section 9 of the M4 design), with a fake editor, a stub game program, a queued UI thread and a
+/// fake clock (section 16.1). The numbers in the comments are the cases of the design.
+/// </summary>
+public sealed class PlayControllerTests : IDisposable
+{
+    private static readonly string Waiting = PlayProtocol.Write(new PlayEvent.Waiting(2300));
+
+    private static readonly string Spawned = PlayProtocol.Write(
+        new PlayEvent.Spawned("Br01", null, new Vector3(-33270, 0, -25039), "ge_fighter", "Starflier", 450));
+
+    private static readonly PlayStart.InSpace Space = new("br01", new Vector3(-33270, 0, -25039), Quaternion.Identity);
+
+    /// <summary>The start of <see cref="Space"/> after the start check with <see cref="DeathZone"/>.</summary>
+    private static readonly Vector3 MovedStart = new(-33270, 0, -24839);
+
+    private const string MovedLine = "Play from camera: the camera is inside Zone_Br01_death. The ship starts 200 units " +
+                                     "behind the camera.";
+
+    /// <summary>A game that loads its data, and spawns at start.</summary>
+    private static readonly StubPlan Game = new([Waiting], [Spawned]);
+
+    private static readonly Diagnostic HullError = Diagnostic.Error(@"C:\mods\proof\patches\goods.ini", "no_such_hull");
+
+    private readonly TestWorkspace ws = new();
+    private readonly QueuedUIThread ui = new();
+    private readonly FakeEditor editor;
+    private readonly PlayStub stub;
+    private readonly List<PlayArgs> starts = [];
+    private readonly PlayController play;
+    private StubPlan plan = Game;
+    private TimeSpan now = TimeSpan.FromSeconds(100);
+
+    public PlayControllerTests()
+    {
+        editor = new FakeEditor(ui);
+        stub = new PlayStub(Path.Combine(ws.Root, "stub"));
+        play = new PlayController(editor, args =>
+        {
+            starts.Add(args);
+            return stub.Command(plan);
+        }, () => now);
+    }
+
+    public void Dispose()
+    {
+        play.Dispose();
+        stub.KillAll();
+        ws.Dispose();
+    }
+
+    private IReadOnlyList<string> Console => editor.Log.Entries.Select(e => e.Message).ToList();
+
+    /// <summary>(1) No edits and a passed validation of the current save: the game gets start at its waiting event.</summary>
+    [Fact]
+    public void WithoutEditsAndWithAPassedValidationTheGameGetsStartAtOnce()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay();
+
+        Assert.Equal(1, editor.SaveCalls);
+        Assert.Equal(1, Assert.Single(starts).Save);
+        Assert.Equal(PlayStatus.Starting, play.Status);
+        Assert.Equal("Play: starting...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Contains("Playing in New London (Br01) with Starflier ge_fighter. From Play to flight: 0.0 s.", Console);
+        Assert.Equal("Playing: New London (Br01), save 1", play.StatusText);
+        play.Stop();
+        Assert.Equal("Play: stopping...", play.StatusText);
+        RunUntil(PlayStatus.Idle);
+        Assert.Null(play.StatusText);
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        Assert.Equal(0, editor.ValidateNowCalls);
+        Assert.Equal("The game closed.", Console[^1]);
+    }
+
+    /// <summary>A new session without a validation: Play validates the saved files, and starts when that passes.</summary>
+    [Fact]
+    public void WithoutAValidationPlayValidatesTheSavedFiles()
+    {
+        RequestPlay();
+
+        Assert.Equal(1, editor.ValidateNowCalls);
+        Assert.Equal(0, Assert.Single(starts).Save);
+        ui.Run(1);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        Assert.Equal("Play: validating the saved files...", play.StatusText);
+        editor.Finish(0);
+        RunUntil(PlayStatus.Running);
+        // A game without a save of the session names no save.
+        Assert.Equal("Playing: New London (Br01)", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>(2) Unsaved edits: the save runs, and start waits for the passed validation of that save.</summary>
+    [Fact]
+    public void UnsavedEditsAreSavedAndStartWaitsForThePassedValidationOfTheSave()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+
+        RequestPlay();
+
+        Assert.Equal(2, Assert.Single(starts).Save);
+        Assert.Contains("Play: saved mod 'proof' (save 2). Waiting for its validation.", Console);
+        ui.Run(1);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        Assert.Equal("Play: validating save 2...", play.StatusText);
+        // A start would give a spawn now.
+        ui.RunUntilQuiet(TimeSpan.FromMilliseconds(500));
+        Assert.Equal(PlayStatus.Validating, play.Status);
+
+        editor.Finish(2);
+
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        Assert.Equal(0, editor.ValidateNowCalls);
+    }
+
+    /// <summary>(3) Validation errors: stop, the Console line, then status Idle at the exit.</summary>
+    [Fact]
+    public void ValidationErrorsStopTheGame()
+    {
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+
+        editor.Finish(2, HullError, Diagnostic.Warning("Engine", "a warning"));
+
+        Assert.Contains("Play stopped: the validation of save 2 found 1 error. The Console lists them.", Console);
+        Assert.Equal(PlayStatus.Stopping, play.Status);
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal(["stop"], stub.Input(0));
+        Assert.DoesNotContain(Console, m => m.StartsWith("Playing") || m == "The game closed.");
+    }
+
+    /// <summary>Errors that come while the game loads stop it at once. The gate does not wait for waiting.</summary>
+    [Fact]
+    public void ValidationErrorsBeforeWaitingStopTheGameAtOnce()
+    {
+        plan = new StubPlan([], [Spawned]);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+
+        editor.Finish(2, HullError, HullError);
+
+        Assert.Contains("Play stopped: the validation of save 2 found 2 errors. The Console lists them.", Console);
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal(["stop"], stub.Input(0));
+    }
+
+    /// <summary>(4) The validation could not run: start, and a warning (D43).</summary>
+    [Fact]
+    public void AValidationThatCouldNotRunStartsWithAWarning()
+    {
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+
+        editor.FailToRun(2);
+
+        Assert.Contains(editor.Log.Entries, e => e.Severity == ConsoleSeverity.Warning &&
+                                                 e.Message == "Play goes on without a validation: the validation of " +
+                                                 "save 2 could not run.");
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>(5) A save that does not save, or a save that is not complete: no game starts.</summary>
+    [Theory]
+    [InlineData(false, 0, false, "Play stopped: the save did not complete. The Console tells why.")]
+    [InlineData(true, 3, true, "Play stopped: save 3 is not complete.")]
+    public void ASaveThatDoesNotSaveStartsNoGame(bool saved, int number, bool incomplete, string line)
+    {
+        editor.SaveResult = new SaveOutcome(saved, number, incomplete);
+
+        RequestPlay();
+
+        Assert.Equal(1, editor.SaveCalls);
+        Assert.Empty(starts);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        Assert.Contains(line, Console);
+        play.Update(false, false);
+        Assert.Empty(starts);
+    }
+
+    /// <summary>
+    /// (6) The repo gate is closed (D5), or another reason stops the edits: Play saves nothing, shows no dialog and
+    /// plays the saved files. Without an active mod, Play plays all mods.
+    /// </summary>
+    [Theory]
+    [InlineData("proof", "The mod 'proof' is part of the OpenLancer repo, so its files are tracked files. Allow its " +
+                         "edits for this session first.",
+        "Play uses the saved files of mod 'proof'. The editor takes no edits for it now: The mod 'proof' is part of " +
+        "the OpenLancer repo, so its files are tracked files. Allow its edits for this session first.")]
+    [InlineData(null, null, "No mod is active, so Play uses the saved files of all mods of the profile.")]
+    public void WithoutEditsToSavePlaySavesNothingAndStarts(string? mod, string? reason, string line)
+    {
+        editor.Session = editor.Session! with { ActiveMod = mod, NoEditReason = reason };
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay();
+
+        Assert.Equal(0, editor.SaveCalls);
+        Assert.Equal(mod, Assert.Single(starts).ActiveMod);
+        Assert.Contains(line, Console);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>(7) A request while a field or a dialog is open runs at the first update without one.</summary>
+    [Fact]
+    public void ARequestWaitsWhileAFieldOrADialogIsOpen()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        play.Request(Space, null);
+
+        play.Update(editing: true, dialogOpen: false);
+        play.Update(editing: false, dialogOpen: true);
+        play.Update(editing: true, dialogOpen: true);
+
+        Assert.Equal(0, editor.SaveCalls);
+        Assert.Empty(starts);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        play.Update(editing: false, dialogOpen: false);
+        Assert.Equal(1, editor.SaveCalls);
+        Assert.Single(starts);
+        play.Update(editing: false, dialogOpen: false);
+        Assert.Single(starts);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>
+    /// The start check of Play from camera runs when the game starts (section 9.5). A request that Stop drops, and a save
+    /// that does not save, give no line of the check. The game gets the start that the check moved.
+    /// </summary>
+    [Fact]
+    public void TheStartCheckOfPlayFromCameraRunsOnlyForAGameThatStarts()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        editor.Shapes.Add(DeathZone());
+
+        play.Request(Space, null);
+        play.Stop();
+        play.Update(false, false);
+        editor.SaveResult = new SaveOutcome(false, 0, false);
+        RequestPlay();
+
+        Assert.Empty(starts);
+        Assert.DoesNotContain(Console, m => m.StartsWith("Play from camera", StringComparison.Ordinal));
+
+        editor.SaveResult = new SaveOutcome(true, 0, false);
+        RequestPlay();
+
+        var start = Assert.IsType<PlayStart.InSpace>(Assert.Single(starts).Start);
+        Near(MovedStart, start.Position);
+        Assert.Equal(Space with { Position = start.Position }, start);
+        Assert.Equal(1, Console.Count(m => m == MovedLine));
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>
+    /// A start at the camera waits until the Scene shows each edit (section 9.5). Here the click on Play ends a field
+    /// whose edit puts a death zone around the camera. The field commits after the flush of the Scene in that frame, so
+    /// the Scene shows the zone one frame later.
+    /// </summary>
+    [Fact]
+    public void ACameraStartWaitsUntilTheSceneShowsTheEditOfTheFieldThatTheClickEnded()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        play.Request(Space, null);
+        editor.SceneBehind = true;
+
+        play.Update(false, false);
+
+        Assert.Equal(0, editor.SaveCalls);
+        Assert.Empty(starts);
+
+        // The next frame: the flush of the Scene applies the edit.
+        editor.SceneBehind = false;
+        editor.Shapes.Add(DeathZone());
+        play.Update(false, false);
+
+        Near(MovedStart, Assert.IsType<PlayStart.InSpace>(Assert.Single(starts).Start).Position);
+        Assert.Contains(MovedLine, Console);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>A start at a base has no start check, so it does not wait for the Scene.</summary>
+    [Fact]
+    public void AStartAtABaseDoesNotWaitForTheScene()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        editor.SceneBehind = true;
+
+        RequestPlay(new PlayStart.AtBase("Br01_01_Base"));
+
+        Assert.Single(starts);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>
+    /// Play from camera stops before its save when the Scene does not show the system of the camera now, for example
+    /// after the user opened another system while the running game closed.
+    /// </summary>
+    [Fact]
+    public void PlayFromCameraStopsWhenTheSceneDoesNotShowTheSystemOfTheCamera()
+    {
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+
+        RequestPlay(new PlayStart.InSpace("li01", Vector3.Zero, Quaternion.Identity));
+
+        Assert.Equal(0, editor.SaveCalls);
+        Assert.Empty(starts);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        Assert.Equal("Play from camera stopped: the Scene does not show li01 now, so Play cannot check the start at " +
+                     "the camera. Open the system, then press Play.", Console[^1]);
+    }
+
+    /// <summary>(8) A second request while the game runs: stop, the exit, then a new game with the new start.</summary>
+    [Fact]
+    public void ASecondPlayStopsTheGameAndStartsANewOneAfterItsExit()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+        var atBase = new PlayStart.AtBase("Br01_01_Base");
+
+        play.Request(atBase, "le_package");
+        play.Update(false, false);
+
+        Assert.Equal(PlayStatus.Stopping, play.Status);
+        Assert.Single(starts);
+        ui.RunUntil(() =>
+        {
+            play.Update(false, false);
+            return starts.Count == 2;
+        }, "the start of the second game");
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        Assert.Equal((atBase, "le_package"), (starts[1].Start, starts[1].Package));
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(1));
+    }
+
+    /// <summary>A second request for a game that does not close: after 5 s the editor ends it and starts the new one.</summary>
+    [Fact]
+    public void ASecondPlayEndsAGameThatDoesNotCloseIn5S()
+    {
+        plan = Game with { IgnoreStop = true };
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+        play.Request(Space, null);
+        play.Update(false, false);
+
+        now += TimeSpan.FromSeconds(4.9);
+        play.Update(false, false);
+        Assert.True(stub.Runs(0));
+        now += TimeSpan.FromSeconds(0.1);
+        play.Update(false, false);
+
+        ui.RunUntil(() =>
+        {
+            play.Update(false, false);
+            return starts.Count == 2;
+        }, "the start of the second game");
+        Assert.False(stub.Runs(0));
+        Assert.Contains("The game did not close in 5 s, so the editor ended it to play again.", Console);
+        RunUntil(PlayStatus.Running);
+        play.Stop();
+        now += PlayController.ExitLimit;
+        play.Stop();
+        RunUntil(PlayStatus.Idle);
+    }
+
+    /// <summary>(9) Stop, and no exit for 5 s on the fake clock: Stop is Force stop, and it kills the game.</summary>
+    [Fact]
+    public void StopIsForceStopAfter5SAndKillsTheGame()
+    {
+        plan = Game with { IgnoreStop = true };
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+
+        play.Stop();
+        Assert.Equal(PlayStatus.Stopping, play.Status);
+        Assert.False(play.ForceStop);
+        // The stub read stop, and it runs on.
+        stub.WaitForInput(0, 2);
+        now += TimeSpan.FromSeconds(4.9);
+        play.Update(false, false);
+        Assert.False(play.ForceStop);
+        now += TimeSpan.FromSeconds(0.1);
+        play.Update(false, false);
+        Assert.True(play.ForceStop);
+        Assert.True(stub.Runs(0));
+
+        play.Stop();
+
+        RunUntil(PlayStatus.Idle);
+        Assert.False(stub.Runs(0));
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        Assert.Equal("The game did not respond, so the editor ended it.", Console[^1]);
+    }
+
+    /// <summary>(10) The window close closes the input of the game, and the game ends.</summary>
+    [Fact]
+    public void TheWindowCloseClosesTheInputAndTheGameEnds()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+        var clock = Stopwatch.StartNew();
+
+        play.SessionEnding(windowClose: true);
+
+        Assert.True(clock.Elapsed < PlayController.CloseLimit, $"The close took {clock.Elapsed}.");
+        Assert.False(stub.Runs(0));
+        Assert.Equal(["start", "<eof>"], stub.Input(0));
+        Assert.Equal(PlayStatus.Idle, play.Status);
+    }
+
+    /// <summary>A game that ignores the end of its input gets 2 s at the window close. Then the job ends it.</summary>
+    [Fact]
+    public void TheWindowCloseEndsAGameThatIgnoresItsInputAfter2S()
+    {
+        plan = new StubPlan([], Sleep: 120);
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        stub.ProcessId(0);
+        var clock = Stopwatch.StartNew();
+
+        play.SessionEnding(windowClose: true);
+
+        Assert.InRange(clock.Elapsed, PlayController.CloseLimit - TimeSpan.FromMilliseconds(100),
+            TimeSpan.FromSeconds(10));
+        var end = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (stub.Runs(0) && DateTime.UtcNow < end)
+        {
+            Thread.Sleep(20);
+        }
+
+        Assert.False(stub.Runs(0));
+        Assert.Equal(PlayStatus.Idle, play.Status);
+    }
+
+    /// <summary>A profile close or another end of the session sends stop. The exit follows.</summary>
+    [Fact]
+    public void AProfileCloseStopsTheGame()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+        play.Request(Space, null);
+
+        play.SessionEnding(windowClose: false);
+
+        Assert.Equal(PlayStatus.Stopping, play.Status);
+        RunUntil(PlayStatus.Idle);
+        play.Update(false, false);
+        Assert.Single(starts);
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>(11) An error event and exit code 3: status Idle, and the message in the Console.</summary>
+    [Fact]
+    public void AnErrorEventAndExitCode3GiveTheMessage()
+    {
+        plan = new StubPlan([Error("Unknown ship package 'no_such_package'.", crash: false)], Exit: PlayExitCodes.Data);
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay();
+
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal("Play stopped: Unknown ship package 'no_such_package'.", Console[^1]);
+        Assert.Equal(ConsoleSeverity.Error, editor.Log.Entries[^1].Severity);
+    }
+
+    /// <summary>A crash without a validation that runs: the code, the cause and the path of the game log.</summary>
+    [Fact]
+    public void ACrashGivesTheCodeTheCauseAndTheGameLog()
+    {
+        plan = new StubPlan(["!err Process terminated. Assertion failed.", "!err    at A.B()"], Exit: 9);
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay();
+
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal("The game stopped with exit code 9: Process terminated. Assertion failed. at A.B(). The log is " +
+                     $"{OpenLancer.Editor.ProgramPaths.PlayLog}.", Console[^1]);
+    }
+
+    /// <summary>
+    /// (12) The game writes an error event with crash and exits while the validation of its save runs. Then the
+    /// validation finds errors. The Console gives them as the cause (D55), not the crash. Here the exit comes first.
+    /// </summary>
+    [Fact]
+    public void ACrashDuringTheValidationWaitsForItAndReportsItsErrors()
+    {
+        plan = new StubPlan([Error("The engine load stops.", crash: true)], Exit: 1);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+
+        // The error event and the exit.
+        ui.Run(2);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        // The game ended, and its report waits for the validation of its save.
+        Assert.Equal("Play: validating save 2...", play.StatusText);
+        Assert.DoesNotContain(Console, m => m.StartsWith("The game stopped"));
+
+        editor.Finish(2, HullError);
+
+        Assert.Equal("Play stopped: the validation of save 2 found 1 error. The game closed during its load because " +
+                     "of them.", Console[^1]);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        Assert.DoesNotContain(Console, m => m.StartsWith("The game stopped"));
+    }
+
+    /// <summary>
+    /// (12) The same, but the validation result comes after the error event and before the editor handles the exit. The
+    /// game ended, so the stop of the gate goes to a game that ended. That write must not throw (R6).
+    /// </summary>
+    [Fact]
+    public void ACrashDuringTheValidationNeedsNoWriteToTheEndedGame()
+    {
+        plan = new StubPlan([Error("The engine load stops.", crash: true)], Exit: 1);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.WaitForQueued(2);
+        Assert.False(stub.Runs(0));
+        ui.Run(1);
+
+        editor.Finish(2, HullError);
+
+        Assert.Equal("Play stopped: the validation of save 2 found 1 error. The game closed during its load because " +
+                     "of them.", Console[^1]);
+        RunUntil(PlayStatus.Idle);
+        Assert.DoesNotContain(Console, m => m.StartsWith("The game stopped"));
+    }
+
+    /// <summary>(12) Without errors, the Console reports the crash with the message of the error event.</summary>
+    [Fact]
+    public void ACrashDuringAValidationWithoutErrorsIsReportedAsACrash()
+    {
+        plan = new StubPlan([Error("Tried to mount combinable item", crash: true)], Exit: 1);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(2);
+
+        editor.Finish(2, Diagnostic.Warning("Engine", "a warning"));
+
+        Assert.Equal("The game stopped with exit code 1: Tried to mount combinable item. The log is " +
+                     $"{OpenLancer.Editor.ProgramPaths.PlayLog}.", Console[^1]);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+    }
+
+    /// <summary>
+    /// (13) A save commits before the game sends waiting: the game can hold files of that save, so the gate waits for
+    /// the validation of the new save, not of the old one (the read window, D51).
+    /// </summary>
+    [Fact]
+    public void ASaveBeforeWaitingMakesTheGateWaitForTheNewSave()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        Assert.Equal(1, Assert.Single(starts).Save);
+        ui.WaitForQueued(1);
+
+        editor.Commit(2);
+        ui.Run(1);
+
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        Assert.Contains("Save 2 came while the game read the mod files. Play waits for its validation.", Console);
+        editor.Finish(2, HullError);
+        Assert.Contains("Play stopped: the validation of save 2 found 1 error. The Console lists them.", Console);
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal(["stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// A save after waiting stops the validation of the gate save (D58). The start does not change (D52): the game
+    /// starts with a warning. The reload of the new save follows when its validation passes.
+    /// </summary>
+    [Fact]
+    public void ASaveAfterWaitingDoesNotChangeTheStart()
+    {
+        plan = Game with { ReloadLines = [Reloaded(3)] };
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+
+        editor.Commit(3);
+        play.Update(false, false);
+
+        Assert.Contains("Play goes on without a validation of save 2: a later save stopped it. The game shows the " +
+                        "files of save 2.", Console);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 2", play.StatusText);
+        editor.Finish(3);
+        Assert.Equal("Play: reloading save 3...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 3", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 3", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// A save stopped the validation of the gate save and wrote nothing, for example after an exception: Play validates
+    /// the files again. A validation that cannot start gives its result at once, during the call. Play then starts
+    /// once, with one warning.
+    /// </summary>
+    [Fact]
+    public void AValidationThatCannotStartGivesOneWarningAndOneStart()
+    {
+        editor.Commit(1);
+        RequestPlay();
+        ui.WaitForQueued(1);
+        editor.StopValidation();
+        editor.ValidationCannotStart = true;
+
+        ui.Run(1);
+
+        Assert.Equal(1, editor.ValidateNowCalls);
+        Assert.Single(Console, m => m == "Play goes on without a validation: the validation of save 1 could not run.");
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>(14) No waiting for 60 s on the fake clock: the game does not respond, and Stop kills it at once.</summary>
+    [Fact]
+    public void WithoutWaitingFor60STheGameDoesNotRespondAndStopKillsItAtOnce()
+    {
+        plan = new StubPlan([]);
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        stub.ProcessId(0);
+
+        now += TimeSpan.FromSeconds(59.9);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.Starting, play.Status);
+        Assert.False(play.ForceStop);
+        now += TimeSpan.FromSeconds(0.1);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.NotResponding, play.Status);
+        Assert.Equal("Play: the game does not respond", play.StatusText);
+        Assert.True(play.ForceStop);
+        Assert.Contains("Play: the game does not respond. It did not load its data in 60 s. Stop ends it.", Console);
+
+        play.Stop();
+
+        RunUntil(PlayStatus.Idle);
+        Assert.False(stub.Runs(0));
+        Assert.Empty(stub.Input(0));
+    }
+
+    /// <summary>A game that does not exit 5 s after its error event, for example a crash window that waits: the editor
+    /// ends it.</summary>
+    [Fact]
+    public void AGameThatDoesNotExit5SAfterItsErrorIsEnded()
+    {
+        plan = new StubPlan([Error("Crashed.", crash: true)], IgnoreStop: true);
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        ui.Run(1);
+
+        now += TimeSpan.FromSeconds(4.9);
+        play.Update(false, false);
+        Assert.True(stub.Runs(0));
+        now += TimeSpan.FromSeconds(0.1);
+        play.Update(false, false);
+
+        RunUntil(PlayStatus.Idle);
+        Assert.False(stub.Runs(0));
+        Assert.Equal("The game did not exit 5 s after its error, so the editor ended it.", Console[^2]);
+        // The kill sets the exit code, so the line gives none. The cause is the message of the error event.
+        Assert.Equal($"The game stopped: Crashed. The log is {OpenLancer.Editor.ProgramPaths.PlayLog}.", Console[^1]);
+    }
+
+    /// <summary>The game can start the play before it reads stop. A spawn after stop then gives no Playing line (section
+    /// 9.8).</summary>
+    [Fact]
+    public void ASpawnAfterStopIsIgnored()
+    {
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+        editor.Finish(2);
+
+        play.Stop();
+
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        Assert.DoesNotContain(Console, m => m.StartsWith("Playing"));
+    }
+
+    /// <summary>The warnings and errors of the engine log of the game go to the Console, by decision D57.</summary>
+    [Fact]
+    public void TheEngineLinesOfTheGameGoToTheConsoleOnce()
+    {
+        plan = Game with { Lines = ["[Warning: 12:00:00] Ini: known", "[Error: 12:00:00] Ship: new", Waiting] };
+        editor.Log.AddEngineLine("[Warning: 11:00:00] Ini: known", LibreLancer.LogSeverity.Warning);
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay();
+
+        RunUntil(PlayStatus.Running);
+        Assert.Single(editor.Log.Entries, e => e.Source == PlayController.Source && e.Message == "Ship: new");
+        Assert.DoesNotContain(editor.Log.Entries, e => e.Source == PlayController.Source && e.Message == "Ini: known");
+        StopAndRunToIdle();
+    }
+
+    [Fact]
+    public void AtABaseTheConsoleNamesTheBaseAndTheLaterModsShowAsAWarning()
+    {
+        plan = Game with
+        {
+            StartLines = [PlayProtocol.Write(new PlayEvent.Spawned("Br01", "Br01_01_Base", null, "le", "", 300))],
+        };
+        editor.Session = editor.Session! with { LaterMods = ["late1", "late2"] };
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay(new PlayStart.AtBase("Br01_01_Base"));
+
+        RunUntil(PlayStatus.Running);
+        Assert.Contains(editor.Log.Entries, e => e.Severity == ConsoleSeverity.Warning &&
+                                                 e.Message == "Play does not include the later mods: late1, late2.");
+        Assert.Contains("Playing at Planet New London (Br01_01_Base) in New London (Br01) with le. From Play to " +
+                        "flight: 0.0 s.", Console);
+        Assert.Equal("Playing: Planet New London (Br01_01_Base), save 1", play.StatusText);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>
+    /// After waiting, a save stopped the validation of the gate save and wrote nothing, for example after an exception.
+    /// No later save exists, so Play validates the gate save again and does not wait for the stopped validation.
+    /// </summary>
+    [Fact]
+    public void AValidationThatASaveStoppedWithoutALaterSaveRunsAgain()
+    {
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+
+        editor.StopValidation();
+        play.Update(false, false);
+
+        Assert.Equal(1, editor.ValidateNowCalls);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        editor.Finish(2);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// A save that is not complete, while the game reads the mod files: the game can hold parts of it. Such a save gets
+    /// no validation, and Play stops the game (D59).
+    /// </summary>
+    [Fact]
+    public void ASaveThatIsNotCompleteInTheReadWindowStopsTheGame()
+    {
+        const string stopped = "Play stopped: save 2 is not complete, and the game can hold parts of it. Correct the " +
+                               "problem of the file, save again, then press Play.";
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+
+        editor.SaveIncomplete(2);
+        play.Update(false, false);
+
+        Assert.Equal(0, editor.ValidateNowCalls);
+        Assert.Equal(ConsoleSeverity.Error, editor.Log.Entries[^1].Severity);
+        Assert.Equal(stopped, Console[^1]);
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal(["stop"], stub.Input(0));
+        Assert.Equal(stopped, Console[^1]);
+    }
+
+    /// <summary>
+    /// A save that is not complete, after waiting: the game holds the gate save. The save stopped the validation of the
+    /// gate save, so Play goes on with the warning of D58 and does not validate the save that is not complete.
+    /// </summary>
+    [Fact]
+    public void ASaveThatIsNotCompleteAfterWaitingGetsNoValidation()
+    {
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+
+        editor.SaveIncomplete(3);
+        play.Update(false, false);
+
+        Assert.Equal(0, editor.ValidateNowCalls);
+        Assert.Contains("Play goes on without a validation of save 2: a later save stopped it. The game shows the " +
+                        "files of save 2.", Console);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>An error event without a crash and exit code 3 give the message at once, also while the validation of
+    /// the save runs. Its result cannot be the cause of a data error such as an unknown package.</summary>
+    [Fact]
+    public void ADataErrorDuringTheValidationGivesItsMessageAtOnce()
+    {
+        plan = new StubPlan([Error("Unknown ship package 'no_such_package'.", crash: false)], Exit: PlayExitCodes.Data);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+
+        // The error event and the exit.
+        ui.Run(2);
+
+        Assert.True(editor.Validation!.Running);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        Assert.Equal("Play stopped: Unknown ship package 'no_such_package'.", Console[^1]);
+    }
+
+    /// <summary>A waiting event after the 60 s watchdog: the game responds again, so Stop sends stop and does not kill
+    /// it.</summary>
+    [Fact]
+    public void AWaitingEventAfterTheLoadLimitEndsNotResponding()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        ui.WaitForQueued(1);
+        now += PlayController.LoadLimit;
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.NotResponding, play.Status);
+
+        ui.Run(1);
+
+        Assert.False(play.ForceStop);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        Assert.Equal("The game closed.", Console[^1]);
+    }
+
+    /// <summary>A crash without an error event and without error output: the cause is the last error line of the
+    /// engine log (section 9.10).</summary>
+    [Fact]
+    public void ACrashWithoutAnEventOrErrorOutputGivesTheLastEngineError()
+    {
+        plan = new StubPlan(["[Error: 12:00:00] Ship: first", "[Error: 12:00:01] Ship: last",
+            "[Warning: 12:00:02] Ini: later"], Exit: 9);
+        editor.Commit(1);
+        editor.Finish(1);
+
+        RequestPlay();
+
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal("The game stopped with exit code 9: Ship: last. The log is " +
+                     $"{OpenLancer.Editor.ProgramPaths.PlayLog}.", Console[^1]);
+    }
+
+    /// <summary>
+    /// A crash in the read window: a save came after the start, so the gate save is the new save. The report waits for
+    /// the validation of the new save, and its errors are the cause (D51, D55).
+    /// </summary>
+    [Fact]
+    public void ACrashInTheReadWindowWaitsForTheValidationOfTheNewSave()
+    {
+        plan = new StubPlan([Error("The engine load stops.", crash: true)], Exit: 1);
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        Assert.Equal(1, Assert.Single(starts).Save);
+        // The error event and the exit.
+        ui.WaitForQueued(2);
+
+        editor.Commit(2);
+        ui.Run(2);
+        play.Update(false, false);
+
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        Assert.DoesNotContain(Console, m => m.StartsWith("The game stopped"));
+        editor.Finish(2, HullError);
+        Assert.Equal("Play stopped: the validation of save 2 found 1 error. The game closed during its load because " +
+                     "of them.", Console[^1]);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+    }
+
+    /// <summary>Stop while a crash report waits for the validation: the Console reports the crash now, and the status
+    /// is Idle.</summary>
+    [Fact]
+    public void StopReportsACrashThatWaitsForTheValidation()
+    {
+        plan = new StubPlan([Error("The engine load stops.", crash: true)], Exit: 1);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(2);
+        Assert.Equal(PlayStatus.Validating, play.Status);
+
+        play.Stop();
+
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        Assert.Equal("The game stopped with exit code 1: The engine load stops. The log is " +
+                     $"{OpenLancer.Editor.ProgramPaths.PlayLog}.", Console[^1]);
+    }
+
+    /// <summary>
+    /// The error watchdog ends a game that crashed while the validation of its save runs. The crash rule (D55) then
+    /// applies as for an exit: the report waits for the validation, and its errors are the cause.
+    /// </summary>
+    [Fact]
+    public void AGameThatTheErrorWatchdogEndedDuringTheValidationWaitsForIt()
+    {
+        plan = new StubPlan([Error("The engine load stops.", crash: true)], IgnoreStop: true);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+        RequestPlay();
+        ui.Run(1);
+
+        now += PlayController.ExitLimit;
+        play.Update(false, false);
+        // The exit after the kill.
+        ui.Run(1);
+
+        Assert.False(stub.Runs(0));
+        Assert.Equal(PlayStatus.Validating, play.Status);
+        Assert.Equal("The game did not exit 5 s after its error, so the editor ended it.", Console[^1]);
+        editor.Finish(2, HullError);
+        Assert.Equal("Play stopped: the validation of save 2 found 1 error. The game closed during its load because " +
+                     "of them.", Console[^1]);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+    }
+
+    /// <summary>
+    /// (15) After the spawn, a save whose validation passes reloads the game (D17). The Console gives the time in the
+    /// game and the time from the save. Reload game is not available during the reload. Here the player docked after
+    /// the spawn, so the reload continues at the base, and the status names the base.
+    /// </summary>
+    [Fact]
+    public void APassedValidationAfterTheSpawnReloadsTheGame()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2, dock: "Br01_01_Base")] });
+        Assert.True(play.CanReload);
+
+        editor.Commit(2);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.Running, play.Status);
+        now += TimeSpan.FromSeconds(3);
+        editor.Finish(2);
+
+        Assert.Equal(PlayStatus.Reloading, play.Status);
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        Assert.False(play.CanReload);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal(["start", "reload 2"], stub.Input(0));
+        Assert.Equal("The running game shows save 2 (reload 0.6 s, 3.0 s from the save).", Console[^1]);
+        Assert.Equal("Playing: Planet New London (Br01_01_Base), save 2", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    /// <summary>(15) Validation errors after the spawn: no reload, and the Console tells once which save the game
+    /// keeps.</summary>
+    [Fact]
+    public void ValidationErrorsAfterTheSpawnKeepTheSaveOfTheGame()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2)] });
+
+        editor.Commit(2);
+        editor.Finish(2, HullError);
+        play.Update(false, false);
+        play.Update(false, false);
+
+        Assert.Equal(PlayStatus.Running, play.Status);
+        Assert.Single(Console, m => m == "The running game keeps save 1. The validation of save 2 found 1 error.");
+        Assert.Equal("Playing: New London (Br01), save 1", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// (15) One reload at a time: the saves during a reload wait for its end. Then only the last save reloads. The
+    /// game read the mod files while those saves came, so it can show parts of the last one (D51).
+    /// </summary>
+    [Fact]
+    public void SavesDuringAReloadWaitAndOnlyTheLastSaveReloads()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2), Reloaded(4)] });
+        editor.Commit(2);
+        editor.Finish(2);
+        // The reloaded event of the stub waits in the queue of the UI thread.
+        ui.WaitForQueued(1);
+
+        editor.Commit(3);
+        editor.Finish(3);
+        editor.Commit(4);
+        editor.Finish(4);
+        play.Update(false, false);
+
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        ui.Run(1);
+        Assert.Contains("The running game shows save 2 (reload 0.6 s, 0.0 s from the save).", Console);
+        Assert.Contains("Save 4 came during the reload, so the game can show parts of it.", Console);
+        Assert.Equal("Play: reloading save 4...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 4", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "reload 4", "stop"], stub.Input(0));
+    }
+
+    /// <summary>(16) A validation that passes before the spawn sends no reload. The reload follows at the spawn
+    /// (D52).</summary>
+    [Fact]
+    public void APassedValidationBeforeTheSpawnReloadsAtTheSpawn()
+    {
+        plan = Game with { ReloadLines = [Reloaded(2)] };
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        // The waiting event: the game gets start, and its spawned event waits in the queue.
+        ui.Run(1);
+        ui.WaitForQueued(1);
+
+        editor.Commit(2);
+        editor.Finish(2);
+        play.Update(false, false);
+
+        Assert.Equal(PlayStatus.Starting, play.Status);
+        Assert.False(play.CanReload);
+        play.Reload();
+        Assert.Equal(PlayStatus.Starting, play.Status);
+        ui.Run(1);
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.DoesNotContain(Console, m => m.Contains("Press F5", StringComparison.Ordinal));
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// (17) A save before waiting: the game read a mix of two saves, so after the spawn the game save is unknown. The
+    /// validation of the new save passed at the gate, so the reload of that save follows the spawn at once (D51).
+    /// </summary>
+    [Fact]
+    public void ASaveBeforeWaitingReloadsTheLastSaveAfterTheSpawn()
+    {
+        plan = Game with { ReloadLines = [Reloaded(2)] };
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        ui.WaitForQueued(1);
+        editor.Commit(2);
+        ui.Run(1);
+        editor.Finish(2);
+
+        ui.RunUntil(() => play.Status != PlayStatus.Starting, "the spawn");
+
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 2", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// (17) A save during a reload: after reloaded, the game can show parts of that save. A passed validation of the
+    /// save then reloads it. Errors give the line that the game can show parts of it.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ASaveDuringAReloadMakesTheGameSaveUnknown(bool passes)
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2), Reloaded(3)] });
+        editor.Commit(2);
+        editor.Finish(2);
+        ui.WaitForQueued(1);
+        editor.Commit(3);
+
+        ui.Run(1);
+
+        Assert.Equal(PlayStatus.Running, play.Status);
+        Assert.Equal("Playing: New London (Br01), parts of save 3", play.StatusText);
+        Assert.Equal("Save 3 came during the reload, so the game can show parts of it.", Console[^1]);
+        if (passes)
+        {
+            editor.Finish(3);
+            Assert.Equal("Play: reloading save 3...", play.StatusText);
+            RunUntil(PlayStatus.Running);
+            Assert.Equal("Playing: New London (Br01), save 3", play.StatusText);
+        }
+        else
+        {
+            editor.Finish(3, HullError);
+            Assert.Equal(PlayStatus.Running, play.Status);
+            Assert.Equal("The running game can show parts of save 3. The validation of save 3 found 1 error.",
+                Console[^1]);
+        }
+
+        StopAndRunToIdle();
+        string[] input = passes ? ["start", "reload 2", "reload 3", "stop"] : ["start", "reload 2", "stop"];
+        Assert.Equal(input, stub.Input(0));
+    }
+
+    /// <summary>
+    /// A reload that fails keeps the save of the game, and the reload trigger does not send it again. Reload game sends
+    /// it again, and a later save reloads.
+    /// </summary>
+    [Fact]
+    public void AFailedReloadIsNotSentAgainButReloadGameSendsIt()
+    {
+        const string failure = "The new data cannot load the autosave of the player. The ship 'm4proof_fighter' is " +
+                               "not in the game data.";
+        PlayToRunning(Game with
+        {
+            ReloadLines = [PlayProtocol.Write(new PlayEvent.ReloadFailed(2, failure)), Reloaded(2, 700), Reloaded(3)],
+        });
+        editor.Commit(2);
+        editor.Finish(2);
+
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("The reload of save 2 failed, so the running game keeps save 1: The new data cannot load the " +
+                     "autosave of the player. The ship 'm4proof_fighter' is not in the game data.", Console[^1]);
+        Assert.Equal(ConsoleSeverity.Error, editor.Log.Entries[^1].Severity);
+        Assert.Equal("Playing: New London (Br01), save 1", play.StatusText);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.Running, play.Status);
+
+        play.Reload();
+
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("The running game shows save 2 (reload 0.7 s).", Console[^1]);
+        editor.Commit(3);
+        editor.Finish(3);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 3", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "reload 2", "reload 3", "stop"], stub.Input(0));
+    }
+
+    /// <summary>Reload game sends the last save also when its validation found errors. It is for a change outside the
+    /// editor (D45).</summary>
+    [Fact]
+    public void ReloadGameSendsTheLastSaveAlsoWithValidationErrors()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2)] });
+        editor.Commit(2);
+        editor.Finish(2, HullError);
+
+        play.Reload();
+
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 2", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    /// <summary>A validation that could not run lets the reload go on with a warning, as the start does (D43).</summary>
+    [Fact]
+    public void AReloadAfterAValidationThatCouldNotRunGoesOnWithAWarning()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2)] });
+        editor.Commit(2);
+
+        editor.FailToRun(2);
+
+        Assert.Contains(editor.Log.Entries, e => e.Severity == ConsoleSeverity.Warning &&
+                                                 e.Message == "The running game loads save 2 without a validation: " +
+                                                 "the validation could not run.");
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// A save stopped the validation of the last save and wrote nothing: the reload trigger validates the files again,
+    /// as the gate does. A save that is not complete gets no validation and no reload (D59). The save that completes it
+    /// starts the validation.
+    /// </summary>
+    [Fact]
+    public void AStoppedValidationRunsAgainAndASaveThatIsNotCompleteWaits()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2), Reloaded(3)] });
+        editor.Commit(2);
+        editor.StopValidation();
+
+        play.Update(false, false);
+
+        Assert.Equal(1, editor.ValidateNowCalls);
+        editor.Finish(2);
+        RunUntil(PlayStatus.Running);
+        editor.SaveIncomplete(3);
+        play.Update(false, false);
+        Assert.Equal(1, editor.ValidateNowCalls);
+        Assert.Equal(PlayStatus.Running, play.Status);
+        // The next save completes save 3.
+        editor.Commit(3);
+        editor.Finish(3);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "reload 3", "stop"], stub.Input(0));
+    }
+
+    /// <summary>No reloaded or reload-failed for 30 s on the fake clock: the game does not respond, and Stop kills it at
+    /// once (section 9.10). The limit counts from the reload command, not from the process start, and the Console warns
+    /// once.</summary>
+    [Fact]
+    public void WithoutTheEndOfAReloadFor30STheGameDoesNotRespond()
+    {
+        const string warning = "Play: the game does not respond. It did not end the reload of save 2 in 30 s. Stop " +
+                               "ends it.";
+        PlayToRunning(Game);
+        // The player flew for 5 minutes before the save.
+        now += TimeSpan.FromMinutes(5);
+        play.Update(false, false);
+        editor.Commit(2);
+        editor.Finish(2);
+        stub.WaitForInput(0, 2);
+
+        now += TimeSpan.FromSeconds(29.9);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.Reloading, play.Status);
+        Assert.False(play.ForceStop);
+        now += TimeSpan.FromSeconds(0.1);
+        play.Update(false, false);
+        play.Update(false, false);
+
+        Assert.Equal(PlayStatus.NotResponding, play.Status);
+        Assert.Equal("Play: the game does not respond", play.StatusText);
+        Assert.True(play.ForceStop);
+        Assert.Equal(warning, Console[^1]);
+        Assert.Single(Console, m => m == warning);
+        play.Stop();
+        RunUntil(PlayStatus.Idle);
+        Assert.False(stub.Runs(0));
+    }
+
+    /// <summary>A reloaded or reload-failed event after the 30 s watchdog: the game responds again. So the status is
+    /// Running, and Stop sends stop and does not kill the game (section 9.10).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ALateEndOfAReloadEndsNotResponding(bool failed)
+    {
+        PlayToRunning(Game with { ReloadLines = [failed ? ReloadFailed(2) : Reloaded(2)] });
+        editor.Commit(2);
+        editor.Finish(2);
+        // The event of the stub waits in the queue of the UI thread.
+        ui.WaitForQueued(1);
+        now += PlayController.ReloadLimit;
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.NotResponding, play.Status);
+
+        ui.Run(1);
+
+        Assert.Equal(PlayStatus.Running, play.Status);
+        Assert.False(play.ForceStop);
+        Assert.Equal($"Playing: New London (Br01), save {(failed ? 1 : 2)}", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+        Assert.Equal("The game closed.", Console[^1]);
+    }
+
+    /// <summary>
+    /// A save during a reload that fails: the failure keeps the save of the game, and it marks only the save of that
+    /// reload. So the newer save, whose validation passed, reloads at once (D74).
+    /// </summary>
+    [Fact]
+    public void ASaveDuringAFailedReloadReloadsAfterIt()
+    {
+        PlayToRunning(Game with { ReloadLines = [ReloadFailed(2), Reloaded(3)] });
+        editor.Commit(2);
+        editor.Finish(2);
+        ui.WaitForQueued(1);
+        editor.Commit(3);
+        editor.Finish(3);
+        play.Update(false, false);
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+
+        ui.Run(1);
+
+        Assert.Equal("The reload of save 2 failed, so the running game keeps save 1: The new data cannot load the " +
+                     "autosave of the player.", Console[^1]);
+        Assert.Equal("Play: reloading save 3...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 3", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "reload 3", "stop"], stub.Input(0));
+    }
+
+    /// <summary>
+    /// (17) A save in the read window of the start, then a save with validation errors before the spawn. The game can
+    /// show parts of the gate save, so the status and the errors line name the gate save, not the save of the start.
+    /// </summary>
+    [Fact]
+    public void ErrorsAfterASaveInTheReadWindowOfTheStartNameTheGateSave()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        // The waiting event waits in the queue, and save 2 comes while the game reads the mod files.
+        ui.WaitForQueued(1);
+        editor.Commit(2);
+        ui.Run(1);
+        editor.Finish(2);
+        // The spawned event waits in the queue, and save 3 has an error.
+        ui.WaitForQueued(1);
+        editor.Commit(3);
+        editor.Finish(3, HullError);
+
+        ui.Run(1);
+
+        Assert.Equal(PlayStatus.Running, play.Status);
+        Assert.Equal("Playing: New London (Br01), parts of save 2", play.StatusText);
+        Assert.Equal("The running game can show parts of save 2. The validation of save 3 found 1 error.", Console[^1]);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "stop"], stub.Input(0));
+    }
+
+    /// <summary>An error event after the spawn: the game closes. So a passed validation sends no reload, and Reload game
+    /// is not available.</summary>
+    [Fact]
+    public void AnErrorEventAfterTheSpawnStopsTheReloads()
+    {
+        plan = new StubPlan([Waiting], [Spawned, Error("Crashed.", crash: true)], IgnoreStop: true,
+            ReloadLines: [Reloaded(2)]);
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+        // The error event.
+        ui.Run(1);
+
+        Assert.False(play.CanReload);
+        Assert.Equal("The game sent an error event, and it closes.", play.ReloadBlock);
+        editor.Commit(2);
+        editor.Finish(2);
+        play.Update(false, false);
+        play.Reload();
+
+        Assert.Equal(PlayStatus.Running, play.Status);
+        Assert.Equal("Playing: New London (Br01), save 1", play.StatusText);
+        now += PlayController.ExitLimit;
+        play.Update(false, false);
+        RunUntil(PlayStatus.Idle);
+        Assert.Equal(["start"], stub.Input(0));
+    }
+
+    /// <summary>A reloaded or reload-failed event after stop: the game closes, so the Console gives no line for it, as
+    /// for a spawn after stop (section 9.8).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnEndOfAReloadAfterStopIsIgnored(bool failed)
+    {
+        PlayToRunning(Game with { ReloadLines = [failed ? ReloadFailed(2) : Reloaded(2)] });
+        editor.Commit(2);
+        editor.Finish(2);
+        ui.WaitForQueued(1);
+        play.Stop();
+
+        ui.Run(1);
+
+        Assert.Equal(PlayStatus.Stopping, play.Status);
+        RunUntil(PlayStatus.Idle);
+        Assert.DoesNotContain(Console, m => m.StartsWith("The running game", StringComparison.Ordinal) ||
+                                            m.StartsWith("The reload of save 2", StringComparison.Ordinal));
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+        Assert.Equal("The game closed.", Console[^1]);
+    }
+
+    /// <summary>A save whose validation passes after stop sends no reload, because the game closes (section 9.8).</summary>
+    [Fact]
+    public void APassedValidationAfterStopSendsNoReload()
+    {
+        PlayToRunning(Game with { IgnoreStop = true, ReloadLines = [Reloaded(2)] });
+        play.Stop();
+        stub.WaitForInput(0, 2);
+
+        editor.Commit(2);
+        editor.Finish(2);
+        play.Update(false, false);
+
+        // The stub reads its input after stop. So a reload command would reach it, and the stub would answer it.
+        ui.RunUntilQuiet(TimeSpan.FromMilliseconds(500));
+        Assert.Equal(["start", "stop"], stub.Input(0));
+        now += PlayController.ExitLimit;
+        play.Stop();
+        RunUntil(PlayStatus.Idle);
+    }
+
+    /// <summary>
+    /// Reload game is not available while the last save is not complete, because the play load refuses its files (D59).
+    /// The save that completes it keeps its number, and the reload trigger then sends it (review of step 8).
+    /// </summary>
+    [Fact]
+    public void ReloadGameWaitsForTheSaveThatCompletesASaveThatIsNotComplete()
+    {
+        PlayToRunning(Game with { ReloadLines = [Reloaded(2)] });
+        editor.SaveIncomplete(2);
+        play.Update(false, false);
+
+        Assert.False(play.CanReload);
+        Assert.Equal("Save 2 is not complete, so the game cannot load the mod files. Correct the problem of the file, " +
+                     "then save again.", play.ReloadBlock);
+        play.Reload();
+        Assert.Equal(PlayStatus.Running, play.Status);
+
+        // Ctrl+S without new edits completes save 2. The number stays, and the validation of save 2 starts.
+        editor.Commit(2);
+        editor.Finish(2);
+
+        Assert.Equal("Play: reloading save 2...", play.StatusText);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal("Playing: New London (Br01), save 2", play.StatusText);
+        StopAndRunToIdle();
+        Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    private static string Error(string message, bool crash) => PlayProtocol.Write(new PlayEvent.Error(message, crash));
+
+    /// <param name="dock">The base of the player, or null in space.</param>
+    private static string Reloaded(int save, long ms = 600, string? dock = null) =>
+        PlayProtocol.Write(new PlayEvent.Reloaded(save, ms, "Br01", dock));
+
+    private static string ReloadFailed(int save) =>
+        PlayProtocol.Write(new PlayEvent.ReloadFailed(save, "The new data cannot load the autosave of the player."));
+
+    /// <summary>Starts a game for save 1, whose validation passed, and runs it until the spawn.</summary>
+    private void PlayToRunning(StubPlan game)
+    {
+        plan = game;
+        editor.Commit(1);
+        editor.Finish(1);
+        RequestPlay();
+        RunUntil(PlayStatus.Running);
+    }
+
+    /// <summary>A death zone with a radius of 1,000 whose center is 900 units ahead of the camera of
+    /// <see cref="Space"/>. The near exit is 100 units behind the camera, so the start moves 200 units back.</summary>
+    private static SpawnShape DeathZone()
+    {
+        var zone = new Zone
+        {
+            Nickname = "Zone_Br01_death", Shape = ShapeKind.Sphere, RotationMatrix = Matrix4x4.Identity,
+            Size = new Vector3(1_000), Position = Space.Position - new Vector3(0, 0, 900),
+        };
+        zone.Damage = 2_000_000;
+        return Assert.Single(SpawnPoint.Shapes(new Dictionary<SystemObject, GameObject>(), [zone], z => z.Nickname));
+    }
+
+    private static void Near(Vector3 expected, Vector3 actual) =>
+        Assert.True(Vector3.Distance(expected, actual) <= 0.05f, $"Expected {expected}, but got {actual}.");
+
+    private void RequestPlay(PlayStart? start = null)
+    {
+        play.Request(start ?? Space, null);
+        play.Update(false, false);
+    }
+
+    private void RunUntil(PlayStatus status) => ui.RunUntil(() => play.Status == status, $"status {status}");
+
+    private void StopAndRunToIdle()
+    {
+        play.Stop();
+        Assert.Equal(PlayStatus.Stopping, play.Status);
+        RunUntil(PlayStatus.Idle);
+    }
+
+    /// <summary>
+    /// The editor side of Play. A save with a number becomes the last save of the session and starts its validation, as
+    /// <see cref="EditController"/> does. The test gives each validation result.
+    /// </summary>
+    private sealed class FakeEditor(QueuedUIThread ui) : IPlayEditor
+    {
+        public ConsoleLog Log { get; } = new();
+
+        public PlaySession? Session { get; set; } = new(@"C:\profiles\p.json", "proof", 0, 0, null, []);
+
+        public ValidationState? Validation { get; private set; }
+
+        public event Action<ValidationState>? Validated;
+
+        /// <summary>The outcome of each save.</summary>
+        public SaveOutcome SaveResult { get; set; } = new(true, 0, false);
+
+        public int SaveCalls { get; private set; }
+
+        public int ValidateNowCalls { get; private set; }
+
+        /// <summary>True: <see cref="ValidateNow"/> gives a result at once, as when oltool does not start.</summary>
+        public bool ValidationCannotStart { get; set; }
+
+        public SaveOutcome Save()
+        {
+            SaveCalls++;
+            if (SaveResult is { Saved: true, Number: > 0 } saved)
+            {
+                if (saved.Incomplete)
+                {
+                    SaveIncomplete(saved.Number);
+                }
+                else
+                {
+                    Commit(saved.Number);
+                }
+            }
+
+            return SaveResult;
+        }
+
+        /// <summary>A save that changed files, for example Ctrl+S: it stops the running validation and starts its
+        /// own.</summary>
+        public void Commit(int number)
+        {
+            Session = Session! with { Saves = number, IncompleteSave = 0 };
+            Validation = new ValidationState(number, true, null);
+        }
+
+        /// <summary>A save that changed files and is not complete: it stops the running validation and starts no
+        /// validation.</summary>
+        public void SaveIncomplete(int number)
+        {
+            StopValidation();
+            Session = Session! with { Saves = number, IncompleteSave = number };
+        }
+
+        /// <summary>The stop of the running validation before a save. The state keeps its save without a result. A save
+        /// that then writes nothing, for example after an exception, starts no validation.</summary>
+        public void StopValidation()
+        {
+            if (Validation is { Running: true } running)
+            {
+                Validation = running with { Running = false };
+            }
+        }
+
+        public void ValidateNow()
+        {
+            ValidateNowCalls++;
+            if (ValidationCannotStart)
+            {
+                FailToRun(Session!.Saves);
+            }
+            else
+            {
+                Validation = new ValidationState(Session!.Saves, true, null);
+            }
+        }
+
+        public void Finish(int save, params Diagnostic[] problems) => Done(new ValidationResult(save, problems, null));
+
+        public void FailToRun(int save) => Done(new ValidationResult(save, null, "oltool did not start."));
+
+        public void QueueUIThread(Action work) => ui.QueueUIThread(work);
+
+        public string SystemName(string nickname) =>
+            nickname.Equals("br01", StringComparison.OrdinalIgnoreCase) ? "New London" : "";
+
+        public string BaseName(string nickname) =>
+            nickname.Equals("br01_01_base", StringComparison.OrdinalIgnoreCase) ? "Planet New London" : "";
+
+        public bool SceneBehind { get; set; }
+
+        /// <summary>The shapes of Br01, the system that the Scene shows.</summary>
+        public List<SpawnShape> Shapes { get; } = [];
+
+        public IReadOnlyList<SpawnShape>? SpawnShapes(string system) =>
+            system.Equals("br01", StringComparison.OrdinalIgnoreCase) ? Shapes.ToList() : null;
+
+        private void Done(ValidationResult result)
+        {
+            Validation = new ValidationState(result.Save, false, result);
+            Validated?.Invoke(Validation);
+        }
+    }
+}

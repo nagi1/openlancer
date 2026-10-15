@@ -50,9 +50,10 @@ public sealed partial class EditSession
         Lookup(lowerView.StringIds, id) ?? Lookup(EditView.StringIds, id);
 
     /// <summary>
-    /// A test that stays true until an edit, an undo or a redo changes W of a file or the text. An edit that was made
-    /// from the edit view uses it to refuse to run on a newer state, because it would undo the changes in between. A
-    /// save keeps the test true, because W after a save has the same lines.
+    /// A test that stays true until an edit, an undo or a redo changes W of an INI file or the text. An edit that was
+    /// made from the INI sections of the edit view uses it to refuse to run on a newer state, because it would undo the
+    /// changes in between. A change of a cutscene does not change such an edit. A save keeps the test true, because W
+    /// after a save has the same lines.
     /// </summary>
     internal Func<bool> Snapshot()
     {
@@ -67,25 +68,25 @@ public sealed partial class EditSession
     {
         foreach (var value in entry)
         {
-            if (value is not (Int32Value or SingleValue or BooleanValue) &&
-                StringPlaceholder.TryParse(value.ToString(), out var placeholder))
+            if (StringPlaceholder.TryParse(value, out var placeholder))
                 yield return placeholder;
         }
     }
 
     /// <summary>
-    /// The lines of the patches and the whole INI files of a mod on disk, in which the merge resolves each text
+    /// The lines of the INI patches and the whole INI files of a mod on disk, in which the merge resolves each text
     /// placeholder: each line of a whole file, and each line of a patch except its directives. A file that cannot be
-    /// read or parsed has no lines here, because the merge reports it.
+    /// read or parsed has no lines here, because the merge reports it. Other files have no lines here. For example, the
+    /// merge of a THN patch does not resolve placeholders.
     /// </summary>
     /// <param name="skipPatch">True for an install path whose patch the caller does not want.</param>
     private static IEnumerable<(string File, Section Section, Entry Entry)> ResolvedLines(Mod mod,
         Func<string, bool> skipPatch)
     {
-        var files = mod.Patches.Where(p => !skipPatch(p.Key)).Select(p => (File: p.Value, Patch: true))
-            .Concat(mod.Files.Where(f => f.Key.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
-                .Select(f => (File: f.Value, Patch: false)));
-        foreach (var (file, isPatch) in files)
+        var files = mod.Patches.Where(p => !skipPatch(p.Key)).Select(p => (Path: p.Key, File: p.Value, Patch: true))
+            .Concat(mod.Files.Select(f => (Path: f.Key, File: f.Value, Patch: false)))
+            .Where(f => f.Path.EndsWith(".ini", StringComparison.OrdinalIgnoreCase));
+        foreach (var (_, file, isPatch) in files)
         {
             IReadOnlyList<Section> sections;
             try

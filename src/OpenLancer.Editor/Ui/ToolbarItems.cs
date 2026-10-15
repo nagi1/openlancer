@@ -32,7 +32,7 @@ internal static class ToolbarItems
     /// A flat icon button that is on or off. When it is on, it has the pressed color, also under the mouse. Returns the
     /// new value.
     /// </summary>
-    public static bool Toggle(string id, char icon, string tooltip, bool value)
+    public static bool Toggle(string id, char icon, string tooltip, bool value, bool enabled = true)
     {
         if (value)
         {
@@ -40,7 +40,9 @@ internal static class ToolbarItems
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, EditorTheme.PressedHover);
         }
 
+        ImGui.BeginDisabled(!enabled);
         var clicked = IconButton(id, icon);
+        ImGui.EndDisabled();
         if (value)
         {
             ImGui.PopStyleColor(2);

@@ -171,6 +171,10 @@ public sealed class ItemIndexTests
         Assert.Equal([hull], session.Related(ItemWorkspace.Ship("s1"), ItemRelation.Hull));
         Assert.Equal([package], session.Related(ItemWorkspace.Ship("s1"), ItemRelation.Package));
         Assert.Equal([package], session.Related(hull, ItemRelation.Package));
+        Assert.Equal([ItemWorkspace.Ship("s1")], session.Related(package, ItemRelation.Ship));
+        Assert.Equal([ItemWorkspace.Ship("s1")], session.Related(hull, ItemRelation.Ship));
+        Assert.Empty(session.Related(ItemWorkspace.Good(ItemWorkspace.WeaponGoodsPath, "gun1"), ItemRelation.Ship));
+        Assert.Empty(session.Related(ItemWorkspace.Ship("s1"), ItemRelation.Ship));
         Assert.Equal([ItemWorkspace.Good(ItemWorkspace.WeaponGoodsPath, "gun1")],
             session.Related(ItemWorkspace.Gun("gun1"), ItemRelation.Good));
         Assert.Equal([ItemWorkspace.Munition("gun1_ammo")], session.Related(ItemWorkspace.Gun("gun1"), ItemRelation.Munition));

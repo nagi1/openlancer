@@ -36,6 +36,7 @@ internal sealed class AxisGizmo
     // The six axis ends, sorted from far to near.
     private readonly End[] ends = new End[6];
     private Vector2 center;
+    private float scale = 1;
 
     /// <summary>One end of an axis on the screen.</summary>
     /// <param name="Direction">The world direction from the center to this end.</param>
@@ -50,23 +51,21 @@ internal sealed class AxisGizmo
     {
         get
         {
-            var radius = new Vector2(BackgroundRadius * ImGuiHelper.Scale);
+            var radius = new Vector2(BackgroundRadius * scale);
             return (center - radius, center + radius);
         }
     }
 
     /// <summary>Places the widget in the scene rectangle and turns its axes with the camera view.</summary>
-    /// <param name="origin">The top-left corner of the scene on the screen, in pixels.</param>
-    /// <param name="size">The size of the scene, in pixels.</param>
-    public void Update(Matrix4x4 view, Vector2 origin, Vector2 size)
+    public void Update(SceneProjection projection)
     {
-        var scale = ImGuiHelper.Scale;
+        scale = projection.UiScale;
         var inset = MathF.Round(Inset * scale);
-        center = new Vector2(origin.X + size.X - inset, origin.Y + inset);
+        center = new Vector2(projection.Origin.X + projection.Size.X - inset, projection.Origin.Y + inset);
         var length = AxisLength * scale;
         for (var i = 0; i < Axes.Length; i++)
         {
-            var v = Vector3.TransformNormal(Axes[i].Axis, view);
+            var v = Vector3.TransformNormal(Axes[i].Axis, projection.View);
             var offset = new Vector2(v.X, -v.Y) * length;
             ends[2 * i] = new End(Axes[i].Axis, center + offset, v.Z, true, i);
             ends[2 * i + 1] = new End(-Axes[i].Axis, center - offset, -v.Z, false, i);
@@ -81,7 +80,6 @@ internal sealed class AxisGizmo
     /// </summary>
     public Vector3? HitTest(Vector2 mouse)
     {
-        var scale = ImGuiHelper.Scale;
         for (var i = ends.Length - 1; i >= 0; i--)
         {
             var end = ends[i];
@@ -101,7 +99,6 @@ internal sealed class AxisGizmo
     /// <param name="mouse">The mouse position when the mouse is over the scene, or null.</param>
     public void Draw(ImDrawListPtr drawList, Vector2? mouse)
     {
-        var scale = ImGuiHelper.Scale;
         var hovered = mouse is { } point ? HitTest(point) : null;
         // A dark disc behind the widget shows that it takes clicks while the mouse is near it.
         if (mouse is { } near && Vector2.Distance(near, center) <= BackgroundRadius * scale)

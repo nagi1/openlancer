@@ -7,8 +7,6 @@ using LibreLancer.Infocards;
 using LibreLancer.Resources;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
-using OpenLancer.Data.Strings;
-using OpenLancer.Editor.Editing;
 
 namespace OpenLancer.Editor;
 
@@ -26,10 +24,14 @@ internal sealed class EditorSession : IDisposable
         Edits = edits;
         Resources = resources;
         RepoRoot = repoRoot;
+        Texts = new ItemTexts(edits, Name, InfoText);
         edits.Changed += _ => Touch();
     }
 
     public EditSession Edits { get; }
+
+    /// <summary>The names and other texts of items, as the edit view gives them.</summary>
+    public ItemTexts Texts { get; }
 
     public ModProfile Profile => Edits.Profile;
 
@@ -159,30 +161,24 @@ internal sealed class EditorSession : IDisposable
     /// <summary>The plain text of an infocard in RDL XML.</summary>
     public static string PlainText(string xml) => RDLParse.Parse(xml).ExtractText().TrimEnd();
 
-    /// <summary>The display name of an item, or an empty string when it has no name.</summary>
-    public string ItemName(object? item) => item is SectionRef section ? SectionName(section) : Name(NameIds(item));
+    /// <summary>
+    /// The display name of an item, or an empty string when it has no name. The name of a scene item, a system or a
+    /// section comes from W (see <see cref="ItemTexts"/>).
+    /// </summary>
+    public string ItemName(object? item) => Texts.NameOf(item);
+
+    /// <summary>The text of a text key of an item, for example <c>tradelane_space_name</c>, or an empty string (see
+    /// <see cref="ItemTexts"/>).</summary>
+    public string TextOf(object? item, string key) => Texts.TextOf(item, key);
 
     /// <summary>
     /// The name of a section of the edit view: the text of its <c>ids_name</c>, from the text of the active mod or from
     /// the game data. An empty string when it has no name.
     /// </summary>
-    public string SectionName(SectionRef section) => Edits.Get(section) is { } view ? NameOf(view) : "";
+    public string SectionName(SectionRef section) => Texts.NameOf(section);
 
     /// <summary>The name of a section: the text of its <c>ids_name</c>, or an empty string.</summary>
-    public string NameOf(SectionView view)
-    {
-        if (view.Lines("ids_name") is not [{ Values: [var value, ..] }, ..])
-        {
-            return "";
-        }
-
-        if (StringPlaceholder.TryParse(FieldEdit.FormatValue(value), out var placeholder))
-        {
-            return Edits.Text(placeholder) ?? "";
-        }
-
-        return value.TryToInt32(out var id) ? Name(id) : "";
-    }
+    public string NameOf(SectionView view) => Texts.NameOf(view);
 
     /// <summary>The string resource id of the name of an item, or 0 when the item has no name.</summary>
     public static int NameIds(object? item) => item switch
@@ -193,5 +189,10 @@ internal sealed class EditorSession : IDisposable
         _ => 0,
     };
 
-    public void Dispose() => Resources.Dispose();
+    /// <summary>Frees the resources and releases the lock of the active mod (see <see cref="EditSession"/>).</summary>
+    public void Dispose()
+    {
+        Resources.Dispose();
+        Edits.Dispose();
+    }
 }

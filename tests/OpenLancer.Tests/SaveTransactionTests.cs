@@ -62,13 +62,17 @@ public sealed class SaveTransactionTests
         return TestWorkspace.Files(ws.ModFolder("act"));
     }
 
-    /// <summary>Saves <see cref="Edit"/>, and stops the editor after <paramref name="k"/> moves and deletes.</summary>
-    private static void SaveAndStop(EditSession session, int k) =>
+    /// <summary>Saves <see cref="Edit"/>, and stops the editor after <paramref name="k"/> moves and deletes. The
+    /// session then closes the handle of its lock and deletes no file, as a crash does.</summary>
+    private static void SaveAndStop(EditSession session, int k)
+    {
         Assert.Throws<EditorStopped>(() => session.Save(false, done =>
         {
             if (done == k)
                 throw new EditorStopped();
         }));
+        session.Abandon();
+    }
 
     /// <summary>
     /// The editor stops after the commit point, after k moves and deletes, for k = 0 to all of them. The next open
@@ -121,11 +125,17 @@ public sealed class SaveTransactionTests
         var session = ws.Session("act");
 
         Assert.Equal(before, TestWorkspace.Files(ws.ModFolder("act")));
-        Assert.False(Directory.Exists(folder));
+        Assert.Empty(TestWorkspace.SaveFiles(ws.ModFolder("act")));
         Assert.Equal(["120"], Values(session, Good("g1"), "price"));
+        // The lock of the session keeps the folder until the session ends.
+        session.Dispose();
+        Assert.False(Directory.Exists(folder));
     }
 
-    /// <summary>The open completes the save of a lower mod too, so B shows the saved files of the lower mod.</summary>
+    /// <summary>
+    /// The open completes the save of a lower mod too, so B shows the saved files of the lower mod. The open holds the
+    /// lock of the lower mod only for that recovery, so an editor of the lower mod can open it while the session runs.
+    /// </summary>
     [Fact]
     public void AnOpenCompletesTheSaveOfALowerMod()
     {
@@ -153,6 +163,14 @@ public sealed class SaveTransactionTests
         Assert.Equal((ValueOrigin.LowerMod, "low"), session.Origin(Gun("gun1"), "range"));
         Assert.Equal(["20"], Values(session, Gun("gun1"), "damage"));
         Assert.False(File.Exists(Journal(low)));
+
+        // The session of the active mod stays open. The recovery released the lock of the lower mod and deleted its
+        // lock files.
+        Assert.True(session.CanEdit);
+        Assert.False(Directory.Exists(Path.Combine(low, SaveTransaction.FolderName)));
+        var lowEditor = ws.Session("low");
+        Assert.True(lowEditor.CanEdit);
+        lowEditor.Execute(Set(Good("g2"), "price", new Int32Value(170)));
     }
 
     /// <summary>
@@ -212,7 +230,7 @@ public sealed class SaveTransactionTests
         Assert.Equal("[Gun]\r\nnickname = gun1\r\ndamage = 77\r\n", File.ReadAllText(weapons));
         Assert.Equal("{ \"strings\": { \"mine\": \"Mine\" } }", File.ReadAllText(strings));
         Assert.Equal(goods, File.ReadAllBytes(Act(ws, Path.Combine("patches", GoodsPath))));
-        Assert.False(Directory.Exists(Act(ws, SaveTransaction.FolderName)));
+        Assert.Empty(TestWorkspace.SaveFiles(ws.ModFolder("act")));
         Assert.True(session.CanEdit);
     }
 
@@ -257,7 +275,7 @@ public sealed class SaveTransactionTests
         Assert.True(session.CanEdit);
         Assert.Equal(["130"], Values(session, Good("g1"), "price"));
         Assert.False(File.Exists(Act(ws, Path.Combine("patches", WeaponsPath))));
-        Assert.False(Directory.Exists(Act(ws, SaveTransaction.FolderName)));
+        Assert.Empty(TestWorkspace.SaveFiles(ws.ModFolder("act")));
     }
 
     /// <summary>
@@ -283,6 +301,7 @@ public sealed class SaveTransactionTests
         Assert.Throws<InvalidOperationException>(() => session.Execute(Set(Good("g2"), "price", new Int32Value(1))));
         Assert.False(session.Save().Saved);
 
+        session.Dispose();
         var again = ws.Session("act");
         Assert.Empty(again.OpenProblems);
         Assert.Equal(expected, TestWorkspace.Files(ws.ModFolder("act")));
@@ -312,6 +331,7 @@ public sealed class SaveTransactionTests
             var later = ws.Session("act");
             Assert.Contains("mod 'other' is not complete", Assert.Single(later.OpenProblems).Message);
             Assert.True(later.CanEdit);
+            later.Dispose();
 
             ws.WriteProfile("other", "act");
             var lower = ws.Session("act");
@@ -393,14 +413,14 @@ public sealed class SaveTransactionTests
         Assert.False(result.Saved);
         Assert.Contains("is a folder", Assert.Single(result.Problems).Message);
         Assert.Equal(before, TestWorkspace.Files(ws.ModFolder("act")));
-        Assert.False(Directory.Exists(Act(ws, SaveTransaction.FolderName)));
+        Assert.Empty(TestWorkspace.SaveFiles(ws.ModFolder("act")));
         Assert.True(session.IsDirty);
 
         File.WriteAllText(Act(ws, @"patches\DATA\SHIPS"), "a file");
         var error = Assert.Throws<IOException>(() => SaveTransaction.Commit(ws.ModFolder("act"),
             [new FileChange(Act(ws, Path.Combine("patches", ShipsPath)), [1])], []));
         Assert.Contains("is a file", error.Message);
-        Assert.False(Directory.Exists(Act(ws, SaveTransaction.FolderName)));
+        Assert.Empty(TestWorkspace.SaveFiles(ws.ModFolder("act")));
     }
 
     private sealed class EditorStopped : Exception;

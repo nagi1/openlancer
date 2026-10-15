@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using LibreLancer.Data.Ini;
 using OpenLancer.Data.Mods;
 
 namespace OpenLancer.Data.Strings;
@@ -37,6 +38,18 @@ public readonly record struct StringPlaceholder(StringKind Kind, string Key)
         }
         placeholder = default;
         return false;
+    }
+
+    /// <summary>Reads a value as the merge reads it: a value whose text is a placeholder.</summary>
+    public static bool TryParse(ValueBase value, out StringPlaceholder placeholder)
+    {
+        // The text of a number or a boolean is never a placeholder.
+        if (value is Int32Value or SingleValue or BooleanValue)
+        {
+            placeholder = default;
+            return false;
+        }
+        return TryParse(value.ToString(), out placeholder);
     }
 
     public override string ToString() => (Kind == StringKind.String ? StringPrefix : InfocardPrefix) + Key;

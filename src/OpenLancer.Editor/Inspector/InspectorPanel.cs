@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.Data;
@@ -7,6 +8,8 @@ using LibreLancer.Data.GameData.Items;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Inspector;
@@ -41,6 +44,7 @@ internal sealed class InspectorPanel
     private readonly EquipmentPage equipmentPage;
     private readonly StarSystemPage starSystemPage;
     private readonly SchemaPage schemaPage;
+    private readonly ThnPage thnPage;
 
     public InspectorPanel(EditorWindow window)
     {
@@ -49,18 +53,25 @@ internal sealed class InspectorPanel
         rawFields = new RawFields(grid);
         systemObjectPage = new SystemObjectPage(window, grid);
         zonePage = new ZonePage(window, grid);
-        lightPage = new LightPage(grid);
+        lightPage = new LightPage(window, grid);
         shipPage = new ShipPage(window, grid);
         equipmentPage = new EquipmentPage(window, grid);
         starSystemPage = new StarSystemPage(window, grid);
         schemaPage = new SchemaPage(window, grid);
+        thnPage = new ThnPage(window, grid);
     }
 
-    /// <summary>True while a field edit is open. The edit history and the save wait for its end.</summary>
-    public bool IsEditing => grid.IsEditing;
+    /// <summary>True while a field edit or a drag of a curve point is open. The edit history and the save wait for its
+    /// end.</summary>
+    public bool IsEditing => grid.IsEditing || thnPage.IsDragging;
 
-    /// <summary>Ends an open field edit and keeps its text, for example when the window closes.</summary>
-    public void EndEdit() => grid.EndEdit();
+    /// <summary>Ends an open field edit and keeps its text, and an open drag of a curve point, for example when the
+    /// window closes.</summary>
+    public void EndEdit()
+    {
+        grid.EndEdit();
+        thnPage.EndDrag();
+    }
 
     /// <summary>Forgets the items that the pages keep. Call it when the profile closes.</summary>
     public void Reset()
@@ -75,14 +86,21 @@ internal sealed class InspectorPanel
     public void Draw(object? item)
     {
         grid.EndLostEdit();
+        thnPage.Frame();
         if (item == null)
         {
             PanelStates.Message("Nothing selected.", "Select an object in the Hierarchy, the Scene or the Database.");
             return;
         }
 
-        Header(item, window.Scene.KindOf(item) ?? ObjectKinds.Unknown);
+        Header(item, window.Cutscenes.KindOf(item) ?? window.Scene.KindOf(item) ?? ObjectKinds.Unknown);
         Banner();
+        // An object, a zone or a light of the open system shows its section of W.
+        var sceneSection = item is SystemObject or Zone or LightSource ? window.SectionOf(item) : null;
+        if (sceneSection != null)
+        {
+            SceneProblems(sceneSection);
+        }
 
         // The sections have no window padding, so their headers run from edge to edge.
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
@@ -94,13 +112,13 @@ internal sealed class InspectorPanel
             switch (item)
             {
                 case SystemObject obj:
-                    systemObjectPage.Draw(obj);
+                    systemObjectPage.Draw(obj, sceneSection);
                     break;
                 case Zone zone:
-                    zonePage.Draw(zone);
+                    zonePage.Draw(zone, sceneSection);
                     break;
                 case LightSource light:
-                    lightPage.Draw(light);
+                    lightPage.Draw(light, sceneSection);
                     break;
                 case Ship ship:
                     shipPage.Draw(ship);
@@ -114,9 +132,12 @@ internal sealed class InspectorPanel
                 case SectionRef section:
                     schemaPage.Draw(section);
                     break;
+                case ThnRef or ThnEventSet or CutsceneRoot:
+                    thnPage.Draw(item);
+                    break;
             }
 
-            if (item is not SectionRef)
+            if (item is not (SectionRef or ThnRef or ThnEventSet or CutsceneRoot))
             {
                 rawFields.Draw(item);
             }
@@ -151,8 +172,9 @@ internal sealed class InspectorPanel
         font.RenderChar(drawList, glyphSize,
             glyphCenter - new Vector2(glyph.X0 + glyph.X1, glyph.Y0 + glyph.Y1) / 2, kind.Abgr, kind.Icon);
 
-        var nickname = Nickname(item) ?? "";
-        var name = window.Session?.ItemName(item);
+        var cutscene = window.Cutscenes.Describe(item);
+        var nickname = cutscene?.Identifier ?? Nickname(item) ?? "";
+        var name = cutscene?.Title ?? window.Session?.ItemName(item);
         var title = !string.IsNullOrEmpty(name) ? name : nickname.Length > 0 ? nickname : item.GetType().Name;
         // A long title or nickname ends with "..." before the chip.
         var x = min.X + padding + glyphSize + MathF.Truncate(GlyphGap * scale);
@@ -241,6 +263,25 @@ internal sealed class InspectorPanel
     /// </summary>
     private (string Text, string Tooltip, bool Editing) Chip(object item)
     {
+        if (item is ThnRef or ThnEventSet or CutsceneRoot)
+        {
+            var cutscene = window.Session;
+            var why = cutscene?.NoEditReason ?? item switch
+            {
+                ThnRef element => cutscene?.Edits.CutsceneReadOnlyReason(element),
+                ThnEventSet set => cutscene?.Edits.CutsceneReadOnlyReason(set.Path),
+                _ => cutscene?.Edits.CutsceneReadOnlyReason(((CutsceneRoot)item).Path),
+            };
+            if (why == null && cutscene?.Edits.ActiveMod is { } active)
+            {
+                return ($"{EditorIcons.Pen}  Editing in {active.Id}",
+                    $"The edits go into the mod '{active.Id}' as a THN patch. A blue label marks a value that the " +
+                    "mod changes.", true);
+            }
+
+            return ($"{EditorIcons.Lock}  Read-only", why ?? "No mod is active, so the profile is read-only.", false);
+        }
+
         var session = window.Session;
         var reason = session?.NoEditReason;
         var section = window.SectionOf(item);
@@ -251,7 +292,10 @@ internal sealed class InspectorPanel
 
         if (session == null || section == null)
         {
-            reason ??= "The editor edits ships, equipment, goods and markets in format version 1.";
+            reason ??= item is SystemObject or Zone or LightSource or StarSystem
+                ? "The edit view has no section for this item, so the editor cannot change it."
+                : "The editor edits ships, equipment, goods, markets, and the objects, zones, lights and settings of " +
+                  "star systems in format version 1.";
         }
         else if (reason == null)
         {
@@ -296,10 +340,7 @@ internal sealed class InspectorPanel
             return;
         }
 
-        var padding = MathF.Truncate(BannerPadding * ImGuiHelper.Scale);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(padding));
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Strip);
-        if (ImGui.BeginChild("##banner", Vector2.Zero, ImGuiChildFlags.AutoResizeY | ImGuiChildFlags.AlwaysUseWindowPadding))
+        Strip("##banner", () =>
         {
             ImGui.TextColored(EditorTheme.Warning, EditorIcons.ExclamationTriangle.ToString());
             ImGui.SameLine();
@@ -308,6 +349,32 @@ internal sealed class InspectorPanel
             {
                 action();
             }
+        });
+    }
+
+    /// <summary>
+    /// The problems of the scene that are not about one key of the section of the item, above the sections. For
+    /// example, the scene does not show a section that the system loaded without. A problem about one key shows below
+    /// the row of the key.
+    /// </summary>
+    private void SceneProblems(SectionRef section)
+    {
+        var problems = window.Scene.Problems(section).Where(p => p.Key == null).ToList();
+        if (problems.Count > 0)
+        {
+            Strip("##problems", () => problems.ForEach(PropertyGrid.ProblemText));
+        }
+    }
+
+    /// <summary>A strip with padding above the sections, for a note or a warning.</summary>
+    private static void Strip(string id, Action content)
+    {
+        var padding = MathF.Truncate(BannerPadding * ImGuiHelper.Scale);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(padding));
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Strip);
+        if (ImGui.BeginChild(id, Vector2.Zero, ImGuiChildFlags.AutoResizeY | ImGuiChildFlags.AlwaysUseWindowPadding))
+        {
+            content();
         }
 
         ImGui.EndChild();
@@ -336,7 +403,7 @@ internal sealed class InspectorPanel
             window.Revert(section!);
         }
 
-        ImGui.SetItemTooltip("Puts back the section as the base data and the mods before the active mod have it.");
+        ImGui.SetItemTooltip(window.RevertTooltip(section));
         ImGui.Separator();
         var nickname = Nickname(item);
         if (Theme.IconMenuItem(EditorIcons.Copy, "Copy nickname", nickname != null))

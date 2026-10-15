@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using LibreLancer.Data.GameData.World;
+using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Hierarchy;
 
-/// <summary>One row of the Hierarchy tree: the system, a group, a trade lane, a zone role or an item.</summary>
+/// <summary>One row of the Hierarchy tree: the system or the cutscene, a group, a trade lane, a zone role or an
+/// item.</summary>
 internal sealed class HierarchyNode
 {
     private readonly List<HierarchyNode> children = [];
@@ -76,10 +79,12 @@ internal sealed class HierarchyNode
 internal readonly record struct HierarchyRow(HierarchyNode Node, int Depth);
 
 /// <summary>
-/// The Hierarchy tree of one system, the open state of its nodes and the search. The tree is built once for each
-/// system. The search is applied again only when its text changes. The visible rows are a flat list, so the panel can
-/// clip them and the keyboard can move along them, also to rows that are not on the screen.
+/// The Hierarchy tree of one system or of one cutscene, the open state of its nodes and the search. The tree is built
+/// again when the system, a name or the cutscene changes, and it keeps the open state of the tree before it. The search
+/// is applied again only when its text changes. The visible rows are a flat list, so the panel can clip them and the
+/// keyboard can move along them, also to rows that are not on the screen.
 /// </summary>
+/// <remarks>An item compares by its equality, so a value such as a cutscene element can be an item.</remarks>
 internal sealed class HierarchyModel
 {
     /// <summary>
@@ -102,6 +107,24 @@ internal sealed class HierarchyModel
             ["field"] = (k, _) => k == ObjectKinds.Of(ZoneRole.AsteroidField),
             ["nebula"] = (k, _) => k == ObjectKinds.Of(ZoneRole.Nebula),
             ["light"] = (_, item) => item is LightSource,
+        };
+
+    /// <summary>The types that a "t:" word selects in the tree of a cutscene: the entity types of the
+    /// Timeline.</summary>
+    internal static readonly IReadOnlyDictionary<string, Func<ObjectKind, object?, bool>> CutsceneTypes =
+        new Dictionary<string, Func<ObjectKind, object?, bool>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["camera"] = (k, _) => k == ObjectKinds.Thn.Camera,
+            ["monitor"] = (k, _) => k == ObjectKinds.Thn.Monitor,
+            ["character"] = (k, _) => k == ObjectKinds.Thn.Character,
+            ["prop"] = (k, _) => k == ObjectKinds.Thn.Prop,
+            ["light"] = (k, _) => k == ObjectKinds.Thn.Light,
+            ["effect"] = (k, _) => k == ObjectKinds.Thn.Effect,
+            ["sound"] = (k, _) => k == ObjectKinds.Thn.Sound,
+            ["marker"] = (k, _) => k == ObjectKinds.Thn.Marker,
+            ["path"] = (k, _) => k == ObjectKinds.Thn.Path,
+            ["scene"] = (k, _) => k == ObjectKinds.Thn.Scene,
+            ["other"] = (k, _) => k == ObjectKinds.Thn.Other,
         };
 
     // The groups of the system objects, in the order of the tree.
@@ -128,8 +151,8 @@ internal sealed class HierarchyModel
         [ZoneRole.Other] = "Other zones",
     };
 
-    private readonly Func<int, string> name;
-    private readonly Dictionary<object, HierarchyNode> nodes = new(ReferenceEqualityComparer.Instance);
+    private readonly IReadOnlyDictionary<string, Func<ObjectKind, object?, bool>> typeWords;
+    private readonly Dictionary<object, HierarchyNode> nodes = [];
     private readonly List<HierarchyNode> items = [];
 
     // The open groups without a search. Groups are closed by default, and the root is open.
@@ -142,63 +165,61 @@ internal sealed class HierarchyModel
     private string[] words = [];
     private Func<ObjectKind, object?, bool>[] types = [];
 
-    /// <param name="name">The text of a string resource id, or an empty string when the id is 0 or unknown.</param>
-    public HierarchyModel(SystemIndex index, Func<int, string> name)
+    /// <param name="text">The text of a text key of an item, for example <c>ids_name</c>, or an empty string (see
+    /// <see cref="EditorSession.TextOf"/>).</param>
+    /// <param name="previous">The tree before this one, or null. When it shows the same system, the new tree keeps its
+    /// open groups and its search.</param>
+    public HierarchyModel(SystemIndex index, Func<object, string, string> text, HierarchyModel? previous = null)
+        : this(SystemTree(index, text), index.System, Types, previous)
     {
         Index = index;
-        this.name = name;
-        var system = index.System;
-        var source = index.Source;
-        Root = new HierarchyNode("root", ObjectKinds.StarSystem,
-            name(source.IdsName) is { Length: > 0 } systemName ? systemName : source.Nickname, source.Nickname, source);
+    }
+
+    /// <param name="root">The root of the tree. Each node with an item is a row that a click selects.</param>
+    /// <param name="identity">What the tree shows. A new tree with the same identity as the tree before keeps its open
+    /// groups and its search.</param>
+    /// <param name="typeWords">The types of the "t:" words of the search.</param>
+    private HierarchyModel(HierarchyNode root, object identity,
+        IReadOnlyDictionary<string, Func<ObjectKind, object?, bool>> typeWords, HierarchyModel? previous)
+    {
+        Root = root;
+        Identity = identity;
+        this.typeWords = typeWords;
         open.Add(Root);
-
-        // The rings of the lanes are in the lane group. Each other object is in the group of its kind, or in the
-        // group of other objects when no group has its kind.
-        var laneRings = new HashSet<SystemObject>(index.Lanes.SelectMany(l => l.Rings),
-            ReferenceEqualityComparer.Instance);
-        var groupedKinds = ObjectGroups.SelectMany(g => g.Members).ToHashSet();
-        foreach (var (id, groupName, kind, members) in ObjectGroups)
-        {
-            var group = new HierarchyNode(id, kind, groupName);
-            if (id == "lanes")
-            {
-                foreach (var lane in index.Lanes.Select(Lane).OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase))
-                {
-                    group.Add(lane);
-                }
-            }
-            else
-            {
-                bool InGroup(ObjectKind objectKind) =>
-                    id == "other" ? !groupedKinds.Contains(objectKind) : members.Contains(objectKind);
-                AddSorted(group, system.Objects.Where(o => !laneRings.Contains(o) && InGroup(ObjectKinds.Of(o)))
-                    .Select(o => Item("o:" + o.Nickname, ObjectKinds.Of(o), o, o.Nickname)));
-            }
-
-            AddGroup(group);
-        }
-
-        var zones = new HierarchyNode("zones", ObjectKinds.Of(ZoneRole.Other), "Zones");
-        foreach (var role in Enum.GetValues<ZoneRole>())
-        {
-            var roleNode = new HierarchyNode("zones/" + role, ObjectKinds.Of(role), RoleNames[role]);
-            AddSorted(roleNode, system.Zones.Where(z => index.ZoneRole(z) == role)
-                .Select(z => Item("z:" + z.Nickname, ObjectKinds.Of(role), z, z.Nickname)));
-            if (roleNode.Children.Count > 0)
-            {
-                zones.Add(roleNode);
-            }
-        }
-
-        AddGroup(zones);
-        var lights = new HierarchyNode("lights", ObjectKinds.Light, "Lights");
-        AddSorted(lights, system.LightSources.Select(l => Item("l:" + l.Nickname, ObjectKinds.Light, l, l.Nickname)));
-        AddGroup(lights);
-
+        Register(Root);
         Root.CountItems();
         ApplySearch();
+        if (previous != null && Equals(previous.Identity, identity))
+        {
+            KeepState(previous);
+        }
     }
+
+    /// <summary>
+    /// The tree of a cutscene: the cutscene row, then the entities in the groups of the Timeline and in its order. The
+    /// monitors are first in the cameras. A tree of the same timeline is the tree before. A new tree keeps the open
+    /// groups and the search of the tree before for the same cutscene.
+    /// </summary>
+    public static HierarchyModel ForCutscene(TimelineModel timeline, HierarchyModel? previous) =>
+        previous != null && ReferenceEquals(previous.Timeline, timeline)
+            ? previous
+            : new HierarchyModel(CutsceneTree(timeline), timeline.Path.ToUpperInvariant(), CutsceneTypes, previous)
+            {
+                Timeline = timeline,
+            };
+
+    /// <summary>
+    /// The tree of the scene: the tree before when the index and the names did not change, or else a new tree that keeps
+    /// the open groups and the search of the tree before for the same system.
+    /// </summary>
+    /// <param name="namesVersion">The names version of the scene (see <see cref="SceneView.NamesVersion"/>). A new
+    /// version means that a name changed.</param>
+    /// <param name="previous">The tree before this one, or null.</param>
+    public static HierarchyModel For(SystemIndex index, int namesVersion, Func<object, string, string> text,
+        HierarchyModel? previous) =>
+        previous != null && ReferenceEquals(previous.Index, index) && previous.NamesVersion == namesVersion
+            ? previous
+            : new HierarchyModel(index, text, previous) { NamesVersion = namesVersion };
 
     /// <summary>
     /// The number of items of a system that each "t:" word of <see cref="Types"/> selects. The system does not have to
@@ -217,10 +238,19 @@ internal sealed class HierarchyModel
             StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>The index of the system that the tree shows.</summary>
-    public SystemIndex Index { get; }
+    /// <summary>The index of the system that the tree shows, or null for the tree of a cutscene.</summary>
+    public SystemIndex? Index { get; }
 
-    /// <summary>The system row. It is the parent of all groups.</summary>
+    /// <summary>The timeline that the tree of a cutscene shows, or null for the tree of a system.</summary>
+    public TimelineModel? Timeline { get; private init; }
+
+    /// <summary>What the tree shows: the system, or the install path of the cutscene without letter case.</summary>
+    public object Identity { get; }
+
+    /// <summary>The names version of the scene that the tree shows (see <see cref="For"/>).</summary>
+    public int NamesVersion { get; private init; }
+
+    /// <summary>The system row or the cutscene row. It is the parent of all groups.</summary>
     public HierarchyNode Root { get; }
 
     /// <summary>The current search text.</summary>
@@ -248,7 +278,7 @@ internal sealed class HierarchyModel
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         words = parts.Where(p => !p.StartsWith("t:", StringComparison.OrdinalIgnoreCase)).ToArray();
         types = parts.Where(p => p.StartsWith("t:", StringComparison.OrdinalIgnoreCase))
-            .Select(p => Types.GetValueOrDefault(p[2..], (_, _) => false))
+            .Select(p => typeWords.GetValueOrDefault(p[2..], (_, _) => false))
             .ToArray();
         closedInSearch.Clear();
         ApplySearch();
@@ -330,18 +360,151 @@ internal sealed class HierarchyModel
     }
 
     /// <summary>
-    /// Makes the row of an item: its name and its nickname, or only its nickname when it has no name. The lookup by
-    /// item finds the row.
+    /// Takes the search and the open groups of the tree before this one. A node has the same id in both trees, also
+    /// when its name changed.
     /// </summary>
-    private HierarchyNode Item(string id, ObjectKind kind, object item, string nickname)
+    private void KeepState(HierarchyModel previous)
     {
-        var itemName = name(EditorSession.NameIds(item));
-        var node = itemName.Length == 0
+        SetSearch(previous.Search);
+        var byId = new Dictionary<string, HierarchyNode>();
+
+        void Add(HierarchyNode node)
+        {
+            byId[node.Id] = node;
+            foreach (var child in node.Children)
+            {
+                Add(child);
+            }
+        }
+
+        Add(Root);
+        open.Clear();
+        open.UnionWith(previous.open.Select(n => byId.GetValueOrDefault(n.Id)).OfType<HierarchyNode>());
+        closedInSearch.UnionWith(previous.closedInSearch.Select(n => byId.GetValueOrDefault(n.Id))
+            .OfType<HierarchyNode>());
+        rows = null;
+    }
+
+    /// <summary>Records the node of each item below a node, so that the lookup by item finds the row.</summary>
+    private void Register(HierarchyNode node)
+    {
+        if (node.Item != null)
+        {
+            nodes[node.Item] = node;
+            items.Add(node);
+        }
+
+        foreach (var child in node.Children)
+        {
+            Register(child);
+        }
+    }
+
+    /// <summary>The tree of a system: the system row, the groups of the objects, the zones by role and the
+    /// lights.</summary>
+    private static HierarchyNode SystemTree(SystemIndex index, Func<object, string, string> text)
+    {
+        var system = index.System;
+        var source = index.Source;
+        var root = new HierarchyNode("root", ObjectKinds.StarSystem,
+            text(source, "strid_name") is { Length: > 0 } systemName ? systemName : source.Nickname, source.Nickname,
+            source);
+
+        // The rings of the lanes are in the lane group. Each other object is in the group of its kind, or in the
+        // group of other objects when no group has its kind.
+        var laneRings = new HashSet<SystemObject>(index.Lanes.SelectMany(l => l.Rings),
+            ReferenceEqualityComparer.Instance);
+        var groupedKinds = ObjectGroups.SelectMany(g => g.Members).ToHashSet();
+        foreach (var (id, groupName, kind, members) in ObjectGroups)
+        {
+            var group = new HierarchyNode(id, kind, groupName);
+            if (id == "lanes")
+            {
+                foreach (var lane in index.Lanes.Select(l => Lane(l, text))
+                             .OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    group.Add(lane);
+                }
+            }
+            else
+            {
+                bool InGroup(ObjectKind objectKind) =>
+                    id == "other" ? !groupedKinds.Contains(objectKind) : members.Contains(objectKind);
+                AddSorted(group, system.Objects.Where(o => !laneRings.Contains(o) && InGroup(ObjectKinds.Of(o)))
+                    .Select(o => Item("o:" + o.Nickname, ObjectKinds.Of(o), o, o.Nickname, text)));
+            }
+
+            AddGroup(root, group);
+        }
+
+        var zones = new HierarchyNode("zones", ObjectKinds.Of(ZoneRole.Other), "Zones");
+        foreach (var role in Enum.GetValues<ZoneRole>())
+        {
+            var roleNode = new HierarchyNode("zones/" + role, ObjectKinds.Of(role), RoleNames[role]);
+            AddSorted(roleNode, system.Zones.Where(z => index.ZoneRole(z) == role)
+                .Select(z => Item("z:" + z.Nickname, ObjectKinds.Of(role), z, z.Nickname, text)));
+            if (roleNode.Children.Count > 0)
+            {
+                zones.Add(roleNode);
+            }
+        }
+
+        AddGroup(root, zones);
+        var lights = new HierarchyNode("lights", ObjectKinds.Light, "Lights");
+        AddSorted(lights,
+            system.LightSources.Select(l => Item("l:" + l.Nickname, ObjectKinds.Light, l, l.Nickname, text)));
+        AddGroup(root, lights);
+        return root;
+    }
+
+    /// <summary>
+    /// The tree of a cutscene: the cutscene row, then the groups of the Timeline with their entities in the order of the
+    /// file. The target names that no entity of the script has are not entities, so they are not in the tree.
+    /// </summary>
+    private static HierarchyNode CutsceneTree(TimelineModel timeline)
+    {
+        var root = new HierarchyNode("cutscene", ObjectKinds.Thn.Script,
+            System.IO.Path.GetFileNameWithoutExtension(timeline.Path), "", new CutsceneRoot(timeline.Path),
+            timeline.Path);
+        foreach (var group in timeline.Groups.Where(g => g.Id != TimelineGroupKind.Missing))
+        {
+            var node = new HierarchyNode("g:" + group.Id, group.Kind, group.Label);
+            var added = new HashSet<ThnRef>();
+            foreach (var lane in group.Lanes)
+            {
+                if (lane.Monitor is { } monitor && added.Add(monitor))
+                {
+                    node.Add(new HierarchyNode("e:" + monitor.Id.Value, ObjectKinds.Thn.Monitor, lane.Name,
+                        lane.Main ? "main" : "", monitor, lane.Note));
+                }
+            }
+
+            foreach (var row in group.Rows)
+            {
+                if (row.Entity is { } entity && added.Add(entity))
+                {
+                    var detail = row.Mark == TimelineModel.HiddenEntityMark ? "not used"
+                        : row.Mark == TimelineModel.IgnoredMonitorMark ? "ignored monitor only"
+                        : "";
+                    node.Add(new HierarchyNode("e:" + entity.Id.Value, row.Kind, row.Name, detail, entity, row.Mark));
+                }
+            }
+
+            AddGroup(root, node);
+        }
+
+        return root;
+    }
+
+    /// <summary>Makes the row of an item: its name and its nickname, or only its nickname when it has no
+    /// name.</summary>
+    private static HierarchyNode Item(string id, ObjectKind kind, object item, string nickname,
+        Func<object, string, string> text)
+    {
+        var itemName = text(item, "ids_name");
+        return itemName.Length == 0
             ? new HierarchyNode(id, kind, nickname, "", item)
             : new HierarchyNode(id, kind, itemName, nickname, item);
-        nodes[item] = node;
-        items.Add(node);
-        return node;
     }
 
     /// <summary>
@@ -349,18 +512,18 @@ internal sealed class HierarchyModel
     /// the trade lane space names of the end rings, then the names of the end rings, and then their nicknames, because
     /// all rings of a lane often have the same name.
     /// </summary>
-    private HierarchyNode Lane(TradeLane lane)
+    private static HierarchyNode Lane(TradeLane lane, Func<object, string, string> text)
     {
         var (first, last) = (lane.Rings[0], lane.Rings[^1]);
-        var label = Ends(name(first.TradelaneSpaceName), name(last.TradelaneSpaceName)) ??
-                    Ends(name(first.IdsName), name(last.IdsName)) ??
+        var label = Ends(text(first, "tradelane_space_name"), text(last, "tradelane_space_name")) ??
+                    Ends(text(first, "ids_name"), text(last, "ids_name")) ??
                     (lane.Rings.Count == 1 ? first.Nickname : $"{first.Nickname} -> {last.Nickname}");
         var rings = lane.Rings.Count == 1 ? "1 ring" : $"{lane.Rings.Count} rings";
         var node = new HierarchyNode("lane:" + first.Nickname, ObjectKinds.TradeLane, label, "", null,
             $"Trade lane from {first.Nickname} to {last.Nickname}, {rings}.");
         foreach (var ring in lane.Rings)
         {
-            node.Add(Item("o:" + ring.Nickname, ObjectKinds.Of(ring), ring, ring.Nickname));
+            node.Add(Item("o:" + ring.Nickname, ObjectKinds.Of(ring), ring, ring.Nickname, text));
         }
 
         return node;
@@ -372,12 +535,12 @@ internal sealed class HierarchyModel
             ? null
             : $"{first} -> {last}";
 
-    private void AddGroup(HierarchyNode group)
+    private static void AddGroup(HierarchyNode root, HierarchyNode group)
     {
         // A group without items does not show.
         if (group.Children.Count > 0)
         {
-            Root.Add(group);
+            root.Add(group);
         }
     }
 
@@ -422,7 +585,7 @@ internal sealed class HierarchyModel
         }
 
         node.Matches = node.Children.Sum(Count);
-        // The system row has no count. Its groups show the counts.
+        // The root row has no count. Its groups show the counts.
         node.CountText = node == Root ? ""
             : IsSearching ? $"{Number(node.Matches)} / {Number(node.Total)}"
             : Number(node.Total);

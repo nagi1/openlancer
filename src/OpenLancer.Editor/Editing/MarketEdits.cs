@@ -26,6 +26,9 @@ internal static class MarketEdits
     /// <summary>The text of the values of a line after the good.</summary>
     public static string ValuesText(MarketLine line) => FieldEdit.FormatLine(line.Values.Skip(1).ToList());
 
+    /// <summary>The key of the field of a line in the "Sold at" section.</summary>
+    public static FieldKey LineKey(MarketLine line) => new(line.Section, MarketGood, line.Line);
+
     /// <summary>True when the active mod adds the section of the line, so an edit can change the line.</summary>
     public static bool CanChange(EditSession session, MarketLine line) =>
         session.Get(line.Section) is { IsNew: true, ReadOnlyReason: null };

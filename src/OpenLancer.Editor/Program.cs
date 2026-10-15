@@ -5,15 +5,31 @@ namespace OpenLancer.Editor;
 
 internal static class Program
 {
-    /// <summary>Starts the editor. The optional argument is a profile file (.json) to open.</summary>
+    /// <summary>
+    /// Starts the editor. The command line is in <see cref="EditorOptions"/>. A wrong command line of the bench writes
+    /// the message to the error output and gives the exit code 2. A wrong command line of a normal start opens the
+    /// editor with the message on the Welcome screen.
+    /// </summary>
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
+        EditorOptions options;
+        try
+        {
+            options = EditorOptions.Parse(args);
+        }
+        catch (ArgumentException e)
+        {
+            Console.Error.WriteLine(e.Message);
+            return 2;
+        }
+
         EditorWindow? window = null;
         AppHandler.Run(() =>
         {
-            window = new EditorWindow(args.Length > 0 ? args[0] : null);
+            window = new EditorWindow(options);
             window.Run();
         }, () => window?.Crashed());
+        return window?.ExitCode ?? 0;
     }
 }

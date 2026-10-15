@@ -1,0 +1,129 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Numerics;
+
+namespace OpenLancer.Data.Thn;
+
+/// <summary>The targets of an event type, from the roles of the retail events (section 7.3 of the M8 design).</summary>
+/// <param name="Type">The event type, as a THN name.</param>
+/// <param name="First">The entity types of the first target.</param>
+/// <param name="Second">The entity types of the second target, or empty when the event has one target.</param>
+/// <param name="SecondRequired">True when the event needs a second target, false when it can have one.</param>
+public sealed record ThnEventRole(string Type, IReadOnlyList<string> First, IReadOnlyList<string> Second,
+    bool SecondRequired)
+{
+    /// <summary>True when an entity type fits a target. Target 1 is the first.</summary>
+    public bool Fits(int target, string? entityType) =>
+        entityType != null && (target == 1 ? First : Second).Contains(entityType, StringComparer.Ordinal);
+
+    /// <summary>True when the event can have a target at a place, from 1.</summary>
+    public bool Has(int target) => target == 1 || target == 2 && Second.Count > 0;
+}
+
+/// <summary>
+/// The events that the Add event menu of a Timeline row offers, and the event that each one adds. A new event has the
+/// usual props of its type in retail, so the engine plays it at once, and the Inspector shows its rows.
+/// </summary>
+public static class ThnTemplates
+{
+    /// <summary>The length of a new event with a length, in seconds.</summary>
+    public const float NewLength = 1;
+
+    /// <summary>The roles of the event types that retail uses, in the order of the menu. A MONITOR takes only
+    /// SET_CAMERA, and the SCENE entity only START_FOG_PROP_ANIM.</summary>
+    public static readonly ImmutableArray<ThnEventRole> Roles =
+    [
+        new("SET_CAMERA", ["MONITOR"], ["CAMERA"], true),
+        new("START_MOTION", ["DEFORMABLE", "COMPOUND"], [], false),
+        new("START_IK", ["DEFORMABLE"], Movable, true),
+        new("ATTACH_ENTITY", Movable, Movable, true),
+        new("START_SPATIAL_PROP_ANIM", Movable, Movable, false),
+        new("START_PATH_ANIMATION", Movable, ["MOTION_PATH"], true),
+        new("CONNECT_HARDPOINTS", ["COMPOUND"], ["DEFORMABLE", "COMPOUND"], true),
+        new("START_SOUND", ["SOUND"], [], false),
+        new("START_AUDIO_PROP_ANIM", ["SOUND"], [], false),
+        new("START_PSYS", ["PSYS"], [], false),
+        new("START_PSYS_PROP_ANIM", ["PSYS"], [], false),
+        new("START_LIGHT_PROP_ANIM", ["LIGHT"], ["LIGHT"], false),
+        new("START_CAMERA_PROP_ANIM", ["CAMERA"], ["CAMERA"], false),
+        new("START_FLR_HEIGHT_ANIM", ["DEFORMABLE"], ["MARKER"], false),
+        new("START_FOG_PROP_ANIM", ["SCENE"], [], false),
+    ];
+
+    /// <summary>The entity types with a place in the scene other than SCENE: "any entity" in the roles of section 7.3.
+    /// In retail, no attachment, IK event, spatial animation or path animation names a MONITOR or the SCENE entity as
+    /// a target.</summary>
+    private static string[] Movable =>
+        ["CAMERA", "COMPOUND", "DEFORMABLE", "LIGHT", "MARKER", "MOTION_PATH", "PSYS", "SOUND"];
+
+    /// <summary>The role of an event type, or null for a type that retail does not use.</summary>
+    public static ThnEventRole? Role(string? eventType) => Roles.FirstOrDefault(r => r.Type == eventType);
+
+    /// <summary>The events whose first target can be an entity of a type, in the order of the menu.</summary>
+    public static IEnumerable<ThnEventRole> RolesFor(string? entityType) => Roles.Where(r => r.Fits(1, entityType));
+
+    /// <summary>
+    /// A new event: <c>{ time, TYPE, { targets }, { props } }</c> with the usual props of the type. An animation of
+    /// props (a START_*_PROP_ANIM) has an empty record of its props. The engine changes only the values that such an
+    /// event has (for example StartSpatialPropAnimEvent.cs:67-101, StartCameraPropAnimEvent.cs:33-48), so the new
+    /// animation changes nothing until an edit sets a value. A value from the entity would not be enough: the
+    /// animation moves from the values at its time, which an earlier event can have changed.
+    /// </summary>
+    /// <param name="first">The first target.</param>
+    /// <param name="second">The second target, or null.</param>
+    /// <exception cref="ArgumentException">The type is not in <see cref="Roles"/>, the time is not a finite number or is
+    /// below 0, or a required second target is missing.</exception>
+    public static ThnTable NewEvent(string type, float time, string first, string? second)
+    {
+        var role = Role(type) ?? throw new ArgumentException($"{type} is not an event type of the Add event menu.", nameof(type));
+        if (!float.IsFinite(time) || time < 0)
+            throw new ArgumentException("The time of an event is a number from 0.", nameof(time));
+        if (role.SecondRequired && second == null)
+            throw new ArgumentException($"{type} needs a second target.", nameof(second));
+        var targets = second == null ? ThnTable.FromList(new ThnText(first))
+            : ThnTable.FromList(new ThnText(first), new ThnText(second));
+        var head = new ThnValue[] { new ThnNumber(time), new ThnSymbol(type), targets };
+        return Props(type) is { } props ? ThnTable.FromList([.. head, props]) : ThnTable.FromList(head);
+    }
+
+    /// <summary>The props of a new event of a type, or null for SET_CAMERA, which has none.</summary>
+    private static ThnTable? Props(string type)
+    {
+        var length = Field("duration", Number(NewLength));
+        var root = Field("target_type", new ThnSymbol("ROOT"));
+        var part = Field("target_part", new ThnText(""));
+        var zero = Field("offset", Vector(Vector3.Zero));
+        return type switch
+        {
+            "SET_CAMERA" => null,
+            "START_MOTION" => Record(Field("animation", new ThnText("")), length, Field("time_scale", Number(1))),
+            "START_IK" => Record(length, Field("end_effector", new ThnText("")), Field("count_to_root", Number(1)), part,
+                root, Field("damping", Number(1)), Field("point_at", Number(1)), Field("move_to", Number(0)),
+                Field("transition_duration", Number(0.1f))),
+            // Without flags the engine uses POSITION and ORIENTATION (AttachEntityEvent.cs:60). A new event says so.
+            "ATTACH_ENTITY" => Record(Field("duration", Number(0)), zero, Field("up", new ThnSymbol("Y_AXIS")),
+                Field("front", new ThnSymbol("NEG_Z_AXIS")), part, root, Field("flags", Number(6))),
+            "START_SPATIAL_PROP_ANIM" => Record(length, part, root, Field("spatialprops", Record())),
+            "START_PATH_ANIMATION" => Record(length, Field("start_percent", Number(0)), Field("stop_percent", Number(1)),
+                zero, Field("flags", Number(6))),
+            "CONNECT_HARDPOINTS" => Record(Field("hardpoint", new ThnText("")), Field("parent_hardpoint", new ThnText(""))),
+            "START_AUDIO_PROP_ANIM" => Record(length, Field("audioprops", Record())),
+            "START_PSYS_PROP_ANIM" => Record(length, Field("psysprops", Record())),
+            "START_LIGHT_PROP_ANIM" => Record(length, Field("lightprops", Record())),
+            "START_CAMERA_PROP_ANIM" => Record(length, Field("cameraprops", Record())),
+            "START_FLR_HEIGHT_ANIM" => Record(length, root, Field("floor_height", Number(0))),
+            "START_FOG_PROP_ANIM" => Record(length, Field("fogprops", Record())),
+            _ => Record(length),
+        };
+    }
+
+    private static ThnNumber Number(float value) => new(value);
+
+    private static ThnField Field(string key, ThnValue value) => new(key, value);
+
+    private static ThnTable Record(params ThnField[] fields) => ThnTable.FromRecord(fields);
+
+    private static ThnTable Vector(Vector3 v) => ThnPose.Vector(v);
+}

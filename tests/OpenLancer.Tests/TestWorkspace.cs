@@ -8,12 +8,17 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Strings;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Tests;
 
 /// <summary>
 /// A temporary folder with a small synthetic game install and mod folders. Deleted on dispose.
 /// </summary>
+/// <remarks>
+/// An edit session holds the lock of its active mod until it is disposed. The workspace disposes each session that it
+/// opened, before it deletes the folder.
+/// </remarks>
 internal sealed class TestWorkspace : IDisposable
 {
     public const string ResourcesSection = """
@@ -21,6 +26,15 @@ internal sealed class TestWorkspace : IDisposable
         DLL = InfoCards.dll
         DLL = Missing.dll
         """;
+
+    /// <summary>The lock files of a session in a mod folder. They are not content of the mod.</summary>
+    private static readonly string[] LockFiles =
+    [
+        Path.Combine(SaveTransaction.FolderName, ModLock.FileName),
+        Path.Combine(SaveTransaction.FolderName, ModLock.InfoName),
+    ];
+
+    private readonly List<EditSession> sessions = [];
 
     public TestWorkspace()
     {
@@ -48,6 +62,11 @@ internal sealed class TestWorkspace : IDisposable
         IniWriter.WriteBini(stream, sections);
     }
 
+    /// <summary>Writes INI text as a binary (BINI) file into the base folder. The text parser gives the value types,
+    /// for example a string for <c>br01_2</c>.</summary>
+    public void WriteBaseBini(string path, string text) =>
+        WriteBaseBini(path, IniFile.ParseFile(path, new MemoryStream(Encoding.ASCII.GetBytes(text))).ToArray());
+
     public Mod Mod(string id, Dictionary<string, string> files, string? manifestExtra = null)
     {
         var folder = Path.Combine(Root, "mods", id);
@@ -58,7 +77,8 @@ internal sealed class TestWorkspace : IDisposable
         return Data.Mods.Mod.Load(folder);
     }
 
-    public ModOverlay Build(params Mod[] mods) => ModOverlay.Build(Base, mods, FakeDllWriter.Instance);
+    /// <summary>Builds the overlay of the mods, with the engine evaluator for the cutscene patches.</summary>
+    public ModOverlay Build(params Mod[] mods) => ModOverlay.Build(Base, mods, FakeDllWriter.Instance, ThnScripts.Evaluator);
 
     /// <summary>The profile file that <see cref="WriteProfile"/> writes.</summary>
     public string ProfilePath => Path.Combine(Root, "profiles", "test.json");
@@ -69,11 +89,36 @@ internal sealed class TestWorkspace : IDisposable
     public void WriteProfile(params string[] modIds) =>
         Write(ProfilePath, $$"""{ "base": "../base", "mods": [ {{string.Join(", ", modIds.Select(id => $"\"../mods/{id}\""))}} ] }""");
 
-    /// <summary>Loads the profile of <see cref="WriteProfile"/> and opens an edit session on it.</summary>
-    public EditSession Session(string? activeModId) =>
-        EditSession.Open(ModProfile.Load(ProfilePath), activeModId, FakeDllWriter.Instance);
+    /// <summary>
+    /// Loads the profile of <see cref="WriteProfile"/> and opens an edit session on it. The workspace disposes the
+    /// session.
+    /// </summary>
+    /// <param name="thn">The cutscene evaluator, or null for the engine evaluator.</param>
+    /// <exception cref="InvalidOperationException">Another session of the test holds the lock of the active mod, so the
+    /// session would be read-only. Dispose the other session first, or use <see cref="SecondSession"/>.</exception>
+    public EditSession Session(string? activeModId, IThnEvaluator? thn = null)
+    {
+        var session = SecondSession(activeModId, thn);
+        if (session.ReadOnlyReason?.StartsWith("Another editor has mod", StringComparison.Ordinal) == true)
+            throw new InvalidOperationException(
+                $"Another session of this test holds the lock of mod '{activeModId}'. Dispose that session first.");
+        return session;
+    }
 
-    /// <summary>The files of a folder: the relative path to the content. An empty result when the folder is missing.</summary>
+    /// <summary>Opens an edit session as a second editor does: it can find the lock of the active mod taken.</summary>
+    /// <param name="thn">The cutscene evaluator, or null for the engine evaluator.</param>
+    public EditSession SecondSession(string? activeModId, IThnEvaluator? thn = null)
+    {
+        var session = EditSession.Open(ModProfile.Load(ProfilePath), activeModId, FakeDllWriter.Instance,
+            thn ?? ThnScripts.Evaluator);
+        sessions.Add(session);
+        return session;
+    }
+
+    /// <summary>
+    /// The files of a folder: the relative path to the content. An empty result when the folder is missing. The lock
+    /// files of a session in a mod folder are not in the result.
+    /// </summary>
     /// <param name="exclude">A subfolder to leave out, or null.</param>
     public static SortedDictionary<string, string> Files(string folder, string? exclude = null)
     {
@@ -83,10 +128,23 @@ internal sealed class TestWorkspace : IDisposable
         foreach (var file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
         {
             var relative = Path.GetRelativePath(folder, file);
+            if (LockFiles.Contains(relative, StringComparer.OrdinalIgnoreCase))
+                continue;
             if (exclude == null || !relative.StartsWith(exclude + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 result[relative] = Convert.ToHexString(File.ReadAllBytes(file));
         }
         return result;
+    }
+
+    /// <summary>The names of the files in the <c>.olsave</c> folder of a mod, without the lock files. Empty when the
+    /// folder is missing.</summary>
+    public static string[] SaveFiles(string modFolder)
+    {
+        var folder = Path.Combine(modFolder, SaveTransaction.FolderName);
+        return !Directory.Exists(folder)
+            ? []
+            : Directory.EnumerateFileSystemEntries(folder).Select(e => Path.GetFileName(e))
+                .Where(n => n is not (ModLock.FileName or ModLock.InfoName)).Order(StringComparer.Ordinal).ToArray();
     }
 
     /// <summary>Parses a merged file of the overlay.</summary>
@@ -98,6 +156,8 @@ internal sealed class TestWorkspace : IDisposable
 
     public void Dispose()
     {
+        foreach (var session in sessions)
+            session.Dispose();
         try
         {
             Directory.Delete(Root, true);

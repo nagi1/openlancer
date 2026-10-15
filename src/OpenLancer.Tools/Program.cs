@@ -10,8 +10,10 @@ using OpenLancer.Data.Dump;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Data.Thn;
 using OpenLancer.Data.Validation;
 using OpenLancer.Runtime.Strings;
+using OpenLancer.Runtime.Thn;
 using OpenLancer.Runtime.Validation;
 
 namespace OpenLancer.Tools;
@@ -36,11 +38,18 @@ internal static class Program
                                             --active: report only the problems that this mod adds to the mods that
                                             load before it. The later mods are not used.
                                             --json: write the problems to stdout as a JSON list of
-                                            {"severity", "source", "message"}, and nothing else.
+                                            {"severity", "source", "message"}, and nothing else. A problem
+                                            of a cutscene also has "cutscene": the path, the element and
+                                            the value.
           deploy <profile.json>             Build and validate, then write the merged data next to the profile.
           ini <profile.json|folder> <path>  Print a merged INI file (binary or text) as text.
           dump <profile.json|folder> <out>  Write a canonical JSON dump of the resolved game data.
-          thn <profile.json|folder> <path>  Print a cutscene script (.thn) as readable Lua text.
+          thn <profile.json|folder> <path>  Print a cutscene script (.thn) as canonical Lua text. The script comes from
+                                            the merged view, so the text shows the changes of the mods.
+          thn roundtrip <profile.json|folder> [<path>]
+                                            Check that the canonical text of each .thn file, or of one file, gives the
+                                            same tables, with exact numbers and key order, and that the text is a fixed
+                                            point. Exit 1 on a difference. Each problem names the first different value.
 
         Exit codes: 0 = OK, 1 = the data has problems, 2 = the command could not run (wrong arguments, files, folders).
         """;
@@ -65,6 +74,8 @@ internal static class Program
                 ["deploy", var profile] => Deploy(profile),
                 ["ini", var source, var path] => PrintIni(source, path),
                 ["dump", var source, var output] => Dump(source, output),
+                ["thn", "roundtrip", var source] => ThnRoundTrip(source, null),
+                ["thn", "roundtrip", var source, var path] => ThnRoundTrip(source, path),
                 ["thn", var source, var path] => PrintThn(source, path),
                 _ => Fail(Usage),
             };
@@ -146,31 +157,33 @@ internal static class Program
     /// merge.</exception>
     private static List<Diagnostic> Problems(ModProfile profile, string? activeId)
     {
-        var count = profile.Mods.Count;
         ModOverlay? lower = null;
         if (activeId != null)
         {
-            count = profile.Mods.Select(m => m.Id).ToList().IndexOf(activeId) + 1;
-            if (count == 0)
+            var index = profile.IndexOf(activeId);
+            if (index < 0)
                 throw new ModLoadException(profile.FilePath, $"The profile has no mod '{activeId}'.");
-            lower = ModOverlay.Build(profile.BaseFolder, profile.Mods.Take(count - 1).ToList(), DllStringResourceWriter.Instance);
+            lower = ModOverlay.Build(profile.BaseFolder, profile.Mods.Take(index).ToList(), DllStringResourceWriter.Instance,
+                ThornEvaluator.Instance);
             if (lower.HasErrors)
                 throw new ModLoadException(profile.FilePath,
                     $"The mods that load before '{activeId}' have merge errors. Run 'oltool build' on a profile with them.");
         }
-        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods.Take(count).ToList(), DllStringResourceWriter.Instance);
+        var overlay = ModOverlay.Build(profile.BaseFolder, profile.ModsThrough(activeId), DllStringResourceWriter.Instance,
+            ThornEvaluator.Instance);
         var problems = (lower == null ? overlay.Diagnostics : Diagnostic.NewIn(lower.Diagnostics, overlay.Diagnostics)).ToList();
         if (!overlay.HasErrors)
         {
             var before = lower?.CreateFileSystem() ?? FileSystem.FromPath(overlay.BaseFolder);
-            problems.AddRange(ProfileValidator.NewProblems(before, overlay.CreateFileSystem()));
+            problems.AddRange(ProfileValidator.NewProblems(before, overlay.CreateFileSystem(), overlay.CutscenePaths));
         }
         return problems;
     }
 
     private static int ReportValidation(ModOverlay overlay)
     {
-        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(overlay.BaseFolder), overlay.CreateFileSystem());
+        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(overlay.BaseFolder), overlay.CreateFileSystem(),
+            overlay.CutscenePaths);
         foreach (var problem in problems)
             Err.WriteLine(problem);
         return Summary(problems);
@@ -229,15 +242,80 @@ internal static class Program
         return ExitOk;
     }
 
+    /// <summary>Prints the canonical text of a script. The bytes come through the file system, because a merged file has
+    /// no file on disk.</summary>
     private static int PrintThn(string source, string path)
     {
         var fs = OpenSource(source);
-        // The decompiler reads a file on disk. Scripts are never merged, so the base or mod file is the real one.
-        if (fs.GetBackingFileName(path) is not { } file || !File.Exists(file))
-            return Fail($"{path} is not a file in {source}.");
-        // Scripts include other scripts relative to EXE, as the engine reads them (GameItemDb.ThornReadCallback).
-        Out.Write(LibreLancer.Thn.ThnDecompile.Decompile(file, include => fs.ReadAllBytes("EXE/" + include)));
-        return ExitOk;
+        if (!fs.FileExists(path))
+            return Fail($"{path} is not in {source}.");
+        try
+        {
+            Out.Write(ThnWriter.Write(ThornEvaluator.Instance.Evaluate(fs.ReadAllBytes(path), path)));
+            return ExitOk;
+        }
+        catch (ThnEvaluationException e)
+        {
+            Err.WriteLine(e.Message);
+            return ExitProblems;
+        }
+    }
+
+    /// <summary>Evaluates each script, writes it, evaluates the text and compares. Prints one line for each script
+    /// with a problem, then a summary.</summary>
+    private static int ThnRoundTrip(string source, string? path)
+    {
+        var fs = OpenSource(source);
+        List<string> paths;
+        if (path == null)
+            paths = ThnFiles(fs);
+        else if (fs.FileExists(path))
+            paths = [path];
+        else
+            return Fail($"{path} is not in {source}.");
+
+        var failed = 0;
+        foreach (var file in paths)
+        {
+            string line;
+            try
+            {
+                var problem = ThnWriter.RoundTripProblem(ThornEvaluator.Instance.Evaluate(fs.ReadAllBytes(file), file),
+                    ThornEvaluator.Instance, file);
+                if (problem == null)
+                    continue;
+                line = $"{file}: {problem}";
+            }
+            catch (ThnEvaluationException e)
+            {
+                // The message starts with the file.
+                line = e.Message;
+            }
+            failed++;
+            Err.WriteLine(line);
+        }
+        Out.WriteLine($"Round trip: {paths.Count - failed} of {paths.Count} scripts give the same tables, with key " +
+                      "order, and a fixed point text.");
+        return failed == 0 ? ExitOk : ExitProblems;
+    }
+
+    /// <summary>The paths of all <c>.thn</c> files of a file system, in a stable order.</summary>
+    private static List<string> ThnFiles(FileSystem fs)
+    {
+        var files = new List<string>();
+        var folders = new Stack<string>([""]);
+        while (folders.TryPop(out var folder))
+        {
+            foreach (var name in fs.GetFiles(folder))
+            {
+                if (name.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
+                    files.Add(folder.Length == 0 ? name : $@"{folder}\{name}");
+            }
+            foreach (var name in fs.GetDirectories(folder))
+                folders.Push(folder.Length == 0 ? name : $@"{folder}\{name}");
+        }
+        files.Sort(VfsPath.Comparer);
+        return files;
     }
 
     /// <summary>A profile file gives its merged view. A folder gives its plain contents.</summary>
@@ -256,7 +334,7 @@ internal static class Program
     private static (ModProfile, ModOverlay) BuildOverlay(string profilePath)
     {
         var profile = ModProfile.Load(profilePath);
-        return (profile, ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance));
+        return (profile, ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance));
     }
 
     private static int Report(ModOverlay overlay)

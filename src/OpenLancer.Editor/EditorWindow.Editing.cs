@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ImGuiNET;
@@ -23,15 +22,19 @@ internal sealed partial class EditorWindow
     private readonly NewFromTemplateDialog templateDialog = new();
 
     /// <summary>
-    /// The section of the edit view that an item shows: the <c>[Ship]</c> of a ship, the section of equipment, or the
-    /// section itself. Null for other items, and when no section or more than one section has the nickname.
+    /// The section of the edit view that an item shows: the <c>[Ship]</c> of a ship, the section of equipment, the
+    /// <c>[system]</c> of a system in <c>universe.ini</c>, the section of an object, a zone or a light of the open
+    /// system, or the section itself. Null for other items, and when no section or more than one section has the
+    /// nickname.
     /// </summary>
     public SectionRef? SectionOf(object? item) => item switch
     {
+        null => null,
         SectionRef section => section,
         Ship ship => Session?.Edits.Find(ItemFileKind.Ships, ship.Nickname),
         Equipment equipment => Session?.Edits.Find(ItemFileKind.Equipment, equipment.Nickname),
-        _ => null,
+        StarSystem system => Session?.Edits.SystemSection(system.Nickname),
+        _ => Scene.SectionOf(item),
     };
 
     /// <summary>True when New from template can copy the section: a ship or equipment, with a session that takes
@@ -45,7 +48,13 @@ internal sealed partial class EditorWindow
     /// <summary>True when Revert can put back the section as the lower layer has it.</summary>
     public bool CanRevert(SectionRef? section) =>
         section != null && Session is { CanEdit: true } session &&
-        session.Edits.Get(section) is { IsChanged: true, IsNew: false, ReadOnlyReason: null };
+        session.Edits.Get(section) is { IsChanged: true, IsNew: false, ReadOnlyReason: null } &&
+        FieldBinding.RevertLock(session.Edits, section) == null;
+
+    /// <summary>The tooltip of Revert: what it does, or why it cannot run for the section.</summary>
+    public string RevertTooltip(SectionRef? section) =>
+        (section == null || Session is not { } session ? null : FieldBinding.RevertLock(session.Edits, section)) ??
+        "Puts back the section as the base data and the mods before the active mod have it.";
 
     /// <summary>Asks for the nickname of a copy of a ship or of equipment, and adds the copy. The copy is then
     /// selected.</summary>
@@ -71,46 +80,9 @@ internal sealed partial class EditorWindow
     public void Revert(SectionRef section) => Edits.Execute(EditCommand.Revert(section));
 
     /// <summary>
-    /// Sets the text of a text key, for example the name of an item. When other sections of the item show the same
-    /// text, for example a gun and its good, a dialog asks whether they get the new text too (review finding F12).
-    /// </summary>
-    public void SetItemText(FieldBinding field, string text)
-    {
-        if (Session is not { } session)
-        {
-            return;
-        }
-
-        if (text.Trim().Length == 0)
-        {
-            Log.Add(ConsoleSeverity.Warning, EditController.Source,
-                $"'{field.Name}' did not change: a text cannot be empty. To remove the line, use the INI rows of the section.");
-            return;
-        }
-
-        void Set(IReadOnlyList<SectionRef>? also) =>
-            Edits.Execute(() => ItemEdits.SetText(session.Edits, field.Section, field.Name, text, also));
-
-        var shared = ItemEdits.SharedText(session.Edits, field.Section, field.Name);
-        if (shared.Count == 0)
-        {
-            Set(null);
-            return;
-        }
-
-        Choice.Show("The same text",
-            $"These sections of the item show the same text as {field.Section.Id}: " +
-            $"{string.Join(", ", shared.Select(s => s.Id.ToString()))}. Give them the new text too?",
-        [
-            new Choice("All of them", () => Set(shared)),
-            new Choice("Only this one", () => Set(null)),
-            new Choice("Cancel", () => { }),
-        ]);
-    }
-
-    /// <summary>
     /// Shows the game data that loaded again after a save. A selection of the game data becomes the item with the same
-    /// nickname in the new data. A scene item stays, because the open system stays, and a section stays as it is.
+    /// nickname in the new data. A scene item stays, because the open system stays, and a section stays as it is. The
+    /// open cutscene stays too.
     /// </summary>
     public void GameDataReplaced(GameDataManager data)
     {
@@ -121,6 +93,8 @@ internal sealed partial class EditorWindow
             StarSystem system => data.Items.Systems.Get(system.Nickname) ?? (object)system,
             var other => other,
         };
+        // The preview builds again with the new data (section 8.4 of the M8 design).
+        Cutscenes.DataReplaced();
     }
 
     /// <summary>The Console warnings of the active mod at the open: the later mods (decision D2) and a mod in the
@@ -161,7 +135,7 @@ internal sealed partial class EditorWindow
     {
         var session = Session;
         var edits = session?.Edits;
-        var idle = !inspector.IsEditing;
+        var idle = !IsEditing;
         if (ImGui.MenuItem($"{EditorIcons.Undo}   {(edits?.UndoLabel is { } undo ? $"Undo {undo}" : "Undo")}", "Ctrl+Z",
                 false, edits is { CanUndo: true } && idle))
         {
@@ -196,7 +170,7 @@ internal sealed partial class EditorWindow
             Revert(section!);
         }
 
-        ImGui.SetItemTooltip("Puts back the section as the base data and the mods before the active mod have it.");
+        ImGui.SetItemTooltip(RevertTooltip(section));
     }
 
     private void ModMenu()
@@ -310,14 +284,16 @@ internal sealed partial class EditorWindow
         templateDialog.Draw();
     }
 
+    /// <summary>True while a dialog of the editor is open.</summary>
+    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || templateDialog.IsOpen;
+
     /// <summary>
-    /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. They wait while a text field or a dialog
-    /// takes the keys.
+    /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5 and Shift+F5. They
+    /// wait while a text field or a dialog takes the keys.
     /// </summary>
     private void Shortcuts()
     {
-        if (Session == null || ImGui.GetIO().WantTextInput || inspector.IsEditing ||
-            Choice.IsOpen || newModDialog.IsOpen || templateDialog.IsOpen)
+        if (Session == null || ImGui.GetIO().WantTextInput || IsEditing || DialogOpen)
         {
             return;
         }
@@ -335,6 +311,14 @@ internal sealed partial class EditorWindow
         else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.S), global))
         {
             Edits.Save();
+        }
+        else if (ImGui.Shortcut((int)ImGuiKey.F5, global))
+        {
+            playMenu.PlayFromCamera();
+        }
+        else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Shift | ImGuiKey.F5), global))
+        {
+            playMenu.Stop();
         }
     }
 }

@@ -19,6 +19,10 @@ namespace OpenLancer.Editor.Database;
 /// </param>
 internal sealed record Column<T>(string Name, Func<T, string> Text, float Width, Func<T, double>? Value = null);
 
+/// <summary>One more item of the context menu of a row, for example "Use for Play" of a ship package.</summary>
+/// <param name="Applies">True for an item whose row has the menu item.</param>
+internal sealed record RowAction<T>(char Icon, string Label, Func<T, bool> Applies, Action<T> Run);
+
 /// <summary>One row of a Database table, with all its cell texts and numbers made once for each data load.</summary>
 /// <param name="Index">The position of the row in the game data. Rows with the same sort keys keep this order.</param>
 /// <param name="Marked">True for a row with a dot next to its glyph, for example a good that the active mod
@@ -59,6 +63,7 @@ internal sealed class DatabaseTable
     private readonly DatabaseRow[] rows;
     private readonly Action<object>? open;
     private readonly string openLabel;
+    private readonly RowAction<object>? action;
     private readonly List<DatabaseRow> shown = [];
     private string filter = "";
     private ObjectKind? kind;
@@ -68,7 +73,7 @@ internal sealed class DatabaseTable
     private SortKey[]? sortKeys;
 
     private DatabaseTable(string id, string noun, (string, float, bool)[] columns, DatabaseRow[] rows,
-        Action<object>? open, string openLabel)
+        Action<object>? open, string openLabel, RowAction<object>? action)
     {
         this.id = id;
         Noun = noun;
@@ -76,6 +81,7 @@ internal sealed class DatabaseTable
         this.rows = rows;
         this.open = open;
         this.openLabel = openLabel;
+        this.action = action;
     }
 
     /// <summary>The word for the items in the count of the toolbar strip, for example "ships".</summary>
@@ -104,9 +110,10 @@ internal sealed class DatabaseTable
     /// </param>
     /// <param name="openLabel">The context menu text of <paramref name="open"/>.</param>
     /// <param name="marked">True for an item whose row has a dot next to its glyph, or null for no dots.</param>
+    /// <param name="action">One more item of the context menu of the rows, or null.</param>
     public static DatabaseTable Create<T>(string id, string noun, IEnumerable<T> items,
         IReadOnlyList<Column<T>> columns, Func<T, ObjectKind> kind, Action<T>? open = null, string openLabel = "Open",
-        Func<T, bool>? marked = null)
+        Func<T, bool>? marked = null, RowAction<T>? action = null)
         where T : notnull
     {
         var rows = items.Select((item, index) => new DatabaseRow(index, item, kind(item),
@@ -115,7 +122,11 @@ internal sealed class DatabaseTable
                 marked?.Invoke(item) ?? false))
             .ToArray();
         return new DatabaseTable(id, noun, columns.Select(c => (c.Name, c.Width, c.Value != null)).ToArray(), rows,
-            open == null ? null : item => open((T)item), openLabel);
+            open == null ? null : item => open((T)item), openLabel,
+            action == null
+                ? null
+                : new RowAction<object>(action.Icon, action.Label, item => action.Applies((T)item),
+                    item => action.Run((T)item)));
     }
 
     /// <summary>
@@ -356,6 +367,15 @@ internal sealed class DatabaseTable
             if (Theme.IconMenuItem(EditorIcons.Open, openLabel, true))
             {
                 open(row.Item);
+            }
+        }
+
+        if (action != null && action.Applies(row.Item))
+        {
+            ImGui.Separator();
+            if (Theme.IconMenuItem(action.Icon, action.Label, true))
+            {
+                action.Run(row.Item);
             }
         }
     }

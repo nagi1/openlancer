@@ -1,0 +1,240 @@
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using LibreLancer;
+using LibreLancer.Data;
+using LibreLancer.Data.GameData;
+using LibreLancer.Data.GameData.World;
+using LibreLancer.Data.IO;
+using LibreLancer.Data.Schema.PetalDb;
+using OpenLancer.Data;
+using OpenLancer.Data.Thn;
+using OpenLancer.Runtime.Validation;
+using Xunit;
+using static OpenLancer.Tests.ThnScripts;
+
+namespace OpenLancer.Tests;
+
+/// <summary>
+/// The cutscene checks of the validation (test 13.1 item 17 of the M8 design): a mod with a broken patched cutscene
+/// gives an error with its place, and the same problem in the lower data gives no new problem. The check reads the
+/// game data of each view, the terrain of each base that plays a script, and the INI lines that tell when the game plays
+/// a script only in space.
+/// </summary>
+public sealed class CutsceneCheckTests
+{
+    // The native compiler loads from the x64 folder of the test output, also when a test of this class runs alone.
+    static CutsceneCheckTests() => AppHandler.ConsoleInit(silent: true);
+
+    private const string Path = ModOverlayThnTests.ScriptPath;
+    private const string PatchFile = ModOverlayThnTests.PatchFile;
+
+    private const string Script = """
+        duration = 10
+        entities = {
+            { entity_name = "Cam_A", type = CAMERA, cameraprops = { fovh = 10, hvaspect = 1.5 } },
+            { entity_name = "Cam_B", type = CAMERA, cameraprops = { fovh = 30 } },
+            { entity_name = "Monitor", type = MONITOR }
+        }
+        events = { { 0, SET_CAMERA, { "Monitor", "Cam_A" } } }
+        """;
+
+    private static string Patch(string entries) => $"ol_thn_patch = 1\nentities = {{ {entries} }}\n";
+
+    /// <summary>A workspace whose freelancer.ini lists no resource DLL, so that the engine can read the game data of
+    /// its base folder.</summary>
+    private static TestWorkspace Workspace()
+    {
+        var ws = new TestWorkspace();
+        ws.WriteBase(@"EXE\freelancer.ini", "[Freelancer]\ndata path = ..\\data\n");
+        return ws;
+    }
+
+    /// <summary>
+    /// A patch that makes a value unreadable gives one error with the place of the value in the merged file. The same
+    /// problem in the lower data gives no new problem, also when the patch deletes an element before it, so that its
+    /// place in the list changes. <see cref="ProfileValidator"/> adds these problems to the validation, and the retail
+    /// test <c>CutsceneCheckRetailTests</c> runs it through oltool.
+    /// </summary>
+    [Fact]
+    public void TheValidatorReportsABrokenPatchedCutsceneAndNotAProblemOfTheLowerData()
+    {
+        using (var ws = Workspace())
+        {
+            ws.WriteBase(Path, Script);
+            var overlay = ws.Build(ws.Mod("m", new()
+            {
+                [PatchFile] = Patch("""{ ol_match = "Cam_B", ol_set = { ["cameraprops.fovh"] = "wide" } }"""),
+            }));
+
+            var problems = CutsceneCheck.NewProblems(FileSystem.FromPath(ws.Base), overlay.CreateFileSystem(),
+                overlay.CutscenePaths, null, null);
+
+            Assert.Equal(Diagnostic.Error(Path, "entity \"Cam_B\", cameraprops.fovh: The value is \"wide\", but the engine reads a " +
+                                                "number there.") with
+            {
+                Cutscene = new ThnLocation(Path, ThnElementKind.Entity, 1, "cameraprops.fovh", "\"Cam_B\""),
+            }, Assert.Single(problems));
+        }
+
+        using (var ws = Workspace())
+        {
+            ws.WriteBase(Path, Script.Replace("fovh = 30", "fovh = \"wide\""));
+            var overlay = ws.Build(ws.Mod("m", new()
+            {
+                [PatchFile] = Patch("""{ ol_match = "Cam_A", ol_delete = Y }, { ol_match = "Cam_B", ol_set = { ["cameraprops.hvaspect"] = 2 } }"""),
+            }));
+            var modded = overlay.CreateFileSystem();
+            // The problem is at place 1 below and at place 0 above.
+            Assert.Equal(1, Assert.Single(CutsceneCheck.Errors(FileSystem.FromPath(ws.Base), Path, null)).Cutscene!.Index);
+            Assert.Equal(0, Assert.Single(CutsceneCheck.Errors(modded, Path, null)).Cutscene!.Index);
+
+            Assert.Empty(CutsceneCheck.NewProblems(FileSystem.FromPath(ws.Base), modded, overlay.CutscenePaths, null, null));
+        }
+    }
+
+    /// <summary>A whole file that does not run is one error of the script: a text that does not compile, or a number
+    /// that is not finite. A text with a character outside ASCII is an error, also in a comment. A patch that does not
+    /// apply is a merge error with the place of the cutscene.</summary>
+    [Fact]
+    public void AScriptThatDoesNotRunIsOneErrorAndAPatchThatDoesNotApplyIsAMergeError()
+    {
+        using var ws = Workspace();
+        ws.WriteBase(Path, Script);
+        const string Infinite = @"DATA\SCRIPTS\infinite.thn";
+        const string Broken = @"DATA\SCRIPTS\broken.thn";
+        const string Accent = @"DATA\SCRIPTS\accent.thn";
+        var mod = ws.Mod("m", new()
+        {
+            [@"files\" + Infinite] = "duration = 1e39\nentities = {}\nevents = {}\n",
+            [@"files\" + Broken] = "duration = \nentities = {}\n",
+            [@"files\" + Accent] = "",
+            [PatchFile] = Patch("""{ ol_match = "Cam_C", ol_set = { ["cameraprops.fovh"] = 20 } }"""),
+        });
+        // The workspace writes ASCII, so this file gets its UTF-8 bytes here.
+        File.WriteAllText(System.IO.Path.Combine(ws.ModFolder("m"), "files", Accent),
+            "duration = 1\n-- caf\u00e9\nentities = {}\nevents = {}\n", new UTF8Encoding(false));
+        var overlay = ws.Build(mod);
+
+        var merge = Assert.Single(overlay.Diagnostics);
+        Assert.Equal(DiagnosticSeverity.Error, merge.Severity);
+        Assert.Equal(new ThnLocation(Path), merge.Cutscene);
+
+        var problems = CutsceneCheck.NewProblems(FileSystem.FromPath(ws.Base), overlay.CreateFileSystem(),
+            overlay.CutscenePaths, null, null);
+
+        Assert.Equal([Accent, Broken, Infinite], problems.Select(p => p.Source));
+        Assert.Equal("Line 2 has a character outside ASCII. The text of a THN script is ASCII.", problems[0].Message);
+        Assert.Contains("does not compile", problems[1].Message);
+        Assert.Equal($"{Infinite}: The value at duration is Infinity. A THN number must be finite.", problems[2].Message,
+            ignoreCase: true);
+        Assert.All(problems, p => Assert.Equal((DiagnosticSeverity.Error, new ThnLocation(p.Source)), (p.Severity, p.Cutscene)));
+    }
+
+    /// <summary>
+    /// The rooms of a base fill in the <c>$terrain_*</c> templates with the terrain of the base (ThnRoomHandler.cs:23-51).
+    /// The check reads the INI lines that name the script, and checks the template of each base that plays it. The
+    /// game data gives the state of each item: a ship without a model, a costume without a body, and a room that
+    /// petalDB does not have.
+    /// </summary>
+    [Fact]
+    public void TheCheckFillsInTheTerrainOfEachBaseThatPlaysTheScriptAndReadsTheGameData()
+    {
+        using var ws = Workspace();
+        const string Ambient = @"DATA\SCRIPTS\ambi.thn";
+        ws.WriteBase(Ambient, """
+            duration = 10
+            entities = {
+                { entity_name = "Rock", type = COMPOUND, template_name = "$terrain_dyna_01", userprops = { category = "solar" } },
+                { entity_name = "Ship", type = COMPOUND, template_name = "hulk", userprops = { category = "ship" } },
+                { entity_name = "Room", type = COMPOUND, template_name = "no_room", userprops = { category = "room" } },
+                { entity_name = "Man", type = DEFORMABLE, template_name = "ghost" }
+            }
+            events = {}
+            """);
+        var db = new GameItemDb(FileSystem.FromPath(ws.Base));
+        db.Ini.PetalDb = new PetalDbIni();
+        Add(db.Archetypes, new Archetype { Nickname = "rock_arch", ModelFile = new ResolvedModel { ModelFile = "rock.cmp", SourcePath = "x" } });
+        Add(db.Ships, new Ship { Nickname = "hulk" });
+        Add(db.Costumes, new Costume { Nickname = "ghost" });
+        Add(db.Bases, new Base { Nickname = "B1", TerrainDyna1 = "rock_arch" });
+        Add(db.Bases, new Base { Nickname = "B2" });
+        string[] others =
+        [
+            "entity \"Ship\", template_name: The ship \"hulk\" has no model.",
+            "entity \"Room\", template_name: The game data has no room of petalDB \"no_room\".",
+            "entity \"Man\", template_name: The costume \"ghost\" has no body. A DEFORMABLE without userprops.Actor needs it.",
+        ];
+        const string Rock = "entity \"Rock\", template_name: The game data has no solar archetype \"$terrain_dyna_01\".";
+
+        // No room plays the script, so the engine reads the template as it is.
+        Assert.Equal([Rock, .. others], Messages());
+        // Without the game data, the checks of the templates and the costumes do not run.
+        Assert.Empty(CutsceneCheck.Errors(FileSystem.FromPath(ws.Base), Ambient, null));
+
+        ws.WriteBase(@"DATA\UNIVERSE\universe.ini",
+            "[Base]\nnickname = B1\nfile = Universe\\b1.ini\n[Base]\nnickname = B2\nfile = Universe\\b2.ini\n");
+        ws.WriteBase(@"DATA\UNIVERSE\b1.ini", "[Room]\nnickname = Bar\nfile = Universe\\bar1.ini\n");
+        ws.WriteBase(@"DATA\UNIVERSE\bar1.ini", "[Room_Info]\nscene = all, ambient, Scripts\\ambi.thn\n");
+        Assert.Equal(others, Messages());
+
+        // B2 has no dynamic terrain, so the template stays, and the engine stops in a room of B2.
+        ws.WriteBase(@"DATA\UNIVERSE\b2.ini", "[Room]\nnickname = Bar\nfile = Universe\\bar2.ini\n");
+        ws.WriteBase(@"DATA\UNIVERSE\bar2.ini", "[Room_Info]\nscene = all, ambient, Scripts\\ambi.thn\n");
+        Assert.Equal([Rock, .. others], Messages());
+
+        string[] Messages() => [.. CutsceneCheck.Errors(FileSystem.FromPath(ws.Base), Ambient, db).Select(p => p.Message)];
+    }
+
+    /// <summary>
+    /// The game makes no COMPOUND of a script that it plays only in space (Cutscene.cs:101-113). The check reads the INI
+    /// lines that name the script, also without the game data: a script that only <c>[Trigger] Act_CallThorn</c> names
+    /// has no COMPOUND error. A mission ambient plays the script in a room, so then the COMPOUND error is back.
+    /// </summary>
+    [Fact]
+    public void AScriptThatTheGamePlaysOnlyInSpaceHasNoCompoundError()
+    {
+        using var ws = Workspace();
+        const string Space = @"DATA\MISSIONS\M01A\space.thn";
+        const string Mission = @"DATA\MISSIONS\M01A\m01a.ini";
+        ws.WriteBase(Space, """
+            duration = 10
+            entities = {
+                { entity_name = "Ship", type = COMPOUND, template_name = "msn_ship" },
+                { entity_name = "L", type = LIGHT }
+            }
+            events = {}
+            """);
+        const string Compound = "entity \"Ship\", userprops.category: The key is missing. The engine needs it for a COMPOUND with " +
+                                "a template.";
+        const string Light = "entity \"L\", lightprops: The key is missing. The engine needs it for a LIGHT.";
+
+        // No INI line names the script.
+        Assert.Equal([Compound, Light], Messages());
+
+        // The trigger doubles the backslashes, as 67 of 70 retail Act_CallThorn values do.
+        ws.WriteBase(Mission, """
+            [Trigger]
+            nickname = t1
+            Act_CallThorn = Missions\\M01A\\space.thn
+            """);
+        Assert.Equal([Light], Messages());
+
+        ws.WriteBase(Mission, """
+            [Trigger]
+            nickname = t1
+            Act_CallThorn = Missions\\M01A\\space.thn
+            Act_AddAmbient = Missions\M01A\space.thn, Bar, B1
+            """);
+        Assert.Equal([Compound, Light], Messages());
+
+        string[] Messages() => [.. CutsceneCheck.Errors(FileSystem.FromPath(ws.Base), Space, null).Select(p => p.Message)];
+    }
+
+    private static void Add<T>(GameItemCollection<T> collection, T item) where T : IdentifiableItem
+    {
+        item.CRC = FLHash.CreateID(item.Nickname);
+        collection.Add(item);
+    }
+}

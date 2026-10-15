@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -73,6 +74,9 @@ internal static class SchemaCatalog
             [("KeyCmd", "ids_info")] = StringKind.String,
         };
 
+    /// <summary>The schema of each section class and section name (in lowercase) that the catalog read.</summary>
+    private static readonly ConcurrentDictionary<(Type Class, string Section), SectionSchema> Classes = new();
+
     private static readonly Lazy<Dictionary<Type, Dictionary<string, SectionSchema>>> Inis = new(ReadInis);
 
     /// <summary>Each section type of each <c>[ParsedIni]</c> class, with its schema.</summary>
@@ -82,6 +86,13 @@ internal static class SchemaCatalog
     /// <summary>The schema of a section type in the files that a <c>[ParsedIni]</c> class reads, or null.</summary>
     public static SectionSchema? Section(Type ini, string sectionName) =>
         Inis.Value.TryGetValue(ini, out var sections) ? sections.GetValueOrDefault(sectionName) : null;
+
+    /// <summary>
+    /// The schema of a section class in a file that no <c>[ParsedIni]</c> class reads, for example a <c>[system]</c>
+    /// of <c>universe.ini</c>. The engine reads such a file itself, and gives each section to the generated parser of
+    /// its class. The key entry and the text kinds depend on the section name.
+    /// </summary>
+    public static SectionSchema SectionClass(Type type, string sectionName) => Schema(type, sectionName);
 
     /// <summary>The kind of text that a key of a section type holds the id of, or null when the key holds no text
     /// id.</summary>
@@ -98,7 +109,6 @@ internal static class SchemaCatalog
 
     private static Dictionary<Type, Dictionary<string, SectionSchema>> ReadInis()
     {
-        var classes = new Dictionary<(Type, string), SectionSchema>();
         var result = new Dictionary<Type, Dictionary<string, SectionSchema>>();
         foreach (var ini in typeof(ParsedIniAttribute).Assembly.GetTypes().Where(t => t.IsDefined(typeof(ParsedIniAttribute))))
         {
@@ -110,7 +120,7 @@ internal static class SchemaCatalog
                     var type = attribute.Type ?? ItemType(field.FieldType);
                     // The parser uses the first field that names a section.
                     if (!sections.ContainsKey(attribute.Name))
-                        sections[attribute.Name] = Schema(type, attribute.Name, classes);
+                        sections[attribute.Name] = Schema(type, attribute.Name);
                 }
             }
             result[ini] = sections;
@@ -119,11 +129,12 @@ internal static class SchemaCatalog
     }
 
     /// <summary>The schema of a section class. Each section name has its own key entry, so its own schema.</summary>
-    private static SectionSchema Schema(Type type, string sectionName, Dictionary<(Type, string), SectionSchema> known)
+    private static SectionSchema Schema(Type type, string sectionName) =>
+        // Two threads can build one schema at the same time, but both get the one that the cache keeps.
+        Classes.GetOrAdd((type, sectionName.ToLowerInvariant()), _ => Build(type, sectionName));
+
+    private static SectionSchema Build(Type type, string sectionName)
     {
-        var id = (type, sectionName.ToLowerInvariant());
-        if (known.TryGetValue(id, out var schema))
-            return schema;
         var match = SectionKeys.For(sectionName);
         var keyEntry = match.Kind == SectionMatchKind.Keyed ? match.KeyEntry : null;
         var keys = new List<KeySchema>();
@@ -133,7 +144,7 @@ internal static class SchemaCatalog
             foreach (var field in t.GetFields(Members | BindingFlags.DeclaredOnly))
             {
                 foreach (var entry in field.GetCustomAttributes<EntryAttribute>())
-                    keys.Add(FieldKey(entry, field.FieldType, sectionName, keyEntry));
+                    keys.Add(FieldKey(entry, field, sectionName, keyEntry));
             }
             foreach (var method in t.GetMethods(Members | BindingFlags.DeclaredOnly))
             {
@@ -144,12 +155,12 @@ internal static class SchemaCatalog
                 }
             }
         }
-        return known[id] = new SectionSchema(type, keys);
+        return new SectionSchema(type, keys);
     }
 
-    private static KeySchema FieldKey(EntryAttribute entry, Type fieldType, string sectionName, string? keyEntry)
+    private static KeySchema FieldKey(EntryAttribute entry, FieldInfo field, string sectionName, string? keyEntry)
     {
-        var type = LineType(fieldType);
+        var type = LineType(field.FieldType);
         return new KeySchema(entry.Name, type, entry.Multiline, entry.Required, MinComponents(type, entry),
             IsKey(entry.Name, keyEntry), TextKind(sectionName, entry.Name))
         {
@@ -157,6 +168,7 @@ internal static class SchemaCatalog
             MinMax = entry.MinMax,
             FloatColor = entry.FloatColor,
             Mode = entry.Mode,
+            Field = field.Name,
         };
     }
 

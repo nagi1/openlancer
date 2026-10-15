@@ -8,6 +8,7 @@ using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Strings;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data.Editing;
 
@@ -22,10 +23,16 @@ namespace OpenLancer.Data.Editing;
 /// <see cref="EditDocument"/>). A save writes the patch that changes B into W.</para>
 /// <para>Use a session on one thread only. To change the active mod, open a new session. The history then starts
 /// empty, because B changes.</para>
+/// <para>A session holds the lock of its active mod (see <see cref="ModLock"/>) until it is disposed. A second session
+/// on the same mod, also in another editor, is read-only. A disposed session is read-only too.</para>
 /// </remarks>
-public sealed partial class EditSession
+public sealed partial class EditSession : IDisposable
 {
     private readonly IStringResourceWriter stringWriter;
+
+    /// <summary>Reads the cutscene scripts and their THN patches for the merged views.</summary>
+    private readonly IThnEvaluator thn;
+
     private readonly IReadOnlyList<Mod> lower;
     private readonly ModOverlay lowerView;
     private readonly LayerInputs inputs;
@@ -33,8 +40,9 @@ public sealed partial class EditSession
     private readonly EditHistory history = new();
     private readonly Lazy<ModOverlay> fullView;
 
-    /// <summary>Why the session cannot edit, or null.</summary>
-    private readonly string? readOnlyReason;
+    /// <summary>Why the session cannot edit, or null. It changes only when the session closes (see
+    /// <see cref="Close"/>).</summary>
+    private string? readOnlyReason;
 
     /// <summary>The paths that a command changed, also when an undo took the change back (rule P1).</summary>
     private readonly HashSet<string> touched = new(VfsPath.Comparer);
@@ -42,29 +50,39 @@ public sealed partial class EditSession
     private ModText text;
     private ChangeSet? transaction;
 
+    /// <summary>The lock of the active mod, or null when the session does not hold it. Without the lock, the session
+    /// does not read, write or delete the recovery file.</summary>
+    private ModLock? modLock;
+
     /// <param name="recoveryFailure">Why the open could not complete an earlier save of the active mod or of a lower
     /// mod, or null.</param>
+    /// <param name="modLock">The lock of the active mod, or null.</param>
+    /// <param name="lockReason">Why the open could not take the lock of the active mod, or null.</param>
     private EditSession(ModProfile profile, IReadOnlyList<Mod> mods, int active, IStringResourceWriter stringWriter,
-        IReadOnlyList<Diagnostic> openProblems, string? recoveryFailure)
+        IThnEvaluator thn, IReadOnlyList<Diagnostic> openProblems, string? recoveryFailure, ModLock? modLock,
+        string? lockReason)
     {
+        this.modLock = modLock;
         Profile = profile;
         this.stringWriter = stringWriter;
+        this.thn = thn;
         OpenProblems = openProblems;
         ActiveMod = active < 0 ? null : mods[active];
         lower = active < 0 ? mods : mods.Take(active).ToList();
         LaterMods = active < 0 ? [] : mods.Skip(active + 1).ToList();
         inputs = new LayerInputs(profile.BaseFolder, lower, ActiveMod);
-        lowerView = ModOverlay.Build(profile.BaseFolder, lower, stringWriter, keepDocuments: true);
+        lowerView = ModOverlay.Build(profile.BaseFolder, lower, stringWriter, thn, keepDocuments: true);
         EditView = ActiveMod == null ? lowerView : BuildEditView(ActiveMod);
         // Only the marks of the later mods need the whole profile, so it is built at the first use.
-        fullView = new Lazy<ModOverlay>(() => ModOverlay.Build(profile.BaseFolder, mods, stringWriter));
+        fullView = new Lazy<ModOverlay>(() => ModOverlay.Build(profile.BaseFolder, mods, stringWriter, thn));
         readOnlyReason = ActiveMod == null ? "There is no active mod. Select a mod to edit."
-            : recoveryFailure
+            : lockReason
+              ?? recoveryFailure
               ?? (lowerView.HasErrors ? "The mods that load before the active mod have merge errors. Correct them, then " +
                                         "open the profile again." : null);
         (text, textHash) = ActiveMod == null ? (ModText.Empty, null) : ReadText(ActiveMod);
         savedText = text;
-        HasRecovery = ActiveMod != null && File.Exists(RecoveryFile.PathOf(ActiveMod.Folder));
+        HasRecovery = ActiveMod != null && modLock != null && File.Exists(RecoveryFile.PathOf(ActiveMod.Folder));
     }
 
     public ModProfile Profile { get; }
@@ -82,8 +100,9 @@ public sealed partial class EditSession
     public bool CanEdit => ReadOnlyReason == null;
 
     /// <summary>
-    /// Why the session takes no edits, or null: it has no active mod, the open could not complete an earlier save, the
-    /// lower mods have merge errors, or the recovery file of an earlier session waits (see <see cref="HasRecovery"/>).
+    /// Why the session takes no edits, or null: it has no active mod, another editor has the active mod open, the open
+    /// could not complete an earlier save, the lower mods have merge errors, the session is closed, or the recovery
+    /// file of an earlier session waits (see <see cref="HasRecovery"/>).
     /// </summary>
     public string? ReadOnlyReason =>
         readOnlyReason ?? (HasRecovery ? "The mod has unsaved edits of an earlier session. Restore or discard them first." : null);
@@ -112,51 +131,138 @@ public sealed partial class EditSession
     /// <summary>True when the session has edits that it did not save.</summary>
     public bool IsDirty => history.IsDirty;
 
+    /// <summary>
+    /// The install paths of the files that a command of the session changed, also when an undo took the change back.
+    /// A save writes the patches of these files. The session opened each of them, so a read of W of such a file opens
+    /// no new file.
+    /// </summary>
+    public IReadOnlyList<string> EditedPaths => touched.Order(StringComparer.OrdinalIgnoreCase).ToList();
+
     /// <summary>Tells what an edit, an undo or a redo changed.</summary>
     public event Action<EditChange>? Changed;
 
     /// <summary>
-    /// Opens a session. When an earlier save of a mod of the profile stopped after its commit point, this completes
-    /// it first (see <see cref="SaveTransaction"/>). <see cref="OpenProblems"/> tells what it could not complete.
+    /// Opens a session. It takes the lock of the active mod first. When another editor has the mod open, the session
+    /// is read-only. When an earlier save of a mod of the profile stopped after its commit point, this completes it
+    /// (see <see cref="SaveTransaction"/>). <see cref="OpenProblems"/> tells what it could not complete.
     /// </summary>
     /// <param name="activeModId">The id of the mod that gets the edits, or null for a read-only session of the whole
     /// profile.</param>
     /// <param name="strings">Writes the text DLL of the merged views.</param>
+    /// <param name="thn">Reads the cutscene scripts and their THN patches for the merged views.</param>
     /// <exception cref="ArgumentException">The profile has no mod with the id.</exception>
     /// <exception cref="ModLoadException">A mod or its text is not valid.</exception>
-    public static EditSession Open(ModProfile profile, string? activeModId, IStringResourceWriter strings)
+    public static EditSession Open(ModProfile profile, string? activeModId, IStringResourceWriter strings,
+        IThnEvaluator thn)
     {
         var active = -1;
         if (activeModId != null)
         {
-            active = profile.Mods.Select(m => m.Id).ToList().IndexOf(activeModId);
+            active = profile.IndexOf(activeModId);
             if (active < 0)
                 throw new ArgumentException($"The profile {profile.Name} has no mod '{activeModId}'.", nameof(activeModId));
         }
-        var problems = new List<Diagnostic>();
-        var mods = new List<Mod>();
-        string? failure = null;
-        for (var i = 0; i < profile.Mods.Count; i++)
+        // The lock comes before the recovery, so that the session never completes or deletes the files of a save that
+        // another editor runs now.
+        string? lockReason = null;
+        var modLock = active < 0 ? null : ModLock.TryTake(profile.Mods[active], out lockReason);
+        try
         {
-            var mod = profile.Mods[i];
-            try
+            var problems = new List<Diagnostic>();
+            var mods = new List<Mod>();
+            string? failure = null;
+            for (var i = 0; i < profile.Mods.Count; i++)
             {
-                // A completed save changes the files of the mod, so the mod loads again.
-                mods.Add(SaveTransaction.Recover(mod.Folder, problems) ? Mod.Load(mod.Folder) : mod);
+                var mod = profile.Mods[i];
+                // Some files of a save that is not complete can be from the save and some from before it. The open
+                // shows them as they are. The edit view does not show a later mod, so only a lower mod or the active
+                // mod stops the edits.
+                void NotComplete(string message)
+                {
+                    problems.Add(Diagnostic.Error(mod.Folder, message));
+                    if (i <= active)
+                        failure ??= message;
+                }
+
+                try
+                {
+                    var completed = Recover(mod, i == active ? modLock : null, problems, out var blocked);
+                    if (blocked != null)
+                        NotComplete($"A save of mod '{mod.Id}' is not complete. {blocked}");
+                    // A completed save changes the files of the mod, so the mod loads again.
+                    mods.Add(completed ? Mod.Load(mod.Folder) : mod);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    NotComplete($"An earlier save of mod '{mod.Id}' is not complete: {e.Message} Correct the problem, " +
+                                "then open the profile again.");
+                    mods.Add(Mod.Load(mod.Folder));
+                }
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                var message = $"An earlier save of mod '{mod.Id}' is not complete: {e.Message} Correct the problem, " +
-                              "then open the profile again.";
-                problems.Add(Diagnostic.Error(mod.Folder, message));
-                // Some files of the mod can be from the save and some from before it. Show them as they are.
-                mods.Add(Mod.Load(mod.Folder));
-                // The edit view does not show a later mod, so only a lower mod or the active mod stops the edits.
-                if (i <= active)
-                    failure ??= message;
-            }
+            return new EditSession(profile, mods, active, strings, thn, problems, failure, modLock, lockReason);
         }
-        return new EditSession(profile, mods, active, strings, problems, failure);
+        catch
+        {
+            modLock?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Completes a save of a mod that stopped after its commit point, and deletes the staged files of a save that
+    /// stopped before it (see <see cref="SaveTransaction.Recover"/>). It does this only with the lock of the mod,
+    /// because another editor that has the mod open can be in the middle of a save. Without the lock, the files of a
+    /// save stay as they are.
+    /// </summary>
+    /// <param name="held">The lock of the mod that the session holds, or null. Without it, the recovery takes the lock
+    /// for its own time.</param>
+    /// <param name="blocked">Why the open cannot complete the save that the journal of the mod holds, or null: the open
+    /// could not take the lock of the mod.</param>
+    /// <returns>True when it completed a save.</returns>
+    /// <exception cref="IOException">A move or a delete of the recovery failed.</exception>
+    /// <exception cref="UnauthorizedAccessException">A move or a delete of the recovery failed.</exception>
+    /// <exception cref="InvalidDataException">The journal is not valid.</exception>
+    private static bool Recover(Mod mod, ModLock? held, List<Diagnostic> problems, out string? blocked)
+    {
+        blocked = null;
+        if (!Directory.Exists(Path.Combine(mod.Folder, SaveTransaction.FolderName)))
+            return false;
+        string? reason = null;
+        using var recoveryLock = held == null ? ModLock.TryTake(mod, out reason) : null;
+        if (held == null && recoveryLock == null)
+        {
+            if (SaveTransaction.HasJournal(mod.Folder))
+                blocked = reason;
+            return false;
+        }
+        return SaveTransaction.Recover(mod.Folder, problems);
+    }
+
+    /// <summary>Releases the lock of the active mod and closes the session (see <see cref="Close"/>).</summary>
+    public void Dispose()
+    {
+        modLock?.Dispose();
+        Close();
+    }
+
+    /// <summary>Closes the handle of the lock and deletes no file, as a crash does. Then it closes the session (see
+    /// <see cref="Close"/>). Only the tests call it.</summary>
+    internal void Abandon()
+    {
+        modLock?.Abandon();
+        Close();
+    }
+
+    /// <summary>
+    /// Makes the session read-only after its lock is gone. The session then takes no edits and does not save, and it
+    /// does not read, write or delete the recovery file. So it changes no file of the mod, which another editor can
+    /// have open now.
+    /// </summary>
+    private void Close()
+    {
+        modLock = null;
+        readOnlyReason = "The edit session is closed. Open the profile again.";
+        HasRecovery = false;
     }
 
     /// <summary>A view of a section of the edit view, or null when the edit view has no such section.</summary>
@@ -237,7 +343,7 @@ public sealed partial class EditSession
     {
         ThrowIfTransaction();
         var change = history.Undo();
-        text = change.Undo(DocumentAt) ?? text;
+        text = change.Undo(FileAt) ?? text;
         Changed?.Invoke(change.Change);
     }
 
@@ -246,14 +352,14 @@ public sealed partial class EditSession
     {
         ThrowIfTransaction();
         var change = history.Redo();
-        text = change.Redo(DocumentAt) ?? text;
+        text = change.Redo(FileAt) ?? text;
         Changed?.Invoke(change.Change);
     }
 
     /// <summary>Puts back the states before the transaction, then runs a command in it.</summary>
     internal void ApplyInTransaction(ChangeSet change, EditCommand command)
     {
-        text = change.Undo(DocumentAt) ?? text;
+        text = change.Undo(FileAt) ?? text;
         try
         {
             Run(change, command);
@@ -275,7 +381,7 @@ public sealed partial class EditSession
             Push(change);
             return;
         }
-        text = change.Undo(DocumentAt) ?? text;
+        text = change.Undo(FileAt) ?? text;
         if (!change.IsEmpty)
             Changed?.Invoke(change.Change);
     }
@@ -289,7 +395,7 @@ public sealed partial class EditSession
         }
         catch
         {
-            text = change.Undo(DocumentAt) ?? text;
+            text = change.Undo(FileAt) ?? text;
             throw;
         }
     }
@@ -297,7 +403,7 @@ public sealed partial class EditSession
     /// <summary>Adds a change set to the history, when it changed anything.</summary>
     private void Push(ChangeSet change)
     {
-        change.Finish(DocumentAt, text);
+        change.Finish(FileAt, text);
         // A transaction whose last step threw ends in its state before, so it can change nothing.
         if (!change.ChangesState)
             return;
@@ -312,8 +418,8 @@ public sealed partial class EditSession
             throw new InvalidOperationException("A transaction is open. Commit or cancel it first.");
     }
 
-    /// <summary>The document of a path that the session opened.</summary>
-    private EditDocument DocumentAt(string path) => documents[path];
+    /// <summary>The INI document or the cutscene of a path that the session opened.</summary>
+    private IEditFile FileAt(string path) => documents.TryGetValue(path, out var document) ? document : cutscenes[path];
 
     /// <summary>The section of a reference.</summary>
     /// <exception cref="ArgumentException">The edit view has no such section.</exception>
@@ -351,7 +457,7 @@ public sealed partial class EditSession
         return true;
     }
 
-    private ModOverlay BuildEditView(Mod active) => ModOverlay.Build(Profile.BaseFolder, [.. lower, active], stringWriter);
+    private ModOverlay BuildEditView(Mod active) => ModOverlay.Build(Profile.BaseFolder, [.. lower, active], stringWriter, thn);
 
     /// <summary>The text of a mod, and the hash of its strings.json, or null when it has none.</summary>
     private static (ModText Text, string? Hash) ReadText(Mod mod)
@@ -372,8 +478,8 @@ public sealed partial class EditSession
     }
 
     /// <summary>
-    /// What a command can change: the documents of the session and the text. The scope records the state of each
-    /// document before the first change to it, so the session can undo the command.
+    /// What a command can change: the INI documents and the cutscenes of the session, and the text. The scope records
+    /// the state of each file before the first change to it, so the session can undo the command.
     /// </summary>
     internal sealed class CommandScope(EditSession session, ChangeSet change)
     {
@@ -410,6 +516,21 @@ public sealed partial class EditSession
             if (document.ReadOnlyReasonAt(index) is { } reason)
                 throw new InvalidOperationException($"{target}: {reason}");
             return (document, index);
+        }
+
+        /// <summary>A cutscene, to change it.</summary>
+        /// <exception cref="ArgumentException">The edit view has no such cutscene, or the editor cannot read it.</exception>
+        /// <exception cref="InvalidOperationException">The session or the cutscene is read-only.</exception>
+        public ThnDocument Cutscene(string path)
+        {
+            if (!session.TryCutscene(path, out var document))
+                throw new ArgumentException(session.CutsceneProblem(path), nameof(path));
+            session.ThrowIfReadOnly();
+            if (document.ReadOnlyReason != null)
+                throw new InvalidOperationException(document.ReadOnlyReason);
+            change.Capture(document);
+            change.NoteCutscene(document.Path);
+            return document;
         }
 
         public void Changed(SectionRef section, bool structural) =>

@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using ImGuiNET;
 using LibreLancer;
+using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
@@ -51,8 +52,12 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         "The INI rotate value goes through a quaternion when the game data loads. So these angles can be different " +
         "from the INI text, but they give the same rotation.";
 
-    private static readonly string[] AxisLetters = ["X", "Y", "Z"];
-    private static readonly Vector4[] AxisColors = [EditorTheme.AxisX, EditorTheme.AxisY, EditorTheme.AxisZ];
+    /// <summary>The text that a rotation row without a line shows: the engine uses no rotation.</summary>
+    private const string NoRotation = "0, 0, 0";
+
+    /// <summary>The labels of the three values of a vector, in the axis colors.</summary>
+    private static readonly ComponentLabel[] AxisLabels =
+        [new("X", EditorTheme.AxisX), new("Y", EditorTheme.AxisY), new("Z", EditorTheme.AxisZ)];
 
     // The infocards that show all their lines, by id.
     private readonly HashSet<int> expandedInfo = [];
@@ -199,12 +204,65 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         EndRow();
     }
 
-    /// <summary>A rotation as Euler angles in degrees: pitch (X), yaw (Y) and roll (Z).</summary>
+    /// <summary>
+    /// A rotation as Euler angles in degrees: pitch (X), yaw (Y) and roll (Z). A bound row shows the angles of the INI
+    /// line, so it converts nothing. Without a line, the engine uses no rotation. Only an unbound row converts the
+    /// quaternion, and its note tells that the angles can differ from the INI text.
+    /// </summary>
     public void Euler(string label, Quaternion value, string? iniKey = null)
     {
+        if (BoundRow(label, iniKey, NoRotation))
+        {
+            return;
+        }
+
         nextNote ??= EulerNote;
-        Vector(label, value.GetEulerDegrees(), iniKey);
+        BeginRow(label, iniKey);
+        VectorFields(value.GetEulerDegrees());
+        EndRow();
     }
+
+    /// <summary>
+    /// The size of a zone: one field for each value of the <c>size</c> line, with a label for each value in INI
+    /// order. A sphere has a radius, a cylinder a radius and a height, a ring an outer radius, an inner radius and a
+    /// height, and an ellipsoid and a box an X, Y and Z value. A line with another number of values, for example one
+    /// value for a box, gets one text field.
+    /// </summary>
+    /// <param name="size">The size of the zone, as the game data holds it: a ring has (outer, height, inner).</param>
+    public void Size(string label, ShapeKind shape, Vector3 size, string? iniKey = null)
+    {
+        if (BoundRow(label, iniKey, "1, 1, 1", count => SizeLabels(shape, count)))
+        {
+            return;
+        }
+
+        float[] values = shape switch
+        {
+            ShapeKind.Sphere => [size.X],
+            ShapeKind.Cylinder => [size.X, size.Y],
+            ShapeKind.Ring => [size.X, size.Z, size.Y],
+            _ => [size.X, size.Y, size.Z],
+        };
+        BeginRow(label, iniKey);
+        ComponentFields(values.Select(v => v.ToString("0.###", CultureInfo.InvariantCulture)).ToArray(),
+            SizeLabels(shape, values.Length) ?? AxisLabels, (_, text, width) => Field(text, width));
+        EndRow();
+    }
+
+    /// <summary>
+    /// The labels of the values of a <c>size</c> line of a zone with a shape, in INI order, or null when the shape does
+    /// not read a line with that number of values one value at a time. The color of a label is the color of the gizmo
+    /// axis that changes the value (see <see cref="Runtime.Scene.ZoneSizeAxes"/>).
+    /// </summary>
+    internal static IReadOnlyList<ComponentLabel>? SizeLabels(ShapeKind shape, int count) => (shape, count) switch
+    {
+        (ShapeKind.Sphere, 1) => [new("Radius", EditorTheme.AxisX)],
+        (ShapeKind.Cylinder, 2) => [new("Radius", EditorTheme.AxisX), new("Height", EditorTheme.AxisY)],
+        (ShapeKind.Ring, 3) =>
+            [new("Outer", EditorTheme.AxisX), new("Inner", EditorTheme.AxisZ), new("Height", EditorTheme.AxisY)],
+        (ShapeKind.Ellipsoid or ShapeKind.Box, 3) => AxisLabels,
+        _ => null,
+    };
 
     /// <summary>The text of a string resource, and its id dim at the right.</summary>
     public void Ids(string label, int ids, string? iniKey = null)
@@ -285,10 +343,18 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// <summary>
     /// A link to another item: a field with the kind glyph and "nickname (Name)", and a button that selects the item. A
     /// null nickname shows a dim "None". A null target disables the button, for an item that the editor cannot select.
+    /// A bound row shows the lines of the key in place of the field, with the button at the right.
     /// </summary>
     public void Reference(string label, ObjectKind kind, string? nickname, string? name, object? target,
         string? iniKey = null)
     {
+        var text = nickname == null ? "None" : string.IsNullOrEmpty(name) ? nickname : $"{nickname} ({name})";
+        var follow = new Follow(target, $"{kind.Label}: {text}");
+        if (BoundRow(label, iniKey, "no value", follow: follow))
+        {
+            return;
+        }
+
         BeginRow(label, iniKey);
         var style = ImGui.GetStyle();
         var height = ImGui.GetFrameHeight();
@@ -301,7 +367,6 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         drawList.AddRectFilled(min, max, ImGui.GetColorU32(EditorTheme.Strip), style.FrameRounding);
         drawList.AddRect(min, max, ImGui.GetColorU32(ImGuiCol.Border), style.FrameRounding);
 
-        var text = nickname == null ? "None" : string.IsNullOrEmpty(name) ? nickname : $"{nickname} ({name})";
         var font = ImGui.GetFont();
         var fontSize = ImGui.GetFontSize();
         var position = min + style.FramePadding;
@@ -319,20 +384,32 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         ImGui.Dummy(new Vector2(width, height));
         if (nickname != null && ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
         {
-            ImGui.SetTooltip($"{kind.Label}: {text}");
+            ImGui.SetTooltip(follow.Item);
         }
 
         ImGui.SameLine(0, spacing);
-        ImGui.BeginDisabled(target == null);
-        if (ImGui.Button($"{EditorIcons.UpRightFromSquare}##follow", new Vector2(buttonWidth, height)))
+        FollowButton(follow);
+        EndRow();
+    }
+
+    /// <summary>The button of a reference that selects the item. A null target disables it.</summary>
+    private void FollowButton(Follow follow)
+    {
+        ImGui.BeginDisabled(follow.Target == null);
+        if (ImGui.Button($"{EditorIcons.UpRightFromSquare}##follow",
+                new Vector2(ToolbarItems.IconWidth, ImGui.GetFrameHeight())))
         {
-            window.Selection = target;
+            window.Selection = follow.Target;
         }
 
         ImGui.EndDisabled();
-        ImGui.SetItemTooltip(target == null ? "The editor cannot select this item." : "Select it");
-        EndRow();
+        ImGui.SetItemTooltip(follow.Target == null ? "The editor cannot select this item." : $"Select {follow.Item}");
     }
+
+    /// <summary>The item of a reference that its button selects.</summary>
+    /// <param name="Target">The item, or null when the editor cannot select it.</param>
+    /// <param name="Item">The kind and the name of the item, for the tooltips.</param>
+    private readonly record struct Follow(object? Target, string Item);
 
     /// <summary>A row with its own widgets. <paramref name="value"/> draws them in the value column.</summary>
     public void Row(string label, Action value)
@@ -357,11 +434,12 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     public void Enum<T>(string label, T value, string? iniKey = null) where T : struct, System.Enum =>
         Text(label, value.ToString(), iniKey);
 
-    /// <summary>A chip for each flag that is set, or a dim "None". The tooltip lists all the flags.</summary>
+    /// <summary>A chip for each flag that is set, or a dim "None". The tooltip lists all the flags. In a bound scope, the
+    /// chips show the lines of the key.</summary>
     public void Flags<T>(string label, T value, string? iniKey = null) where T : struct, System.Enum
     {
         BeginRow(label, iniKey);
-        var bits = FlagTable<T>.Bits(value);
+        var bits = FlagBits(iniKey, FlagTable<T>.Bits(value));
         if (bits == 0)
         {
             Field(null);
@@ -380,11 +458,20 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     }
 
     /// <summary>
-    /// A read-only checkbox for each flag of <typeparamref name="T"/>, two in each row, and a row with the INI value.
+    /// A row with the INI value, then a read-only checkbox for each flag of <typeparamref name="T"/>, two in each row.
+    /// In a bound scope, the value row edits the key, and the checkboxes show its lines.
     /// </summary>
     public void FlagChecks<T>(T value, string iniKey) where T : struct, System.Enum
     {
-        var bits = FlagTable<T>.Bits(value);
+        var bits = FlagBits(iniKey, FlagTable<T>.Bits(value));
+        var number = bits.ToString(CultureInfo.InvariantCulture);
+        if (!BoundRow("Value", iniKey, number))
+        {
+            BeginRow("Value", iniKey);
+            Field($"{iniKey} = {number}");
+            EndRow();
+        }
+
         var entries = FlagTable<T>.Entries;
         for (var i = 0; i < entries.Length; i++)
         {
@@ -398,19 +485,25 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             ReadOnlyCheckbox(entries[i].Name, (bits & entries[i].Value) != 0);
             ImGui.PopID();
         }
-
-        Text("Value", $"{iniKey} = {bits.ToString(CultureInfo.InvariantCulture)}", iniKey);
     }
 
-    /// <summary>A color swatch and the color as "r, g, b" from 0 to 255, as in the INI files.</summary>
-    public void Color(string label, Color4 value, string? iniKey = null)
+    /// <summary>A color swatch and the color as "r, g, b" from 0 to 255, as in the INI files. A null color shows a dim
+    /// "None".</summary>
+    public void Color(string label, Color4? color, string? iniKey = null)
     {
-        if (BoundRow(label, iniKey, $"{Byte(value.R)}, {Byte(value.G)}, {Byte(value.B)}"))
+        if (BoundRow(label, iniKey, color is { } c ? $"{Byte(c.R)}, {Byte(c.G)}, {Byte(c.B)}" : "no color"))
         {
             return;
         }
 
         BeginRow(label, iniKey);
+        if (color is not { } value)
+        {
+            Field(null);
+            EndRow();
+            return;
+        }
+
         var height = ImGui.GetFrameHeight();
         ImGui.ColorButton("##swatch", new Vector4(value.R, value.G, value.B, value.A),
             ImGuiColorEditFlags.NoPicker | ImGuiColorEditFlags.NoDragDrop | ImGuiColorEditFlags.AlphaOpaque,
@@ -541,48 +634,49 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         ImGui.TextDisabled(number);
     }
 
-    private static void VectorFields(Vector3 value) => AxisFields(
+    private static void VectorFields(Vector3 value) => ComponentFields(
     [
         value.X.ToString("0.###", CultureInfo.InvariantCulture),
         value.Y.ToString("0.###", CultureInfo.InvariantCulture),
         value.Z.ToString("0.###", CultureInfo.InvariantCulture),
-    ], (_, text, width) => Field(text, width));
+    ], AxisLabels, (_, text, width) => Field(text, width));
 
     /// <summary>
-    /// Three fields with an X, Y and Z prefix in the axis colors. The fields share one row when every value fits. If
-    /// not, each field gets its own row, so that no value is cut. For example, a position of 141000 does not fit in a
-    /// third of a 360 pt Inspector.
+    /// One field for each label, with the label in front of it in its color. A missing value gives an empty field. The
+    /// fields share one row when every value fits. If not, each field gets its own row, so that no value is cut. For
+    /// example, a position of 141000 does not fit in a third of a 360 pt Inspector.
     /// </summary>
     /// <param name="field">Draws field i with its text, in the width that it gets.</param>
-    private static void AxisFields(string[] components, Action<int, string, float> field)
+    /// <param name="reserve">The width to leave free at the right of the fields.</param>
+    private static void ComponentFields(IReadOnlyList<string> components, IReadOnlyList<ComponentLabel> labels,
+        Action<int, string, float> field, float reserve = 0)
     {
         var style = ImGui.GetStyle();
         var spacing = style.ItemInnerSpacing.X;
-        var prefix = MathF.Truncate(AxisPrefixWidth * ImGuiHelper.Scale);
-        var available = ImGui.GetContentRegionAvail().X;
-        var part = MathF.Floor((available - 2 * spacing) / 3);
         var height = ImGui.GetFrameHeight();
         var drawList = ImGui.GetWindowDrawList();
-        var needed = components.Max(c => ImGui.CalcTextSize(c).X) + 2 * style.FramePadding.X;
-        var stacked = part - prefix < needed;
-        var fieldWidth = Math.Max(1, stacked ? available - prefix : part - prefix);
-        for (var i = 0; i < components.Length; i++)
+        var texts = labels.Select((_, i) => i < components.Count ? components[i] : "").ToArray();
+        var layout = ComponentLayout.Of(labels.Count,
+            labels.Max(l => ImGui.CalcTextSize(l.Text).X),
+            texts.Max(c => ImGui.CalcTextSize(c).X) + 2 * style.FramePadding.X,
+            ImGui.GetContentRegionAvail().X - reserve, MathF.Truncate(AxisPrefixWidth * ImGuiHelper.Scale), spacing);
+        for (var i = 0; i < labels.Count; i++)
         {
-            if (i > 0 && !stacked)
+            if (i > 0 && !layout.Stacked)
             {
                 ImGui.SameLine(0, spacing);
             }
 
-            // The axis letter is centered in its prefix space, at the height of the field text.
+            // The label is centered in its prefix space, at the height of the field text.
             var min = ImGui.GetCursorScreenPos();
-            var letterWidth = ImGui.CalcTextSize(AxisLetters[i]).X;
-            var letterPosition = new Vector2(min.X + MathF.Truncate((prefix - letterWidth) / 2),
+            var labelWidth = ImGui.CalcTextSize(labels[i].Text).X;
+            var labelPosition = new Vector2(min.X + MathF.Truncate((layout.Prefix - labelWidth) / 2),
                 min.Y + style.FramePadding.Y);
-            drawList.AddText(letterPosition, ImGui.GetColorU32(AxisColors[i]), AxisLetters[i]);
-            ImGui.Dummy(new Vector2(prefix, height));
+            drawList.AddText(labelPosition, ImGui.GetColorU32(labels[i].Color), labels[i].Text);
+            ImGui.Dummy(new Vector2(layout.Prefix, height));
             ImGui.SameLine(0, 0);
             ImGui.PushID(i);
-            field(i, components[i], fieldWidth);
+            field(i, texts[i], layout.Field);
             ImGui.PopID();
         }
     }
@@ -648,6 +742,33 @@ internal sealed partial class PropertyGrid(EditorWindow window)
 
     /// <summary>A color channel from 0 to 1 as a number from 0 to 255.</summary>
     private static int Byte(float channel) => (int)MathF.Round(Math.Clamp(channel, 0, 1) * 255);
+
+    /// <summary>The label in front of the field of one value of a line, for example X or Radius.</summary>
+    internal readonly record struct ComponentLabel(string Text, Vector4 Color);
+
+    /// <summary>How the labeled fields of the values of one line share the value cell.</summary>
+    /// <param name="Prefix">The width of the label in front of each field.</param>
+    /// <param name="Field">The width of each field.</param>
+    /// <param name="Stacked">True when each field gets its own row, because a value does not fit next to the
+    /// others.</param>
+    internal readonly record struct ComponentLayout(float Prefix, float Field, bool Stacked)
+    {
+        /// <param name="count">The number of fields.</param>
+        /// <param name="label">The width of the text of the widest label.</param>
+        /// <param name="value">The width that the widest value needs in its field, with the padding of the field.</param>
+        /// <param name="available">The width of the value cell for the fields.</param>
+        /// <param name="minimumPrefix">The width of the label of an axis letter. A label that fits in it gets this
+        /// width. A wider label gets <paramref name="spacing"/> at each side.</param>
+        /// <param name="spacing">The space between two fields in one row.</param>
+        public static ComponentLayout Of(int count, float label, float value, float available, float minimumPrefix,
+            float spacing)
+        {
+            var prefix = label <= minimumPrefix ? minimumPrefix : MathF.Ceiling(label + 2 * spacing);
+            var part = MathF.Floor((available - (count - 1) * spacing) / count);
+            var stacked = count > 1 && part - prefix < value;
+            return new ComponentLayout(prefix, MathF.Max(1, stacked ? available - prefix : part - prefix), stacked);
+        }
+    }
 
     /// <summary>The flags of an enum type: each value with one bit, and its names.</summary>
     private static class FlagTable<T> where T : struct, System.Enum

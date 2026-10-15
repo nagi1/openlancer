@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor;
 
@@ -13,8 +14,9 @@ namespace OpenLancer.Editor;
 internal sealed record RecentProfile(string Path, DateTime LastOpenedUtc);
 
 /// <summary>
-/// Editor preferences that persist between sessions: the UI scale, the panel sizes, the view options, the Database
-/// category, the open Inspector sections, the ImGui table state and the recent profiles.
+/// Editor preferences that persist between sessions: the UI scale, the panel sizes, the view options, the gizmo tool
+/// and its snap, the Database category, the open Inspector sections, the ImGui table state, the recent profiles, and
+/// the active mod and the Play ship of each profile.
 /// </summary>
 internal sealed class EditorSettings
 {
@@ -41,6 +43,16 @@ internal sealed class EditorSettings
     public const float DefaultDatabaseCategoryWidth = 190;
     public const float DefaultConsoleDetailHeight = 80;
 
+    // The defaults of the gizmo: the move tool, the world axes and the snap steps of decision D27.
+    private const GizmoTool DefaultTool = GizmoTool.Move;
+    private const GizmoSpace DefaultSpace = GizmoSpace.World;
+    private const float DefaultMoveStep = 100;
+    private const float DefaultRotateStep = 15;
+    private const float DefaultSizeStep = 100;
+
+    // The move step of the gizmo of the Cutscene view, in meters.
+    private const float DefaultCutsceneMoveStep = 0.1f;
+
     /// <summary>The user's UI scale. The display DPI scale multiplies it.</summary>
     public float UiScale { get; set; } = 1;
 
@@ -65,6 +77,12 @@ internal sealed class EditorSettings
     /// </summary>
     public Dictionary<string, string> ActiveMods { get; set; } = new(PathComparer);
 
+    /// <summary>
+    /// The ship package of Play for each profile, by the full path of the profile file (decision D15). A profile that is
+    /// not in the list, or that has an empty value, plays with the package of a new multiplayer character.
+    /// </summary>
+    public Dictionary<string, string> PlayPackages { get; set; } = new(PathComparer);
+
     public bool ShowMarkers { get; set; } = true;
     public bool ShowLabels { get; set; } = true;
     public bool ShowGrid { get; set; } = true;
@@ -73,6 +91,47 @@ internal sealed class EditorSettings
     public bool ShowNebulae { get; set; } = true;
     public bool ShowStarsphere { get; set; } = true;
     public bool Wireframe { get; set; }
+
+    /// <summary>The tool of the gizmo.</summary>
+    [JsonIgnore]
+    public GizmoTool Tool { get; set; } = DefaultTool;
+
+    /// <summary>The axes of a move or a turn. A scale always uses the axes of the item.</summary>
+    [JsonIgnore]
+    public GizmoSpace Space { get; set; } = DefaultSpace;
+
+    // The file holds the tool and the space by name. A name that this editor does not know, for example a tool of a
+    // later editor, gives the default of that setting. So the other settings stay.
+    [JsonInclude]
+    [JsonPropertyName(nameof(Tool))]
+    private string ToolName
+    {
+        get => Tool.ToString();
+        set => Tool = Named(value, DefaultTool);
+    }
+
+    [JsonInclude]
+    [JsonPropertyName(nameof(Space))]
+    private string SpaceName
+    {
+        get => Space.ToString();
+        set => Space = Named(value, DefaultSpace);
+    }
+
+    /// <summary>True when a drag of the gizmo snaps to the steps. Ctrl during a drag reverses it.</summary>
+    public bool Snap { get; set; }
+
+    // The snap steps of the gizmo: a distance, an angle in degrees and a size. Each step is above 0.
+    public float MoveStep { get; set; } = DefaultMoveStep;
+    public float RotateStep { get; set; } = DefaultRotateStep;
+    public float SizeStep { get; set; } = DefaultSizeStep;
+
+    /// <summary>The move step of the gizmo of the Cutscene view, in meters. A cutscene is room size.</summary>
+    public float CutsceneMoveStep { get; set; } = DefaultCutsceneMoveStep;
+
+    /// <summary>The snap of a drag of the gizmo, before Ctrl (see <see cref="GizmoSnap.WithCtrl"/>).</summary>
+    [JsonIgnore]
+    public GizmoSnap DragSnap => new(Snap, MoveStep, RotateStep, SizeStep);
 
     /// <summary>
     /// The open state of the Inspector sections that the user changed, by section key ("Type.Section"). A section that
@@ -98,6 +157,13 @@ internal sealed class EditorSettings
     private static StringComparer PathComparer =>
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
+    // False for the settings of a run that must not change the settings file, for example the preview bench.
+    private bool persistent = true;
+
+    /// <summary>The default settings, which <see cref="Save"/> never writes. The preview bench uses them, so that it does
+    /// not change the settings of the user.</summary>
+    public static EditorSettings Transient() => new() { persistent = false };
+
     /// <summary>Reads the settings. A missing or damaged file gives the defaults.</summary>
     public static EditorSettings Load()
     {
@@ -115,10 +181,12 @@ internal sealed class EditorSettings
 
     /// <summary>
     /// Reads the settings from their JSON text. The last profile of an older editor becomes the first recent profile,
-    /// so the editor still opens it at the start.
+    /// so the editor still opens it at the start. A gizmo tool or space that this editor does not know, or a snap step
+    /// that is not a finite number above 0, gives the default of that setting only.
     /// </summary>
     /// <param name="savedUtc">The time when the file was saved. It is the time of a moved last profile.</param>
-    /// <exception cref="JsonException">The text is not valid settings, for example a setting is null.</exception>
+    /// <exception cref="JsonException">The text is not valid settings, for example a setting is null or has the wrong
+    /// JSON type.</exception>
     internal static EditorSettings Parse(string json, DateTime savedUtc)
     {
         var settings = JsonSerializer.Deserialize<EditorSettings>(json, JsonOptions) ?? new EditorSettings();
@@ -128,16 +196,31 @@ internal sealed class EditorSettings
             throw new JsonException("The list of recent profiles has an entry without a path.");
         }
 
+        // A drag with snapping needs a finite step above 0 (see GizmoDrag.Update). Another step, for example a step of
+        // 0 from a hand edit, gives the default step. So the other settings stay.
+        settings.MoveStep = ValidStep(settings.MoveStep, DefaultMoveStep);
+        settings.RotateStep = ValidStep(settings.RotateStep, DefaultRotateStep);
+        settings.SizeStep = ValidStep(settings.SizeStep, DefaultSizeStep);
+        settings.CutsceneMoveStep = ValidStep(settings.CutsceneMoveStep, DefaultCutsceneMoveStep);
+
         if (settings.LegacyLastProfile is { Length: > 0 } last && settings.RecentProfiles.Count == 0)
         {
             settings.RecentProfiles.Add(new RecentProfile(last, savedUtc));
         }
 
         settings.LegacyLastProfile = null;
-        // The serializer makes the dictionary without the comparer of the paths.
+        // The serializer makes the dictionaries without the comparer of the paths.
         settings.ActiveMods = new Dictionary<string, string>(settings.ActiveMods, PathComparer);
+        settings.PlayPackages = new Dictionary<string, string>(settings.PlayPackages, PathComparer);
         return settings;
     }
+
+    /// <summary>The value of an enum name, or the fallback for a name that this editor does not know.</summary>
+    private static T Named<T>(string name, T fallback) where T : struct, Enum =>
+        Enum.GetValues<T>().FirstOrDefault(v => v.ToString().Equals(name, StringComparison.OrdinalIgnoreCase), fallback);
+
+    /// <summary>The step, or the fallback for a step that is not a finite number above 0.</summary>
+    private static float ValidStep(float step, float fallback) => float.IsFinite(step) && step > 0 ? step : fallback;
 
     /// <summary>
     /// The id of the active mod of a profile: the stored id when the profile has that mod, else the last mod of the
@@ -156,6 +239,23 @@ internal sealed class EditorSettings
 
     /// <summary>Stores the active mod of a profile. Null stores no active mod.</summary>
     public void SetActiveMod(string profilePath, string? modId) => ActiveMods[profilePath] = modId ?? "";
+
+    /// <summary>The nickname of the ship package of Play for a profile, or null for the default package.</summary>
+    public string? PlayPackageOf(string profilePath) =>
+        PlayPackages.TryGetValue(profilePath, out var package) && !string.IsNullOrWhiteSpace(package) ? package : null;
+
+    /// <summary>Stores the ship package of Play for a profile. Null sets the default package again.</summary>
+    public void SetPlayPackage(string profilePath, string? package)
+    {
+        if (package == null)
+        {
+            PlayPackages.Remove(profilePath);
+        }
+        else
+        {
+            PlayPackages[profilePath] = package;
+        }
+    }
 
     /// <summary>
     /// Puts a profile at the top of the recent list. The list keeps each path once and has at most
@@ -179,6 +279,11 @@ internal sealed class EditorSettings
     /// <summary>Writes the settings. A failure only loses the preferences, so it does not stop the editor.</summary>
     public void Save()
     {
+        if (!persistent)
+        {
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);

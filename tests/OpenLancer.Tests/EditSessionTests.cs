@@ -327,6 +327,38 @@ public sealed class EditSessionTests
         Assert.Throws<ArgumentException>(() => EditCommand.SetText(StringKind.String, "key", ""));
     }
 
+    /// <summary>A change of the text alone lists no section, so the change tells that the text changed. The scene
+    /// then shows a new name of an item at once.</summary>
+    [Fact]
+    public void AChangeTellsWhenTheTextChanged()
+    {
+        using var ws = Workspace();
+        var first = ws.Session("act");
+        first.Execute(EditCommand.SetText(StringKind.String, "n", "N"));
+        Assert.Empty(first.WriteRecovery());
+        first.Dispose();
+        var session = ws.Session("act");
+        var changes = new List<EditChange>();
+        session.Changed += changes.Add;
+
+        Assert.Empty(session.RestoreRecovery());
+        session.Undo();
+        session.Redo();
+        session.Execute(EditCommand.SetText(StringKind.String, "g1_name", "Gun"));
+        session.Undo();
+        session.Redo();
+        session.Execute(ItemEdits.SetText(session, Good("g1"), "ids_name", "Good"));
+        session.Execute(Set(Good("g1"), "price", new Int32Value(1)));
+        session.Undo();
+
+        Assert.Equal([true, true, true, true, true, true, true, false, false], changes.Select(c => c.Text));
+        // A restore lists no section, so it is structural. Its undo and its redo give the same change.
+        Assert.All(changes.Take(3), c => Assert.True(c.Structural));
+        Assert.All(changes.Take(3), c => Assert.Empty(c.Sections));
+        Assert.Empty(changes[3].Sections);
+        Assert.Equal([Good("g1")], changes[6].Sections);
+    }
+
     [Fact]
     public void ASessionWithoutAnActiveModIsReadOnly()
     {

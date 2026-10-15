@@ -456,7 +456,7 @@ public sealed class OverlayPatchTests
             [@"files\DATA\whole.ini"] = "[Group]\nnickname = w1",
         });
 
-        var overlay = ModOverlay.Build(ws.Base, [lower], TestWorkspace.FakeDllWriter.Instance, keepDocuments: true);
+        var overlay = ModOverlay.Build(ws.Base, [lower], TestWorkspace.FakeDllWriter.Instance, thn: null, keepDocuments: true);
 
         // The text writer writes the float 100 as "100", which the parser reads as an Int32.
         Assert.IsType<Int32Value>(Section(overlay, "beta")["volume"]![0]);

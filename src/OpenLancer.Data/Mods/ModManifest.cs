@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Mods;
 
@@ -37,7 +38,7 @@ public sealed partial record ModManifest(
         ManifestJson? json;
         try
         {
-            json = JsonSerializer.Deserialize<ManifestJson>(File.ReadAllText(path), JsonOptions);
+            json = JsonSerializer.Deserialize<ManifestJson>(SharedFile.ReadAllText(path), JsonOptions);
         }
         catch (JsonException e)
         {

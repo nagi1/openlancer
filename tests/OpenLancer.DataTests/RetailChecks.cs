@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using LibreLancer;
@@ -5,6 +7,7 @@ using LibreLancer.Data;
 using LibreLancer.Data.IO;
 using LibreLancer.Data.Schema.Save;
 using LibreLancer.World;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.IO;
 using Xunit;
 
@@ -15,6 +18,15 @@ internal static class RetailChecks
 {
     /// <summary>Planet Manhattan in New York, the first base of the story.</summary>
     public const string Manhattan = "li01_01_base";
+
+    /// <summary>The install paths of universe.ini and of the file of each of its [system] sections, in file
+    /// order.</summary>
+    public static List<string> SystemFiles(EditSession session) =>
+        session.Sections(session.UniversePath!)
+            .Where(s => s.Id.Type.Equals("system", StringComparison.OrdinalIgnoreCase))
+            .Select(s => session.SystemPath(s.Id.Key!)!)
+            .Prepend(session.UniversePath!)
+            .ToList();
 
     /// <summary>The base folder holds the unchanged retail data, and each of its files is read-only.</summary>
     public static void AssertBaseIsUnchanged(string baseFolder)

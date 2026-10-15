@@ -1,0 +1,171 @@
+# The cutscene editor
+
+The editor opens each cutscene script (`.thn`) of the game data: the retail scripts and the scripts of the mods. It shows the entities and the events of a script on a timeline. It previews the script as the game plays it, and it shows each value in the Inspector. With an active mod, it also edits the script. A save writes the changes into the mod as a THN patch. The format of a THN patch is in [MOD_FORMAT.md](MOD_FORMAT.md), section "Cutscenes".
+
+Without an active mod, the editor shows each cutscene and takes no edits. So you can study how the retail cutscenes work, and no mod changes.
+
+This version has these limits:
+
+- The preview plays no sound.
+- The editor cannot make a new cutscene. It cannot change a whole cutscene file of a mod into a patch.
+- The validation reports only the errors that stop a cutscene. It does not report warnings, for example an event after the end of the script.
+
+## Browse and preview the retail cutscenes
+
+1. Run `start.bat` to build and start the editor.
+2. Click File > Open profile, then click a profile. A profile without mods shows only the retail data.
+3. Click Mod > None (read-only). The editor then shows all mods of the profile and takes no edits.
+4. Click the Cutscenes tab at the bottom of the window. A scan reads each script one time. Until the scan ends, the toolbar of the tab shows "reading" and the count of the scripts that it read.
+5. Type a part of the name or of the path in the filter field, for example `s002xe`. To show one group of scripts, select the group in the folder list next to the filter, for example Story.
+6. Double-click a row. The script opens in the Cutscene tab, beside the Scene tab, and in the Timeline tab, beside the Cutscenes tab.
+7. In the toolbar of the Timeline, click the play button after the label Preview. Or click in the Timeline and press Space.
+8. To go to a time, drag on the ruler of the Timeline or on the scrub bar below the view. Or type the time in the time field at the right end of the scrub bar.
+9. Click an event in the Timeline, or the name of an entity in the Timeline or in the Hierarchy. The Inspector shows its values. The event links in the Inspector page of an entity select its events.
+10. To look through a camera from the free camera, select the CAMERA entity. Then click Align view to camera, the eye button of the Cutscene toolbar. The view changes to Free mode, with the pose and the field of view of the camera at the playhead.
+11. To see the shot as the game shows it again, click Shot, the video camera button of the Cutscene toolbar.
+
+The question mark button at the end of the Cutscene toolbar lists the keys of the preview and of Free mode.
+
+## The Cutscenes tab
+
+The Cutscenes tab is at the bottom, beside the Database, the Console and the Timeline. It lists each cutscene script (`.thn`) of the edit view: the base data, the mods before the active mod, and the active mod. It works also in a profile without an active mod.
+
+| Column | Content |
+|---|---|
+| Name, Folder | The file name, and the folder group: Bases, Story, GCS, Missions, Extras, Vendors or Intro, Mods for the new cutscenes under `DATA/MODS/`, and Other. |
+| Duration, Entities, Events | The `duration` global and the number of entities and events. A scan reads each script once, a part in each frame, so the counts fill in during the first seconds. The tooltip of a script that the scan cannot read tells why. |
+| Used by | The INI lines that name the script, for example `M000_s002xe_Li01_01_nrml.ini [CharacterEncounter] action`. The editor reads each value below `DATA`, with either separator and in any case, so `missions\\m01a\\x.thn` and `Missions/M01a/x.thn` name one script. A click on the line shows its section in the Inspector. The tooltip and the menu of the row list all lines. |
+| State | Retail (no mod changes the script), Changed by a lower mod (a mod before the active mod adds it, patches it or replaces it), Patched here (the active mod has a THN patch), Replaced here (the active mod has a whole file for a lower script) or New here (the active mod adds the script). A dot after the state marks unsaved edits. |
+
+Filter the list by name or path, or by folder group. A click on a column header sorts the list. The commands are in the toolbar and in the menu of a row:
+
+- **Open** (or a double-click) opens the script in the Cutscene tab and in the Timeline. One cutscene is open at a time.
+- **Revert** puts back the script as the mods before the active mod leave it. The next save then deletes the patch of the active mod. Revert is one entry of the edit history. It is not available for a whole file of the active mod, and not when the active mod does not change the script.
+- **Copy path** copies the install path, for example `DATA\Scripts\Story\s002xe_nrml_sinclair_li_01_Cityscape_01.thn`.
+
+The Console and the engine log get one line for each open, with the counts of the Timeline, for example "2 monitor lanes, 35 cuts (13 on the main monitor)", and the cameras that only an ignored monitor uses.
+
+## The Cutscene tab
+
+The Cutscene tab is beside the Scene tab. It previews the open cutscene script, also in a profile without an active mod. The list of its toolbar opens a script too. The preview reads the script with the unsaved edits of the session.
+
+The context list sets how the preview plays the script. The editor suggests the context in which the game plays it:
+
+| Context | Scripts | What the preview builds |
+|---|---|---|
+| Room | the set, scene, cart, start, landing and launching scripts of a room, the story cutscenes of `[CharacterEncounter]` at its `location`, and the mission ambients of `Act_AddAmbient` | The room as the game builds it: the set script, then the scene scripts of the room, then the script. Each script plays one time. When the script is the set script, a scene script or an ambient, the room plays without a cutscene: the view looks through the `[Camera]` of the room, and the player ship is on the `[PlayerShipPlacement]` marker. Else the script plays as the cutscene, with the fixtures of the room that play its characters. |
+| Fidget | the scripts of `[MRoom] fixture`, `[Char] fidget` and the fidget segment of `[GenericScripts]` | A stand-in character at the spot of the fixture plays the `START_MOTION` events of the script, as the game plays a fidget. Without a room, the stand-in stands at the origin. |
+| Space | the scripts of `Act_CallThorn` | The script alone. The game plays it in space with the mission objects, so a banner tells the difference. |
+| Script only | each script | The script alone, with the player ship of the Play package. A script with `$terrain_*` templates needs a room, because only the context of a room fills them in. A banner then names the room. |
+
+The player ship is the ship of the Play package of the profile (see [PLAY.md](PLAY.md)).
+
+The view has two modes, the two camera buttons of the toolbar:
+
+- **Shot** shows the active THN camera with the letterbox of the game: the viewport is 1/1.39 of the height of the screen rectangle while a cutscene plays, and the whole screen rectangle when a room plays without a cutscene. The aspect list sets the ratio of the screen rectangle: the ratio of the panel, 4:3 or 16:9.
+- **Free** shows the scene through the fly camera of the editor, in the whole panel. The controls are the controls of the Scene, at the scale of a room: 5 m/s at the start and a near plane of 0.05 m. Over the scene, a glyph marks each entity of the script, a frustum shows each camera (the active camera of the shot in yellow), and a line shows each motion path. A click selects the entity of a glyph, and a click on empty space selects the cutscene. `F` frames the selected entity. The Names button shows the names of all entities. A script without a camera opens in Free mode.
+
+**Align view to camera** (the eye button) puts the free camera at the pose and the field of view of the selected camera, or of the active camera when no camera is selected, at the playhead. Then Free mode shows what the camera shows, across the width of the view. The frustum of that camera then shows the frame of the shot.
+
+**Set camera from view** (the camera button beside it) writes the pose of the free camera into the start pose of the selected CAMERA (`spatialprops.pos` and `orient`), in one edit. Select a CAMERA entity and use Free mode first. Align view to camera and Set camera from view are the two camera commands of Unity.
+
+In Free mode, the **gizmo** moves and turns the item of the selection, with the tools, the Local and World switch and the snap of the Scene gizmo. The move step of the snap is in meters (0.01 m to 10 m). A cutscene entity has no size, so the scale tool is off. Each drag is one edit, and the drag ends when you release the mouse button.
+
+| Selection | What the gizmo changes |
+|---|---|
+| An entity | Its start pose: `spatialprops.pos` and `spatialprops.orient`. A MONITOR has no place in the scene. The engine does not make an entity with the REFERENCE flag: it uses the object with the same name that another script of the scene makes, for example the set script of the room. So the gizmo and Set camera from view do not change such an entity, and its Transform rows say why. |
+| A START_SPATIAL_PROP_ANIM with one target | The target pose of the event: `spatialprops.pos` and `q_orient` of its props. A rotate always writes `q_orient`, because the engine cannot load the `orient` key of this event. |
+| A START_SPATIAL_PROP_ANIM with a second target | The start pose of the entity of the second target. The engine moves the entity to the pose of that target in each frame, so the values of the event only choose which parts move. |
+| A MOTION_PATH with a key selected in the Inspector | The key, in the frame of the path entity. The edit writes `path_data` again. |
+
+Events can move an entity later, so the gizmo edits the start pose that W gives, not the pose of the shown frame. While the playhead is not at 0, a ring labeled "start pose" marks that pose, and a line joins it to the entity in the shown frame. The ring follows each frame of a drag.
+
+The play button below the view plays and pauses the preview. The Preview controls are in the toolbar of the Timeline. They have circle icons, so they do not look like Play of the game: play, pause, stop, one frame back and forward, loop, pre-roll and the speed (0.25x to 2x). The loop plays the whole script, or the loop range of the ruler of the Timeline. With a loop range, a play from a playhead outside the range starts at the start of the range. The keys work while the Cutscene or the Timeline panel has the focus: Space plays or pauses, Home and End go to the start and the end, Left and Right go one frame (1/60 s), and Shift with Left or Right goes one second. F5 and Shift+F5 stay Play and Stop of the game. The preview runs while the Cutscene tab or the Timeline shows.
+
+The preview steps at exactly 1/60 s, so a play to a time and a jump to that time give the same picture. A jump forward is fast. A jump back builds the scene again and runs it to the playhead. Until then, the view keeps the last frame, and the scrub bar shows the progress. A play from a scrubbed time starts with a pre-roll of 3 s at four times the speed, so that the particle effects that started before the playhead show as in the game. A jump to the start of the loop range starts with a pre-roll too. The scrub bar shows the first 600 s of a long script. The time field takes any time.
+
+A play waits while the scene builds again or runs to the playhead, for example at the start of a pre-roll or of a loop. Then the play goes on from the frame that the view shows.
+
+When the script has no camera, the view shows only "This script has no camera". A problem of a build shows as a banner with the message of the engine, and the view keeps the last frame.
+
+The readout button shows the build time, the step time and the steps of each frame. The editor option `--bench-cutscene <install path>...` opens the profile of the command line without an active mod, previews each script to its end (at most 600 s), and then jumps back to the middle of that time. The first build loads the models, and the build of the jump back finds them loaded, as each jump back and each edit does. The bench writes the times of both builds and catch-ups and the active camera to the log, and closes. A wrong command line of the bench gives the exit code 2, and a script that fails gives the exit code 1. The bench does not change the editor settings. As each start of the editor, it replaces the engine log of the editor, `%LOCALAPPDATA%\Librelancer\logs\OpenLancer.Editor.log.txt`, so copy that file first when you need the log of your last session. While another editor runs, the bench writes `OpenLancer.Editor.log.0.txt`.
+
+A wrong command line of a normal start, for example two profile files, opens the editor without a profile. The Welcome screen shows the problem.
+
+## The Timeline tab
+
+The Timeline tab shows the events of the open cutscene on the time of the script. With an active mod, it also edits them. When the cutscene takes no edits, for example without an active mod, the toolbar of the Timeline shows "Read-only", and its tooltip tells why.
+
+- The **ruler** shows the seconds and the end of the script. A drag on the ruler moves the playhead. A drag back builds the scene again when you release the mouse button. A thin bar shows the progress of the build. `Shift` and a drag on the ruler set the **loop range** and turn the loop on. Then the loop plays only that range. `Shift` and a click on the ruler clear the range.
+- The **Cameras** group has one lane for each MONITOR. The engine sorts the monitors by `userprops.Priority` and uses only the first one. The lane of that monitor is the main lane: each cut is a diamond, and each shot is a segment with the name of its camera. The other lanes are grey, because the engine ignores their cuts. A camera that only an ignored monitor cuts to has an information mark, unless another event names it. For example, in s002xe a START_SPATIAL_PROP_ANIM moves `Cam_02_Intro_Trent_A` to the pose of `Cam_02_Intro_Trent_B`, so the pose of `Cam_02_Intro_Trent_B` matters, and it has no mark.
+- Each **entity** has one row, in the group of its type: Cameras, Characters, Props, Lights, Effects, Sounds, Markers, Paths, Scene and Other. An event is on the row of its first target. An event whose first target names no entity of the script is in the group "Not in this script". The filter button hides the rows without events. A click on a group header opens or closes it.
+- An event with a length is a **bar**, with its type and its second target. The points of its `param_curve` are ticks at the bottom of the bar. An event without a length is a **diamond**. The tooltip of an event gives its times, its targets and its notes.
+- An event that starts **after the end** of the script has the warning color. Its tooltip gives the gap and whether a steady 60 frames per second runs it: the game runs an event only when its last frame passes the time of the event. The preview stops at the end, so it does not run such an event.
+- An event that the game does not run in the context of the preview is **grey**: the events of a set script, the events of a fidget other than START_MOTION, and the cuts of an ignored monitor.
+
+A click on an event selects it, and a double-click also moves the playhead to it. `Shift` and a click add an event to the selection or remove it. A drag on empty track space selects the events in the box. A click on a row selects its entity. `F` shows the selection on the timeline. `Ctrl` with the wheel zooms, and `Shift` with the wheel or the middle mouse button moves in time. The timeline shows at most 600 s at once.
+
+The edits of the Timeline:
+
+- A **drag of a bar or a diamond** moves the selected events in time. A drag of the **start of a bar** moves its time and keeps its end. A drag of the **end of a bar** changes its length (`props.duration`). A drag of the **end handle** of the ruler changes the `duration` of the script. Each change is a whole number of milliseconds, the grid of all retail times. With `Ctrl`, a moved edge snaps to the playhead and to the start and the end of the other events. `Esc` cancels a drag. Each drag is one edit, and it ends when you release the mouse button.
+- `Delete` deletes the selected events. `Ctrl+C` copies them. `Ctrl+V` pastes them at the playhead: the earliest event starts at the playhead, and the others keep their offset. When an entity is selected, the events of the row of the copy move to that entity. The pasted times are on the 1 ms grid. `Ctrl+D` adds a copy of the selected events right after them, as Duplicate of Unity does: the earliest copy starts at the end of the event that ends last, and the copies keep their offsets. Events without a length move their copies one frame (17 ms) later. The copies take the selection, so that a drag moves them.
+- The menu of a row (a right click) has **Add event** with the event types whose first target fits the entity, at the time of the click. A new event has the usual props of its type, for example START_MOTION with `animation`, `duration` and `time_scale = 1`. A new animation of props, for example START_SPATIAL_PROP_ANIM or START_CAMERA_PROP_ANIM, has an empty record of its props. The engine changes only the values that such an event has, so the new animation changes nothing until you set a value. An event that needs a second target gets the first entity that fits it, for example the first CAMERA for a SET_CAMERA on a monitor lane. The second target is never the entity of the row, an entity that a later entity with the same name hides, a MONITOR or the SCENE entity. Retail uses a MONITOR and the SCENE entity only as the first target of SET_CAMERA and START_FOG_PROP_ANIM. The menu also has **Paste here** and **Delete entity...**. When events name the entity, a dialog lists them and offers **Delete with events** or **Cancel**.
+- The menu of an event has Copy, Duplicate, Delete and **Move before**. The engine runs the events of one time in the order of the file. Move before puts the event before another event of the same time. In a patch, the events after it become a delete and a new event, so Move before is off, with the reason, when such an event has a key that repeats in the lower cutscene.
+
+While the Cutscene tab shows, the Hierarchy shows the open cutscene: the cutscene row, then the entities in the groups of the Timeline. A `t:` word of the search selects a type, for example `t:camera`. A double-click on an entity frames it in Free mode. The Scene tab and the Cutscene tab each keep their own selection.
+
+## The Inspector of a cutscene
+
+The Inspector shows the selected entity or event, the selected events, or the cutscene page when the cutscene is selected: the state, the duration, the counts, the monitors, the lines that use the script and the scripts of the preview. With an active mod, its rows edit W, and each edit is one entry of the edit history. A blue label and a bar mark a value that differs from the lower cutscene. The menu of a label has **Revert to the lower cutscene**, **Remove** and **Copy value**. The tooltip of a label names the engine lines that read the key.
+
+- An entity shows the rows of its type, in the groups of its records: Transform, Camera, Light, Sound, Character, Path, Effect and User props. An event shows its time, length, type and targets, then the rows of its type. The time and the length change as a drag on the Timeline changes them: on the 1 ms grid, and not below 0. A key that the editor does not know shows in **Other keys** as Lua text, and the evaluator reads a new text. A key that the engine does not read has a note, for example `No_Fog`. The engine reads the `userprops` keys without letter case, so a row edits the spelling that the entity has.
+- A number shows the shortest text that gives the same float. A text that is not a number, or a number that is not finite, keeps the last valid value and shows the error. A position has an X, a Y and a Z field. A rotation matrix (`orient`) shows as Euler angles in degrees.
+- **Flags** of an entity are checkboxes: REFERENCE, LIT_DYNAMIC, LIT_AMBIENT and HIDDEN, and SPATIAL in place of LIT_DYNAMIC on a SOUND. A stored number stays a number, one flag from a name or from no key is the name of the flag, and else the value is the number that the engine reads. The flags of ATTACH_ENTITY, START_PATH_ANIMATION and START_SOUND, and the `event_flags` of START_MOTION and START_IK, are checkboxes with the same rules. An ATTACH_ENTITY without `flags` runs with POSITION and ORIENTATION, so its checkboxes show these two, and a click adds a bit to them or removes one. A THN name, for example `target_type`, is a list. A target of an event is a list of the entities that fit its role, with a button that selects the entity.
+- START_CAMERA_PROP_ANIM reads its keys by place, not by name. So the rows say what each key sets: `aspect` sets the near plane, `near` the far plane, and `far` the aspect. When the second target of the event is a CAMERA, the engine takes the end values from that camera, and a note says so. A START_SPATIAL_PROP_ANIM with a second target has a note and a link that selects that target. The engine cannot load the `orient` key of a START_SPATIAL_PROP_ANIM, so a script with it does not play. Its row says so. Use `q_orient`.
+- The **curve** of an event shows as a graph of its value over the length of the event, as the engine computes it. A drag of a point of the graph is one edit. The time of a point stays between the times of its neighbors. A row for each point edits its time, value and slopes.
+- The **path keys** of a MOTION_PATH show as a row for each key, with its point and its orientation. An edit writes the whole `path_data` again. A path that no edit changed keeps its text. **Select for the gizmo** gives a key to the gizmo of the Cutscene view.
+- A new **name** renames the entity, the targets of the events that name it and the `userprops.speaker` values that name it, in this file. When other data uses the name, a dialog lists the uses first and offers **Rename in this file** or **Cancel**: the `[Camera]`, `[CharacterPlacement]`, `[PlayerShipPlacement]` and `[ForSaleShipPlacement]` names of the rooms whose set or scene script is this file, the `[MRoom] fixture` spots of those rooms, and the REFERENCE entities with the name in the other scripts of those rooms. A rename never changes other files.
+- Two or more selected events show "N events selected", a time shift and **Delete the events**.
+
+## Edit a cutscene
+
+1. Click Mod, then click the mod that gets the edits. The editor writes only into this mod.
+2. Open the cutscene in the Cutscenes tab.
+3. Change the cutscene: drag an event on the Timeline, type a new value in the Inspector, or move an entity with the gizmo in Free mode. Each change is one entry of the edit history.
+4. Press Ctrl+S. The Console shows the save, for example "Saved mod 'my-mod' (save 1): 1 file written, 0 files deleted." and "Wrote patches\DATA\Scripts\Story\s002xe_nrml_sinclair_li_01_Cityscape_01.thn".
+5. Wait for the validation. The Console shows "Validation OK for save 1: no errors, 0 warnings that the mod adds.", or the errors of the save.
+
+The patch holds only the values that the edits change. A save keeps the bytes of a patch that the edits do not change, and it deletes a patch that changes nothing after the edits. "What stays in a patch file" in [MOD_FORMAT.md](MOD_FORMAT.md) gives the rules. The game plays the patched cutscene after `oltool deploy`. Play shows it without a deploy (see [PLAY.md](PLAY.md)).
+
+## Keys
+
+| Key | Where | Effect |
+|---|---|---|
+| Space | Timeline or Cutscene tab | Play or pause the preview. |
+| Home, End | Timeline or Cutscene tab | Go to the start or the end of the script. |
+| Left, Right | Timeline or Cutscene tab | Go one frame (1/60 s) back or forward. |
+| Shift+Left, Shift+Right | Timeline or Cutscene tab | Go one second back or forward. |
+| F | Timeline | Show the selected events. |
+| F | Cutscene tab, Free mode | Frame the selected entity. |
+| Delete, Ctrl+C, Ctrl+V, Ctrl+D | Timeline | Delete, copy, paste at the playhead, and duplicate the selected events. |
+| Ctrl+wheel, Shift+wheel | Timeline | Zoom, and move in time. |
+| Esc | During a drag on the Timeline or of the gizmo | Cancel the drag. |
+| Right mouse button with W, A, S, D, Q and E | Cutscene tab, Free mode | Fly the free camera. |
+| W, E, X | Cutscene tab, Free mode | Select the move or the rotate tool of the gizmo, and change between Local and World axes. |
+| Ctrl+Z, Ctrl+Y, Ctrl+S | Each panel | Undo, redo and save. |
+| F5, Shift+F5 | Each panel | Play and Stop of the game, not of the preview. |
+
+The keys of the preview work only while the Timeline or the Cutscene tab has the focus and no text field is active.
+
+## How the preview differs from the game
+
+| Preview | Game |
+|---|---|
+| Steps at exactly 1/60 s. So a play to a time and a jump to that time give the same picture. | Steps with the time of each frame. So two plays in the game can differ a little. |
+| Plays no sound. | Plays the sounds and the voice lines. |
+| Shows no patrons in a room. | Puts random patrons into a room. |
+| Builds a room without the ambient scripts of a mission (`Act_AddAmbient`), unless the open script is one of them. | Adds the ambient scripts of the active mission to the room. |
+| Plays the script of a mission trigger (`Act_CallThorn`) alone, and makes its entities. A banner tells the difference. | Plays the script in space with the objects of the mission. |
+| After a jump, a particle effect that started before the playhead shows its first state, and the tag "Effects start at the playhead" shows. A play with pre-roll shows the effect as the game shows it. | Shows each effect at its age. |
+| Stops at the end of the script, so it does not run an event after the end. | Runs such an event only when the time of its last frame passes the time of the event. |
+| Plays the goods cart scripts and the GCS scripts other than the fidgets. | Does not play them. So the game cannot show an edit of such a script. |

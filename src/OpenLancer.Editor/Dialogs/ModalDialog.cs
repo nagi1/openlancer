@@ -85,7 +85,10 @@ internal abstract class ModalDialog
             ImGui.PushStyleColor(ImGuiCol.ButtonActive, EditorTheme.Pressed);
         }
 
-        var clicked = ImGui.Button(label, new Vector2(MathF.Truncate(ButtonWidth * ImGuiHelper.Scale), 0)) ||
+        // A long label, for example "Rename in this file", makes the button wider than the usual width.
+        var width = MathF.Max(MathF.Truncate(ButtonWidth * ImGuiHelper.Scale),
+            MathF.Ceiling(ImGui.CalcTextSize(label).X + 2 * ImGui.GetStyle().FramePadding.X));
+        var clicked = ImGui.Button(label, new Vector2(width, 0)) ||
                       primary && enabled && ImGui.IsKeyPressed(ImGuiKey.Enter, false) &&
                       !ImGui.IsAnyItemActive();
         if (primary)

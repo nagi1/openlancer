@@ -102,6 +102,7 @@ public sealed class EditCommandTextTests
         var result = session.Save();
 
         Assert.True(result.Saved, string.Join("\n", result.Problems));
+        session.Dispose();
         var reopened = ws.Session("act");
         Assert.Equal(edited, Typed(reopened, BinaryGood("bg1"), "price")
             .Concat(Typed(reopened, BinaryGood("bg1"), "combinable"))
@@ -279,7 +280,8 @@ public sealed class EditCommandTextTests
                 price = 5
                 """,
         });
-        var session = EditSession.Open(ModProfile.Load(ws.ProfilePath), null, TestWorkspace.FakeDllWriter.Instance);
+        var session = EditSession.Open(ModProfile.Load(ws.ProfilePath), null, TestWorkspace.FakeDllWriter.Instance,
+            ThnScripts.Evaluator);
 
         // The edit view is the whole profile, and the lower layer is the same view.
         Assert.Equal(["5"], Values(session, Good("g1"), "price"));

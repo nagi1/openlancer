@@ -21,7 +21,7 @@ public sealed class PatchRuleTests
     public void ALargeNumberInABinaryFileStaysAFloat()
     {
         using var ws = new TestWorkspace();
-        WriteBini(ws, @"DATA\ships.ini", "[Ship]\nnickname = s1\nangular_drag = 4000000000.0, 1.0, 1.0");
+        ws.WriteBaseBini(@"DATA\ships.ini", "[Ship]\nnickname = s1\nangular_drag = 4000000000.0, 1.0, 1.0");
 
         var overlay = ws.Build(ws.Mod("m", new()
         {
@@ -37,7 +37,7 @@ public sealed class PatchRuleTests
     public void ANewLargeIntegerInABinaryFileIsAnError()
     {
         using var ws = new TestWorkspace();
-        WriteBini(ws, @"DATA\ships.ini", "[Ship]\nnickname = s1");
+        ws.WriteBaseBini(@"DATA\ships.ini", "[Ship]\nnickname = s1");
 
         var overlay = ws.Build(ws.Mod("m", new() { [@"patches\DATA\ships.ini"] = "[Ship]\nnickname = s1\nhash = 4000000000" }));
 
@@ -505,9 +505,6 @@ public sealed class PatchRuleTests
         IniWriter.WriteBini(stream, sections);
         return IniDocument.Parse(@"DATA\x.ini", stream.ToArray());
     }
-
-    private static void WriteBini(TestWorkspace ws, string path, string text) =>
-        ws.WriteBaseBini(path, IniFile.ParseFile("x", new MemoryStream(Encoding.ASCII.GetBytes(text))).ToArray());
 
     private static Section BiniSection(string name, params (string Name, ValueBase Value)[] entries)
     {

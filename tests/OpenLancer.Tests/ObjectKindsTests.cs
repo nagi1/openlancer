@@ -113,12 +113,12 @@ public sealed class ObjectKindsTests
     [Fact]
     public void FadesAMarkerBetween60And100PercentOfItsFadeDistance()
     {
-        Assert.Equal(1, SceneOverlay.Fade(5_000, 15_000));
-        Assert.Equal(1, SceneOverlay.Fade(9_000, 15_000));
-        Assert.Equal(0.5f, SceneOverlay.Fade(12_000, 15_000), 0.001f);
-        Assert.Equal(0, SceneOverlay.Fade(15_000, 15_000));
-        Assert.Equal(0, SceneOverlay.Fade(80_000, 15_000));
-        Assert.Equal(1, SceneOverlay.Fade(1e7f, float.PositiveInfinity));
+        Assert.Equal(1, SceneMarkers.Fade(5_000, 15_000));
+        Assert.Equal(1, SceneMarkers.Fade(9_000, 15_000));
+        Assert.Equal(0.5f, SceneMarkers.Fade(12_000, 15_000), 0.001f);
+        Assert.Equal(0, SceneMarkers.Fade(15_000, 15_000));
+        Assert.Equal(0, SceneMarkers.Fade(80_000, 15_000));
+        Assert.Equal(1, SceneMarkers.Fade(1e7f, float.PositiveInfinity));
     }
 
     [Theory]

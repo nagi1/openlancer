@@ -242,6 +242,7 @@ public sealed class ItemTemplatesTests
         Assert.Equal(["True"], Firsts(session, Gun("gun1"), "lootable"));
         Assert.Equal("[Gun]\r\nol.new = true\r\nnickname = gun2\r\nlootable = true\r\nhit_pts = 400\r\n",
             File.ReadAllText(Path.Combine(ws.ModFolder("act"), "patches", WeaponsPath)));
+        session.Dispose();
         Assert.Empty(ws.Session("act").Check(Gun("gun2")));
     }
 }

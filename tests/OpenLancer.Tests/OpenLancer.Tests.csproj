@@ -1,5 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- Copies the Librelancer natives next to the test assembly. The THN tests compile Lua text with
+       x64\thorncompiler.dll. -->
+  <Import Project="..\..\external\Librelancer\src\PublishAssets\PublishAssets.projitems" Label="Shared" />
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">

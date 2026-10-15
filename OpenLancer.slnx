@@ -24,6 +24,7 @@
   <Folder Name="/src/">
     <Project Path="src/OpenLancer.Data/OpenLancer.Data.csproj" />
     <Project Path="src/OpenLancer.Editor/OpenLancer.Editor.csproj" />
+    <Project Path="src/OpenLancer.Play/OpenLancer.Play.csproj" />
     <Project Path="src/OpenLancer.Runtime/OpenLancer.Runtime.csproj" />
     <Project Path="src/OpenLancer.Tools/OpenLancer.Tools.csproj" />
   </Folder>

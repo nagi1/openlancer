@@ -12,6 +12,7 @@ using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Validation;
 using OpenLancer.Runtime.Strings;
+using OpenLancer.Runtime.Thn;
 using OpenLancer.Runtime.Validation;
 using Xunit;
 
@@ -52,7 +53,8 @@ public sealed class SampleModTests(ITestOutputHelper output)
         var baseFolder = GameDataPaths.RequireBase();
         var overlay = BuildSample(baseFolder);
 
-        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), overlay.CreateFileSystem());
+        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), overlay.CreateFileSystem(),
+            overlay.CutscenePaths);
 
         Print(problems);
         Assert.DoesNotContain(problems, p => p.Severity == DiagnosticSeverity.Error);
@@ -64,7 +66,7 @@ public sealed class SampleModTests(ITestOutputHelper output)
     {
         var baseFolder = GameDataPaths.RequireBase();
         var profile = TestProfile(baseFolder, "sample", GameDataPaths.SampleMod(SampleId));
-        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance);
+        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
 
         var result = ProfileDeployer.Deploy(overlay, profile);
         output.WriteLine(result.ToString());
@@ -84,7 +86,7 @@ public sealed class SampleModTests(ITestOutputHelper output)
     {
         var baseFolder = GameDataPaths.RequireBase();
         var profile = TestProfile(baseFolder, "empty");
-        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance);
+        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
 
         var result = ProfileDeployer.Deploy(overlay, profile);
 
@@ -279,10 +281,11 @@ public sealed class SampleModTests(ITestOutputHelper output)
         if (Directory.Exists(modFolder))
             Directory.Delete(modFolder, true);
         WriteMod(modFolder, modId, files);
-        var overlay = ModOverlay.Build(baseFolder, [Mod.Load(modFolder)], DllStringResourceWriter.Instance);
+        var overlay = ModOverlay.Build(baseFolder, [Mod.Load(modFolder)], DllStringResourceWriter.Instance, ThornEvaluator.Instance);
         Assert.False(overlay.HasErrors, string.Join("\n", overlay.Diagnostics));
 
-        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), overlay.CreateFileSystem());
+        var problems = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), overlay.CreateFileSystem(),
+            overlay.CutscenePaths);
         Print(problems);
         return problems;
     }
@@ -302,7 +305,7 @@ public sealed class SampleModTests(ITestOutputHelper output)
     private ModOverlay BuildSample(string baseFolder)
     {
         var overlay = ModOverlay.Build(baseFolder, [Mod.Load(GameDataPaths.SampleMod(SampleId))],
-            DllStringResourceWriter.Instance);
+            DllStringResourceWriter.Instance, ThornEvaluator.Instance);
         Print(overlay.Diagnostics);
         Assert.False(overlay.HasErrors);
         return overlay;

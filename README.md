@@ -1,6 +1,6 @@
 # OpenLancer
 
-OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a load order, and an editor for the game content. The editor has data editors and a 3D scene editor for star systems. OpenLancer runs on the [Librelancer](https://github.com/Librelancer/Librelancer) engine. Librelancer is an unmodified git submodule.
+OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a load order, and an editor for the game content. The editor has data editors, a 3D scene editor for star systems, and a cutscene editor. OpenLancer runs on the [Librelancer](https://github.com/Librelancer/Librelancer) engine. Librelancer is an unmodified git submodule.
 
 OpenLancer contains no Microsoft game files. You supply the game data from your own copy of Freelancer.
 
@@ -37,3 +37,11 @@ See [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md). `samples/mods/ol-sample` is a comp
 2. Run `oltool validate GameData\profiles\my.json`.
 3. Run `oltool deploy GameData\profiles\my.json`.
 4. Start the game with `lancer.exe GameData\profiles\my.lancer.ini`.
+
+## Play from the editor
+
+Run `start.bat` to build and start the editor. Open a profile and a system, then press F5. The game starts at the Scene camera with the edits of the active mod, and a save reloads the running game. See [docs/PLAY.md](docs/PLAY.md).
+
+## Study and edit cutscenes
+
+Open the Cutscenes tab of the editor to browse the retail cutscenes and the cutscenes of the mods. Open one to preview it on a timeline and to see each value. With Mod > None (read-only), the editor takes no edits. With an active mod, a save writes the changes of a cutscene as a small THN patch. See [docs/CUTSCENES.md](docs/CUTSCENES.md).

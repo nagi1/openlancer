@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.IO;
 
 namespace OpenLancer.Editor.Editing;
 
@@ -11,6 +12,12 @@ namespace OpenLancer.Editor.Editing;
 /// </summary>
 internal sealed class FieldBinding
 {
+    /// <summary>The key of a <c>[system]</c> of universe.ini that names the file of the system.</summary>
+    private const string SystemFileKey = "file";
+
+    private const string SystemFileReason =
+        "Changing the file of a system moves all its contents. A later milestone does this.";
+
     private FieldBinding(SectionRef section, string name, KeySchema? key, IReadOnlyList<EntryView> lines,
         ValueOrigin origin, string? originMod, IReadOnlyList<string> laterMods, string? readOnlyReason, bool canRevert)
     {
@@ -30,6 +37,9 @@ internal sealed class FieldBinding
 
     /// <summary>The INI key, for example <c>hit_pts</c>.</summary>
     public string Name { get; }
+
+    /// <summary>The key of a field that edits all lines of the key.</summary>
+    public FieldKey FieldKey => new(Section, Name, FieldKey.AllLines);
 
     /// <summary>What the engine reads from the key, or null when the schema does not have the key.</summary>
     public KeySchema? Key { get; }
@@ -69,13 +79,44 @@ internal sealed class FieldBinding
     {
         var key = session.Schema(section, name);
         var (origin, mod) = session.Origin(section, name);
-        var reason = view.ReadOnlyReason ?? (key?.IsKeyEntry == true
-            ? $"'{name}' is the key that finds the section. The editor does not change it in format version 1."
-            : null);
+        var reason = view.ReadOnlyReason ?? KeyLock(session, section, view, key, name);
         return new FieldBinding(section, key?.Name ?? name, key, view.Lines(name), origin, mod,
             session.LaterModsThatChange(section, name), reason,
             reason == null && origin == ValueOrigin.ActiveMod && !view.IsNew);
     }
+
+    /// <summary>
+    /// Why a row cannot change one key of a section that takes edits, or null. A row cannot change the key entry that a
+    /// patch finds the section by, a key of a group of lines that belong together, or the file of a system.
+    /// </summary>
+    private static string? KeyLock(EditSession session, SectionRef section, SectionView view, KeySchema? key, string name)
+    {
+        if (key?.IsKeyEntry == true)
+            return $"'{name}' is the key that finds the section. The editor does not change it in format version 1.";
+        // For example, a change of the encounter lines of a zone gives its faction lines to another encounter.
+        if (view.IsLinked(name))
+            return "This key belongs to a group of lines that belong together. A later milestone edits the group.";
+        return name.Equals(SystemFileKey, StringComparison.OrdinalIgnoreCase) && IsUniverseSystem(session, section)
+            ? SystemFileReason
+            : null;
+    }
+
+    /// <summary>
+    /// Why a revert of a whole section cannot run, or null. A revert puts back all the lines of the lower layer, also
+    /// the lines of the keys that no row can change. Of those keys, only the file of a system moves contents. So a
+    /// revert cannot run when the active mod sets the file of a system. A revert of the key entry keeps the section,
+    /// and a revert of a group of lines that belong together puts back the whole group.
+    /// </summary>
+    public static string? RevertLock(EditSession session, SectionRef section) =>
+        IsUniverseSystem(session, section) && session.Get(section) != null &&
+        session.Origin(section, SystemFileKey).Origin == ValueOrigin.ActiveMod
+            ? SystemFileReason
+            : null;
+
+    /// <summary>True for a <c>[system]</c> section of universe.ini.</summary>
+    private static bool IsUniverseSystem(EditSession session, SectionRef section) =>
+        session.UniversePath is { } universe && VfsPath.Comparer.Equals(section.Path, universe) &&
+        section.Id.Type.Equals("system", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The edit that sets the key from the text of a field. Empty text removes the key.</summary>
     /// <exception cref="ArgumentException">The text is not valid for the key.</exception>

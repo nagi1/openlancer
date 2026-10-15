@@ -25,7 +25,8 @@ internal sealed record FileChange(string Path, byte[]? Content);
 /// and the hash of its new content. The journal is the commit point. Before it exists, the save has changed no file
 /// of the mod.</item>
 /// <item>The save moves each staged file into place and deletes the files to delete. A move in the mod folder
-/// replaces the target in one step. Then the save deletes the journal.</item>
+/// replaces the target in one step, also while another process reads the target with delete sharing (see
+/// <see cref="AtomicFile.MoveOver"/>). Then the save deletes the journal.</item>
 /// </list>
 /// <para>When the editor stops after the commit point, <see cref="Recover"/> completes the moves and deletes at the
 /// next open. When it stops before, <see cref="Recover"/> deletes the staged files.</para>
@@ -191,7 +192,8 @@ internal static class SaveTransaction
             return;
         }
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        File.Move(source, target, overwrite: true);
+        // The game or oltool can read the target now. The rename replaces it all the same (decision D51).
+        AtomicFile.MoveOver(source, target);
     }
 
     /// <exception cref="IOException">A move or a delete of the target would fail.</exception>

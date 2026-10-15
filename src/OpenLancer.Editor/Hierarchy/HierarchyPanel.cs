@@ -6,13 +6,18 @@ using ImGuiNET;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Hierarchy;
 
 /// <summary>
-/// The tree of the open system: the system row, then the objects, zones and lights in groups by kind. A click selects
-/// an item, and a double-click frames it in the Scene. The arrow keys move the selection along the visible rows.
+/// The tree of the open system, or of the open cutscene while the Cutscene tab shows (section 7.4 of the M8 design).
+/// The tree of a system has the system row, then the objects, zones and lights in groups by kind. The tree of a
+/// cutscene has the cutscene row, then the entities in the groups of the Timeline. A click selects an item, and a
+/// double-click frames it in the Scene or in the Free mode of the Cutscene view. The arrow keys move the selection
+/// along the visible rows.
 /// </summary>
 internal sealed class HierarchyPanel(EditorWindow window)
 {
@@ -20,8 +25,14 @@ internal sealed class HierarchyPanel(EditorWindow window)
         "Search by name or nickname. A t: word shows one type, for example t:station.\n" +
         "Types: sun, planet, station, ring, gate, hole, lane, satellite, platform, zone, field, nebula, light.";
 
+    private const string CutsceneSearchTip =
+        "Search by name. A t: word shows one type, for example t:camera.\n" +
+        "Types: camera, monitor, character, prop, light, effect, sound, marker, path, scene, other.";
+
     private HierarchyModel? model;
+    private HierarchyModel? cutsceneModel;
     private string search = "";
+    private string cutsceneSearch = "";
 
     // The selection at the last frame. A different selection that another panel made opens the tree to its row.
     private object? lastSeenSelection;
@@ -30,15 +41,27 @@ internal sealed class HierarchyPanel(EditorWindow window)
     private (object Item, bool Center)? scrollRequest;
 
     /// <summary>Draws the items of the toolbar strip: the search field with a clear button in it.</summary>
-    public void Toolbar() => ToolbarItems.SearchField("search", "Search (t:station)", ref search, -1, SearchTip);
+    public void Toolbar()
+    {
+        if (window.CutsceneMode)
+        {
+            ToolbarItems.SearchField("search-cutscene", "Search (t:camera)", ref cutsceneSearch, -1, CutsceneSearchTip);
+        }
+        else
+        {
+            ToolbarItems.SearchField("search", "Search (t:station)", ref search, -1, SearchTip);
+        }
+    }
 
-    /// <summary>Sets the text of the search field, for example "t:zone" to show only the zones.</summary>
+    /// <summary>Sets the text of the search field of the system tree, for example "t:zone" to show only the
+    /// zones.</summary>
     public void SetSearch(string text) => search = text;
 
-    /// <summary>Forgets the tree of the last system. Call it when the profile closes.</summary>
+    /// <summary>Forgets the trees of the last system and cutscene. Call it when the profile closes.</summary>
     public void Reset()
     {
         model = null;
+        cutsceneModel = null;
         lastSeenSelection = null;
         scrollRequest = null;
     }
@@ -52,40 +75,66 @@ internal sealed class HierarchyPanel(EditorWindow window)
             return;
         }
 
-        if (window.Scene.Index is not { } index)
+        HierarchyModel tree;
+        if (window.CutsceneMode)
         {
-            PanelStates.Message("No system is open.", "Select a system in the Scene toolbar.");
-            return;
+            if (window.Cutscenes.Timeline is not { } timeline)
+            {
+                PanelStates.Message("No cutscene is open.", "Open a cutscene in the Cutscenes tab.");
+                return;
+            }
+
+            tree = HierarchyModel.ForCutscene(timeline, cutsceneModel);
+            Show(tree, cutsceneModel);
+            cutsceneModel = tree;
+            tree.SetSearch(cutsceneSearch);
+        }
+        else
+        {
+            if (window.Scene.Index is not { } index)
+            {
+                PanelStates.Message("No system is open.", "Select a system in the Scene toolbar.");
+                return;
+            }
+
+            // A new index or a new name builds the tree again. The tree of the same system keeps its open groups.
+            tree = HierarchyModel.For(index, window.Scene.NamesVersion, session.TextOf, model);
+            Show(tree, model);
+            model = tree;
+            tree.SetSearch(search);
         }
 
-        if (model?.Index != index)
-        {
-            model = new HierarchyModel(index, session.Name);
-            lastSeenSelection = null;
-            scrollRequest = null;
-        }
-
-        model.SetSearch(search);
         var selection = window.Selection;
-        if (!ReferenceEquals(selection, lastSeenSelection))
+        if (!Equals(selection, lastSeenSelection))
         {
             lastSeenSelection = selection;
-            if (model.Reveal(selection))
+            if (tree.Reveal(selection))
             {
                 scrollRequest = (selection!, true);
             }
         }
 
         var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
-        Rows(model, focused);
-        if (model.IsSearching && model.Root.Matches == 0)
+        Rows(tree, focused);
+        if (tree.IsSearching && tree.Root.Matches == 0)
         {
-            PanelStates.Message("No object matches the search.", "Esc in the search field clears it.");
+            PanelStates.Message(window.CutsceneMode ? "No entity matches the search." : "No object matches the search.",
+                "Esc in the search field clears it.");
         }
 
         if (focused && !ImGui.GetIO().WantTextInput)
         {
-            Keys(model);
+            Keys(tree);
+        }
+    }
+
+    /// <summary>A tree of another system or cutscene than the tree before forgets the selection that it saw.</summary>
+    private void Show(HierarchyModel tree, HierarchyModel? before)
+    {
+        if (!Equals(tree.Identity, before?.Identity))
+        {
+            lastSeenSelection = null;
+            scrollRequest = null;
         }
     }
 
@@ -151,7 +200,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             flags |= ImGuiTreeNodeFlags.OpenOnArrow;
         }
 
-        if (node.Item != null && ReferenceEquals(node.Item, window.Selection))
+        if (node.Item != null && node.Item.Equals(window.Selection))
         {
             flags |= ImGuiTreeNodeFlags.Selected;
         }
@@ -239,9 +288,9 @@ internal sealed class HierarchyPanel(EditorWindow window)
             Frame(selection);
         }
 
-        if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.C)) && selection is NicknameItem named)
+        if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.C)) && CopyText(tree, selection) is { } copy)
         {
-            ImGui.SetClipboardText(named.Nickname);
+            ImGui.SetClipboardText(copy);
         }
     }
 
@@ -271,21 +320,46 @@ internal sealed class HierarchyPanel(EditorWindow window)
         lastSeenSelection = item;
     }
 
-    /// <summary>Moves the Scene camera to an item, or frames the whole system for the system row.</summary>
+    /// <summary>
+    /// Moves the Scene camera to an item, or frames the whole system for the system row. An entity of a cutscene shows
+    /// in the Free mode of the Cutscene view.
+    /// </summary>
     private void Frame(object item)
     {
-        if (item is StarSystem)
+        switch (item)
         {
-            window.Scene.FrameSystem();
-        }
-        else
-        {
-            window.Scene.Focus(item);
+            case StarSystem:
+                window.Scene.FrameSystem();
+                break;
+            case ThnRef { Kind: ThnElementKind.Entity } entity:
+                window.FrameInCutscene(entity);
+                break;
+            case CutsceneRoot or ThnRef:
+                break;
+            default:
+                window.Scene.Focus(item);
+                break;
         }
     }
 
+    /// <summary>The text that Ctrl+C copies: the nickname of an item of a system, or the name of an entity or of the
+    /// cutscene. Null for another item.</summary>
+    private static string? CopyText(HierarchyModel tree, object item) => item switch
+    {
+        NicknameItem named => named.Nickname,
+        CutsceneRoot root => root.Path,
+        ThnRef => tree.NodeOf(item)?.Name,
+        _ => null,
+    };
+
     private void ContextMenu(object item)
     {
+        if (item is ThnRef or CutsceneRoot)
+        {
+            CutsceneMenu(item);
+            return;
+        }
+
         if (Theme.IconMenuItem(EditorIcons.CompressArrowsAlt, "Frame in Scene", true))
         {
             Frame(item);
@@ -349,6 +423,21 @@ internal sealed class HierarchyPanel(EditorWindow window)
             {
                 window.Selection = previous;
             }
+        }
+    }
+
+    /// <summary>The menu of the cutscene row and of an entity row.</summary>
+    private void CutsceneMenu(object item)
+    {
+        if (item is ThnRef entity && Theme.IconMenuItem(EditorIcons.CompressArrowsAlt, "Frame in Free view", true))
+        {
+            Frame(entity);
+        }
+
+        var text = item is CutsceneRoot root ? root.Path : cutsceneModel?.NodeOf(item)?.Name;
+        if (Theme.IconMenuItem(EditorIcons.Copy, item is CutsceneRoot ? "Copy path" : "Copy name", text != null))
+        {
+            ImGui.SetClipboardText(text!);
         }
     }
 

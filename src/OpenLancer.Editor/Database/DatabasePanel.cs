@@ -11,6 +11,7 @@ using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Database;
@@ -183,11 +184,12 @@ internal sealed class DatabasePanel(EditorWindow window)
         return current!;
     }
 
-    /// <summary>The goods category: the [Good] sections of the edit view.</summary>
+    /// <summary>The goods category: the [Good] sections of the edit view. A ship package has the row action Use for
+    /// Play (decision D15).</summary>
     private Category GoodsCategory(EditorSession session)
     {
         goodsVersion = session.Version;
-        var rows = new Dictionary<SectionRef, (string Category, string Name, double Price, bool Changed)>();
+        var rows = new Dictionary<SectionRef, (string Category, string Name, double Price, bool Changed, bool Package)>();
         foreach (var section in session.Edits.List(ItemFileKind.Goods))
         {
             if (section.Id.Type.Equals("Good", StringComparison.OrdinalIgnoreCase) && session.Edits.Get(section) is { } view)
@@ -195,7 +197,8 @@ internal sealed class DatabasePanel(EditorWindow window)
                 var price = view.Lines("price") is [{ Values: [var value, ..] }, ..] && value.TryToSingle(out var number)
                     ? number
                     : double.NaN;
-                rows[section] = (First(view, "category") ?? "", session.NameOf(view), price, view.IsChanged);
+                rows[section] = (First(view, "category") ?? "", session.NameOf(view), price, view.IsChanged,
+                    PlayShips.IsPackage(section, view));
             }
         }
 
@@ -205,7 +208,9 @@ internal sealed class DatabasePanel(EditorWindow window)
             new("Name", s => rows[s].Name, NameWidth),
             new("Category", s => rows[s].Category, 100),
             new("Price", s => DatabaseTable.Number(rows[s].Price), NumberWidth, s => rows[s].Price),
-        ], _ => ObjectKinds.Good, marked: s => rows[s].Changed);
+        ], _ => ObjectKinds.Good, marked: s => rows[s].Changed,
+            action: new RowAction<SectionRef>(EditorIcons.Play, "Use for Play", s => rows[s].Package && s.Id.Key != null,
+                s => window.UseForPlay(s.Id.Key!)));
         return new Category(GoodsId, "Goods", ObjectKinds.Good, table, null, 0, table.RowCount);
     }
 
