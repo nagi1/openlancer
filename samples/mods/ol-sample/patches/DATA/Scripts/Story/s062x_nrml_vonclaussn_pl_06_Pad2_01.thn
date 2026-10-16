@@ -1,0 +1,4 @@
+ol_thn_patch = 1
+entities = {
+	{ ol_match = "Char_Trent", ol_set = { ["spatialprops.pos"] = { -25.472391, 0, -21.618008 } } }
+}
