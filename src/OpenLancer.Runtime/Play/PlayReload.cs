@@ -84,7 +84,7 @@ public static class PlayReload
 
     /// <summary>
     /// Saves <c>AutoSave.fl</c> into the save folder of the player, stops the server and gives the place of the
-    /// player. With local patch 0021, the stop frees the worlds of the server.
+    /// player. With fork commit OL-0021, the stop frees the worlds of the server.
     /// </summary>
     /// <remarks>
     /// The server thread writes the save at its next update. The stop runs on a task, so that a server thread that

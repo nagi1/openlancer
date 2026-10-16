@@ -1,3 +1,0 @@
-# git apply needs the patches with the LF line ends that git diff wrote.
-# Without this rule, core.autocrlf=true writes them with CRLF, and no patch applies.
-*.patch text eol=lf

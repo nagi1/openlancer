@@ -215,7 +215,7 @@ internal sealed class SceneView : IDisposable
         overlay.Reset();
         picker.Reset();
         world?.Dispose();
-        // With local patch 0022, the renderer also frees the meshes of the asteroid fields.
+        // With fork commit OL-0022, the renderer also frees the meshes of the asteroid fields.
         renderer?.Dispose();
         zoneRenderer?.Dispose();
         world = null;

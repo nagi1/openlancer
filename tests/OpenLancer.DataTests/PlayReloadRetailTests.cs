@@ -119,7 +119,7 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
         }
         finally
         {
-            // Without patch 0021, the world stays alive after the stop. Then the test finishes it, so that its finalizer
+            // Without OL-0021, the world stays alive after the stop. Then the test finishes it, so that its finalizer
             // cannot end the test host at a later collection.
             if (poolAfter != 0)
                 oldWorld.Finish();
@@ -186,7 +186,7 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
         Assert.InRange(Vector3.Distance(newDepot, moved), 0, 0.01f);
         Assert.NotEqual(LaterDepot, moved);
 
-        // The world of the old server freed its physics (patch 0021).
+        // The world of the old server freed its physics (OL-0021).
         Assert.True(poolBefore > 0, "The world of the player has no physics memory.");
         Assert.Equal(0UL, poolAfter);
         RetailChecks.AssertBaseIsUnchanged(baseFolder);
@@ -370,7 +370,7 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
 
     /// <summary>
     /// Twenty reloads in a row end without an exception, and they leak no thread. Each stopped server frees its worlds
-    /// with their physics threads (patch 0021), and nothing holds a stopped server. A leak of one world costs three
+    /// with their physics threads (OL-0021), and nothing holds a stopped server. A leak of one world costs three
     /// physics threads on a machine with 16 cores, and a leak of a server costs its thread too.
     /// </summary>
     /// <remarks>

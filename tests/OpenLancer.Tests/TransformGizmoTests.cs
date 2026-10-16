@@ -7,7 +7,7 @@ using Xunit;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The export check of the gizmo. Local patch 0019 adds <c>igGuizmoEnable</c> to <c>cimgui</c>. The editor keeps the
+/// The export check of the gizmo. Fork commit OL-0019 adds <c>igGuizmoEnable</c> to <c>cimgui</c>. The editor keeps the
 /// gizmo off with a <c>cimgui.dll</c> from before the patch, so that the end of a drag cannot stop the editor.
 /// </summary>
 public sealed class TransformGizmoTests

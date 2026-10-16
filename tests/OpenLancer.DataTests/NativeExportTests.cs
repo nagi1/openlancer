@@ -6,9 +6,10 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// Local patch 0019 changes native code: <c>cimgui</c> exports <c>igGuizmoEnable</c>, the only reset of a stuck drag of
-/// ImGuizmo. The test folder gets the natives from PublishAssets, so this test fails when <c>bin\natives\x64</c> has a
-/// <c>cimgui.dll</c> from before the patch (run <c>build.ps1 BuildNatives</c>, see docs/UPSTREAM.md).
+/// Fork commit OL-0019 changes native code: <c>cimgui</c> exports <c>igGuizmoEnable</c>, the only reset of a stuck
+/// drag of ImGuizmo. The test folder gets the natives from PublishAssets, so this test fails when
+/// <c>bin\natives\x64</c> has a <c>cimgui.dll</c> from before that commit (run <c>build.ps1 BuildNatives</c>, see
+/// docs/UPSTREAM.md).
 /// </summary>
 public sealed class NativeExportTests
 {

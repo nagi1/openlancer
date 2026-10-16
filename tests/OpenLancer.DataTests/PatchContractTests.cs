@@ -8,14 +8,13 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// The engine members that OpenLancer adds with local patches. A test reads each member by reflection, so a missing
-/// member fails the test and does not stop the build of the tests. <c>apply-librelancer-patches.ps1 -Check</c> guards
-/// the other lines of each patch.
+/// The engine members that OpenLancer adds with fork commits. A test reads each member by reflection, so a missing
+/// member fails the test and does not stop the build of the tests.
 /// </summary>
 public sealed class PatchContractTests
 {
     /// <summary>
-    /// Patch 0020: a host gives the game its file system, for example the mod overlay of a profile. The field is a
+    /// OL-0020: a host gives the game its file system, for example the mod overlay of a profile. The field is a
     /// config field such as <c>CustomState</c>, and the XML serializer of the config ignores it.
     /// </summary>
     [Fact]

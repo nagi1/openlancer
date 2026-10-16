@@ -16,7 +16,7 @@ namespace OpenLancer.Play;
 
 /// <summary>
 /// Runs the game of a play (sections 10.1 to 10.4 and 12.2 of the M4 design). The game reads its data through the
-/// overlay of the play (patch 0020). After the load, it waits until the editor sends start. Then it starts the player
+/// overlay of the play (OL-0020). After the load, it waits until the editor sends start. Then it starts the player
 /// from a save in code. A reload loads the data again and continues at the same place.
 /// </summary>
 /// <remarks>
@@ -68,7 +68,7 @@ internal sealed class PlayHost
         // between plays.
         config.Settings.FullScreen = false;
         config.Settings.Debug = true;
-        // Patch 0020: the game reads the base data and the mods through this one file system object.
+        // OL-0020: the game reads the base data and the mods through this one file system object.
         files = overlay.CreateFileSystem();
         config.CustomFileSystem = () => files;
         config.CustomState = FirstState;

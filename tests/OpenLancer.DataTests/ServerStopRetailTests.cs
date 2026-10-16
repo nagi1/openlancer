@@ -15,11 +15,11 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// Local patch 0021 (section 7.3 of the M4 design): <c>GameServer.Stop</c> finishes each world, also a world that
-/// loads during the stop. Before the patch, a stopped server kept the physics world of each world with its buffer
+/// Fork commit OL-0021 (section 7.3 of the M4 design): <c>GameServer.Stop</c> finishes each world, also a world that
+/// loads during the stop. Before that commit, a stopped server kept the physics world of each world with its buffer
 /// memory and its worker threads. In a Debug build, the finalizer of such a physics world fails an assert, and the
-/// process ends. <c>apply-librelancer-patches.ps1 -Check</c> alone guards the other lines of the patch: the order of
-/// <c>WorldReady</c> after the store, and the <c>Mouse_MouseUp</c> line of <c>SpaceGameplay</c>.
+/// process ends. No test sees the other lines of the commit: the order of <c>WorldReady</c> after the store, and the
+/// <c>Mouse_MouseUp</c> line of <c>SpaceGameplay</c>.
 /// </summary>
 public sealed class ServerStopRetailTests(ITestOutputHelper output)
 {

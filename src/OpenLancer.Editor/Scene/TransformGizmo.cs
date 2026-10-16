@@ -34,7 +34,7 @@ internal sealed record GizmoSteps(float[] Move, Func<EditorSettings, float> Get,
 /// the Cutscene view drags an element of the open cutscene.
 /// </summary>
 /// <remarks>
-/// The editor clears the drag state of ImGuizmo with <c>ImGuizmo.Enable</c>, which local patch 0019 exports. A
+/// The editor clears the drag state of ImGuizmo with <c>ImGuizmo.Enable</c>, which fork commit OL-0019 exports. A
 /// <c>cimgui.dll</c> from before that patch does not export it. Then the gizmo stays off, so that the end of a drag
 /// cannot stop the editor.
 /// </remarks>
@@ -45,10 +45,10 @@ internal sealed class TransformGizmo
     public const int ToolbarItemCount = 6;
 
     /// <summary>The Console message when <c>cimgui.dll</c> does not export <see cref="EnableExport"/>.</summary>
-    internal const string NativeMessage = "cimgui.dll is older than local patch 0019. Run build.ps1 BuildNatives " +
+    internal const string NativeMessage = "cimgui.dll is older than fork commit OL-0019. Run build.ps1 BuildNatives " +
                                           "(docs/UPSTREAM.md), then build the editor again.";
 
-    /// <summary>The native function that local patch 0019 adds.</summary>
+    /// <summary>The native function that fork commit OL-0019 adds.</summary>
     internal const string EnableExport = "igGuizmoEnable";
 
     // The snap steps of the step menu.
@@ -91,7 +91,7 @@ internal sealed class TransformGizmo
     /// for its end.</summary>
     public bool IsDragging => flow.State == GizmoDragState.Open;
 
-    /// <summary>True when a native library exports the function of local patch 0019.</summary>
+    /// <summary>True when a native library exports the function of fork commit OL-0019.</summary>
     internal static bool ExportsEnable(IntPtr library) => NativeLibrary.TryGetExport(library, EnableExport, out _);
 
     /// <summary>The snap of a drag in this frame: the snap toggle, the steps, and Ctrl.</summary>

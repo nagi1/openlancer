@@ -75,7 +75,7 @@ internal sealed class HeadlessServer : IDisposable
     }
 
     /// <summary>Saves the player, stops the server and gives the place, as the play host does:
-    /// <see cref="PlayReload.Leave"/>. With local patch 0021, the stop frees the worlds.</summary>
+    /// <see cref="PlayReload.Leave"/>. With fork commit OL-0021, the stop frees the worlds.</summary>
     public PlayPlace Leave()
     {
         var place = PlayReload.Leave(Server);
@@ -125,7 +125,7 @@ internal sealed class HeadlessServer : IDisposable
         return result.Task.WaitAsync(WaitLimit).GetAwaiter().GetResult();
     }
 
-    /// <summary>Stops the server once. With local patch 0021, the stop frees the worlds.</summary>
+    /// <summary>Stops the server once. With fork commit OL-0021, the stop frees the worlds.</summary>
     public void Stop()
     {
         if (!started || stopped)

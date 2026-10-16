@@ -6,10 +6,9 @@ This repository contains no Microsoft game files. Each user supplies the game da
 
 Third-party software
 --------------------
-OpenLancer uses Librelancer as a git submodule (external/Librelancer). The submodule is pinned to an unmodified
-upstream commit. Before the build, tools/apply-librelancer-patches.ps1 applies the local patches in
-patches/librelancer to the submodule working tree, so the built programs contain modified Librelancer code.
-docs/UPSTREAM.md lists the patches and the reason for each one.
+OpenLancer uses a fork of Librelancer as a git submodule (external/Librelancer, branch openlancer). The fork adds
+OpenLancer's engine changes as commits on top of an upstream commit, so the built programs contain modified
+Librelancer code. docs/UPSTREAM.md lists the changes and the reason for each one.
   Librelancer - MIT License
   Copyright (c) Callum McGing, Librelancer Contributors 2013-2026
   Portions Copyright (c) Malte Rupprecht 2011-2012
