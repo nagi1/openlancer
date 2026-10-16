@@ -458,7 +458,7 @@ public sealed class ScenePickerTests
         if (world)
         {
             var gameObject = new GameObject { RenderComponent = model == null ? null : new ModelRenderer(model) };
-            gameObject.SetLocalTransform(new Transform3D(position, obj.Rotation));
+            gameObject.SetTransform(new Transform3D(position, obj.Rotation));
             objects[obj] = gameObject;
         }
 

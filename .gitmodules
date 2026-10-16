@@ -1,3 +1,4 @@
 [submodule "external/Librelancer"]
 	path = external/Librelancer
-	url = https://github.com/Librelancer/Librelancer
+	url = https://github.com/spool1/openlancer-engine.git
+	branch = openlancer

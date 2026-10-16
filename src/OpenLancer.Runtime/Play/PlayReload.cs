@@ -70,10 +70,9 @@ public static class PlayReload
     /// no character yet.</returns>
     public static string? CheckLeave(GameServer server)
     {
-        // The server thread makes the database when it starts and drops it when it ends. A server that does not run never
-        // writes the save. This is the case when the game left the play, for example with Quit to menu or Load game: the
-        // session of the play stopped its server.
-        if (server.Database is null)
+        // A server that does not run never writes the save (fork commit OL-0024). This is the case when the game left the
+        // play, for example with Quit to menu or Load game: the session of the play stopped its server.
+        if (!server.Running)
             return "The server of the play does not run, because the game left the play. Stop the game and press Play.";
         if (server.LocalPlayer is not { } player)
             return "The server has no local player.";

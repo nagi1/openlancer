@@ -172,9 +172,9 @@ internal sealed class SceneView : IDisposable
         // The engine starsphere pass uses the near plane of the scene camera, which is too far at the whole-system view.
         // So the view draws the starsphere in its own pass (DrawBackground).
         renderer = new SystemRenderer(camera, resources, window) { DrawStarsphere = false };
-        world = new GameWorld(renderer, null, resources, null, true);
+        world = new GameWorld(renderer, null, resources, null, true) { DefaultObjectType = EquipmentType.Editor };
         data.LoadAllSystem(system);
-        world.LoadSystem(system, resources, null, false, false);
+        world.LoadSystem(system, resources, null, false);
         renderer.LoadLights(system);
         renderer.LoadStarspheres(system);
         renderer.LoadZones(system.AsteroidFields, system.Nebulae);
@@ -709,7 +709,7 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
-        var transform = obj.WorldTransform.Matrix();
+        var transform = obj.Transform.Matrix();
         var drawn = false;
         // DrawVWire keeps the blend mode of the transparent pass, which can be additive. The wireframe must have the
         // accent color, so it draws with normal blending.

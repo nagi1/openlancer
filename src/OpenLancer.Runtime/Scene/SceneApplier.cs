@@ -575,7 +575,7 @@ public sealed class SceneApplier
     private void MoveWorldObject(SystemObject obj)
     {
         if (objects.TryGetValue(obj, out var gameObject))
-            gameObject.SetLocalTransform(new Transform3D(obj.Position, obj.Rotation));
+            gameObject.SetTransform(new Transform3D(obj.Position, obj.Rotation));
     }
 
     /// <summary>Records the problem of a section that has no scene item: the engine dropped its object, or the system

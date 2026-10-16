@@ -37,7 +37,7 @@ public sealed class InspectorEditRetailTests
         // pos: each keystroke moves the depot and its world object.
         Field(scene, session, scene.SectionOf(depot), "pos", "-37675, 0, -2770", "-37675, 0, -27705");
         Assert.Equal(new Vector3(-37675, 0, -27705), depot.Position);
-        Assert.Equal(depot.Position, scene.Objects[depot].LocalTransform.Position);
+        Assert.Equal(depot.Position, scene.Objects[depot].Transform.Position);
 
         // archetype: a partial name names the problem for the archetype row, and the depot keeps its model. The full
         // name of an archetype applies at once, and the model loads after the field ends.

@@ -236,7 +236,7 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
             gameObject.RenderComponent is ModelRenderer { Model: { } model })
         {
             model.GetBoundingBox().GetCorners(points);
-            var world = gameObject.WorldTransform.Matrix();
+            var world = gameObject.Transform.Matrix();
             for (var i = 0; i < points.Length; i++)
             {
                 points[i] = Vector3.Transform(points[i], world);

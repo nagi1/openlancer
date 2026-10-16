@@ -88,7 +88,8 @@ public sealed class RandomEditTests(ITestOutputHelper output)
 
         foreach (var mods in layers)
         {
-            var lower = ModOverlay.Build(baseFolder, mods, DllStringResourceWriter.Instance, thn: null, keepDocuments: true);
+            var lower = ModOverlay.Build(baseFolder, mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance,
+                keepDocuments: true);
             Assert.False(lower.HasErrors, string.Join("\n", lower.Diagnostics));
             var requiredTargets = paths.SelectMany(p => lower.Document(p)!.Sections).SelectMany(s => s)
                 .Where(e => RequiredReferences.Contains(e.Name, StringComparer.OrdinalIgnoreCase))

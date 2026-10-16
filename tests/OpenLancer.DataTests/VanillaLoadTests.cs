@@ -52,8 +52,12 @@ public sealed class VanillaLoadTests(ITestOutputHelper output)
         {
             try
             {
-                using var world = new GameWorld(null, null, resources, () => 0, true);
-                world.LoadSystem(system, resources, null, server: false);
+                // A world without a renderer is a server world unless the caller says otherwise (GameWorld.cs:81).
+                using var world = new GameWorld(null, null, resources, () => 0, true)
+                {
+                    DefaultObjectType = EquipmentType.RemoteObject,
+                };
+                world.LoadSystem(system, resources, null);
                 objectCount += world.Objects.Count;
             }
             catch (Exception e)

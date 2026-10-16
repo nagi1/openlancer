@@ -173,7 +173,7 @@ internal static class ObjectKinds
         ShieldBatteryEquipment => Equip.ShieldBattery,
         CargoPodEquipment => Equip.CargoPod,
         LootCrateEquipment => Equip.LootCrate,
-        AnimationEquipment => Equip.Animation,
+        InternalFxEquipment => Equip.Animation,
         EffectEquipment => Equip.Effect,
         _ => AnyEquipment,
     };

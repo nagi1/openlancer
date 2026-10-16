@@ -91,8 +91,8 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
         var good = session.Find(ItemFileKind.Goods, PricedGood)!;
         var oldPrice = game.Data.Items.Goods.Get(PricedGood)!.Ini.Price;
         var newPrice = oldPrice + 1234;
-        var oldDepot = old.OnWorld(w => w.GameWorld.GetObject(Depot)!.LocalTransform.Position);
-        var shipBefore = old.OnWorld(w => w.Players[old.Player].LocalTransform);
+        var oldDepot = old.OnWorld(w => w.GameWorld.GetObject(Depot)!.Transform.Position);
+        var shipBefore = old.OnWorld(w => w.Players[old.Player].Transform);
         var (oldWorld, poolBefore) = old.OnWorld(w => (w, w.GameWorld.Physics!.BufferPool.GetTotalAllocatedByteCount()));
         var oldSystemBytes = game.Live.ReadAllBytes(systemPath);
         var oldGoodsBytes = game.Live.ReadAllBytes(good.Path);
@@ -130,8 +130,8 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
         var data = await load;
         var failure = PlayReload.Apply(load, place, game.Target);
         var next = game.Resume(place, old, output);
-        var ship = next.OnWorld(w => w.Players[next.Player].LocalTransform);
-        var newDepot = next.OnWorld(w => w.GameWorld.GetObject(Depot)!.LocalTransform.Position);
+        var ship = next.OnWorld(w => w.Players[next.Player].Transform);
+        var newDepot = next.OnWorld(w => w.GameWorld.GetObject(Depot)!.Transform.Position);
         Assert.True(data.Overlay.StringIds.TryGet(ModId, new StringPlaceholder(StringKind.String, TextKey), out var textId));
 
         output.WriteLine($"Leave {leaveMs} ms, Load {loadMs} ms, to the spawn {clock.ElapsedMilliseconds} ms.");
@@ -214,7 +214,7 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
         var failure = PlayReload.Apply(load, place, game.Target);
         var after = game.Parts();
         var next = game.Resume(place, old, output);
-        var ship = next.OnWorld(w => w.Players[next.Player].LocalTransform);
+        var ship = next.OnWorld(w => w.Players[next.Player].Transform);
 
         output.WriteLine($"The load failed after {loadMs} ms: {failure?.Message}");
         output.WriteLine($"The ship is at {ship.Position} in {next.Player.System}, dot product with the heading " +
@@ -397,7 +397,7 @@ public sealed class PlayReloadRetailTests(ITestOutputHelper output)
             counts[cycle] = Threads();
         }
 
-        var ship = server.OnWorld(w => w.Players[server.Player].LocalTransform);
+        var ship = server.OnWorld(w => w.Players[server.Player].Transform);
         var first = counts[0].Threads - counts[0].PoolThreads;
         var last = counts[^1].Threads - counts[^1].PoolThreads;
         output.WriteLine($"Reload times in ms: {string.Join(", ", times)}.");

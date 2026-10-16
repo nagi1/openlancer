@@ -78,7 +78,7 @@ internal sealed class HeadlessCutscenePlayer : ICutscenePlayer
                     obj.Object = Character(name, entity, data, resources);
                     break;
             }
-            obj.Object?.SetLocalTransform(new Transform3D(entity.Position ?? Vector3.Zero, entity.Rotation));
+            obj.Object?.SetTransform(new Transform3D(entity.Position ?? Vector3.Zero, entity.Rotation));
             objects[name] = obj;
         }
         instance.Objects = objects;
@@ -128,7 +128,7 @@ internal sealed class HeadlessCutscenePlayer : ICutscenePlayer
             Add(pose, $"{name}.translate", obj.Translate);
             Add(pose, $"{name}.rotate", obj.Rotate);
             if (obj.Object != null)
-                Add(pose, $"{name}.object", obj.Object.LocalTransform);
+                Add(pose, $"{name}.object", obj.Object.Transform);
             if (obj.Camera is { } camera)
                 Add(pose, $"{name}.camera", new Vector4(camera.FovH, camera.AspectRatio, camera.Znear, camera.Zfar));
             if (obj.Light is { } light)

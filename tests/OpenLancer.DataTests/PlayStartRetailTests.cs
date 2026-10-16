@@ -60,7 +60,7 @@ public sealed class PlayStartRetailTests(ITestOutputHelper output)
         Start(headless, InBr01, null, HeadlessServer.SpawnPacket);
 
         var player = headless.Player;
-        var ship = headless.OnWorld(w => w.Players[player].LocalTransform);
+        var ship = headless.OnWorld(w => w.Players[player].Transform);
         output.WriteLine($"System {player.System}, base {player.Base ?? "none"}, ship at {ship.Position}, " +
                          $"{Vector3.Distance(ship.Position, Br01Point)} from the start.");
         Assert.NotNull(player.Space);
@@ -95,14 +95,14 @@ public sealed class PlayStartRetailTests(ITestOutputHelper output)
         var start = new PlayStart.InSpace("br01", Br01Point, heading);
         Start(headless, start, null, HeadlessServer.SpawnPacket);
         var player = headless.Player;
-        var before = headless.OnWorld(w => w.Players[player].LocalTransform);
+        var before = headless.OnWorld(w => w.Players[player].Transform);
 
         PlaySpawn.Orient(player, start);
         // The world runs its actions in order, so this read runs after the turn.
-        var after = headless.OnWorld(w => w.Players[player].LocalTransform);
+        var after = headless.OnWorld(w => w.Players[player].Transform);
         // Some world updates later, the ship still has the heading.
         Thread.Sleep(500);
-        var later = headless.OnWorld(w => w.Players[player].LocalTransform);
+        var later = headless.OnWorld(w => w.Players[player].Transform);
 
         output.WriteLine($"Dot product with the heading: {Dot(before, heading)} before the turn, {Dot(after, heading)} " +
                          $"after it, {Dot(later, heading)} 500 ms later. The ship is " +

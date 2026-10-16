@@ -11,7 +11,6 @@ using LibreLancer.Data.GameData;
 using LibreLancer.Data.GameData.Items;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.Data.Schema.Missions;
-using LibreLancer.Items;
 using LibreLancer.Render;
 using LibreLancer.Resources;
 using LibreLancer.Thn;
@@ -104,16 +103,15 @@ public sealed class CutscenePlayer : ICutscenePlayer
         foreach (var (key, value) in plan.Substitutions)
             context.Substitutions[key] = value;
 
-        // The player ship, as RoomGameplay.cs:1038-1046 sets it.
+        // The player ship, as RoomGameplay.cs:1036-1043 sets it.
         var ship = PlayerShip(items, resources, plan.ShipPackage);
         if (ship != null)
         {
             context.PlayerShip = ship;
-            if (ship.TryGetComponent<CEngineComponent>(out var engine))
+            if (ship.CoreEquipment.Engine != null)
             {
-                context.PlayerEngine = engine;
-                engine.Active = false;
-                engine.PlaySound = false;
+                context.PlayerEngine = ship.CoreEquipment.Engine;
+                context.PlayerEngine.Active = false;
             }
         }
 
@@ -144,7 +142,7 @@ public sealed class CutscenePlayer : ICutscenePlayer
             }
 
             if (plan.ShipMarker != null && ship != null && cutscene.GetObject(plan.ShipMarker) is { } marker)
-                PlaceShip(ship, marker);
+                PlaceShip(cutscene, ship, marker);
             if (plan.Fidget != null)
                 AddFidget(cutscene, scripts(plan.Fidget), plan.FidgetSpot, room, data, resources);
             // The events of time 0 ran in BeginScene. The poses that they set apply in an update (Cutscene.cs:424). The
@@ -268,7 +266,7 @@ public sealed class CutscenePlayer : ICutscenePlayer
 
     /// <summary>
     /// The player ship: the ship of the package with the equipment that has a hardpoint, as RoomGameplay makes the ship
-    /// of the session (RoomGameplay.cs:1020-1030, :961-975). Without a package, the ship and the loadout of the package
+    /// of the session (RoomGameplay.cs:1018-1023, :961-975). Without a package, the ship and the loadout of the package
     /// of a new multiplayer character, which Play gives too. Null when the data has no such ship.
     /// </summary>
     private static GameObject? PlayerShip(GameItemDb items, ResourceManager resources, string? package)
@@ -292,9 +290,6 @@ public sealed class CutscenePlayer : ICutscenePlayer
 
         if (ship?.ModelFile?.LoadFile(resources) is not { } model)
             return null;
-        // The engine registers the equipment types when it makes its first world (GameWorld.cs:55). The ship gets its
-        // equipment before the cutscene makes its world.
-        EquipmentHandlers.Register();
         var obj = new GameObject(model, resources, true, false);
         foreach (var (hardpoint, equipment) in mounts.Where(m => !string.IsNullOrEmpty(m.Hardpoint)))
             EquipmentObjectManager.InstantiateEquipment(obj, resources, null, EquipmentType.Cutscene, hardpoint,
@@ -302,13 +297,18 @@ public sealed class CutscenePlayer : ICutscenePlayer
         return obj;
     }
 
-    /// <summary>Puts the ship on its marker, as <c>SetRoomCameraAndShip</c> does (RoomGameplay.cs:1415-1426).</summary>
-    private static void PlaceShip(GameObject ship, ThnSceneObject marker)
+    /// <summary>Attaches the ship to its marker, as <c>SetRoomCameraAndShip</c> does (RoomGameplay.cs:1418-1431).</summary>
+    private static void PlaceShip(Cutscene cutscene, GameObject ship, ThnSceneObject marker)
     {
-        ship.SetLocalTransform(ship.HardpointExists("HpMount")
+        var offset = ship.HardpointExists("HpMount")
             ? ship.GetHardpoint("HpMount")!.Transform.Inverse()
-            : Transform3D.Identity);
-        marker.Object?.Children.Add(ship);
+            : Transform3D.Identity;
+        var thnObject = new ThnSceneObject { Name = "$$_PLAYER_SHIP", Object = ship };
+        thnObject.Attachments.Add(new ThnAttachment(new ThnObjectParent(marker, null, null) { ChildOffset = offset })
+        {
+            Position = true, Orientation = true
+        });
+        cutscene.AddObject(thnObject);
     }
 
     /// <summary>

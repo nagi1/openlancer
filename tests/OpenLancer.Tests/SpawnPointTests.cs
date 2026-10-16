@@ -297,7 +297,7 @@ public sealed class SpawnPointTests
             Archetype = new Archetype { Nickname = nickname, Type = type },
         };
         var gameObject = new GameObject { RenderComponent = new ModelRenderer(model) };
-        gameObject.SetLocalTransform(new Transform3D(position, rotation));
+        gameObject.SetTransform(new Transform3D(position, rotation));
         objects[obj] = gameObject;
     }
 

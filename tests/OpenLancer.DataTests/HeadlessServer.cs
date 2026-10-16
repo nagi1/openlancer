@@ -46,8 +46,9 @@ internal sealed class HeadlessServer : IDisposable
         {
             ScriptsFolder = Path.Combine(folder, "scripts"),
             ThreadCount = 1,
+            UseDatabase = false,
         };
-        Player = new Player(Client, Server, Guid.Empty) { SaveFolder = folder };
+        Player = new Player(Client, Server, Guid.Empty, default) { SaveFolder = folder };
         Server.LocalPlayer = Player;
         Server.ConnectedPlayers.Add(Player);
     }

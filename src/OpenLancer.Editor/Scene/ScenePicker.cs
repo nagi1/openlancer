@@ -153,7 +153,7 @@ internal sealed class ScenePicker(
     /// </summary>
     internal static RaySpan ObjectSpan(SystemObject obj, GameObject gameObject, Ray ray)
     {
-        var transform = gameObject.WorldTransform;
+        var transform = gameObject.Transform;
         var model = gameObject.RenderComponent is ModelRenderer { Model: { } drawn } ? drawn : null;
         if (obj.Archetype?.Type == ArchetypeType.planet)
         {

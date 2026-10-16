@@ -6,9 +6,10 @@ OpenLancer runs on a fork of [Librelancer](https://github.com/Librelancer/Librel
 
 - The branch `openlancer` starts at the upstream commit in "Base commit" below. Each OpenLancer change to the engine is a normal commit on that branch. OpenLancer code that does not have to be in the engine stays in OpenLancer's own projects.
 - Commit in the submodule first. Then commit the new submodule commit in OpenLancer.
-- The subject of each fork commit starts with its change number, for example `OL-0012`. This table and the other documents use these numbers. The next free number is `OL-0023`.
+- The subject of each fork commit starts with its change number, for example `OL-0012`. This table and the other documents use these numbers. The next free number is `OL-0025`.
 - The fork commits are never submitted upstream. Librelancer does not accept AI-written issues or pull requests, and automated tools must not open them.
-- The remote `upstream` of the submodule is the Librelancer repository. The fork has no remote of its own yet, so its commits exist only in this clone. A new clone of OpenLancer cannot get the submodule commit until the fork gets a remote.
+- The fork is the private repository `https://github.com/spool1/openlancer-engine` (remote `origin` of the submodule). Push each new fork commit there before you commit the submodule pointer in OpenLancer, so that a new clone can get it. Keep the repository private.
+- The remote `upstream` of the submodule is Librelancer on Codeberg, `https://codeberg.org/Librelancer/Librelancer.git`. Librelancer moved there from GitHub on 2026-10-10, and its GitHub repository holds only a notice now.
 
 ## Fork commits
 
@@ -38,19 +39,27 @@ Each commit applies on top of all commits before it, and it can change lines tha
 | OL-0020 `76b0ec0c` | Play from the OpenLancer editor (Milestone 4, decision D14). `FreelancerGame.Load` made its file system only with `FileSystem.FromPath(FreelancerPath)`. Thus a host could not give the game the mod overlay of a profile without a deploy of the files. The patch adds the field `GameConfig.CustomFileSystem`, a `Func<FileSystem>` with `[XmlIgnore]`, next to `CustomState`. When the field is set, `Load` uses the file system that it gives, for the resource manager and for `GameItemDb`. When the field is null, `Load` reads `freelancer_path` as before. The play host of OpenLancer sets the field. `PatchContractTests` checks the field, and `apply-librelancer-patches.ps1 -Check` guards the changed line of `Load`. Changes outside OpenLancer: none, because `lancer.exe` does not set the field. |
 | OL-0021 `b19971aa` | A stopped server leaked its worlds (Milestone 4, decision D49). `GameServer.Stop` joined the server thread, but it did not finish the worlds. Each world keeps a physics world with its buffer memory and its worker threads. In a Debug build, the finalizer of a physics world that is not disposed fails a `Debug.Assert`, and the process ends. A hot reload, the retail tests and Quit to menu stop servers. Now `Stop` calls the new `WorldProvider.Close`, which finishes each world. A world that loads during the stop finishes at the end of its load, and `RequestWorld` stops its wait. `LoadWorld` now reports a world to the server after it stores the world, not before. Also, `SpaceGameplay.OnUnload` now removes its `Mouse_MouseUp` handler. Before, the game mouse held the old state, and the state held its session, its server and its worlds. `ServerStopRetailTests` checks that the buffer pool of a world in Li01 is empty after `Stop`. It also holds the load of Li01 in its preload and stops the server during that load. Then the request gives no world, and the request ends. No suite test can see the order of `WorldReady` after the store, and the handler change has no suite test, because `SpaceGameplay` needs a window. `-Check` alone guards these lines. Changes outside OpenLancer: `lancer.exe` and its dedicated server now free the worlds of a stopped server. |
 | OL-0022 `f9381f56` | A disposed system renderer leaked the meshes of its asteroid fields (Milestone 5, hot reload). `SystemRenderer.Dispose` freed its other buffers, but not `AsteroidFields`. Each asteroid field holds a cube mesh with its own vertex buffer, and only `LoadZones` freed the meshes of the fields that it replaced. So each unload of the space state leaked one vertex buffer for each asteroid field of the system: at a dock, a jump, Quit to menu and each hot reload. The finalizer of a vertex buffer only logs "VERTEX BUFFER LEAK", so the GPU kept the buffer. Br01 has 10 asteroid fields, and 20 hot reloads in Br01 logged 200 leak lines. Now `Dispose` frees the mesh of each asteroid field and clears the list. With the patch, the same 20 reloads log no leak line (smoke run F of the M4 design). The editor no longer calls `LoadZones(null, null)` before it disposes its renderer. No suite test can see the change, because a vertex buffer needs a GPU. `-Check` guards the lines. Changes outside OpenLancer: `lancer.exe` and cutscenes free the asteroid field meshes when they dispose a system renderer. |
+| OL-0023 `ef0c342b` | Merge of upstream `b825457c`: each piece of equipment took the type of its world, and that type decides whether it loads a drawable model. A client or editor world without a renderer (the headless editor scene of the retail tests) then loaded drawable models through `ServerResourceManager`, which threw in `FindMesh`. `GameWorld.InitObject` now gives the equipment the server type when the world has no renderer, as `InitWithArchetype` already does for the model of the object. A world with a renderer keeps `DefaultObjectType`. Changes outside OpenLancer: none, because upstream worlds without a renderer are server worlds. |
+| OL-0024 `17f0c273` | Merge of upstream `4bf6765b`: an embedded server has `UseDatabase = false`, so `GameServer.Database` stays null. The hot reload read `Database` to know if the server thread still runs, so every reload refused. `GameServer.Running` is true from `Start` until `Stop`, and `PlayReload.CheckLeave` reads it. Changes outside OpenLancer: none. |
 
 OL-0001 to OL-0022 were local patch files before the fork. Their numbers did not change.
 
+## Upstream merges
+
+| Merge | Upstream commit | Notes |
+|---|---|---|
+| `eb8622c9` (2026-10-16) | `91d140e5` (2026-10-16) | 36 commits, among them the EquipmentObject model, Transform3D renderers and network limits. OL-0023 and OL-0024 adapt the fork to two of them. OpenLancer changes: `GameObject.Transform` and `SetTransform` replace `WorldTransform`, `LocalTransform` and `SetLocalTransform`. `CoreEquipment.Engine` replaces `CEngineComponent`. `InternalFxEquipment` replaces `AnimationEquipment`. `LoadSystem` has no `server` argument. A world without a renderer is a server world unless `DefaultObjectType` says otherwise, so the editor scene uses `EquipmentType.Editor`, as LancerEdit does. The player ship of a room cutscene is an attachment to its marker. |
+
 ## Base commit
 
-The branch `openlancer` starts at this upstream commit.
+The last upstream commit that the branch `openlancer` holds. The branch started at `dcbcf808` (2026-09-24).
 
 | Field | Value |
 |---|---|
-| Commit | `dcbcf8080dec4a10ebe1ef28b89a0a6d122fe415` |
-| Describe | `2025.11-567-gdcbcf808` |
-| Date | 2026-09-24 |
-| Subject | EditableUtf: Fix regression in saving files |
+| Commit | `91d140e5cddc96dc607b45a1ff104b9ee8cb7ec8` |
+| Describe | `2025.11-604-g91d140e5` |
+| Date | 2026-10-16 |
+| Subject | BlenderImport: Set export_apply=True and export_merge_animation='NLA_TRACK' |
 
 ## Build the submodule
 

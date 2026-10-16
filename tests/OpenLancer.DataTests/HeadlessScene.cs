@@ -27,8 +27,13 @@ internal sealed class HeadlessScene : IDisposable
         var game = RetailGame.Instance;
         Source = game.Data.Items.Systems.Get(system) ?? throw new ArgumentException($"No system {system}.", nameof(system));
         System = Source.Clone();
-        World = new GameWorld(null, null, game.Resources, () => 0, true);
-        World.LoadSystem(System, game.Resources, null, server: false);
+        // A world without a renderer is a server world unless the caller says otherwise (GameWorld.cs:81). This scene
+        // has the type of the editor scene (SceneView).
+        World = new GameWorld(null, null, game.Resources, () => 0, true)
+        {
+            DefaultObjectType = EquipmentType.Editor,
+        };
+        World.LoadSystem(System, game.Resources, null);
         Objects = World.Objects.Where(o => o.SystemObject != null).ToDictionary(o => o.SystemObject!);
         Applier = new SceneApplier(session, game.Data.Items, game.Resources, System, World, Objects, Host);
         session.Changed += Applier.Note;

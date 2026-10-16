@@ -88,7 +88,7 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
                 transaction.Apply(Pos(section, start + new Vector3(100 * step, 0, 0)));
                 scene.Applier.Run();
                 Assert.Equal(start + new Vector3(100 * step, 0, 0), obj.Position);
-                Assert.Equal(obj.Position, gameObject.LocalTransform.Position);
+                Assert.Equal(obj.Position, gameObject.Transform.Position);
                 Assert.Equal(rotation, RotationBits(obj, gameObject));
             }
             transaction.Commit();
@@ -317,7 +317,7 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
         scene.Applier.Run();
         Assert.NotSame(model, gameObject.Model);
         Assert.False(scene.Applier.HasPending);
-        Assert.Equal(depot.Position, gameObject.LocalTransform.Position);
+        Assert.Equal(depot.Position, gameObject.Transform.Position);
     }
 
     /// <summary>
@@ -471,11 +471,11 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
 
         session.Execute(Pos(scene.SectionOf(depot), -37675, 0, -27705));
         Assert.Equal(new Vector3(-38675, 0, -27705), depot.Position);
-        Assert.Equal(new Vector3(-38675, 0, -27705), scene.Objects[depot].LocalTransform.Position);
+        Assert.Equal(new Vector3(-38675, 0, -27705), scene.Objects[depot].Transform.Position);
         Assert.True(scene.Applier.HasPending);
         scene.Applier.Run();
         Assert.Equal(new Vector3(-37675, 0, -27705), depot.Position);
-        Assert.Equal(depot.Position, scene.Objects[depot].LocalTransform.Position);
+        Assert.Equal(depot.Position, scene.Objects[depot].Transform.Position);
     }
 
     /// <summary>
@@ -705,7 +705,7 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
     {
         var depot = scene.Object(Depot);
         Assert.Equal(new Vector3(-37675, 0, -27705), depot.Position);
-        Assert.Equal(depot.Position, scene.Objects[depot].LocalTransform.Position);
+        Assert.Equal(depot.Position, scene.Objects[depot].Transform.Position);
 
         var ring = scene.Object(LaneRing);
         Assert.Equal(Station, ring.Archetype!.Nickname);
@@ -759,11 +759,11 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
 
     /// <summary>The bits of the position and the rotation of an object and of its world object.</summary>
     private static int[] TransformBits(SystemObject obj, GameObject gameObject) =>
-        [..Bits(obj.Position), ..RotationBits(obj, gameObject), ..Bits(gameObject.LocalTransform.Position)];
+        [..Bits(obj.Position), ..RotationBits(obj, gameObject), ..Bits(gameObject.Transform.Position)];
 
     /// <summary>The bits of the rotation of an object and of its world object.</summary>
     private static int[] RotationBits(SystemObject obj, GameObject gameObject) =>
-        [..Bits(obj.Rotation), ..Bits(gameObject.LocalTransform.Orientation)];
+        [..Bits(obj.Rotation), ..Bits(gameObject.Transform.Orientation)];
 
     /// <summary>The bits of the rotation of a zone: the matrix and the angles.</summary>
     private static int[] RotationBits(Zone zone) => [..Bits(zone.RotationMatrix), ..Bits(zone.RotationAngles)];
