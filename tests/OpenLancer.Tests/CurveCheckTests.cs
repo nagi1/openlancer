@@ -115,7 +115,7 @@ public sealed class CurveCheckTests
         Assert.Equal((Point, "atten_curve"), (curve.Target, curve.Key));
         Assert.StartsWith("[LightSource] nickname = Light_point: 'atten_curve = no_such_curve': no curve has the name " +
                           "'no_such_curve'.", curve.Message);
-        Assert.EndsWith("The engine stops with an error when it loads the game data.", curve.Message);
+        Assert.EndsWith("The game stops loading with this value.", curve.Message);
         var refused = EditController.Gate(session);
         Assert.NotNull(refused);
         Assert.False(refused.Saved);
@@ -132,7 +132,7 @@ public sealed class CurveCheckTests
 
     [Theory]
     [InlineData("no_points", "has no 'point' line.")]
-    [InlineData("twice", "2 sections have the name 'TWICE', so the engine finds none of them.")]
+    [InlineData("twice", "2 sections have the name 'TWICE', so the game finds none of them.")]
     [InlineData("color_curve", "no curve has the name 'color_curve'.")]
     public void ACurveThatTheEngineCannotLoadIsAnError(string name, string problem)
     {

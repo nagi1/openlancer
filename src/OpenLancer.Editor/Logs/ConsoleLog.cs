@@ -78,8 +78,10 @@ internal sealed partial class ConsoleLog
     public int Count(ConsoleSeverity severity) => counts[(int)severity];
 
     /// <param name="target">The section that the message is about, or null.</param>
-    public ConsoleEntry Add(ConsoleSeverity severity, string source, string message, SectionRef? target = null) =>
-        Add(new ConsoleEntry(severity, source, message, DateTime.Now) { Target = target });
+    /// <param name="cutscene">The place in a cutscene that the message is about, or null.</param>
+    public ConsoleEntry Add(ConsoleSeverity severity, string source, string message, SectionRef? target = null,
+        ThnLocation? cutscene = null) =>
+        Add(new ConsoleEntry(severity, source, message, DateTime.Now) { Target = target, Cutscene = cutscene });
 
     /// <summary>Adds an entry. When the log is full, the oldest entry goes.</summary>
     private ConsoleEntry Add(ConsoleEntry entry)

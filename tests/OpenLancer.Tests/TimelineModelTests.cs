@@ -362,15 +362,195 @@ public sealed class TimelineModelTests
         Assert.Null(TimelineModel.HitTest(header, 0, 1));
     }
 
+    /// <summary>A bar that overlaps an earlier bar of its row goes to its own sub-row, so each line hit tests only its
+    /// own bar (decision D131).</summary>
     [Fact]
-    public void ALaterEventOnTheSameRowWinsTheHitTest()
+    public void AnOverlappingEventOnTheSameRowIsOnItsOwnSubRow()
     {
         var model = Model(Script.Replace("{ 3, ATTACH_ENTITY, { \"Char_trent\", \"Mk_end\" } },",
             "{ 3, START_MOTION, { \"Char_trent\" }, { animation = \"Sc_Y\", duration = 1 } },"));
+        var lines = SubRowLines(model, "Char_trent");
 
-        var hit = TimelineModel.HitTest(Line(model, "Char_trent"), 3.5, 0.05);
+        Assert.Equal(2, lines.Count);
+        Assert.Equal(2f, TimelineModel.HitTest(lines[0], 3.5, 0.05)?.Time);
+        Assert.Equal(3f, TimelineModel.HitTest(lines[1], 3.5, 0.05)?.Time);
+    }
 
-        Assert.Equal(3f, hit?.Time);
+    /// <summary>
+    /// A row in three forms for the sub-rows: A 0-1, B 0.5-6, X 3-4 and C 5-7, and three diamonds at 8 and two at 9 and
+    /// 9.05. The first packing puts A, X and C on sub-row 0 and B on sub-row 1.
+    /// </summary>
+    private const string SubRowScript = """
+        duration = 20
+        entities = {
+            { entity_name = "Char", type = DEFORMABLE },
+            { entity_name = "Mk", type = MARKER }
+        }
+        events = {
+            { 0, START_MOTION, { "Char" }, { animation = "A", duration = 1 } },
+            { 0.5, START_MOTION, { "Char" }, { animation = "B", duration = 5.5 } },
+            { 3, START_MOTION, { "Char" }, { animation = "X", duration = 1 } },
+            { 5, START_MOTION, { "Char" }, { animation = "C", duration = 2 } },
+            { 8, ATTACH_ENTITY, { "Char", "Mk" } },
+            { 8, ATTACH_ENTITY, { "Char", "Mk" } },
+            { 8, ATTACH_ENTITY, { "Char", "Mk" } },
+            { 9.05, ATTACH_ENTITY, { "Char", "Mk" } },
+            { 9, ATTACH_ENTITY, { "Char", "Mk" } }
+        }
+        """;
+
+    private static TimelineModel SubRowModel(string script = SubRowScript, TimelineModel? previous = null,
+        bool pin = false) =>
+        TimelineModel.Build(Path, ThnScriptModel.From(ThnScripts.Evaluate(script), ThnElementId.Counter()),
+            ThnScripts.Evaluator.Symbols, ScriptPlay.Normal, previous, pin);
+
+    /// <summary>The sub-row of each event of the row "Char", by the animation of a bar or the time of a diamond.</summary>
+    private static Dictionary<string, int> SubRows(TimelineModel model) =>
+        Row(model, "Char").Events.ToDictionary(
+            e => e.Index switch { 0 => "A", 1 => "B", 2 => "X", 3 => "C", _ => $"d{e.Index}" }, e => e.SubRow);
+
+    private static List<TimelineLine> SubRowLines(TimelineModel model, string name) =>
+        model.Lines(new HashSet<TimelineGroupKind>(), false).Where(l => l.Row?.Name == name).ToList();
+
+    [Fact]
+    public void OverlappingBarsGetSubRowsAndTouchingBarsShareOne()
+    {
+        var model = SubRowModel();
+        var row = Row(model, "Char");
+
+        // B overlaps A, so it takes sub-row 1. X starts after A ends, so it takes the free sub-row 0. C overlaps only B.
+        Assert.Equal(2, row.SubRows);
+        Assert.Equal(new Dictionary<string, int>
+        {
+            ["A"] = 0, ["B"] = 1, ["X"] = 0, ["C"] = 0,
+            ["d4"] = 0, ["d5"] = 0, ["d6"] = 0, ["d7"] = 0, ["d8"] = 0,
+        }, SubRows(model));
+        // The model gives each event with its sub-row.
+        Assert.All(row.Events, e => Assert.Same(e, model.Event(e.Ref.Id)));
+
+        // Touching bars share a sub-row: A ends at 1, and X from 1 to 2 touches it. X from 0.9 overlaps A and B.
+        var touching = SubRowModel(SubRowScript.Replace("{ 3, START_MOTION", "{ 1, START_MOTION"));
+        Assert.Equal(0, SubRows(touching)["X"]);
+        Assert.Equal(2, Row(touching, "Char").SubRows);
+        var overlapping = SubRowModel(SubRowScript.Replace("{ 3, START_MOTION", "{ 0.9, START_MOTION"));
+        Assert.Equal(2, SubRows(overlapping)["X"]);
+        Assert.Equal(3, Row(overlapping, "Char").SubRows);
+    }
+
+    [Fact]
+    public void EachSubRowIsALineAndTheHitTestsSeeOnlyTheirSubRow()
+    {
+        var model = SubRowModel();
+        var lines = SubRowLines(model, "Char");
+
+        Assert.Equal([0, 1], lines.Select(l => l.SubRow));
+        Assert.All(lines, l => Assert.Equal("Char", l.Row!.Name));
+        // B (0.5-6) is on sub-row 1, A and X are on sub-row 0.
+        Assert.Equal(3f, TimelineModel.HitTest(lines[0], 3.5, 0.05)?.Time);
+        Assert.Equal(0.5f, TimelineModel.HitTest(lines[1], 3.5, 0.05)?.Time);
+        Assert.Null(TimelineModel.HitTest(lines[0], 2, 0.05));
+        Assert.Equal(0.5f, TimelineModel.HitTest(lines[1], 2, 0.05)?.Time);
+        // The diamonds are on sub-row 0.
+        Assert.Null(TimelineModel.HitTest(lines[1], 8, 0.05));
+        Assert.Equal(8f, TimelineModel.HitTest(lines[0], 8, 0.05)?.Time);
+        Assert.Equal([0.5f], TimelineModel.EventsIn(lines[1], 0, 20, 0.05).Select(e => e.Time));
+        Assert.Equal(8, TimelineModel.EventsIn(lines[0], 0, 20, 0.05).Count());
+        // The second target line of the panel goes to the first sub-row of a row.
+        var all = model.Lines(new HashSet<TimelineGroupKind>(), false);
+        Assert.Equal(0, all[TimelinePanel.IndexOf(all, "char")].SubRow);
+    }
+
+    /// <summary>X 0-2 is changed to 0-4: Y and Z keep their sub-rows, and only X moves. A packing from the start would
+    /// put X on sub-row 0 and push Z to sub-row 2.</summary>
+    [Fact]
+    public void AnEditKeepsTheSubRowsOfTheOtherEvents()
+    {
+        const string script = """
+            duration = 10
+            entities = { { entity_name = "Char", type = DEFORMABLE } }
+            events = {
+                { 0, START_MOTION, { "Char" }, { animation = "X", duration = 2 } },
+                { 1, START_MOTION, { "Char" }, { animation = "Y", duration = 4 } },
+                { 3, START_MOTION, { "Char" }, { animation = "Z", duration = 1 } }
+            }
+            """;
+        var before = SubRowModel(script);
+        Assert.Equal([0, 1, 0], before.Events.Select(e => e.SubRow));
+
+        var edited = SubRowModel(script.Replace("animation = \"X\", duration = 2", "animation = \"X\", duration = 4"),
+            before);
+
+        Assert.Equal([2, 1, 0], edited.Events.Select(e => e.SubRow));
+        Assert.Equal(3, Row(edited, "Char").SubRows);
+        // An undo puts X back on sub-row 0, and the empty sub-row at the bottom goes away.
+        var undone = SubRowModel(script, edited);
+        Assert.Equal([0, 1, 0], undone.Events.Select(e => e.SubRow));
+        Assert.Equal(2, Row(undone, "Char").SubRows);
+        // A new open packs from the start.
+        Assert.Equal([0, 1, 2], SubRowModel(script.Replace("animation = \"X\", duration = 2",
+            "animation = \"X\", duration = 4")).Events.Select(e => e.SubRow));
+    }
+
+    /// <summary>C moves from 5 to 2.5, over the unchanged X of its sub-row. The unchanged bars keep their sub-rows
+    /// first, so C moves to another sub-row and X stays. A pass in time order alone would keep C on sub-row 0 and push
+    /// X away.</summary>
+    [Fact]
+    public void AnEditToAnEarlierTimeMovesTheEditedBarAndNotTheUnchangedBar()
+    {
+        var before = SubRowModel();
+        var edited = SubRowModel(SubRowScript.Replace("{ 5, START_MOTION", "{ 2.5, START_MOTION"), before);
+
+        Assert.Equal(0, SubRows(edited)["A"]);
+        Assert.Equal(1, SubRows(edited)["B"]);
+        Assert.Equal(0, SubRows(edited)["X"]);
+        Assert.Equal(2, SubRows(edited)["C"]);
+    }
+
+    /// <summary>While a gesture is open, each event keeps its sub-row, also when bars overlap. The first build after
+    /// the gesture packs again from the model before the gesture.</summary>
+    [Fact]
+    public void AGestureKeepsTheSubRowsAndTheFirstBuildAfterItPacksAgain()
+    {
+        var before = SubRowModel();
+        var step1 = SubRowModel(SubRowScript.Replace("{ 5, START_MOTION", "{ 4, START_MOTION"), before, pin: true);
+        var step2 = SubRowModel(SubRowScript.Replace("{ 5, START_MOTION", "{ 2.5, START_MOTION"), step1, pin: true);
+
+        // C overlaps X on sub-row 0 during the drag.
+        Assert.Equal(0, SubRows(step2)["C"]);
+        Assert.Equal(0, SubRows(step2)["X"]);
+        Assert.Equal(2, Row(step2, "Char").SubRows);
+
+        var after = SubRowModel(SubRowScript.Replace("{ 5, START_MOTION", "{ 2.5, START_MOTION"), step2);
+
+        Assert.Equal(0, SubRows(after)["X"]);
+        Assert.Equal(2, SubRows(after)["C"]);
+        // Each sub-row of the packed model holds bars that do not overlap.
+        var bars = Row(after, "Char").Events.Where(e => e.IsBar).ToList();
+        Assert.DoesNotContain(bars, a => bars.Any(b => !ReferenceEquals(a, b) && a.SubRow == b.SubRow &&
+                                                       a.Time < b.End && b.Time < a.End));
+    }
+
+    /// <summary>Diamonds at one time, and diamonds closer than the width of a diamond at the zoom, make one mark with
+    /// their count. A box select takes all diamonds of a mark.</summary>
+    [Fact]
+    public void DiamondsThatOverlapOnTheScreenMakeOneMark()
+    {
+        var model = SubRowModel();
+        var line = SubRowLines(model, "Char")[0];
+
+        var wide = TimelineModel.Diamonds(line, 0.1);
+        Assert.Equal([(8f, 3), (9f, 2)], wide.Select(m => (m.Time, m.Events.Count)));
+        // The events of a mark are in the order of the file: the diamond at 9.05 comes first in the file.
+        Assert.Equal([7, 8], wide[1].Events.Select(e => e.Index));
+
+        var narrow = TimelineModel.Diamonds(line, 0.01);
+        Assert.Equal([(8f, 3), (9f, 1), (9.05f, 1)], narrow.Select(m => (m.Time, m.Events.Count)));
+
+        // A box around 9 takes the diamond at 9.05 of the same mark too.
+        Assert.Equal(2, TimelineModel.EventsIn(line, 8.99, 9.01, 0, 0.1).Count());
+        Assert.Single(TimelineModel.EventsIn(line, 8.99, 9.01, 0, 0.01));
+        // A click selects the last diamond of the file at the time, as before.
+        Assert.Equal(6, TimelineModel.HitTest(line, 8, 0.01)?.Index);
     }
 
     [Fact]

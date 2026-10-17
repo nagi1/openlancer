@@ -220,7 +220,8 @@ public sealed class TimelineDragTests
         Assert.Equal(TimelineDragKind.Move, TimelineDrag.KindAt(Ev(session, Cut), 0, 0.1));
     }
 
-    /// <summary>A box select takes the bars that overlap the time range and the diamonds in it.</summary>
+    /// <summary>A box select takes the bars that overlap the time range and the diamonds in it. The two bars of Fx
+    /// overlap, so each is on its own sub-row, and a box over both lines takes both (decision D131).</summary>
     [Fact]
     public void ABoxTakesTheBarsThatOverlapItAndTheDiamondsInIt()
     {
@@ -228,13 +229,17 @@ public sealed class TimelineDragTests
         var session = ws.Session("act");
         var model = Model(session);
         var lines = model.Lines(new HashSet<TimelineGroupKind>(), false);
-        var fx = lines.Single(l => l.Row?.Name == "Fx");
+        var fx = lines.Where(l => l.Row?.Name == "Fx").ToList();
         var cam = lines.Single(l => l.Row?.Name == "Cam_A");
         var monitor = lines.Single(l => l.Lane?.Name == "Monitor");
 
-        Assert.Equal(2, TimelineModel.EventsIn(fx, 6.5, 7.5, 0.01).Count());
-        Assert.Single(TimelineModel.EventsIn(fx, 7.1, 9, 0.01));
-        Assert.Empty(TimelineModel.EventsIn(fx, 8.1, 9, 0.01));
+        Assert.Equal([0, 1], fx.Select(l => l.SubRow));
+        IEnumerable<TimelineEvent> Both(double from, double to) =>
+            fx.SelectMany(l => TimelineModel.EventsIn(l, from, to, 0.01));
+        Assert.Equal(2, Both(6.5, 7.5).Count());
+        Assert.Single(TimelineModel.EventsIn(fx[1], 6.5, 7.5, 0.01));
+        Assert.Single(Both(7.1, 9));
+        Assert.Empty(Both(8.1, 9));
         Assert.Single(TimelineModel.EventsIn(cam, 5.995, 6.1, 0.01));
         Assert.Single(TimelineModel.EventsIn(monitor, 1, 0.005, 0.01));
     }

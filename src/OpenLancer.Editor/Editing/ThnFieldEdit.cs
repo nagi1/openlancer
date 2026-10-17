@@ -7,6 +7,7 @@ using System.Text;
 using LibreLancer;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Editing;
@@ -139,7 +140,7 @@ internal static class ThnFieldEdit
         }
         catch (Exception e) when (e is ThnEvaluationException or ArgumentException)
         {
-            return ThnFieldParse.Fail(e.Message);
+            return ThnFieldParse.Fail(ErrorText.Of(e));
         }
     }
 
@@ -220,7 +221,7 @@ internal sealed class ThnFieldGesture : FieldGesture
         catch (Exception e) when (e is ArgumentException or InvalidOperationException)
         {
             // The transaction is back at the state before the edit.
-            Error = e.Message;
+            Error = ErrorText.Of(e);
         }
     }
 

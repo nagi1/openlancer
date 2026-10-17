@@ -259,7 +259,7 @@ public sealed class CutsceneViewerTests
 
     /// <summary>
     /// A problem of the validation selects its element in the Console (section 9 of the M8 design). The check reads the
-    /// saved file, and the save opens the cutscene again from that file. So the place of the problem names the element
+    /// file of the mod, and the session opens the cutscene from that file. So the place of the problem names the element
     /// of W, also after a delete moved the places, and also after the problem went through the JSON of oltool. The
     /// result comes some seconds after the save. When an edit in that time moves the element, the key of the place finds
     /// it. When the key names no element or more than one element, the cutscene is selected.
@@ -269,12 +269,20 @@ public sealed class CutsceneViewerTests
     {
         const string path = ThnSessions.ScriptPath;
         using var ws = ThnSessions.Workspace();
-        var session = ws.Session("act");
-        session.Execute(ThnEdits.Delete(ThnSessions.Entity(session, "Monitor")));
-        session.Execute(ThnEdits.Set(ThnSessions.Entity(session, "Voice_other"), new ThnPath("audioprops.ain"), new ThnText("loud")));
+        var writer = ws.Session("act");
+        writer.Execute(ThnEdits.Delete(ThnSessions.Entity(writer, "Monitor")));
+        writer.Execute(ThnEdits.Set(ThnSessions.Entity(writer, "Voice_other"), new ThnPath("audioprops.ain"), new ThnText("loud")));
         // The second of two events with one key.
-        session.Execute(ThnEdits.Set(ThnSessions.Event(session, 2), new ThnPath("props.duration"), new ThnText("long")));
-        ThnSessions.AssertSaved(session.Save());
+        writer.Execute(ThnEdits.Set(ThnSessions.Event(writer, 2), new ThnPath("props.duration"), new ThnText("long")));
+        // The save gate refuses these errors (decision D137 of the M8b design), so the test writes the patch of the
+        // edits as a modder does outside the editor.
+        var patch = writer.CutsceneDocument(path)!.ChangedFile()!.Text!;
+        Assert.False(writer.Save().Saved);
+        writer.Dispose();
+        var patchFile = Path.Combine(ws.ModFolder("act"), ThnSessions.PatchFile);
+        Directory.CreateDirectory(Path.GetDirectoryName(patchFile)!);
+        File.WriteAllText(patchFile, patch);
+        var session = ws.Session("act");
         var overlay = ws.Build(Mod.Load(ws.ModFolder("act")));
 
         var problems = CutsceneCheck.NewProblems(FileSystem.FromPath(ws.Base), overlay.CreateFileSystem(),
@@ -459,6 +467,25 @@ public sealed class CutsceneViewerTests
         Assert.Equal(1 / MathF.Tan(10 * MathF.PI / 180), narrow.Projection.M11, 3);
         Assert.True(wide.Projection.M11 < narrow.Projection.M11);
         Assert.Equal(narrow.Projection.M11 * 0.75f, screen.Projection.M11, 3);
+    }
+
+    /// <summary>
+    /// After a data reload, the workspace makes the choices of the context again (section 5.4 of the M8b design). The
+    /// chosen context stays when it is still a choice, also when only its ship package differs. A room that the new
+    /// choices do not have gives the first choice.
+    /// </summary>
+    [Fact]
+    public void AfterADataReloadTheChosenContextStaysWhenItIsStillAChoice()
+    {
+        var room = new Runtime.Thn.PreviewContext(Runtime.Thn.PreviewContextKind.Room, "Li01_01_base", "Bar", null, "pkg");
+        var choices = new List<Runtime.Thn.PreviewContext> { room, Runtime.Thn.PreviewContext.ScriptOnly };
+
+        Assert.Same(Runtime.Thn.PreviewContext.ScriptOnly,
+            CutsceneWorkspace.ContextAfterReload(choices, Runtime.Thn.PreviewContext.ScriptOnly));
+        Assert.Same(room, CutsceneWorkspace.ContextAfterReload(choices, room with { Room = "BAR", ShipPackage = null }));
+        Assert.Same(room, CutsceneWorkspace.ContextAfterReload(choices, room with { Room = "Cityscape" }));
+        Assert.Same(Runtime.Thn.PreviewContext.ScriptOnly,
+            CutsceneWorkspace.ContextAfterReload([Runtime.Thn.PreviewContext.ScriptOnly], room));
     }
 
     private static void AssertSameTurn(Quaternion expected, Quaternion actual)

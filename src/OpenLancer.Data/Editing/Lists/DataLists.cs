@@ -7,6 +7,7 @@ using LibreLancer.Data.Ini;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data.Editing.Lists;
 
@@ -23,7 +24,8 @@ namespace OpenLancer.Data.Editing.Lists;
 /// revision returns at once. At a new revision, a cache compares the W states of its own files only, so an edit of one
 /// file builds again only the lists and the reverse index parts of that file.</para>
 /// <para>"Missing" is a pure function of W: no state stores it. So an undo of a delete heals each referrer at once
-/// (decision D81).</para>
+/// (decision D81). "Unusable" is a pure function of W too, so one undo of the edit that made an entry unusable heals
+/// each line that names it.</para>
 /// <para>A file that the active mod replaces with a whole file has its lower data in W. The lists read such a file as
 /// the edit view gives it, so they hold its entries.</para>
 /// </remarks>
@@ -35,9 +37,14 @@ public sealed class DataLists
     private readonly Dictionary<string, ReferencePart> parts = new(VfsPath.Comparer);
     private readonly Dictionary<string, MergedReferences> merged = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<SectionRef, IReadOnlyList<ListProblem>> problems = [];
+    private readonly Dictionary<SectionRef, ListProblem?> unusable = [];
+    private readonly HashSet<SectionRef> unusableInProgress = [];
     private readonly Dictionary<string, (ModOverlay View, FileTable? Table)> wholeFiles = new(VfsPath.Comparer);
     private readonly Dictionary<string, RemovedPart> removedParts = new(VfsPath.Comparer);
-    private int problemsRevision = int.MinValue;
+    private int checksRevision = int.MinValue;
+
+    // The files of the edit view with an extension, for a files list. The edit view changes only with a save.
+    private (ModOverlay View, string Extension, List<string> Paths)? editViewFiles;
     private (int Revision, IReadOnlyList<RemovedEntry> Entries, Dictionary<(string, string, string), RemovedEntry> Keys)? removed;
 
     internal DataLists(EditSession session, ListRules rules)
@@ -87,10 +94,19 @@ public sealed class DataLists
     {
         var map = Merged(list);
         var normal = scopeFile == null ? null : VfsPath.Normalize(scopeFile);
+        var lower = ValueKey(list, value);
         if (normal != null || !IsScoped(list))
-            return map.GetValueOrDefault((normal?.ToLowerInvariant(), value.Trim().ToLowerInvariant())) ?? [];
-        var lower = value.Trim().ToLowerInvariant();
+            return map.GetValueOrDefault((normal?.ToLowerInvariant(), lower)) ?? [];
         return map.Where(p => p.Key.Value == lower).SelectMany(p => p.Value).ToList();
+    }
+
+    /// <summary>The key of a value of a list in the reverse index: the value without letter case, or for a files list
+    /// its path below the data folder without letter case, so the spellings of one path give one key.</summary>
+    private string ValueKey(string list, string value)
+    {
+        var trimmed = value.Trim();
+        var files = rules.Lists.TryGetValue(list, out var definition) && definition.Source?.Files != null;
+        return (files && ThnReferences.PathOf(trimmed) is { } path ? path : trimmed).ToLowerInvariant();
     }
 
     /// <summary>The number of line values that name an entry (see <see cref="ReferencesTo"/>).</summary>
@@ -108,11 +124,7 @@ public sealed class DataLists
     /// of the M21 design. Empty when the edit view has no such section.</summary>
     public IReadOnlyList<ListProblem> Problems(SectionRef target)
     {
-        if (problemsRevision != session.Revision)
-        {
-            problems.Clear();
-            problemsRevision = session.Revision;
-        }
+        RefreshChecks();
         if (!problems.TryGetValue(target, out var result))
         {
             result = ListChecks.Check(session, this, target);
@@ -120,6 +132,129 @@ public sealed class DataLists
         }
         return result;
     }
+
+    /// <summary>
+    /// Why the engine cannot use an entry, or null when it can (decision D82, as the user decided it on 2026-10-18).
+    /// An entry is unusable when its list says so (<see cref="ListEntry.Usable"/>), or when the list checks of its
+    /// section give an error whose effect drops the item, crashes the game or stops the load. An error of a list check
+    /// is always a change of the active mod, so the active mod made such an entry unusable.
+    /// </summary>
+    internal Unusability? Unusable(ListEntry entry)
+    {
+        if (!entry.Usable)
+            return new Unusability(ListChecks.Lower(entry.Problem ?? "the game cannot use it."), null,
+                entry.UnusableByActiveMod);
+        return entry.Section is { } section && UnusableProblem(section) is { } problem
+            ? new Unusability(problem.Reason, problem.Consequence, true)
+            : null;
+    }
+
+    /// <summary>
+    /// The errors of the lines of any layer, under a closed rule, that name an entry that the active mod removes
+    /// (decision D81) or makes unusable (decision D82, as decided on 2026-10-18). The save gate reads them. A line
+    /// whose effect makes its own section unusable makes the entries of that section unusable in turn, so the search
+    /// follows it: a munition without its explosion makes each gun that fires it unusable, and so each loadout line
+    /// that names such a gun is an error.
+    /// </summary>
+    internal IReadOnlyList<ListProblem> ReferrerErrors()
+    {
+        var result = new List<ListProblem>();
+        var sections = new Queue<SectionRef>();
+        var seenSections = new HashSet<SectionRef>();
+        var seenEntries = new HashSet<(string List, string? Scope, string Value)>();
+
+        void Follow(IEnumerable<ListReference> references, ListProblemKind kind)
+        {
+            foreach (var reference in references.Where(r => r.Rule.Closed))
+            {
+                result.AddRange(Problems(reference.Section).Where(p => p.Kind == kind && p.IsError));
+                sections.Enqueue(reference.Section);
+            }
+        }
+
+        foreach (var entry in Removed())
+            Follow(ReferencesTo(entry.List, entry.Value, IsScoped(entry.List) ? entry.LowerSection.Path : null),
+                ListProblemKind.Removed);
+        // Only a section that the active mod adds or changes, or a section that names an unusable entry, can make an
+        // entry unusable.
+        foreach (var path in session.ActiveChangedPaths())
+        {
+            if (TableOf(path) is not { } table)
+                continue;
+            for (var i = 0; i < table.Working.Count; i++)
+            {
+                if (ChangedByActiveMod(table, i))
+                    sections.Enqueue(table.Ref(i));
+            }
+        }
+        while (sections.TryDequeue(out var section))
+        {
+            if (!seenSections.Add(section) || TableOf(section.Path) is not { } table ||
+                IndexOf(table, section.Id) is not (>= 0 and var index))
+                continue;
+            foreach (var definition in SourcesOf(table.Path, table.Working[index].Name))
+            {
+                var source = definition.Source!;
+                if (!Matches(table.Working[index], source.Where))
+                    continue;
+                var scope = source.Scoped ? table.Path : null;
+                foreach (var name in Names(table.Working[index], source))
+                {
+                    if (!seenEntries.Add((definition.Id.ToLowerInvariant(), scope?.ToLowerInvariant(),
+                            name.ToLowerInvariant())) ||
+                        View([definition.Id], scope)?.Find(name) is not { } entry ||
+                        Unusable(entry) is not { ByActiveMod: true })
+                        continue;
+                    Follow(ReferencesTo(definition.Id, name, scope), ListProblemKind.Unusable);
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>The first error of a section whose effect makes the section unusable, from the rules with such an
+    /// effect only, or null.</summary>
+    private ListProblem? UnusableProblem(SectionRef section)
+    {
+        RefreshChecks();
+        if (unusable.TryGetValue(section, out var known))
+            return known;
+        // A cycle of such rules: the section in progress counts as usable, so the check ends. A section of the cycle can
+        // then miss an unusable entry of the cycle. The rule data of the retail game has no such cycle.
+        if (!unusableInProgress.Add(section))
+            return null;
+        try
+        {
+            known = ListChecks.Check(session, this, section, unusableOnly: true)
+                .FirstOrDefault(p => p.IsError && ListRule.MakesUnusable(p.Effect));
+        }
+        finally
+        {
+            unusableInProgress.Remove(section);
+        }
+        unusable[section] = known;
+        return known;
+    }
+
+    /// <summary>Clears the check results of an older revision of W.</summary>
+    private void RefreshChecks()
+    {
+        if (checksRevision == session.Revision)
+            return;
+        problems.Clear();
+        unusable.Clear();
+        checksRevision = session.Revision;
+    }
+
+    /// <summary>True when the active mod adds or changes the section at an index of a table: a section of W that is
+    /// not the section of the lower layer, or a section of a whole file of the active mod.</summary>
+    private bool ChangedByActiveMod(FileTable table, int index) =>
+        session.ActiveMod != null && (table.Document is not { } document ||
+                                      document.BaseSection(table.Ids[index]) is not { } lower ||
+                                      !ReferenceEquals(lower, table.Working[index]));
+
+    private static int IndexOf(FileTable table, SectionIdentity id) =>
+        table.Document?.IndexOf(id) ?? Array.IndexOf(table.Ids, id);
 
     /// <summary>The entry of the list that the active mod removes, or null (see <see cref="Removed"/>).</summary>
     /// <param name="scope">The file of a scoped list, or null.</param>
@@ -168,13 +303,22 @@ public sealed class DataLists
             return cached.View;
         cached.Revision = session.Revision;
         var paths = new List<string>();
+        var other = new List<object?>();
         foreach (var id in ids)
         {
-            if (rules.Lists.TryGetValue(id, out var definition) && definition.Source is { } source)
-                paths.AddRange(source.Scoped ? scope == null ? [] : [scope] : Files.Paths(source.Role!));
+            if (!rules.Lists.TryGetValue(id, out var definition) || definition.Source is not { } source)
+                continue;
+            if (source.Files != null)
+            {
+                // The files of the edit view change only with a save. The new cutscenes of W change with each edit.
+                other.Add(session.EditView);
+                other.AddRange(session.NewCutsceneDocuments.Select(d => d.State));
+                continue;
+            }
+            paths.AddRange(source.Scoped ? scope == null ? [] : [scope] : Files.Paths(source.Role!));
         }
-        var states = paths.Select(StateOf).ToArray();
-        if (cached.Built && cached.Paths.SequenceEqual(paths, VfsPath.Comparer) &&
+        var states = paths.Select(StateOf).Concat(other).ToArray();
+        if (cached.Built && cached.Paths.SequenceEqual(paths, VfsPath.Comparer) && cached.States.Length == states.Length &&
             cached.States.Zip(states).All(p => ReferenceEquals(p.First, p.Second)))
             return cached.View;
         cached.Built = true;
@@ -212,9 +356,11 @@ public sealed class DataLists
         if (!available)
             return null;
         var first = definitions[0];
+        // The values of a files list compare as paths below the data folder, as the engine finds the files.
+        Func<string, string?>? keyOf = definitions.Any(d => d.Source?.Files != null) ? ThnReferences.PathOf : null;
         return new ListView(definitions.Count == 1 ? first.Id : string.Join("+", definitions.Select(d => d.Id)),
             definitions.Count == 1 ? first.Label : string.Join(" or ", definitions.Select(d => d.Label)), first.Kind,
-            closed, definitions.All(d => d.Enum != null), entries, collisions);
+            closed, definitions.All(d => d.Enum != null), entries, collisions, keyOf);
     }
 
     /// <summary>The entries of one list for a scope, or null when the list is not available.</summary>
@@ -228,9 +374,11 @@ public sealed class DataLists
         }
         if (definition.Source is not { } source)
             return null;
+        if (source.Files is { } extension)
+            return (FileEntries(extension), true, []);
         IReadOnlyList<string> paths = source.Scoped ? scope == null ? [] : [scope] : Files.Paths(source.Role!);
         var order = new List<string>();
-        var byName = new Dictionary<string, (ListEntry Entry, int Count)>(StringComparer.OrdinalIgnoreCase);
+        var byName = new Dictionary<string, (ListEntry Entry, int Count, bool AnyChanged)>(StringComparer.OrdinalIgnoreCase);
         var available = false;
         foreach (var path in paths)
         {
@@ -248,15 +396,18 @@ public sealed class DataLists
                     foreach (var name in Names(section, source))
                     {
                         var entry = Entry(table, index, name, definition);
+                        // Only a repeated name of a unique list needs to know if the active mod changed a section.
+                        var changed = definition.Unique && ChangedByActiveMod(table, index);
                         if (byName.TryGetValue(name, out var known))
                         {
                             // The last section with the name gives the entry, as in the engine. A values list keeps the
                             // first section, because each section only shares the value.
-                            byName[name] = (source.Values == null ? entry : known.Entry, known.Count + 1);
+                            byName[name] = (source.Values == null ? entry : known.Entry, known.Count + 1,
+                                known.AnyChanged || changed);
                         }
                         else
                         {
-                            byName[name] = (entry, 1);
+                            byName[name] = (entry, 1, changed);
                             order.Add(name);
                         }
                     }
@@ -267,18 +418,61 @@ public sealed class DataLists
             return null;
         var entries = order.Select(n =>
         {
-            var (entry, count) = byName[n];
+            var (entry, count, anyChanged) = byName[n];
             return definition.Unique && count > 1
                 ? entry with
                 {
                     Usable = false,
-                    Problem = $"{count} sections have the name '{entry.Value}', so the engine finds none of them.",
+                    Problem = $"{count} sections have the name '{entry.Value}', so the game finds none of them.",
+                    UnusableByActiveMod = anyChanged,
                 }
                 : entry;
         }).ToList();
         var collisions = definition.Hash ? Collisions(order) : [];
         var closed = source.Scoped || source.Role == null || Files.Engine(source.Role);
         return (entries, closed, collisions);
+    }
+
+    /// <summary>
+    /// The entries of a files list (section 5.6 of the M8b design): each file of the edit view with the extension, and
+    /// each new cutscene of W. The value of an entry is its path below the data folder, in the letter case of the file,
+    /// as an INI line names it. The name is the file name without the extension. A new cutscene whose New cutscene an
+    /// undo took back is not an entry, because the next save deletes its file.
+    /// </summary>
+    private IReadOnlyList<ListEntry> FileEntries(string extension)
+    {
+        var view = session.EditView;
+        if (editViewFiles is not { } known || !ReferenceEquals(known.View, view) ||
+            !known.Extension.Equals(extension, StringComparison.OrdinalIgnoreCase))
+        {
+            known = (view, extension, VfsFiles.Find(view.CreateFileSystem(), extension).ToList());
+            editViewFiles = known;
+        }
+
+        var cutscenes = extension.Equals(".thn", StringComparison.OrdinalIgnoreCase);
+        var absent = cutscenes
+            ? session.NewCutsceneDocuments.Where(d => !d.State.Exists).Select(d => d.Path).ToHashSet(VfsPath.Comparer)
+            : [];
+        var paths = known.Paths.Where(p => !absent.Contains(p)).ToList();
+        if (cutscenes)
+        {
+            var inView = known.Paths.ToHashSet(VfsPath.Comparer);
+            paths.AddRange(session.NewCutscenes.Where(p => !inView.Contains(p)));
+        }
+
+        var entries = new List<ListEntry>(paths.Count);
+        foreach (var path in paths)
+        {
+            if (ThnReferences.IniValueOf(path) is not { } value)
+                continue;
+            var (origin, mod, unsaved) = session.FileOrigin(path);
+            entries.Add(new ListEntry(value, null, origin, mod, path)
+            {
+                Name = System.IO.Path.GetFileNameWithoutExtension(path),
+                Unsaved = unsaved,
+            });
+        }
+        return entries;
     }
 
     /// <summary>The entry of a name of a section.</summary>
@@ -294,6 +488,7 @@ public sealed class DataLists
             Usable = missing.Count == 0,
             Problem = missing.Count == 0 ? null : $"The [{section.Name}] '{name}' has no '{missing[0]}' line.",
             Unsaved = unsaved,
+            UnusableByActiveMod = missing.Count > 0 && ChangedByActiveMod(table, index),
         };
     }
 
@@ -424,7 +619,8 @@ public sealed class DataLists
         var names = new List<(ListDefinition, string, SectionRef)>();
         foreach (var definition in rules.Lists.Values)
         {
-            if (definition.Source is not { Values: null } source || !(source.Scoped
+            // A files list has no sections, so an INI file removes none of its entries.
+            if (definition.Source is not { Values: null, Files: null } source || !(source.Scoped
                     ? isSystem
                     : Files.Paths(source.Role!).Contains(document.Path, VfsPath.Comparer)))
                 continue;
@@ -535,15 +731,16 @@ public sealed class DataLists
                 lineOfKey[entry.Name] = line + 1;
                 foreach (var rule in keyRules)
                 {
-                    if (rule.Index >= entry.Count || entry[rule.Index].ToString().Trim() is not { Length: > 0 } value)
+                    if (rule.IndexIn(entry) is not (>= 0 and var at) ||
+                        entry[at].ToString().Trim() is not { Length: > 0 } value)
                         continue;
                     usesSystems |= rule.SystemValue >= 0;
                     if (!ScopeOf(rule, table.Path, entry.ToList(), out var scope))
                         continue;
-                    var reference = new ListReference(target, entry.Name, line, rule.Index, rule);
+                    var reference = new ListReference(target, entry.Name, line, at, rule);
                     foreach (var list in rule.Lists)
                     {
-                        var key = (list.ToLowerInvariant(), scope?.ToLowerInvariant(), value.ToLowerInvariant());
+                        var key = (list.ToLowerInvariant(), scope?.ToLowerInvariant(), ValueKey(list, value));
                         if (!map.TryGetValue(key, out var all))
                             map[key] = all = [];
                         all.Add(reference);

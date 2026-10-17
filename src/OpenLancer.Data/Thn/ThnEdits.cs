@@ -197,6 +197,76 @@ public static class ThnEdits
         return new RevertCommand($"Revert {what}", path, target, valuePath);
     }
 
+    /// <summary>The refusal of a new cutscene at a path that the edit view or W has.</summary>
+    public const string PathInUse = "A cutscene with this path exists. Type another name.";
+
+    /// <summary>The refusal of a new cutscene without an active mod.</summary>
+    public const string NoActiveMod = "Make a mod active first. A new cutscene goes into the active mod.";
+
+    /// <summary>The refusal of a name with other characters.</summary>
+    public const string BadName = "Use only letters, digits, \"_\" and \"-\" in the name.";
+
+    /// <summary>
+    /// Why the user cannot make a new cutscene at an install path, or null (decision D134 of the M8b design): the
+    /// session has no active mod or is read-only, the path is not <c>DATA\MODS\&lt;active mod id&gt;\CUTSCENES\&lt;name&gt;.thn</c>,
+    /// the name has a character other than letters, digits, <c>_</c> and <c>-</c>, the edit view or W has a file at the
+    /// path in any letter case, or the active mod is in the OpenLancer repo (decision D70).
+    /// </summary>
+    public static string? NewCutsceneRefusal(EditSession session, string path)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        if (session.ActiveMod is not { } mod)
+            return NoActiveMod;
+        if (session.ReadOnlyReason is { } reason)
+            return reason;
+        if (NewCutscenePathProblem(mod, path) is { } problem)
+            return problem;
+        if (session.HasCutsceneFile(VfsPath.Normalize(path)!))
+            return PathInUse;
+        return EditSession.WholeCutsceneInRepo(mod);
+    }
+
+    /// <summary>
+    /// Makes the script of a new cutscene at an install path of the active mod (see
+    /// <see cref="NewCutsceneRefusal"/>). W gets the globals, and a save writes W as a whole file. An undo takes the
+    /// cutscene back, and a save after the undo deletes its file.
+    /// </summary>
+    /// <param name="globals">The globals of the script, for example <see cref="ThnTemplates.NewScript"/>.</param>
+    /// <exception cref="ArgumentException">The globals are not a script that the engine can read.</exception>
+    public static EditCommand NewCutscene(string path, ThnTable globals)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(globals);
+        try
+        {
+            ThnScriptModel.From(globals, ThnElementId.Counter());
+            ThnWriter.Write(globals);
+        }
+        catch (FormatException e)
+        {
+            throw new ArgumentException(e.Message, nameof(globals), e);
+        }
+
+        return new NewCutsceneCommand(path, globals);
+    }
+
+    /// <summary>Why the path is not a path of a new cutscene of a mod, or null: the path and the name rules of
+    /// <see cref="NewCutsceneRefusal"/>. The restore of the recovery file uses them too.</summary>
+    internal static string? NewCutscenePathProblem(Mods.Mod mod, string path)
+    {
+        var normal = VfsPath.Normalize(path);
+        var folder = EditSession.NewCutsceneFolder(mod.Id);
+        if (normal == null || !VfsPath.Comparer.Equals(VfsPath.Parent(normal), folder) ||
+            !normal.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
+            return $@"A new cutscene goes into the folder {folder} of the active mod.";
+        var name = System.IO.Path.GetFileNameWithoutExtension(normal);
+        if (name.Length == 0)
+            return "Type a name for the cutscene.";
+        return name.All(c => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-')
+            ? null
+            : BadName;
+    }
+
     private static void CheckKind(ThnRef target, ThnElementKind kind)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -477,6 +547,18 @@ public static class ThnEdits
                 ? element.Table
                 : ThnElementPaths.Set(ThnElementKind.Entity, element.Table, path, value);
             Replace(document, ThnElementKind.Entity, index, table, PinsIn(element.Id, path));
+        }
+    }
+
+    private sealed class NewCutsceneCommand(string path, ThnTable globals)
+        : EditCommand($"New cutscene {System.IO.Path.GetFileNameWithoutExtension(path)}")
+    {
+        internal override void Run(EditSession.CommandScope scope)
+        {
+            var document = scope.NewCutscene(path);
+            // The elements get the ids of the document, so a later new element gets an id that W does not have.
+            var working = ThnDocument.WithoutOrigins(ThnScriptModel.From(globals, document.NewId));
+            document.Restore(document.State with { Working = working, Exists = true });
         }
     }
 

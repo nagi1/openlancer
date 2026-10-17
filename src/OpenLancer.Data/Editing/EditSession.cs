@@ -447,6 +447,10 @@ public sealed partial class EditSession : IDisposable
         return index >= 0;
     }
 
+    /// <summary>The document of an INI file when the session has it open, or null. It opens no file.</summary>
+    internal EditDocument? OpenedDocument(string path) =>
+        VfsPath.Normalize(path) is { } normal && documents.TryGetValue(normal, out var document) ? document : null;
+
     /// <summary>The document of an INI file. Opens it at first use.</summary>
     private bool TryDocument(string path, out EditDocument? document)
     {
@@ -529,15 +533,41 @@ public sealed partial class EditSession : IDisposable
         }
 
         /// <summary>A cutscene, to change it.</summary>
+        /// <param name="absent">True to allow a new cutscene that does not exist now, for the restore of the recovery
+        /// file.</param>
         /// <exception cref="ArgumentException">The edit view has no such cutscene, or the editor cannot read it.</exception>
         /// <exception cref="InvalidOperationException">The session or the cutscene is read-only.</exception>
-        public ThnDocument Cutscene(string path)
+        public ThnDocument Cutscene(string path, bool absent = false)
         {
-            if (!session.TryCutscene(path, out var document))
+            if (!session.TryCutscene(path, out var document) || !absent && !document.State.Exists)
                 throw new ArgumentException(session.CutsceneProblem(path), nameof(path));
             session.ThrowIfReadOnly();
             if (document.ReadOnlyReason != null)
                 throw new InvalidOperationException(document.ReadOnlyReason);
+            return Captured(document);
+        }
+
+        /// <summary>
+        /// The document of a new cutscene, to make its script (see <see cref="ThnEdits.NewCutscene"/>). The session
+        /// makes the absent document when it has none for the path.
+        /// </summary>
+        /// <exception cref="ArgumentException">The path is not an install path of a cutscene.</exception>
+        /// <exception cref="InvalidOperationException">The session is read-only, or a cutscene with the path
+        /// exists.</exception>
+        public ThnDocument NewCutscene(string path)
+        {
+            session.ThrowIfReadOnly();
+            var normal = VfsPath.Normalize(path);
+            if (normal == null || normal.Contains(':') || !normal.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException($"{path} is not an install path of a cutscene.", nameof(path));
+            var document = session.NewCutsceneDocument(normal);
+            if (document.State.Exists || document.Kind != ThnFileKind.NewHere)
+                throw new InvalidOperationException(ThnEdits.PathInUse);
+            return Captured(document);
+        }
+
+        private ThnDocument Captured(ThnDocument document)
+        {
             change.Capture(document);
             change.NoteCutscene(document.Path);
             return document;

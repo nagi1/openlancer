@@ -41,8 +41,9 @@ internal sealed partial class PropertyGrid
     private IReadOnlyList<ListRule> ListRules(FieldBinding field) =>
         window.Session?.Edits.Lists.Rules(field.Section, field.Name) ?? [];
 
-    /// <summary>True when the key gets one picker field: one rule, on the first value, without a slot label.</summary>
-    internal static bool IsListed(IReadOnlyList<ListRule> rules) => rules is [{ Index: 0, Label: null }];
+    /// <summary>True when the key gets one picker field: one rule, on the first value, without a slot label. The rule of
+    /// a scene line reads a value by its place, so its key keeps the text field.</summary>
+    internal static bool IsListed(IReadOnlyList<ListRule> rules) => rules is [{ Index: 0, Label: null, Scene: false }];
 
     /// <summary>The labels of the slots of a key with labeled rules on its values (see <see cref="ListRule.Label"/>),
     /// or null for a key without such rules. A value without a rule gets "Value N".</summary>
@@ -250,9 +251,11 @@ internal sealed partial class PropertyGrid
         return named.Rows;
     }
 
-    /// <summary>The display name of an entry: the text of its <c>ids_name</c>, or its nickname.</summary>
+    /// <summary>The display name of an entry: the text of its <c>ids_name</c>, its own name (for example the file name
+    /// of a cutscene), or its nickname.</summary>
     private string EntryName(ListEntry entry) =>
-        entry.Section != null && window.Session?.SectionName(entry.Section) is { Length: > 0 } name ? name : entry.Value;
+        entry.Section != null && window.Session?.SectionName(entry.Section) is { Length: > 0 } name ? name
+        : entry.Name ?? entry.Value;
 
     /// <summary>
     /// The popup of a list field. One opening is one field edit of the key, with the label "Set key". Each click and
@@ -278,9 +281,10 @@ internal sealed partial class PropertyGrid
     }
 
     /// <summary>The value of the field for the rows of a picker opening. An enum has no "Missing" row, so a name outside
-    /// the enum gives no value. The picker then selects no name of the enum.</summary>
+    /// the enum gives no value. The picker then selects no name of the enum. A value of a list of paths that names an
+    /// entry in another spelling gives the value of the entry, so the picker selects it.</summary>
     internal static string PickerValue(ListView list, string value) =>
-        list.IsEnum && list.Find(value) == null ? "" : value;
+        list.Find(value) is { } entry ? entry.Value : list.IsEnum ? "" : value;
 
     /// <summary>
     /// The problems of the lists below the row of their key, with the fixes: Pick opens the picker for the first bad
@@ -311,6 +315,8 @@ internal sealed partial class PropertyGrid
         var values = lineIndex < field.Lines.Count ? field.Lines[lineIndex].Values : null;
         var list = session.Edits.Lists.List(rule, field.Section, values);
         var whole = field.Lines.Count <= 1 && field.Key?.Multiline != true && IsListed(ListRules(field));
+        // The rule of a scene line reads its value by its place, so a pick goes to that place.
+        var valueIndex = values != null && rule.IndexIn(values) is >= 0 and var at ? at : rule.Index;
         var pick = false;
         if (list != null)
         {
@@ -318,7 +324,7 @@ internal sealed partial class PropertyGrid
             ImGui.SetItemTooltip(whole ? $"Pick a {list.Label.ToLowerInvariant()}."
                 : $"Pick a {list.Label.ToLowerInvariant()} for line {lineIndex + 1}.");
             ListPopup("##listfix", pick, field, list, first.Value ?? "", whole && !rule.Required,
-                start => whole ? picked : PickedLine(start, lineIndex, rule.Index, picked));
+                start => whole ? picked : PickedLine(start, lineIndex, valueIndex, picked));
         }
 
         if (whole && !rule.Required && field.Lines.Count > 0)

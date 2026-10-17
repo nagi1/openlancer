@@ -6,9 +6,11 @@ Without an active mod, the editor shows each cutscene and takes no edits. So you
 
 This version has these limits:
 
-- The preview plays no sound.
-- The editor cannot make a new cutscene. It cannot change a whole cutscene file of a mod into a patch.
+- The preview plays the sounds of the open script in 2D only. It does not play the position of a sound, START_AUDIO_PROP_ANIM, or the sounds of the other scripts of a room.
+- A new cutscene plays only in OpenLancer until the M11 check that the retail engine reads text cutscenes.
+- The editor cannot change a whole cutscene file of a mod into a patch.
 - The validation reports only the errors that stop a cutscene. It does not report warnings, for example an event after the end of the script.
+- The save gate checks a cutscene without the game data. So it does not find a template or a costume that does not exist.
 
 ## Browse and preview the retail cutscenes
 
@@ -39,9 +41,24 @@ The Cutscenes tab is at the bottom, beside the Database, the Console and the Tim
 
 Filter the list by name or path, or by folder group. A click on a column header sorts the list. The commands are in the toolbar and in the menu of a row:
 
+- **New cutscene** (the plus button of the toolbar) makes a new script in the active mod (see "Make a new cutscene").
 - **Open** (or a double-click) opens the script in the Cutscene tab and in the Timeline. One cutscene is open at a time.
 - **Revert** puts back the script as the mods before the active mod leave it. The next save then deletes the patch of the active mod. Revert is one entry of the edit history. It is not available for a whole file of the active mod, and not when the active mod does not change the script.
 - **Copy path** copies the install path, for example `DATA\Scripts\Story\s002xe_nrml_sinclair_li_01_Cityscape_01.thn`.
+- **Copy INI value** copies the path below `DATA`, for example `Scripts\Story\s002xe_nrml_sinclair_li_01_Cityscape_01.thn`. An INI line, for example `start_script`, names a cutscene in this form.
+
+A new cutscene shows in the list at once, with the state New here and a dot, also before its save. After the save, its row comes from the game data, as the other rows do.
+
+## Make a new cutscene
+
+1. Click Mod, then click the mod that gets the cutscene. The mod must not be in the OpenLancer repo.
+2. In the toolbar of the Cutscenes tab, click **New cutscene**.
+3. Type a name. Use only letters, digits, `_` and `-`. The popup shows the install path, for example `DATA\MODS\my-mod\CUTSCENES\bar_shot.thn`.
+4. Click **Create**, or press Enter. When Create is off, its tooltip tells why.
+
+The new script is 10 s long. It has a SCENE, a MONITOR and a CAMERA at the origin with the median lens of the retail cameras of the bases, and a cut to the camera at 0. It opens in the Cutscene tab in the context Script only, because no INI line names it yet. New cutscene is one entry of the edit history. An undo takes the cutscene back and closes it. A save writes the script as a whole Lua text file into the `files` folder of the mod. A save after the undo deletes that file.
+
+To play the cutscene in a room, give a room line its INI value: copy it with **Copy INI value**, or pick the cutscene in the picker of the line (see "Data lists and pickers" in [MOD_FORMAT.md](MOD_FORMAT.md)). After the save and the reload of the game data, the context list of the Cutscene tab has the room.
 
 The Console and the engine log get one line for each open, with the counts of the Timeline, for example "2 monitor lanes, 35 cuts (13 on the main monitor)", and the cameras that only an ignored monitor uses.
 
@@ -86,6 +103,10 @@ The preview steps at exactly 1/60 s, so a play to a time and a jump to that time
 
 A play waits while the scene builds again or runs to the playhead, for example at the start of a pre-roll or of a loop. Then the play goes on from the frame that the view shows.
 
+The preview plays the START_SOUND events of the open script in 2D, as the Unity Game view plays audio. The **Sound** toggle after the speed list turns the sound on and off, as Mute Audio of Unity does. The editor keeps the toggle in its settings, and it is on by default. The sound plays only while the preview plays forward: not during a pre-roll, a catch-up or a drag of the playhead. A play from the middle of a sound starts the sound at that time, also after a pause. The pitch follows the speed, so the sound stays in time with the picture.
+
+A START_SOUND without `props.duration` plays nothing, as in the game. A voice line (`VoiceProfile_<line>` with a `userprops.speaker`) plays with the voice of the speaker in the scene. When the scene gives the speaker no voice, the preview takes the first voice of the game data that has the line, then `trent_voice` for the player, then `rvp146`. The Console tells which voice the preview took, and it names each sound that the game data does not have, one time.
+
 When the script has no camera, the view shows only "This script has no camera". A problem of a build shows as a banner with the message of the engine, and the view keeps the last frame.
 
 The readout button shows the build time, the step time and the steps of each frame. The editor option `--bench-cutscene <install path>...` opens the profile of the command line without an active mod, previews each script to its end (at most 600 s), and then jumps back to the middle of that time. The first build loads the models, and the build of the jump back finds them loaded, as each jump back and each edit does. The bench writes the times of both builds and catch-ups and the active camera to the log, and closes. A wrong command line of the bench gives the exit code 2, and a script that fails gives the exit code 1. The bench does not change the editor settings. As each start of the editor, it replaces the engine log of the editor, `%LOCALAPPDATA%\Librelancer\logs\OpenLancer.Editor.log.txt`, so copy that file first when you need the log of your last session. While another editor runs, the bench writes `OpenLancer.Editor.log.0.txt`.
@@ -100,6 +121,7 @@ The Timeline tab shows the events of the open cutscene on the time of the script
 - The **Cameras** group has one lane for each MONITOR. The engine sorts the monitors by `userprops.Priority` and uses only the first one. The lane of that monitor is the main lane: each cut is a diamond, and each shot is a segment with the name of its camera. The other lanes are grey, because the engine ignores their cuts. A camera that only an ignored monitor cuts to has an information mark, unless another event names it. For example, in s002xe a START_SPATIAL_PROP_ANIM moves `Cam_02_Intro_Trent_A` to the pose of `Cam_02_Intro_Trent_B`, so the pose of `Cam_02_Intro_Trent_B` matters, and it has no mark.
 - Each **entity** has one row, in the group of its type: Cameras, Characters, Props, Lights, Effects, Sounds, Markers, Paths, Scene and Other. An event is on the row of its first target. An event whose first target names no entity of the script is in the group "Not in this script". The filter button hides the rows without events. A click on a group header opens or closes it.
 - An event with a length is a **bar**, with its type and its second target. The points of its `param_curve` are ticks at the bottom of the bar. An event without a length is a **diamond**. The tooltip of an event gives its times, its targets and its notes.
+- When bars of one row overlap, the row gets **sub-rows**, so no bar hides another bar. A bar takes the first sub-row where no bar overlaps it. Bars that only touch share a sub-row. An edit, an undo or a redo moves only the bars that it changes. During a drag, each bar stays in its sub-row. When you release the mouse button, the bars pack again. The diamonds stay on the first sub-row. Diamonds that overlap at the zoom of the view show as one diamond with a count. Its tooltip lists all of them, a click selects the last one in the file, and a box selects all of them.
 - An event that starts **after the end** of the script has the warning color. Its tooltip gives the gap and whether a steady 60 frames per second runs it: the game runs an event only when its last frame passes the time of the event. The preview stops at the end, so it does not run such an event.
 - An event that the game does not run in the context of the preview is **grey**: the events of a set script, the events of a fidget other than START_MOTION, and the cuts of an ignored monitor.
 
@@ -128,6 +150,8 @@ The Inspector shows the selected entity or event, the selected events, or the cu
 - The **path keys** of a MOTION_PATH show as a row for each key, with its point and its orientation. An edit writes the whole `path_data` again. A path that no edit changed keeps its text. **Select for the gizmo** gives a key to the gizmo of the Cutscene view.
 - A new **name** renames the entity, the targets of the events that name it and the `userprops.speaker` values that name it, in this file. When other data uses the name, a dialog lists the uses first and offers **Rename in this file** or **Cancel**: the `[Camera]`, `[CharacterPlacement]`, `[PlayerShipPlacement]` and `[ForSaleShipPlacement]` names of the rooms whose set or scene script is this file, the `[MRoom] fixture` spots of those rooms, and the REFERENCE entities with the name in the other scripts of those rooms. A rename never changes other files.
 - Two or more selected events show "N events selected", a time shift and **Delete the events**.
+- A SOUND entity has the row **Preview**. Play plays the sound of its template once from its start, in 2D, with the voice rule of the preview. Stop stops it.
+- The cutscene page has the section **Problems** when the script has errors that the lower cutscene does not have. The game crashes when it plays such a script, so these errors stop Save and Play. A click on an error selects its element. The state of a new cutscene says "OpenLancer only until the M11 check".
 
 ## Edit a cutscene
 
@@ -135,6 +159,7 @@ The Inspector shows the selected entity or event, the selected events, or the cu
 2. Open the cutscene in the Cutscenes tab.
 3. Change the cutscene: drag an event on the Timeline, type a new value in the Inspector, or move an entity with the gizmo in Free mode. Each change is one entry of the edit history.
 4. Press Ctrl+S. The Console shows the save, for example "Saved mod 'my-mod' (save 1): 1 file written, 0 files deleted." and "Wrote patches\DATA\Scripts\Story\s002xe_nrml_sinclair_li_01_Cityscape_01.thn".
+   - If an edit gives an error that crashes the game, the save writes nothing. The Console line starts with "The game crashes when it plays this cutscene." and names the element and the key. Click the line to select the element. Correct the value or undo the edit, then save again.
 5. Wait for the validation. The Console shows "Validation OK for save 1: no errors, 0 warnings that the mod adds.", or the errors of the save.
 
 The patch holds only the values that the edits change. A save keeps the bytes of a patch that the edits do not change, and it deletes a patch that changes nothing after the edits. "What stays in a patch file" in [MOD_FORMAT.md](MOD_FORMAT.md) gives the rules. The game plays the patched cutscene after `oltool deploy`. Play shows it without a deploy (see [PLAY.md](PLAY.md)).
@@ -166,7 +191,7 @@ The keys of the preview work only while the Timeline or the Cutscene tab has the
 | Preview | Game |
 |---|---|
 | Steps at exactly 1/60 s. So a play to a time and a jump to that time give the same picture. | Steps with the time of each frame. So two plays in the game can differ a little. |
-| Plays no sound. | Plays the sounds and the voice lines. |
+| Plays the sounds and the voice lines of the open script in 2D. A voice line without a voice in the scene takes the first voice of the game data that has the line. | Plays the sounds at their positions, with the sounds of the other scripts of the room. A voice line takes the voice of the NPC that the game binds to the speaker. |
 | Shows no patrons in a room. | Puts random patrons into a room. |
 | Builds a room without the ambient scripts of a mission (`Act_AddAmbient`), unless the open script is one of them. | Adds the ambient scripts of the active mission to the room. |
 | Plays the script of a mission trigger (`Act_CallThorn`) alone, and makes its entities. A banner tells the difference. | Plays the script in space with the objects of the mission. |

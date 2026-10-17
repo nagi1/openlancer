@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data.Editing;
 
@@ -105,9 +106,18 @@ public sealed partial class EditSession
             {
                 if (recovered.Path.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
                 {
-                    var cutscene = scope.Cutscene(recovered.Path);
+                    // A new cutscene that the earlier session did not save has no file, so the session cannot open
+                    // it. The restore makes its absent document first, when the path and name rules of a new cutscene
+                    // allow the path. It does not use the read-only rule of New cutscene: the session is read-only
+                    // while it has the recovery file.
+                    if (!TryCutscene(recovered.Path, out _) && recovered.Kind == RecoveredKind.WholeFile &&
+                        ThnEdits.NewCutscenePathProblem(ActiveMod, recovered.Path) == null)
+                        NewCutsceneDocument(VfsPath.Normalize(recovered.Path)!);
+                    var cutscene = scope.Cutscene(recovered.Path, absent: true);
+                    // Only a new cutscene has a whole file without text: the delete after an undo of New cutscene.
                     if (cutscene.SourceHash != recovered.KnownHash ||
-                        cutscene.IsWholeFile != (recovered.Kind == RecoveredKind.WholeFile))
+                        cutscene.IsWholeFile != (recovered.Kind == RecoveredKind.WholeFile) ||
+                        recovered is { Kind: RecoveredKind.WholeFile, Text: null } && cutscene.Kind != ThnFileKind.NewHere)
                     {
                         problems.Add(Diagnostic.Error(recovered.Path, changed));
                         continue;

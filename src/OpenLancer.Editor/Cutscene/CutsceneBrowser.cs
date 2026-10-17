@@ -17,12 +17,22 @@ namespace OpenLancer.Editor.Cutscene;
 /// <summary>
 /// The Cutscenes tab (section 7.2 of the M8 design): each cutscene script of the edit view, with its folder, its
 /// duration, its entity and event counts, the INI lines that use it and its state for the active mod. The counts come
-/// from a scan that reads each script once. The commands are Open, Revert and Copy path.
+/// from a scan that reads each script once. The commands are New cutscene, Open, Revert, Copy path and Copy INI value.
+/// A new cutscene shows at once, with its counts from W (section 5.4 of the M8b design).
 /// </summary>
 internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace workspace)
 {
     /// <summary>The id of the panel.</summary>
     public const string PanelId = "cutscenes";
+
+    /// <summary>The note of a new cutscene about the retail engine (risk 7 of the M8b design).</summary>
+    public const string OpenLancerOnly =
+        "OpenLancer only until the M11 check that the retail engine reads text cutscenes.";
+
+    private const string NewPopupId = "##new-cutscene";
+
+    /// <summary>The default name of a new cutscene (decision D134).</summary>
+    private const string DefaultName = "new_cutscene";
 
     /// <summary>The time that the scan takes in each frame.</summary>
     private static readonly TimeSpan ScanBudget = TimeSpan.FromMilliseconds(8);
@@ -54,10 +64,17 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
     private string filter = "";
     private CutsceneFolder? folder;
 
-    // The filter, the folder and the scan count of the shown rows. Another value filters and sorts again.
-    private (string Filter, CutsceneFolder? Folder, int Scanned)? shownView;
+    // The filter, the folder, the scan count and the edit version of the shown rows. Another value filters and sorts
+    // again.
+    private (string Filter, CutsceneFolder? Folder, int Scanned, int Version)? shownView;
     private (int Column, bool Descending)[] sortKeys = [(0, false)];
     private string? selected;
+
+    // The version of the session whose new cutscenes the catalog has.
+    private int? unsavedVersion;
+
+    // The name in the popup of New cutscene.
+    private string newName = DefaultName;
 
     /// <summary>Forgets the list of the game data. Call it when the profile closes.</summary>
     public void Reset()
@@ -67,6 +84,7 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         sources.Clear();
         shown.Clear();
         shownView = null;
+        unsavedVersion = null;
         selected = null;
     }
 
@@ -74,6 +92,15 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
     public void Toolbar()
     {
         var scale = ImGuiHelper.Scale;
+        if (ToolbarItems.Button("new", EditorIcons.Plus, "New cutscene: a new script in the active mod.",
+                window.Session != null))
+        {
+            newName = FreeName();
+            ImGui.OpenPopup(NewPopupId);
+        }
+
+        NewPopup();
+        ImGui.SameLine();
         ToolbarItems.SearchField("filter", "Filter by name or path", ref filter, 220 * scale);
         ImGui.SameLine();
         FolderMenu(FolderWidth * scale);
@@ -100,13 +127,21 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         }
 
         ImGui.SameLine();
+        var value = row == null ? null : ThnReferences.IniValueOf(row);
+        if (ToolbarItems.Button("copy-ini", EditorIcons.Link, IniValueTip(value), value != null))
+        {
+            ImGui.SetClipboardText(value!);
+        }
+
+        ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
         ImGui.AlignTextToFramePadding();
         if (catalog != null)
         {
+            var total = catalog.Entries.Count + catalog.Unsaved.Count;
             var count = $"{shown.Count.ToString("N0", CultureInfo.InvariantCulture)} of " +
-                        $"{catalog.Entries.Count.ToString("N0", CultureInfo.InvariantCulture)} cutscenes";
+                        $"{total.ToString("N0", CultureInfo.InvariantCulture)} cutscenes";
             ImGui.TextDisabled(catalog.Done
                 ? count
                 : $"{count}, reading {catalog.Scanned.ToString("N0", CultureInfo.InvariantCulture)}");
@@ -136,18 +171,104 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
             catalog.Scan(data.Items.VFS.ReadAllBytes, ThornEvaluator.Instance, ScanBudget);
         }
 
-        var view = (filter, folder, catalog.Scanned);
+        // The new cutscenes of W follow each edit, undo and redo.
+        var version = window.Session!.Version;
+        if (unsavedVersion != version)
+        {
+            unsavedVersion = version;
+            var edits = window.Session.Edits;
+            catalog.SetUnsaved(edits.NewCutscenes.Select(p => (p, edits.Cutscene(p)!)), data.Items.VFS.FileExists);
+            sources.Clear();
+        }
+
+        var view = (filter, folder, catalog.Scanned, version);
         if (shownView != view)
         {
             shownView = view;
             shown.Clear();
-            shown.AddRange(catalog.Entries.Where(e => (folder == null || e.Folder == folder) &&
+            shown.AddRange(catalog.All.Where(e => (folder == null || e.Folder == folder) &&
                 (filter.Length == 0 || e.Path.Contains(filter, StringComparison.OrdinalIgnoreCase))));
             Sort();
         }
 
         Table();
     }
+
+    /// <summary>The popup of New cutscene: the name, the install path, the note about the retail engine, and Create
+    /// and Cancel. Create is disabled with the refusal as its tooltip.</summary>
+    private void NewPopup()
+    {
+        if (!ImGui.BeginPopup(NewPopupId))
+        {
+            return;
+        }
+
+        var session = window.Session;
+        var scale = ImGuiHelper.Scale;
+        ImGui.Text("New cutscene");
+        ImGui.Separator();
+        if (ImGui.IsWindowAppearing())
+        {
+            ImGui.SetKeyboardFocusHere();
+        }
+
+        ImGui.SetNextItemWidth(260 * scale);
+        var enter = ImGui.InputText("Name", ref newName, 64, ImGuiInputTextFlags.EnterReturnsTrue);
+        var path = session?.Edits.NewCutscenePath(newName);
+        ImGui.TextDisabled(path ?? "No active mod");
+        ImGui.SetItemTooltip("The install path of the new cutscene. A save writes it as a whole Lua text file into the " +
+                             "files folder of the active mod.");
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + 360 * scale);
+        ImGui.TextDisabled(OpenLancerOnly);
+        ImGui.PopTextWrapPos();
+        var refusal = session == null ? "No profile is open."
+            : path == null ? ThnEdits.NoActiveMod
+            : session.NoEditReason ?? ThnEdits.NewCutsceneRefusal(session.Edits, path);
+        ImGui.BeginDisabled(refusal != null);
+        var create = ImGui.Button("Create") || enter && refusal == null;
+        ImGui.EndDisabled();
+        ImGui.SetItemTooltip(refusal ?? "Makes the cutscene with a scene, a monitor and a camera, and opens it.");
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel") || ImGui.IsKeyPressed(ImGuiKey.Escape, false))
+        {
+            ImGui.CloseCurrentPopup();
+        }
+        else if (create && refusal == null && window.Edits.Execute(ThnEdits.NewCutscene(path!, ThnTemplates.NewScript())))
+        {
+            ImGui.CloseCurrentPopup();
+            selected = path;
+            window.Log.Add(ConsoleSeverity.Info, EditorWindow.EditorSource,
+                $"New cutscene {path}. {OpenLancerOnly} The next save writes it.");
+            workspace.OpenAndShow(path!);
+        }
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>The default name of a new cutscene: <c>new_cutscene</c>, or <c>new_cutscene_2</c> and up when the name
+    /// is in use.</summary>
+    private string FreeName()
+    {
+        if (window.Session?.Edits is not { ActiveMod: not null } edits)
+        {
+            return DefaultName;
+        }
+
+        for (var i = 1; ; i++)
+        {
+            var name = i == 1 ? DefaultName : $"{DefaultName}_{i}";
+            if (ThnEdits.NewCutsceneRefusal(edits, edits.NewCutscenePath(name)!) != ThnEdits.PathInUse)
+            {
+                return name;
+            }
+        }
+    }
+
+    /// <summary>The tooltip of Copy INI value.</summary>
+    private static string IniValueTip(string? value) => value == null
+        ? "Copy INI value: select a cutscene below the DATA folder."
+        : $"Copy the INI value of the selected cutscene: {value}. An INI line, for example start_script, names a " +
+          "cutscene with its path below the DATA folder.";
 
     private const string RevertTip =
         "Revert: put back the cutscene as the lower mods leave it. The next save deletes the patch of the active mod.";
@@ -427,6 +548,14 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
             ImGui.SetClipboardText(entry.Path);
         }
 
+        var value = ThnReferences.IniValueOf(entry.Path);
+        if (Theme.IconMenuItem(EditorIcons.Link, "Copy INI value", value != null))
+        {
+            ImGui.SetClipboardText(value!);
+        }
+
+        ImGui.SetItemTooltip(IniValueTip(value));
+
         if (uses.Count == 0)
         {
             return;
@@ -465,7 +594,7 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
     /// paths. A row that the scan did not read yet sorts after the others.</summary>
     private void Sort()
     {
-        var order = catalog!.Entries.Select((e, i) => (e, i)).ToDictionary(x => x.e, x => x.i);
+        var order = catalog!.All.Select((e, i) => (e, i)).ToDictionary(x => x.e, x => x.i);
         var references = workspace.References();
         shown.Sort((a, b) =>
         {

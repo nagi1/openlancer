@@ -88,6 +88,54 @@ public static class ThnTemplates
         return Props(type) is { } props ? ThnTable.FromList([.. head, props]) : ThnTable.FromList(head);
     }
 
+    /// <summary>The length of a new cutscene, in seconds.</summary>
+    public const float NewScriptDuration = 10;
+
+    /// <summary>The camera of a new cutscene.</summary>
+    public const string NewCamera = "Camera_01";
+
+    /// <summary>The monitor of a new cutscene.</summary>
+    public const string NewMonitor = "Monitor";
+
+    /// <summary>The lens of the camera of a new cutscene: the medians of the CAMERA entities of the retail scripts in
+    /// <c>SCRIPTS\BASES</c>: 7,050 cameras in 635 files (retail test 3 of the M8b design).</summary>
+    private const float MedianFovH = 25;
+    private const float MedianHvAspect = 1.85f;
+    private const float MedianNearPlane = 0.3f;
+    private const float MedianFarPlane = 4000;
+
+    /// <summary>
+    /// The globals of a new cutscene (decision D134 of the M8b design): 10 s long, a SCENE, a MONITOR and a CAMERA, and a
+    /// SET_CAMERA at 0 that cuts the monitor to the camera. The types are THN names, not numbers.
+    /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item>The SCENE has the ambient color 0, 0, 0. The engine skips a zero ambient, so a room keeps the ambient of
+    /// its set script (ThnScriptInstance.cs:206-213).</item>
+    /// <item>The MONITOR has no <c>Priority</c>. It is the only monitor, so the engine uses it
+    /// (ThnScriptInstance.cs:309-312).</item>
+    /// <item>The CAMERA is at the origin with no turn, and has the median lens of the retail cameras of the
+    /// bases.</item>
+    /// <item>The script uses none of the 9 names that only Librelancer defines (section 4.6 of the publishing
+    /// plan).</item>
+    /// </list>
+    /// </remarks>
+    public static ThnTable NewScript()
+    {
+        var scene = Record(Field("entity_name", new ThnText("Scene")), Field("type", new ThnSymbol("SCENE")),
+            Field("ambient", Vector(Vector3.Zero)));
+        var monitor = Record(Field("entity_name", new ThnText(NewMonitor)), Field("type", new ThnSymbol("MONITOR")));
+        var camera = Record(Field("entity_name", new ThnText(NewCamera)), Field("type", new ThnSymbol("CAMERA")),
+            Field("spatialprops", Record(Field("pos", Vector(Vector3.Zero)),
+                Field("orient", ThnPose.Orient(Matrix4x4.Identity)))),
+            Field("cameraprops", Record(Field("fovh", Number(MedianFovH)), Field("hvaspect", Number(MedianHvAspect)),
+                Field("nearplane", Number(MedianNearPlane)), Field("farplane", Number(MedianFarPlane)))));
+        var cut = NewEvent("SET_CAMERA", 0, NewMonitor, NewCamera);
+        return Record(Field(ThnScriptModel.DurationGlobal, Number(NewScriptDuration)),
+            Field(ThnScriptModel.EntitiesGlobal, ThnTable.FromList(scene, monitor, camera)),
+            Field(ThnScriptModel.EventsGlobal, ThnTable.FromList(cut)));
+    }
+
     /// <summary>The props of a new event of a type, or null for SET_CAMERA, which has none.</summary>
     private static ThnTable? Props(string type)
     {

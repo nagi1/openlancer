@@ -186,6 +186,8 @@ A cutscene script (`.thn`) is a Lua 3.2 script. The retail scripts are bytecode.
 - `patches/<install path>.thn` is a THN patch. It holds only the changed values. Use it to change a retail cutscene or a cutscene of another mod.
 - `files/<install path>` is a whole script as Lua text. Use it for a new cutscene, under `DATA/MODS/<mod id>/CUTSCENES/`. Do not copy a retail script into a mod.
 
+New cutscene in the editor writes `files/DATA/MODS/<mod id>/CUTSCENES/<name>.thn`. An INI line names a cutscene with its path below `DATA`, for example `start_script = MODS\my-mod\CUTSCENES\bar_shot.thn`. The engine finds the file through the data folder of the merged files. A new cutscene plays in OpenLancer. It plays in the retail game only after the M11 check that the retail engine reads text cutscenes, so the editor marks it "OpenLancer only".
+
 The merge reads the script as the mods before the patch leave it, and applies each THN patch in load order. Then it writes the result as canonical Lua text. `oltool thn` prints that text, and `oltool deploy` writes it into the deploy folder. The cutscene editor shows each cutscene, and it saves the edits of a lower cutscene as a THN patch (see [CUTSCENES.md](CUTSCENES.md)).
 
 ### Values
@@ -409,6 +411,21 @@ A line with more than one listed value, for example `goto = Li02, Li02_to_Li01, 
 
 A value outside its list shows as "Missing (Loadout): li_foo" in red, as Unity shows a missing reference. The row then offers Pick..., None and Revert. The rule data marks the lists that the engine uses to find the value. For these lists, a value of the active mod outside the list is an error. For the other lists, it is a warning: unlisted values are allowed. A value of a lower layer outside a list is a warning, because the active mod did not set it.
 
+The Inspector also edits three sections of each room file that a `[Room]` of a base file names: `[Room_Info]`, `[CharacterPlacement]` and `[PlayerShipPlacement]`. A room file has each of these sections one time at most, so a patch section finds its target by its type. The other sections of a room file stay read-only.
+
+The script keys of these sections use the list of the cutscenes. The list holds each `.thn` file of the edit view and each new cutscene of the active mod, also before its save. A value is a path below `DATA`, for example `Scripts\Bases\Li_01_bar_enter_01.thn`. The list compares the values as paths: without letter case, and with `\` or `/`. In the picker, a new cutscene that is not saved has the tag "new".
+
+| Key | Field | A value of the active mod outside the list |
+|---|---|---|
+| `[Room_Info] set_script` | Picker without None | Error: the game crashes when the player enters this room. A room of the active mod without the key is an error too. |
+| `[Room_Info] scene` | Text field | Error: the game crashes when the player enters this room. |
+| `[CharacterPlacement] start_script` | Picker | Error: the game skips this script when the player enters the room. |
+| `[PlayerShipPlacement] landing_script` | Picker | Error: the game skips the landing scene. |
+| `[PlayerShipPlacement] launching_script` | Picker | Error: the game skips the launch scene. |
+| `[Room_Info] goodscart_script` | Picker | Warning: the game does not play cart scripts. |
+
+A `scene` line names its script by its place: value 2 when value 0 is `all`, else value 1. The check reads that value, as the engine does, also when the value does not end with `.thn`. A `scene` line with fewer values gets no check, because the engine skips it.
+
 The editor reads some files only for the lists, for example `solararch.ini` and `loadouts.ini`. Their sections are read-only in the Inspector until a later milestone gives them their pages.
 
 ### The raw INI block
@@ -424,14 +441,28 @@ Each save runs the save gate first, also a save with nothing to write, and also 
 - A value of the active mod outside a list that the engine uses to find it, for example an `archetype` or a `loadout` that no section has.
 - A required key without a valid line in a section that the active mod adds or changes, for example an `[Object]` without an `archetype`. The game drops such an object.
 - A value of any layer that names an entry that the active mod removes, for example a retail object whose loadout the active mod deletes with `ol.delete`.
+- A value of any layer that names an entry that the active mod makes unusable, also without a delete. For example, the active mod removes the `point` lines of a curve, and a retail light names the curve. The game stops loading with such a light.
 - A light of the active mod that names a curve that the engine cannot load, or a name of the active mod with the FLHash of another name of its list. The engine load stops.
 - A problem of the field checks in a section that the active mod adds or changes, for example a number that the engine cannot read.
+- An error of the checks of a cutscene that the active mod changes, when the lower cutscene does not have the error. For example, a LIGHT has no `spatialprops.pos`. A whole cutscene file of the active mod that the engine cannot read is an error too. The game crashes when it plays such a cutscene, so the message starts with "The game crashes when it plays this cutscene." These checks run without the game data, so they do not check templates and costumes.
 
-The Console lists each error with its section. A click on the line selects the section, and the Inspector shows the error below the row of its key. An edit with an error stays in the editor and in the recovery file until you correct it or undo it. A delete never stops at a check: the references to the deleted entry show as "Missing", as in Unity, and one Undo heals them.
+An entry is unusable when the engine cannot use it. A curve without points is unusable, and so is a name that two curves have. An entry is also unusable when its own checks give an error that makes the game drop it, crash, or stop loading. Some examples:
+
+- A `[Munition]` with a `motor` and no `explosion_arch`. The game stops loading.
+- A `[Gun]` without a valid `projectile_archetype`. The game drops the gun.
+- An `[Object]` without a valid `archetype`, or with a `dock_with` that names no base. The game drops the object, or crashes when the player docks there.
+
+A line that names an unusable entry can make its own section unusable. The gate follows such lines. For example, a missile without its explosion makes each gun that fires it an error. The game drops such a gun, so each loadout line that names the gun is an error too. When a lower mod or the base data made the entry unusable, the line gives a warning only.
+
+Each error tells what the game does with the data, for example "The game stops loading with this value.", "The game crashes when the player docks here." or "The game drops this object." An error about an unusable entry tells why the entry is not usable, and how to correct the line:
+
+`[LightSource] nickname = System_LIGHT: 'atten_curve = DYNAMIC_DIRECTION': Curve 'DYNAMIC_DIRECTION' is not usable: the [IGraph] 'DYNAMIC_DIRECTION' has no 'point' line. The game stops loading with this value. Fix 'DYNAMIC_DIRECTION', or pick another value.`
+
+The Console lists each error with its section. A click on the line selects the section, and the Inspector shows the error below the row of its key. The Select button of the row selects the unusable entry. An edit with an error stays in the editor and in the recovery file until you correct it or undo it. A delete never stops at a check: the references to the deleted entry show as "Missing", as in Unity, and one Undo heals them. One Undo of the edit that made an entry unusable also heals each line that names the entry.
 
 ### Cutscenes in the editor
 
-The Cutscenes tab lists the cutscene scripts, and the Cutscene tab previews one. The Timeline tab and the Inspector show and edit its entities and events. A save writes a THN patch for each changed cutscene (see "Cutscenes" and "What stays in a patch file"). See [CUTSCENES.md](CUTSCENES.md).
+The Cutscenes tab lists the cutscene scripts, and the Cutscene tab previews one. The Timeline tab and the Inspector show and edit its entities and events. A save writes a THN patch for each changed cutscene (see "Cutscenes" and "What stays in a patch file"). New cutscene in the Cutscenes tab makes a new script in the active mod, and a save writes it as a whole file. See [CUTSCENES.md](CUTSCENES.md).
 
 ### After a save
 
@@ -479,7 +510,7 @@ A save also stops in these cases:
 - A patch line of a key that holds a text id holds the id of a text of a mod as a number. The id comes from the position of the text in the generated DLL, so it changes when a mod adds text. Copy this text into the mod and use its placeholder.
 - A file that the save writes is a folder now, a folder of its path is a file, or the file is read-only.
 - The active mod is in the OpenLancer repo, and the save would write a whole cutscene file into it. The content scan cannot tell such a file from a copy of a retail script. A THN patch is allowed.
-- The save gate finds an error (see "The save gate"). For example, a light of the active mod names an attenuation curve (`atten_curve`) that the engine cannot load: no FLOAT graph of `igraph.ini` has the name, more than one graph has it, or the graph has no points. The engine stops with an error when it loads such a light, so each later load of the profile would fail. The Console names the light, the curve and the file. The gate reads the curves from the edit view, so it needs no loaded game data.
+- The save gate finds an error (see "The save gate"). For example, a light names an attenuation curve (`atten_curve`) that the engine cannot load: no FLOAT graph of `igraph.ini` has the name, more than one graph has it, or the graph has no points. The light can be a light of the active mod, or a light of any layer when the active mod removed the points of the curve. The game stops loading with such a light, so each later load of the profile would fail. The Console names the light, the curve and the file. The gate reads the curves from the edit view, so it needs no loaded game data.
 
 While the editor has unsaved edits, it keeps them in `.olsave/recovery.json`, a moment after each edit. When no unsaved edits remain, for example after an undo, the editor deletes the file. A close of the profile and a change of the active mod ask first: Save, Discard or Cancel. After a save, the action continues, also when the save needed your confirmation to overwrite a file.
 

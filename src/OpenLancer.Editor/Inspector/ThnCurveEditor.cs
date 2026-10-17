@@ -166,7 +166,7 @@ internal sealed class ThnCurveEditor(EditorWindow window, PropertyGrid grid)
         }
         catch (InvalidOperationException e)
         {
-            window.Log.Add(ConsoleSeverity.Warning, EditController.Source, $"The curve point did not move: {e.Message}");
+            window.Log.Add(ConsoleSeverity.Warning, EditController.Source, $"The curve point did not move: {ErrorText.Of(e)}");
         }
     }
 
@@ -178,7 +178,7 @@ internal sealed class ThnCurveEditor(EditorWindow window, PropertyGrid grid)
         }
         catch (InvalidOperationException e)
         {
-            window.Log.Add(ConsoleSeverity.Error, EditController.Source, $"The drag of the curve point stopped: {e.Message}");
+            window.Log.Add(ConsoleSeverity.Error, EditController.Source, $"The drag of the curve point stopped: {ErrorText.Of(e)}");
             drag!.Cancel();
             drag = null;
             dragged = null;

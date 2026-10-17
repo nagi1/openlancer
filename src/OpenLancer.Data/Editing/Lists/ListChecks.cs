@@ -29,7 +29,8 @@ public enum ListProblemKind
 }
 
 /// <summary>One result of the list checks of a section.</summary>
-/// <param name="Diagnostic">The problem, with the section as its target and the key as its key.</param>
+/// <param name="Diagnostic">The problem, with the section as its target and the key as its key. Its message is the
+/// section, the <see cref="Reason"/>, the <see cref="Consequence"/> and a fix, if the problem has one.</param>
 /// <param name="Rule">The rule of the value, or null for a hash collision.</param>
 /// <param name="Line">The position of the line among the lines of the key, from 0, or -1 for a missing key.</param>
 /// <param name="Value">The value, or null for a missing key.</param>
@@ -38,6 +39,16 @@ public sealed record ListProblem(Diagnostic Diagnostic, ListProblemKind Kind, Li
     ListView? List)
 {
     public bool IsError => Diagnostic.Severity == DiagnosticSeverity.Error;
+
+    /// <summary>What the engine does with the section because of the problem: the effect of the rule, or
+    /// <see cref="RuleEffect.LoadBreak"/> for a hash collision.</summary>
+    public RuleEffect Effect { get; init; }
+
+    /// <summary>What is wrong, for example "'loadout = lo_foo': no loadout has the name 'lo_foo'."</summary>
+    public string Reason { get; init; } = "";
+
+    /// <summary>What the game does with the data, in plain words, for example "The game drops this object."</summary>
+    public string Consequence { get; init; } = "";
 }
 
 /// <summary>
@@ -51,22 +62,35 @@ public sealed record ListProblem(Diagnostic Diagnostic, ListProblemKind Kind, Li
 /// <item>A value of any layer under a closed rule that names an entry that the active mod removed is an error
 /// (decision D81, D108 amended).</item>
 /// <item>A required key without a valid line, in a section that the active mod adds or changes, is an error (D82).</item>
-/// <item>A value of the active mod that names an entry that the engine cannot use is an error (D34, D82).</item>
+/// <item>A value of the active mod that names an entry that the engine cannot use is an error (D34, D82). A value of
+/// any layer under a closed rule is an error too when the active mod made the entry unusable (D82, decided on
+/// 2026-10-18; see <see cref="DataLists.Unusable"/>).</item>
 /// <item>The name of a section of the active mod with the FLHash of another name of a hash list is an error (D82).</item>
 /// <item>A value of a lower layer outside a list is a warning (D108).</item>
 /// </list>
+/// <para>Each error tells what the game does with the data, from the effect of the rule.</para>
 /// </remarks>
 internal static class ListChecks
 {
-    public static IReadOnlyList<ListProblem> Check(EditSession session, DataLists lists, SectionRef target)
+    /// <param name="unusableOnly">True to check only the rules whose effect makes the section unusable (see
+    /// <see cref="ListRule.MakesUnusable"/>), and the hash collisions. The result then tells if the section is
+    /// unusable. Such a check follows only these rules to other sections, so it reads few of them.</param>
+    public static IReadOnlyList<ListProblem> Check(EditSession session, DataLists lists, SectionRef target,
+        bool unusableOnly = false)
     {
         if (session.OpenDocument(target.Path) is not { } document || document.IndexOf(target.Id) is not (>= 0 and var index))
+            return [];
+        // The editor cannot change a whole file of the active mod, so its results never stop the save (review finding
+        // R22). W of such a file has the lower data.
+        var wholeFile = session.ActiveMod is { } mod && mod.Files.ContainsKey(document.Path);
+        if (unusableOnly && wholeFile)
             return [];
         var section = document.Working[index];
         var result = new List<ListProblem>();
         var byKey = session.DataFiles.RolesOf(target.Path)
             .SelectMany(r => lists.RuleData.ByRoleAndSection.GetValueOrDefault((r.ToLowerInvariant(),
                 section.Name.ToLowerInvariant())) ?? [])
+            .Where(r => !unusableOnly || ListRule.MakesUnusable(r.Effect))
             .GroupBy(r => r.Key, StringComparer.OrdinalIgnoreCase);
         var lower = document.BaseSection(document.IdentityAt(index));
         var changedSection = lower == null || !ReferenceEquals(lower, section);
@@ -84,9 +108,7 @@ internal static class ListChecks
                 CheckRule(lists, target, section, key, lines.Count, read, rule, active, origin, changedSection, result);
         }
         CheckHash(lists, target, section, document, index, result);
-        // The editor cannot change a whole file of the active mod, so its results never stop the save (review finding
-        // R22). W of such a file has the lower data.
-        if (session.ActiveMod is { } mod && mod.Files.ContainsKey(document.Path))
+        if (wholeFile)
         {
             return result.Select(p => p.IsError
                 ? p with { Diagnostic = p.Diagnostic with { Severity = DiagnosticSeverity.Warning } }
@@ -105,7 +127,8 @@ internal static class ListChecks
         var valid = false;
         foreach (var (line, i) in read)
         {
-            var value = rule.Index < line.Count ? line[rule.Index].ToString().Trim() : "";
+            // A scene line gives the place of its value (see ListRule.Scene).
+            var value = rule.IndexIn(line) is >= 0 and var at ? line[at].ToString().Trim() : "";
             if (value.Length == 0)
                 continue;
             valid = true;
@@ -113,14 +136,19 @@ internal static class ListChecks
             if (lists.List(rule, target, values) is not { } list)
                 continue;
             var prefix = count > 1 ? $"line {i + 1}: " : "";
-            var shown = $"'{line.Name} = {string.Join(", ", values.Select(v => v.ToString()))}'";
+            var shown = $"{prefix}'{line.Name} = {string.Join(", ", values.Select(v => v.ToString()))}'";
             if (list.Find(value) is { } entry)
             {
-                if (entry.Usable)
+                if (lists.Unusable(entry) is not { } unusable)
                     continue;
-                var severity = active && rule.Closed ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
+                // Like a removed entry: when the active mod made the entry unusable, each line that names it is an
+                // error, in any layer.
+                var severity = rule.Closed && list.Closed && (active || unusable.ByActiveMod)
+                    ? DiagnosticSeverity.Error
+                    : DiagnosticSeverity.Warning;
                 Add(result, severity, target, key, ListProblemKind.Unusable, rule, i, value, list,
-                    $"{prefix}{shown}: {entry.Problem} {rule.ConsequenceText}");
+                    $"{shown}: {list.Label} '{entry.Value}' is not usable: {unusable.Reason}",
+                    unusable.Consequence ?? rule.ConsequenceText, $"Fix '{entry.Value}', or pick another value.");
                 continue;
             }
             if (list.IsEnum)
@@ -133,25 +161,25 @@ internal static class ListChecks
                 rule.Lists.Select(l => lists.RemovedOf(l, scope, value)).FirstOrDefault(r => r != null) is { } removed)
             {
                 Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.Removed, rule, i, value, list,
-                    $"{prefix}{shown}: the active mod removes the {Lower(list.Label)} '{value}' ({removed.ModPath}). " +
+                    $"{shown}: the active mod removes the {Lower(list.Label)} '{value}' ({removed.ModPath}).",
                     rule.ConsequenceText);
                 continue;
             }
             if (active && rule.Closed && list.Closed)
             {
                 Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.Missing, rule, i, value, list,
-                    $"{prefix}{shown}: no {Lower(list.Label)} has the name '{value}'. {rule.ConsequenceText}");
+                    $"{shown}: no {Lower(list.Label)} has the name '{value}'.", rule.ConsequenceText);
             }
             else if (active)
             {
                 Add(result, DiagnosticSeverity.Warning, target, key, ListProblemKind.NotListed, rule, i, value, list,
-                    $"{prefix}{shown}: '{value}' is not in the {Lower(list.Label)} list. Unlisted values are allowed.");
+                    $"{shown}: '{value}' is not in the {Lower(list.Label)} list.", "Unlisted values are allowed.");
             }
             else
             {
                 var layer = origin.Origin == ValueOrigin.LowerMod ? $"mod '{origin.ModId}'" : "the base data";
                 Add(result, DiagnosticSeverity.Warning, target, key, ListProblemKind.NotListed, rule, i, value, list,
-                    $"{prefix}{shown}: '{value}' is not in the {Lower(list.Label)} list. The value comes from {layer}.");
+                    $"{shown}: '{value}' is not in the {Lower(list.Label)} list.", $"The value comes from {layer}.");
             }
         }
         if (required && !valid && !(rule.Empty && count > 0))
@@ -159,7 +187,7 @@ internal static class ListChecks
             var severity = changedSection ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
             var why = rule.Required ? "" : $" A section with '{rule.RequiredWith}' needs it.";
             Add(result, severity, target, key, ListProblemKind.RequiredMissing, rule, -1, null, null,
-                $"the key '{key}' is missing.{why} {rule.ConsequenceText}");
+                $"the key '{key}' is missing.{why}", rule.MissingText);
         }
     }
 
@@ -181,20 +209,31 @@ internal static class ListChecks
                     var others = string.Join(", ", group.Where(n => !Is(n, name)).Select(n => $"'{n}'"));
                     var key = SectionKeys.For(section.Name).KeyEntry ?? SectionKeys.DefaultKey;
                     Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.HashCollision, null, 0, name, list,
-                        $"the name '{name}' has the FLHash of {others}. The engine stops with an error when it loads " +
-                        "the game data. Give the section another name.");
+                        $"the name '{name}' has the FLHash of {others}.", "The game stops loading with this name.",
+                        "Give the section another name.");
                 }
             }
         }
     }
 
+    /// <param name="reason">What is wrong.</param>
+    /// <param name="consequence">What the game does with the data.</param>
+    /// <param name="fix">What to do, or null.</param>
     private static void Add(List<ListProblem> result, DiagnosticSeverity severity, SectionRef target, string key,
-        ListProblemKind kind, ListRule? rule, int line, string? value, ListView? list, string message) =>
-        result.Add(new ListProblem(
-            new Diagnostic(severity, target.Path, $"{target.Id}: {message}") { Target = target, Key = key },
-            kind, rule, line, value, list));
+        ListProblemKind kind, ListRule? rule, int line, string? value, ListView? list, string reason, string consequence,
+        string? fix = null)
+    {
+        var message = fix == null ? $"{target.Id}: {reason} {consequence}" : $"{target.Id}: {reason} {consequence} {fix}";
+        result.Add(new ListProblem(new Diagnostic(severity, target.Path, message) { Target = target, Key = key },
+            kind, rule, line, value, list)
+        {
+            Effect = rule?.Effect ?? RuleEffect.LoadBreak,
+            Reason = reason,
+            Consequence = consequence,
+        });
+    }
 
-    private static string Lower(string label) => label.Length == 0 ? label : char.ToLowerInvariant(label[0]) + label[1..];
+    internal static string Lower(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text[1..];
 
     private static bool Is(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }

@@ -7,19 +7,22 @@ namespace OpenLancer.Editor.Cutscene;
 
 /// <summary>
 /// The Preview controls of the Timeline toolbar (section 7.7 of the M8 design): the label, the circle icons of play,
-/// pause and stop, one frame back and forward, the loop, the pre-roll and the speed. The circle icons do not look like
-/// the Play of the game in the menu bar.
+/// pause and stop, one frame back and forward, the loop, the pre-roll, the speed and the sound. The circle icons do not
+/// look like the Play of the game in the menu bar.
 /// </summary>
 internal static class PreviewControls
 {
     public const string PlayTooltip =
         "Preview in the editor (Space). The Play button of the menu bar starts the game.";
 
+    public const string SoundTooltip = "Sound: the preview plays the sounds and the voice lines of this cutscene in 2D.";
+
     // Sizes in unscaled points.
     private const float SpeedWidth = 58;
 
-    /// <summary>Draws the controls. They are disabled without a preview.</summary>
-    public static void Draw(PreviewTransport? transport)
+    /// <summary>Draws the controls. They are disabled without a preview. The Sound toggle changes the setting of the
+    /// editor (decision D132), as the Mute Audio toggle of the Unity Game view.</summary>
+    public static void Draw(PreviewTransport? transport, EditorSettings settings)
     {
         var on = transport != null;
         ImGui.AlignTextToFramePadding();
@@ -68,6 +71,9 @@ internal static class PreviewControls
 
         ImGui.SameLine();
         SpeedMenu(transport, SpeedWidth * ImGuiHelper.Scale);
+        ImGui.SameLine();
+        settings.PreviewSound = ToolbarItems.Toggle("sound",
+            settings.PreviewSound ? EditorIcons.VolumeUp : EditorIcons.VolumeMute, SoundTooltip, settings.PreviewSound);
     }
 
     /// <summary>The play toggle alone, for example next to the scrub bar of the Cutscene view.</summary>

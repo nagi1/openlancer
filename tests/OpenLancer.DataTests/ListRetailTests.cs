@@ -37,7 +37,7 @@ public sealed class ListRetailTests(ITestOutputHelper output)
             ["effect_type"] = 45, ["beam"] = 55, ["explosion_fx"] = 70, ["explosion_equipment"] = 86, ["motor"] = 76,
             ["munition"] = 513, ["fuse"] = 192, ["good"] = 855, ["head"] = 104, ["body"] = 88, ["left_hand"] = 6,
             ["right_hand"] = 6, ["accessory"] = 106, ["curve"] = 6, ["gate_tunnel"] = 4, ["jump_gate_effect"] = 5,
-            ["weapon_type"] = 21, ["shield_type"] = 9, ["dock_sphere_type"] = 7,
+            ["weapon_type"] = 21, ["shield_type"] = 9, ["dock_sphere_type"] = 7, ["cutscene"] = 1506,
         };
         foreach (var (id, count) in expected)
         {
@@ -69,12 +69,14 @@ public sealed class ListRetailTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// With no edit of the active mod, no rule gives an error. The warnings are the 4 retail values outside a list: two
-    /// <c>parent</c> lines that name an object of another system, and two <c>lens_glow</c> lines. Each rule matches a
-    /// retail line, or the rule data marks it as unused.
+    /// With no edit of the active mod, no rule gives an error. The warnings are the 4 retail values outside a list, two
+    /// <c>parent</c> lines that name an object of another system and two <c>lens_glow</c> lines, and the 3 rooms without
+    /// <c>set_script</c>: the <c>Cityscape</c> rooms of the intro bases, which the engine plays through
+    /// <c>IntroScenes</c>, not as rooms (section 5.6 of the M8b design). Each rule matches a retail line, or the rule
+    /// data marks it as unused.
     /// </summary>
     [Fact]
-    public void TheRetailDataGivesNoListErrorAndFourWarnings()
+    public void TheRetailDataGivesNoListErrorAndSevenWarnings()
     {
         using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m21proof");
         var session = workspace.Open();
@@ -108,7 +110,11 @@ public sealed class ListRetailTests(ITestOutputHelper output)
             output.WriteLine(problem.Diagnostic.ToString());
 
         Assert.DoesNotContain(problems, p => p.IsError);
-        Assert.Equal(4, problems.Count);
+        Assert.Equal(7, problems.Count);
+        var intro = problems.Where(p => p.Kind == ListProblemKind.RequiredMissing).ToList();
+        Assert.Equal(3, intro.Count);
+        Assert.All(intro, p => Assert.Equal(("set_script", "Room_Info"), (p.Diagnostic.Key, p.Diagnostic.Target!.Id.Type)));
+        Assert.All(intro, p => Assert.Contains("intro", p.Diagnostic.Source, StringComparison.OrdinalIgnoreCase));
         Assert.Equal(2, problems.Count(p => p.Diagnostic.Key == "parent" && p.Value!.Equals("Li01_space_police_dmg_1",
             StringComparison.OrdinalIgnoreCase)));
         Assert.Contains(problems, p => p.Diagnostic.Key == "lens_glow" && p.Value == "blue_lens_glow");
@@ -177,6 +183,62 @@ public sealed class ListRetailTests(ITestOutputHelper output)
         Assert.Contains(problems, p => p.Target == battleship && p.Key == "loadout");
         Assert.All(problems, p => Assert.Equal(DiagnosticSeverity.Error, p.Severity));
         Assert.False(session.Save().Saved);
+    }
+
+    /// <summary>
+    /// Decision D82, as decided on 2026-10-18: the active mod removes the explosion of a retail missile, so the engine
+    /// stops the load. The missile is unusable, so each retail gun that fires it is an error, also though the active
+    /// mod did not change the gun. The engine drops such a gun, so each loadout line that names it is an error too. One
+    /// undo heals all of them.
+    /// </summary>
+    [Fact]
+    public void AMissileWithoutItsExplosionMakesEachRetailLineThatNamesItAnError()
+    {
+        using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m21proof");
+        var session = workspace.Open();
+        var lists = session.Lists;
+        // The first missile of the list that a gun fires and a loadout carries on a gun.
+        var missile = lists.List("munition")!.Entries.First(e =>
+            e.Section is { } s && session.Get(s)!.Lines("motor").Count > 0 &&
+            lists.ReferencesTo("munition", e.Value).Any(r => lists.ReferencesTo("equipment", r.Section.Id.Key!)
+                .Any(g => g.Key.Equals("equip", StringComparison.OrdinalIgnoreCase))));
+        var guns = lists.ReferencesTo("munition", missile.Value).Select(r => r.Section).Distinct().ToList();
+        var equips = guns.SelectMany(g => lists.ReferencesTo("equipment", g.Id.Key!)
+                .Where(r => r.Key.Equals("equip", StringComparison.OrdinalIgnoreCase)).Select(r => (Gun: g.Id.Key!, r.Section)))
+            .ToList();
+        output.WriteLine($"Missile {missile.Value}: {guns.Count} guns fire it, {equips.Count} loadout lines name a gun.");
+
+        session.Execute(EditCommand.RemoveName(missile.Section!, "explosion_arch"));
+        var watch = Stopwatch.StartNew();
+        var problems = session.SaveProblems();
+        output.WriteLine($"The save gate: {watch.Elapsed.TotalMilliseconds:0.0} ms, {problems.Count} errors");
+        foreach (var problem in problems)
+            output.WriteLine(problem.ToString());
+
+        Assert.All(problems, p => Assert.Equal(DiagnosticSeverity.Error, p.Severity));
+        var own = Assert.Single(problems, p => p.Target == missile.Section);
+        Assert.Equal("explosion_arch", own.Key);
+        Assert.EndsWith("The game stops loading without this key.", own.Message);
+        foreach (var gun in guns)
+        {
+            var error = Assert.Single(problems, p => p.Target == gun && p.Key == "projectile_archetype");
+            Assert.EndsWith($"Munition '{missile.Value}' is not usable: the key 'explosion_arch' is missing. A section " +
+                            "with 'motor' needs it. The game stops loading without this key. " +
+                            $"Fix '{missile.Value}', or pick another value.", error.Message);
+        }
+        foreach (var (gun, loadout) in equips)
+        {
+            Assert.Contains(problems, p => p.Target == loadout && p.Key == "equip" &&
+                                           p.Message.Contains($"Equipment '{gun}' is not usable",
+                                               StringComparison.OrdinalIgnoreCase));
+        }
+        Assert.False(session.Save().Saved);
+        Assert.False(Directory.Exists(Path.Combine(workspace.ModFolder, "patches")));
+
+        session.Undo();
+        Assert.Empty(session.SaveProblems());
+        Assert.All(guns, g => Assert.Empty(lists.Problems(g)));
+        RetailChecks.AssertBaseIsUnchanged(GameDataPaths.RequireBase());
     }
 
     /// <summary>A raw edit of <c>pos</c> of the battleship writes the same patch line as a row edit. A raw edit of a

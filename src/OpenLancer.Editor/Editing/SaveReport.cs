@@ -3,13 +3,16 @@ using System.IO;
 using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Logs;
 
 namespace OpenLancer.Editor.Editing;
 
 /// <summary>One line of the Console report of a save.</summary>
 /// <param name="Target">The section that the line is about, or null.</param>
-internal sealed record ReportLine(ConsoleSeverity Severity, string Source, string Message, SectionRef? Target = null);
+/// <param name="Cutscene">The place in a cutscene that the line is about, or null.</param>
+internal sealed record ReportLine(ConsoleSeverity Severity, string Source, string Message, SectionRef? Target = null,
+    ThnLocation? Cutscene = null);
 
 /// <summary>The Console report of a save: what the save wrote and deleted, and its problems.</summary>
 internal static class SaveReport
@@ -42,7 +45,7 @@ internal static class SaveReport
         }
         lines.AddRange(result.Problems.Select(p => new ReportLine(
             p.Severity == DiagnosticSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning, p.Source,
-            p.Message, p.Target)));
+            p.Message, p.Target, p.Cutscene)));
         return lines;
     }
 

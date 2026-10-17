@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OpenLancer.Data.Editing;
+using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Editing;
 
@@ -95,7 +96,7 @@ internal static class RawSectionEdit
             }
             catch (ArgumentException e)
             {
-                return Stop(number, e.Message);
+                return Stop(number, ErrorText.Of(e));
             }
         }
 

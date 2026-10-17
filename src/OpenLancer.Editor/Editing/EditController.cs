@@ -10,6 +10,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Editing;
 
@@ -95,7 +96,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException)
         {
-            Log.Add(ConsoleSeverity.Error, Source, e.Message);
+            Log.Add(ConsoleSeverity.Error, Source, ErrorText.Of(e));
             return false;
         }
     }
@@ -119,7 +120,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException)
         {
-            Log.Add(ConsoleSeverity.Error, Source, e.Message);
+            Log.Add(ConsoleSeverity.Error, Source, ErrorText.Of(e));
             return false;
         }
 
@@ -192,7 +193,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         {
             foreach (var line in SaveReport.Lines(refused, mod.Id, mod.Folder, 0))
             {
-                Log.Add(line.Severity, line.Source, line.Message, line.Target);
+                Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene);
             }
 
             return SaveOutcome.NotSaved;
@@ -216,7 +217,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         var number = result.Saved ? session.Saved(changedFiles) : 0;
         foreach (var line in SaveReport.Lines(result, mod.Id, mod.Folder, number))
         {
-            Log.Add(line.Severity, line.Source, line.Message, line.Target);
+            Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene);
         }
 
         if (!result.Saved && result.ChangedOnDisk.Count > 0)

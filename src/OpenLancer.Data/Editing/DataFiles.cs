@@ -14,8 +14,9 @@ namespace OpenLancer.Data.Editing;
 /// </summary>
 /// <remarks>
 /// <para>The roles come from <c>freelancer.ini</c> of the edit view, which format version 1 cannot patch. So they do not
-/// change in a session, except the <c>system</c> role: the system files are the files that the <c>[system]</c> sections
-/// of W of <c>universe.ini</c> name.</para>
+/// change in a session, except the <c>system</c> and <c>room</c> roles: the system files are the files that the
+/// <c>[system]</c> sections of W of <c>universe.ini</c> name, and the room files are the files that the <c>[Room]</c>
+/// sections of the base files name (see <see cref="RoomFiles"/>).</para>
 /// <para>The <c>[Data]</c> names compare without letter case, as the engine compares them. Retail spells
 /// <c>PetalDB</c> and <c>WeaponModDB</c>.</para>
 /// </remarks>
@@ -23,18 +24,20 @@ internal sealed class DataFiles
 {
     private readonly ListRules rules;
     private readonly SystemFiles systems;
+    private readonly RoomFiles rooms;
     private readonly Dictionary<string, IReadOnlyList<string>> fixedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> fixedRoles = new(VfsPath.Comparer);
 
     /// <param name="freelancerIni">The sections of <c>freelancer.ini</c> of the edit view.</param>
-    public DataFiles(IReadOnlyList<Section> freelancerIni, ListRules rules, SystemFiles systems)
+    public DataFiles(IReadOnlyList<Section> freelancerIni, ListRules rules, SystemFiles systems, RoomFiles rooms)
     {
         this.rules = rules;
         this.systems = systems;
+        this.rooms = rooms;
         var entries = DataPaths.Entries(freelancerIni).ToList();
         foreach (var role in rules.Roles.Values)
         {
-            if (role.Universe || role.SystemFiles)
+            if (role.Universe || role.SystemFiles || role.RoomFiles)
                 continue;
             var paths = Resolve(freelancerIni, entries, role);
             fixedPaths[role.Name] = paths;
@@ -57,7 +60,7 @@ internal sealed class DataFiles
             return [];
         if (definition.Universe)
             return systems.UniversePath is { } universe ? [universe] : [];
-        return definition.SystemFiles ? systems.Files : [];
+        return definition.SystemFiles ? systems.Files : definition.RoomFiles ? rooms.Files : [];
     }
 
     /// <summary>The roles of an install path. A path can have more than one role.</summary>
@@ -70,7 +73,7 @@ internal sealed class DataFiles
         foreach (var role in rules.Roles.Values)
         {
             if (role.Universe && systems.UniversePath is { } universe && VfsPath.Comparer.Equals(universe, normal) ||
-                role.SystemFiles && systems.IsSystemFile(normal))
+                role.SystemFiles && systems.IsSystemFile(normal) || role.RoomFiles && rooms.Contains(normal))
                 result.Add(role.Name);
         }
         return result;

@@ -62,7 +62,7 @@ public sealed class CurveSaveRetailTests(ITestOutputHelper output)
         Assert.Equal("atten_curve", problem.Key);
         Assert.Contains(ManhattanLight, problem.Message);
         Assert.Contains("'no_such_curve'", problem.Message);
-        Assert.Contains("The engine stops with an error when it loads the game data.", problem.Message);
+        Assert.Contains("The game stops loading with this value.", problem.Message);
 
         // The gate stops the save, and the save writes nothing.
         var result = session.Save();
@@ -82,6 +82,62 @@ public sealed class CurveSaveRetailTests(ITestOutputHelper output)
         foreach (var line in problems)
             output.WriteLine(line.ToString());
         Assert.Contains(problems,
+            p => p.Severity == DiagnosticSeverity.Error && p.Source == EngineDataLoader.LoadSource);
+        RetailChecks.AssertBaseIsUnchanged(baseFolder);
+    }
+
+    /// <summary>
+    /// The case of the M21 verify report (decision D82, as decided on 2026-10-18): the active mod removes the points of
+    /// the retail curve of the first light of Li01 with a curve. The active mod changes no light, but each retail light
+    /// that names the curve is an error of the gate, as for a removed curve. One undo heals them. The same edit as a
+    /// saved patch makes the engine load fail, so the rule is needed.
+    /// </summary>
+    [Fact]
+    public void ACurveWithoutPointsMakesEachRetailLightThatNamesItAnError()
+    {
+        var baseFolder = GameDataPaths.RequireBase();
+        using var workspace = new RetailWorkspace(baseFolder, "m2proof");
+        var session = workspace.Open();
+        var light = session.Sections(session.SystemPath("Li01")!).First(s =>
+            s.Id.Type.Equals("LightSource", StringComparison.OrdinalIgnoreCase) &&
+            session.Get(s)!.Lines("atten_curve").Count > 0);
+        var name = session.Get(light)!.Lines("atten_curve")[0].Values[0].ToString()!;
+        var curve = session.Lists.List("curve")!.Find(name)!;
+        var lights = session.Lists.ReferencesTo("curve", name).Select(r => r.Section).ToHashSet();
+        output.WriteLine($"{light.Id} names the curve {name} of {curve.Section!.Path}. {lights.Count} lights name it.");
+        Assert.Contains(light, lights);
+
+        session.Execute(EditCommand.RemoveName(curve.Section!, "point"));
+
+        var problems = session.SaveProblems();
+        foreach (var problem in problems)
+            output.WriteLine(problem.ToString());
+        Assert.Equal(lights, problems.Select(p => p.Target!).ToHashSet());
+        Assert.All(problems, p =>
+        {
+            Assert.Equal((DiagnosticSeverity.Error, "atten_curve"), (p.Severity, p.Key));
+            Assert.EndsWith($"Curve '{name}' is not usable: the [IGraph] '{name}' has no 'point' line. The game stops " +
+                            $"loading with this value. Fix '{name}', or pick another value.", p.Message);
+        });
+        var result = session.Save();
+        Assert.False(result.Saved);
+        Assert.False(Directory.Exists(Path.Combine(workspace.ModFolder, "patches")));
+
+        session.Undo();
+        Assert.Empty(session.SaveProblems());
+
+        // The same edit as a patch written by hand: the validation, as oltool runs it, finds that the engine cannot
+        // load the data.
+        var patch = Path.Combine(workspace.ModFolder, "patches", "DATA", "igraph.ini");
+        Directory.CreateDirectory(Path.GetDirectoryName(patch)!);
+        File.WriteAllText(patch, $"[IGraph]\r\nnickname = {name}\r\nol.remove = point\r\n");
+        var profile = ModProfile.Load(workspace.ProfilePath);
+        var overlay = ModOverlay.Build(profile.BaseFolder, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
+        var validation = ProfileValidator.NewProblems(FileSystem.FromPath(baseFolder), overlay.CreateFileSystem(),
+            overlay.CutscenePaths);
+        foreach (var line in validation)
+            output.WriteLine(line.ToString());
+        Assert.Contains(validation,
             p => p.Severity == DiagnosticSeverity.Error && p.Source == EngineDataLoader.LoadSource);
         RetailChecks.AssertBaseIsUnchanged(baseFolder);
     }

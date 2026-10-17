@@ -39,6 +39,9 @@ internal sealed class PreviewTransport(CutsceneClock clock, Func<double> end)
 
     private (double Start, double End)? loopRange;
 
+    // The frames that count as a scrub after the last step of a drag of the playhead.
+    private int scrubFrames;
+
     /// <summary>The speed of a play, from 0.25 to 2.</summary>
     public double Speed
     {
@@ -81,6 +84,21 @@ internal sealed class PreviewTransport(CutsceneClock clock, Func<double> end)
 
     public bool Playing => clock.Playing;
 
+    /// <summary>
+    /// A count that goes up by 1 at each jump of the playhead: a <see cref="Seek"/>, a loop jump, a jump of a play to
+    /// the start of the loop range, and the end of a pre-roll. The time alone cannot show a forward seek during a play,
+    /// so the sound of the preview reads this count (see <see cref="TimelineAudio.Frame"/>).
+    /// </summary>
+    public int Jumps { get; private set; }
+
+    /// <summary>True while the user drags the playhead, and one frame after the last step of the drag. The preview
+    /// plays no sound during a scrub (decision D132).</summary>
+    public bool Scrubbing => scrubFrames > 0;
+
+    /// <summary>True while the preview plays forward at the playhead, so its sound can play (decision D132): a play
+    /// runs, and no pre-roll, no catch-up and no scrub runs.</summary>
+    public bool PlaysSound => clock.Playing && preRollTarget == null && !clock.CatchingUp && !Scrubbing;
+
     /// <summary>True while a pre-roll plays.</summary>
     public bool InPreRoll => preRollTarget != null;
 
@@ -116,6 +134,7 @@ internal sealed class PreviewTransport(CutsceneClock clock, Func<double> end)
         {
             clock.Seek(start);
             scrubbed = true;
+            Jumps++;
         }
 
         PlayFromPlayhead();
@@ -184,7 +203,11 @@ internal sealed class PreviewTransport(CutsceneClock clock, Func<double> end)
 
         clock.Seek(Math.Clamp(time, 0, End));
         scrubbed = !clock.Playing;
+        Jumps++;
     }
+
+    /// <summary>Notes a step of a drag of the playhead (see <see cref="Scrubbing"/>).</summary>
+    public void NoteScrub() => scrubFrames = 2;
 
     /// <summary>Pauses and moves the playhead by whole frames of the clock.</summary>
     public void StepFrames(int frames)
@@ -209,6 +232,11 @@ internal sealed class PreviewTransport(CutsceneClock clock, Func<double> end)
     /// </summary>
     public void Frame(double wallSeconds, TimeSpan budget)
     {
+        if (scrubFrames > 0)
+        {
+            scrubFrames--;
+        }
+
         var waiting = clock.CatchingUp;
         if (waiting || waited)
         {
@@ -237,11 +265,13 @@ internal sealed class PreviewTransport(CutsceneClock clock, Func<double> end)
             preRollTarget = null;
             clock.Seek(target);
             clock.Play(speed);
+            Jumps++;
         }
         else if (Loop && End > 0)
         {
             clock.Seek(start);
             scrubbed = true;
+            Jumps++;
             PlayFromPlayhead();
         }
         else

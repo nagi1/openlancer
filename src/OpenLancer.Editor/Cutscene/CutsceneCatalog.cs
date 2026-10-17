@@ -59,6 +59,25 @@ internal sealed class CutsceneCatalog
     /// <summary>The scripts, in the order of the paths.</summary>
     public IReadOnlyList<CutsceneEntry> Entries => entries;
 
+    /// <summary>The new cutscenes of W that the loaded game data does not have yet, with their counts from W. The
+    /// Cutscenes tab shows them at once, as the Unity Project window shows a new asset. After the save and the reload of
+    /// the game data, their rows come from the data.</summary>
+    public IReadOnlyList<CutsceneEntry> Unsaved { get; private set; } = [];
+
+    /// <summary>All rows: the scripts of the data, then the unsaved new cutscenes.</summary>
+    public IEnumerable<CutsceneEntry> All => entries.Concat(Unsaved);
+
+    /// <summary>Takes the new cutscenes of W (see <see cref="Unsaved"/>).</summary>
+    /// <param name="cutscenes">The install path and W of each new cutscene of the session.</param>
+    /// <param name="inData">True for an install path that the loaded game data has.</param>
+    public void SetUnsaved(IEnumerable<(string Path, ThnScriptModel Working)> cutscenes, Func<string, bool> inData) =>
+        Unsaved = cutscenes.Where(c => !inData(c.Path))
+            .Select(c => new CutsceneEntry(VfsPath.Normalize(c.Path) ?? c.Path)
+            {
+                Counts = new CutsceneCounts(c.Working.Duration, c.Working.Entities.Count, c.Working.Events.Count, null),
+            })
+            .ToList();
+
     /// <summary>The number of scripts that the scan read.</summary>
     public int Scanned => next;
 

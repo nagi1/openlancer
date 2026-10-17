@@ -25,28 +25,29 @@ public sealed partial class EditSession
     internal SectionTable Table => table ??= new SectionTable(OpenDocument);
 
     /// <summary>The files of each role of the rule data.</summary>
-    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ListRules.Retail, Systems);
+    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ListRules.Retail, Systems, Rooms);
 
     /// <summary>The data lists of the edit view, and the reverse index of their references (milestone M21).</summary>
     public DataLists Lists => lists ??= new DataLists(this, ListRules.Retail);
 
     /// <summary>
     /// The list checks of a section (layer 2 of the checks): values outside their lists, values that name an entry
-    /// that the active mod removed, required keys without a valid line, and FLHash collisions. Each problem has the
-    /// section as its target and the key as its key. The list is empty when the edit view has no such section.
+    /// that the active mod removed or that the engine cannot use, required keys without a valid line, and FLHash
+    /// collisions. Each problem has the section as its target and the key as its key. The list is empty when the edit
+    /// view has no such section.
     /// </summary>
     public IReadOnlyList<Diagnostic> CheckLists(SectionRef target) =>
         Lists.Problems(target).Select(p => p.Diagnostic).ToList();
 
     /// <summary>
-    /// True when the editor knows the schema of the file: an item file, <c>universe.ini</c> or a star system file. The
-    /// editor reads the other files only for the lists, so the Inspector shows their sections read-only (decision
-    /// D123).
+    /// True when the editor knows the schema of the file: an item file, <c>universe.ini</c>, a star system file or a
+    /// room file (decision D135 of the M8b design). The editor reads the other files only for the lists, so the
+    /// Inspector shows their sections read-only (decision D123).
     /// </summary>
     public bool KnowsSchema(string path) =>
         Items.KindOf(path) != null ||
         UniversePath is { } universe && VfsPath.Comparer.Equals(VfsPath.Normalize(path), universe) ||
-        IsSystemFile(path);
+        IsSystemFile(path) || IsRoomFile(path);
 
     /// <summary>
     /// The layer that gives an entry of a list: the active mod when it adds the section, else the last lower mod that

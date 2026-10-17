@@ -22,7 +22,8 @@
     "jump_effect":  { "paths": ["FX\\jumpeffect.ini"], "engine": false },
     "weapon_mod":   { "paths": ["EQUIPMENT\\WeaponModDB.ini"], "engine": false },
     "universe":     { "universe": true },
-    "system":       { "systemFiles": true }
+    "system":       { "systemFiles": true },
+    "room":         { "roomFiles": true }
   },
   "lists": [
     { "id": "solar_archetype", "label": "Solar archetype", "kind": "SolarArchetype", "hash": true,
@@ -105,7 +106,8 @@
     { "id": "shield_type", "label": "Shield type", "kind": "Enum",
       "source": { "role": "weapon_mod", "values": { "section": "WeaponType", "key": "shield_mod", "index": 0 } } },
     { "id": "dock_sphere_type", "label": "Dock type", "kind": "Enum",
-      "enum": "LibreLancer.Data.Schema.Solar.DockSphereType" }
+      "enum": "LibreLancer.Data.Schema.Solar.DockSphereType" },
+    { "id": "cutscene", "label": "Cutscene", "kind": "Cutscene", "source": { "files": ".thn" } }
   ],
   "rules": [
     { "role": "system", "section": "Object", "key": "archetype", "list": "solar_archetype",
@@ -119,8 +121,8 @@
       "evidence": "GameItemDb.cs:2600, World\\GameWorld.cs:165-167" },
     { "role": "system", "section": "Object", "key": "base", "list": "base", "closed": true, "effect": "degrade",
       "evidence": "GameItemDb.cs:2599" },
-    { "role": "system", "section": "Object", "key": "dock_with", "list": "base", "closed": true, "effect": "degrade",
-      "consequence": "The game stops with an error when the player docks.",
+    { "role": "system", "section": "Object", "key": "dock_with", "list": "base", "closed": true, "effect": "crash",
+      "consequence": "The game crashes when the player docks here.",
       "evidence": "GameItemDb.cs:2618-2625, Server\\Player.cs:908" },
     { "role": "system", "section": "Object", "key": "star", "list": "star", "closed": true, "effect": "degrade",
       "evidence": "GameItemDb.cs:2670" },
@@ -150,8 +152,7 @@
       { "index": 1, "list": "body", "label": "Body", "evidence": "Open: stored only (GameItemDb.cs:2612)" },
       { "index": 2, "list": "accessory", "label": "Accessory", "evidence": "Open: stored only (GameItemDb.cs:2612)" } ] },
     { "role": "system", "section": "LightSource", "key": "atten_curve", "list": "curve", "closed": true,
-      "effect": "loadBreak", "consequence": "The engine stops with an error when it loads the game data.",
-      "evidence": "GameItemDb.cs:1356, GraphIni.cs:18-21" },
+      "effect": "loadBreak", "evidence": "GameItemDb.cs:1356, GraphIni.cs:18-21" },
     { "role": "system", "section": "zone", "key": "music", "list": "sound",
       "evidence": "Open: stored only (GameItemDb.cs:1617)" },
     { "role": "system", "section": "zone", "key": "spacedust", "list": "effect",
@@ -184,15 +185,15 @@
       "evidence": "Open: not read in GameItemDb.cs:2496-2562" },
     { "role": "solar", "section": "Solar", "key": "docking_sphere", "values": [
       { "index": 0, "list": "dock_sphere_type", "label": "Dock type", "closed": true, "effect": "degrade",
-        "consequence": "The engine logs the name and uses 'berth'.", "evidence": "Schema\\Archetype.cs:83-91" } ] },
+        "consequence": "The game logs the name and uses 'berth'.", "evidence": "Schema\\Archetype.cs:83-91" } ] },
     { "role": "loadouts", "section": "Loadout", "key": "archetype", "lists": ["solar_archetype", "ship"],
       "evidence": "Open: stored only (GameItemDb.cs:1367). Server\\NPCManager.cs:150 reads it as a ship only for NPC loadouts." },
     { "role": "loadouts", "section": "Loadout", "key": "equip", "values": [
       { "index": 0, "list": "equipment", "label": "Equipment", "closed": true, "effect": "degrade",
-        "consequence": "The engine skips the item.", "evidence": "GameItemDb.cs:1369-1377" } ] },
+        "consequence": "The game skips this item.", "evidence": "GameItemDb.cs:1369-1377" } ] },
     { "role": "loadouts", "section": "Loadout", "key": "cargo", "values": [
       { "index": 0, "list": "equipment", "label": "Equipment", "closed": true, "effect": "degrade",
-        "consequence": "The engine skips the cargo.", "evidence": "GameItemDb.cs:1379-1387" } ] },
+        "consequence": "The game skips this cargo.", "evidence": "GameItemDb.cs:1379-1387" } ] },
     { "role": "groups", "section": "Group", "key": "rep", "values": [
       { "index": 1, "list": "faction", "label": "Faction", "closed": true, "effect": "degrade",
         "evidence": "GameItemDb.cs:699-708" } ] },
@@ -215,7 +216,7 @@
     { "role": "effects", "section": "Effect", "key": "effect_type", "list": "effect_type",
       "evidence": "Open: not read in GameItemDb.cs:208-250" },
     { "role": "costumes", "section": "Costume", "key": "body", "list": "body", "closed": true, "required": true,
-      "effect": "drop", "consequence": "The engine drops this costume.", "evidence": "GameItemDb.cs:974-978" },
+      "effect": "drop", "consequence": "The game drops this costume.", "evidence": "GameItemDb.cs:974-978" },
     { "role": "costumes", "section": "Costume", "key": "head", "list": "head", "closed": true, "effect": "degrade",
       "evidence": "GameItemDb.cs:982-984" },
     { "role": "costumes", "section": "Costume", "key": "lefthand", "list": "left_hand", "closed": true,
@@ -225,12 +226,9 @@
     { "role": "costumes", "section": "Costume", "key": "accessory", "list": "accessory", "closed": true,
       "effect": "degrade", "unused": true, "evidence": "GameItemDb.cs:985" },
     { "role": "equipment", "section": "Munition", "key": "motor", "list": "motor", "closed": true,
-      "effect": "loadBreak", "consequence": "The engine stops with an error when it loads the game data.",
-      "evidence": "GameItemDb.cs:1019-1020" },
+      "effect": "loadBreak", "evidence": "GameItemDb.cs:1019-1020" },
     { "role": "equipment", "section": "Munition", "key": "explosion_arch", "list": "explosion_equipment",
-      "closed": true, "requiredWith": "motor", "effect": "loadBreak",
-      "consequence": "The engine stops with an error when it loads the game data.",
-      "evidence": "GameItemDb.cs:1019-1022" },
+      "closed": true, "requiredWith": "motor", "effect": "loadBreak", "evidence": "GameItemDb.cs:1019-1022" },
     { "role": "equipment", "section": "Munition", "key": "const_effect", "list": "effect", "closed": true,
       "effect": "degrade", "evidence": "GameItemDb.cs:1034" },
     { "role": "equipment", "section": "Munition", "key": "munition_hit_effect", "list": "effect", "closed": true,
@@ -238,7 +236,7 @@
     { "role": "equipment", "section": "Munition", "key": "weapon_type", "list": "weapon_type",
       "evidence": "Open: the fork loads no WeaponModDB.ini" },
     { "role": "equipment", "section": "Gun", "key": "projectile_archetype", "list": "munition", "closed": true,
-      "required": true, "effect": "drop", "consequence": "The engine drops this gun.",
+      "required": true, "effect": "drop", "consequence": "The game drops this gun.",
       "evidence": "GameItemDb.cs:1153-1181" },
     { "role": "equipment", "section": "Gun", "key": "flash_particle_name", "list": "effect", "closed": true,
       "effect": "degrade", "evidence": "GameItemDb.cs:1162" },
@@ -268,6 +266,24 @@
       "evidence": "existing item links (ItemIndex.MarketLines)" },
     { "role": "markets", "section": "BaseGood", "key": "marketgood", "values": [
       { "index": 0, "list": "good", "label": "Good", "closed": true, "effect": "degrade",
-        "evidence": "ItemIndex.cs:83" } ] }
+        "evidence": "ItemIndex.cs:83" } ] },
+    { "role": "room", "section": "Room_Info", "key": "set_script", "list": "cutscene", "closed": true,
+      "required": true, "effect": "crash", "consequence": "The game crashes when the player enters this room.",
+      "evidence": "GameItemDb.cs:155-164, :297, ResourceLoadExtensions.cs:48-49, :62, ThnRoomHandler.cs:22, RoomGameplay.cs:1036" },
+    { "role": "room", "section": "Room_Info", "key": "scene", "list": "cutscene", "scene": true, "closed": true,
+      "effect": "crash", "consequence": "The game crashes when the player enters this room.",
+      "evidence": "Schema\\Universe\\Rooms\\RoomInfo.cs:27-41, GameItemDb.cs:299-306, ResourceLoadExtensions.cs:61, RoomGameplay.cs:1050" },
+    { "role": "room", "section": "CharacterPlacement", "key": "start_script", "list": "cutscene", "closed": true,
+      "effect": "degrade", "consequence": "The game skips this script when the player enters the room.",
+      "evidence": "GameItemDb.cs:310, RoomGameplay.cs:1057-1059" },
+    { "role": "room", "section": "PlayerShipPlacement", "key": "landing_script", "list": "cutscene", "closed": true,
+      "effect": "degrade", "consequence": "The game skips the landing scene.",
+      "evidence": "GameItemDb.cs:308, RoomGameplay.cs:1052-1055" },
+    { "role": "room", "section": "PlayerShipPlacement", "key": "launching_script", "list": "cutscene", "closed": true,
+      "effect": "degrade", "consequence": "The game skips the launch scene.",
+      "evidence": "GameItemDb.cs:309, RoomGameplay.cs:858-860" },
+    { "role": "room", "section": "Room_Info", "key": "goodscart_script", "list": "cutscene",
+      "consequence": "The game does not play cart scripts.",
+      "evidence": "Open: ResourceLoadExtensions.cs:63 has no caller" }
   ]
 }

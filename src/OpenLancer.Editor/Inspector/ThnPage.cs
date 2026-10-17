@@ -4,9 +4,11 @@ using System.Globalization;
 using System.Linq;
 using ImGuiNET;
 using LibreLancer.Thn;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Thn;
 
@@ -94,7 +96,15 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         if (grid.BeginSection("Thn.Cutscene", EditorIcons.Film, "Cutscene"))
         {
             grid.Text("Path", path);
-            var state = CutsceneCatalog.StateText(edits.CutsceneSource(path));
+            var source = edits.CutsceneSource(path);
+            var state = CutsceneCatalog.StateText(source);
+            if (source.Kind == ThnFileKind.NewHere)
+            {
+                // A new cutscene is a text file, which the retail engine reads only after the M11 check.
+                state += ", OpenLancer only until the M11 check";
+                grid.SetNextNote(CutsceneBrowser.OpenLancerOnly);
+            }
+
             grid.Text("State", edits.HasUnsavedCutsceneEdits(path) ? $"{state}, with unsaved edits" : state);
             grid.SetNextNote("The length of the script in seconds (ThnScript.cs:124). A drag of the end handle of the " +
                              "Timeline ruler changes it too.");
@@ -108,6 +118,25 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
             if (readOnly != null)
             {
                 grid.Text("Read-only", readOnly);
+            }
+
+            grid.EndSection();
+        }
+
+        // The errors that crash the game when it plays the cutscene (decision D137 of the M8b design). They block the
+        // save and Play, so the page shows them above the other sections.
+        var errors = edits.CutsceneErrors(path);
+        if (errors.Count > 0 &&
+            grid.BeginSection("Thn.Problems", EditorIcons.ExclamationTriangle, $"Problems ({errors.Count})"))
+        {
+            foreach (var error in errors.Take(100))
+            {
+                var text = error.Message[EditSession.CutsceneCrash.Length..].TrimStart();
+                if (grid.Link("Error", text, $"{error.Message}\n\nThe save and Play stop until you correct this. Click to " +
+                                             "select the element.") && error.Cutscene is { } place)
+                {
+                    workspace.Show(place);
+                }
             }
 
             grid.EndSection();
@@ -264,6 +293,11 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
                 grid.Text("Monitor", lane.Main ? "The main monitor" : "Ignored by the engine");
             }
 
+            if (type == "SOUND")
+            {
+                SoundPreview(workspace, entity);
+            }
+
             foreach (var key in rows.Where(r => IsTop(r.Path) && r.Kind != ThnKeyKind.Record &&
                                                 r.Path.Text is not (ThnScriptModel.EntityNameKey or "type")))
             {
@@ -290,6 +324,28 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
 
             grid.EndSection();
         }
+    }
+
+    /// <summary>The Preview row of a SOUND entity: Play plays its template once from its start, in 2D, with the voice
+    /// rule of the preview, and Stop stops it (section 5.3 of the M8b design).</summary>
+    private void SoundPreview(CutsceneWorkspace workspace, ThnRef entity)
+    {
+        grid.SetNextNote("Plays the sound of the template once from its start, in 2D. A voice line plays with the voice " +
+                         "of its speaker, as in the preview. The Console tells when the game data has no such sound.");
+        grid.Row("Preview", () =>
+        {
+            if (ImGui.Button($"{EditorIcons.PlayCircle}  Play") && !workspace.PlaySound(entity))
+            {
+                window.Log.Add(ConsoleSeverity.Warning, CutsceneSound.Source,
+                    "This SOUND entity has no template_name, so it has no sound to play.");
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button($"{EditorIcons.StopCircle}  Stop"))
+            {
+                workspace.StopSound();
+            }
+        });
     }
 
     /// <summary>The name row of an entity. A new name runs the rename when the field ends.</summary>
@@ -636,7 +692,7 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         }
         catch (InvalidOperationException e)
         {
-            grid.ThnTextRow(label, field, e.Message, Parser(ThnKeyKind.Value), NotSet);
+            grid.ThnTextRow(label, field, ErrorText.Of(e), Parser(ThnKeyKind.Value), NotSet);
             return;
         }
 
@@ -654,7 +710,7 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         }
         catch (InvalidOperationException e)
         {
-            grid.ThnTextRow(label, field, e.Message, Parser(ThnKeyKind.Value), NotSet);
+            grid.ThnTextRow(label, field, ErrorText.Of(e), Parser(ThnKeyKind.Value), NotSet);
             return;
         }
 

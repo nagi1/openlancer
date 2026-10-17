@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using LibreLancer.Data.Ini;
 
 namespace OpenLancer.Data.Editing.Lists;
 
 /// <summary>What the engine does with a value that is not valid, or with a missing line (section 6.3 of the M21
-/// design). Decisions D82 and D124 read it.</summary>
+/// design). Decisions D82 and D124 read it. The values go from the least to the most severe.</summary>
 public enum RuleEffect
 {
     /// <summary>The engine does not use the value.</summary>
@@ -18,6 +19,10 @@ public enum RuleEffect
 
     /// <summary>The engine drops the item.</summary>
     Drop,
+
+    /// <summary>The game crashes when it uses the item, for example when the player docks. The rule gives the
+    /// consequence that tells when.</summary>
+    Crash,
 
     /// <summary>The load of the game data stops.</summary>
     LoadBreak,
@@ -49,6 +54,35 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
     /// <summary>True when no retail line has the key. The retail check then expects no line for the rule.</summary>
     public bool Unused { get; init; }
 
+    /// <summary>
+    /// True for the <c>scene</c> line of a room (section 5.6 of the M8b design): the rule reads value 1 of the line, or
+    /// value 2 when value 0 is <c>all</c>, whatever its text, as the engine reads it (RoomInfo.cs:27-41). The engine
+    /// skips a line with too few values (RoomInfo.cs:46-49), so such a line gets no check.
+    /// </summary>
+    public bool Scene { get; init; }
+
+    /// <summary>The index of the value that the rule reads in a line, or -1 when the line has no such value. Without
+    /// <see cref="Scene"/>, it is <see cref="Index"/>.</summary>
+    public int IndexIn(Entry line) => IndexIn(line.Count, line.Count > 0 ? line[0].ToString() : null);
+
+    /// <summary>The index of the value that the rule reads in the values of a line (see <see cref="IndexIn(Entry)"/>).
+    /// The Inspector uses it to put a picked value at the place of the rule.</summary>
+    public int IndexIn(IReadOnlyList<ValueBase> values) =>
+        IndexIn(values.Count, values.Count > 0 ? values[0].ToString() : null);
+
+    private int IndexIn(int count, string? first)
+    {
+        if (!Scene)
+            return Index < count ? Index : -1;
+        if (count == 0)
+            return -1;
+        var at = first?.Trim().Equals(SceneAll, StringComparison.OrdinalIgnoreCase) == true ? 2 : 1;
+        return at < count ? at : -1;
+    }
+
+    /// <summary>The first value of a <c>scene</c> line for the ambient scripts of all times of day.</summary>
+    private const string SceneAll = "all";
+
     /// <summary>The value index of a <c>systemOf:N</c> scope, or -1.</summary>
     public int SystemValue =>
         Scope != null && Scope.StartsWith(SystemOfPrefix, StringComparison.Ordinal) &&
@@ -56,14 +90,30 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
             ? index
             : -1;
 
-    /// <summary>The message text for a bad value: the consequence, or the text of the effect.</summary>
+    /// <summary>What the game does with a value that is not valid, in plain words: the consequence, or the text of the
+    /// effect.</summary>
     public string ConsequenceText => Consequence ?? Effect switch
     {
-        RuleEffect.Degrade => "The engine ignores the value.",
+        RuleEffect.Degrade => "The game ignores this value.",
         RuleEffect.Drop => "The game drops this item.",
-        RuleEffect.LoadBreak => "The engine stops with an error when it loads the game data.",
-        _ => "The engine does not use the value.",
+        RuleEffect.Crash => "The game crashes with this value.",
+        RuleEffect.LoadBreak => "The game stops loading with this value.",
+        _ => "The game does not use this value.",
     };
+
+    /// <summary>What the game does when the key has no valid line, in plain words: the consequence, or the text of the
+    /// effect.</summary>
+    public string MissingText => Consequence ?? Effect switch
+    {
+        RuleEffect.LoadBreak => "The game stops loading without this key.",
+        _ => ConsequenceText,
+    };
+
+    /// <summary>True for an effect that makes the item unusable: the engine drops it, the game crashes with it, or
+    /// the load stops. A line that names such an item is then an error (decision D82, as decided on
+    /// 2026-10-18).</summary>
+    internal static bool MakesUnusable(RuleEffect effect) =>
+        effect is RuleEffect.Drop or RuleEffect.Crash or RuleEffect.LoadBreak;
 
     internal const string SystemOfPrefix = "systemOf:";
 }
@@ -77,8 +127,10 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
 /// closed.</param>
 /// <param name="Universe">True for <c>universe.ini</c>.</param>
 /// <param name="SystemFiles">True for the files that the <c>[system]</c> sections of <c>universe.ini</c> name.</param>
+/// <param name="RoomFiles">True for the room files that the <c>[Room]</c> sections of the base files name (decision D135
+/// of the M8b design).</param>
 internal sealed record RoleDefinition(string Name, string? Data, bool Last, string? Fallback,
-    IReadOnlyList<string> Paths, bool Engine, bool Universe, bool SystemFiles);
+    IReadOnlyList<string> Paths, bool Engine, bool Universe, bool SystemFiles, bool RoomFiles);
 
 /// <summary>Where the entries of a list come from (section 6.4 of the M21 design).</summary>
 /// <param name="Role">The role of the files, or null for a scoped list.</param>
@@ -88,8 +140,11 @@ internal sealed record RoleDefinition(string Name, string? Data, bool Last, stri
 /// <param name="Values">For a values list: the section type, the key and the value index whose distinct values are the
 /// entries. Null for a sections list.</param>
 /// <param name="Scoped">True when the rule gives the file (a scoped list).</param>
+/// <param name="Files">For a files list: the extension of the files whose paths are the entries, for example <c>.thn</c>
+/// (section 5.6 of the M8b design). Null for the other lists.</param>
 internal sealed record ListSource(string? Role, IReadOnlyList<string> Sections, IReadOnlyList<string>? Keys,
-    IReadOnlyDictionary<string, string> Where, (string Section, string Key, int Index)? Values, bool Scoped);
+    IReadOnlyDictionary<string, string> Where, (string Section, string Key, int Index)? Values, bool Scoped,
+    string? Files = null);
 
 /// <summary>One list of the rule data.</summary>
 /// <param name="Kind">The kind of the entries, for the glyph of the editor.</param>
@@ -180,7 +235,8 @@ internal sealed class ListRules
 
     private static RoleDefinition ReadRole(string name, JsonElement e) => new(name,
         String(e, "data"), Bool(e, "last"), String(e, "fallback"), Strings(e, "paths"),
-        !e.TryGetProperty("engine", out var engine) || engine.GetBoolean(), Bool(e, "universe"), Bool(e, "systemFiles"));
+        !e.TryGetProperty("engine", out var engine) || engine.GetBoolean(), Bool(e, "universe"), Bool(e, "systemFiles"),
+        Bool(e, "roomFiles"));
 
     private static ListDefinition ReadList(JsonElement e)
     {
@@ -195,7 +251,7 @@ internal sealed class ListRules
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             source = new ListSource(String(s, "role"), Strings(s, "sections"),
                 s.TryGetProperty("keys", out _) ? Strings(s, "keys") : null, where, values,
-                String(s, "scope") == "file");
+                String(s, "scope") == "file", String(s, "files"));
         }
         return new ListDefinition(e.GetProperty("id").GetString()!, e.GetProperty("label").GetString()!,
             String(e, "kind") ?? "Other", Bool(e, "hash"), Bool(e, "unique"), Strings(e, "requires"),
@@ -225,6 +281,7 @@ internal sealed class ListRules
             null or "none" => RuleEffect.None,
             "degrade" => RuleEffect.Degrade,
             "drop" => RuleEffect.Drop,
+            "crash" => RuleEffect.Crash,
             "loadBreak" => RuleEffect.LoadBreak,
             var other => throw new FormatException($"The effect '{other}' of {section} {key} is not known."),
         };
@@ -233,6 +290,7 @@ internal sealed class ListRules
             String(e, "consequence"), String(e, "evidence"))
         {
             Unused = Bool(e, "unused"),
+            Scene = Bool(e, "scene"),
         };
     }
 

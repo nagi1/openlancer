@@ -48,6 +48,11 @@ internal static class SectionKeys
         ["Ambient"] = new(SectionMatchKind.Singleton, null),
         ["Background"] = new(SectionMatchKind.Singleton, null),
         ["TexturePanels"] = new(SectionMatchKind.Singleton, null),
+        // Room files (decision D66 of the M8 design). In retail, each of these occurs at most once in a file, and only
+        // in the 446 room files. [CharacterPlacement] has a name line, but no nickname.
+        ["Room_Info"] = new(SectionMatchKind.Singleton, null),
+        ["CharacterPlacement"] = new(SectionMatchKind.Singleton, null),
+        ["PlayerShipPlacement"] = new(SectionMatchKind.Singleton, null),
     };
 
     /// <summary>

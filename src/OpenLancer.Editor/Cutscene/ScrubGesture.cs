@@ -16,6 +16,7 @@ internal sealed class ScrubGesture
     /// <summary>A step of the drag to a time.</summary>
     public void Drag(PreviewTransport transport, double time)
     {
+        transport.NoteScrub();
         if (time < transport.Time)
         {
             Held = time;

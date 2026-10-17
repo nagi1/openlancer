@@ -112,7 +112,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
     /// <summary>The Preview controls, the event filter and the zoom.</summary>
     public void Toolbar()
     {
-        PreviewControls.Draw(workspace.Transport);
+        PreviewControls.Draw(workspace.Transport, window.Settings);
         ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
@@ -369,6 +369,18 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
             window.Selection as ThnRef is { Kind: ThnElementKind.Entity } entity ? entity : null);
         TimelineEvent? hovered = null;
         var hoveredY = 0f;
+        // The stripe follows the row, not the line, so that the sub-rows of one row look like one row.
+        var stripes = new bool[lines.Count];
+        for (int i = 0, row = -1; i < lines.Count; i++)
+        {
+            if (lines[i].SubRow == 0)
+            {
+                row++;
+            }
+
+            stripes[i] = row % 2 == 1;
+        }
+
         var clipper = new ImGuiListClipper();
         clipper.Begin(lines.Count, rowHeight);
         while (clipper.Step())
@@ -376,7 +388,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
             for (var i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
             {
                 ImGui.PushID(i);
-                var hit = Line(model, view, lines[i], i, left, width, labelWidth, rowHeight, selection);
+                var hit = Line(model, view, lines[i], stripes[i], left, width, labelWidth, rowHeight, selection);
                 if (hit != null)
                 {
                     (hovered, hoveredY) = (hit, top + i * rowHeight + rowHeight / 2);
@@ -434,7 +446,8 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
     }
 
     /// <summary>Draws one line and reads its clicks. Returns the event under the mouse, or null.</summary>
-    private TimelineEvent? Line(TimelineModel model, TimelineView view, TimelineLine line, int index, float left,
+    /// <param name="stripe">True for the stripe color of every second row.</param>
+    private TimelineEvent? Line(TimelineModel model, TimelineView view, TimelineLine line, bool stripe, float left,
         float width, float labelWidth, float rowHeight, Selection selection)
     {
         var scale = ImGuiHelper.Scale;
@@ -450,7 +463,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         {
             drawList.AddRectFilled(min, rowMax, SelectedRowColor);
         }
-        else if (index % 2 == 1)
+        else if (stripe)
         {
             drawList.AddRectFilled(min, rowMax, StripeColor);
         }
@@ -480,7 +493,11 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
             ImGui.SetItemTooltip(tooltip);
         }
 
-        Label(drawList, line, view.Collapsed.Contains(line.Group.Id), min, labelWidth, rowHeight);
+        // The other sub-rows of a row have an empty label cell.
+        if (line.SubRow == 0)
+        {
+            Label(drawList, line, view.Collapsed.Contains(line.Group.Id), min, labelWidth, rowHeight);
+        }
 
         // The track cell.
         ImGui.SameLine(0, 0);
@@ -490,6 +507,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         var mouse = ImGui.GetMousePos();
         var mouseTime = view.TimeAt(mouse.X, left);
         var hit = hovered ? TimelineModel.HitTest(line, mouseTime, HitTolerance * scale / view.PixelsPerSecond) : null;
+        var marks = TimelineModel.Diamonds(line, MarkWidth(view));
         if (ImGui.IsItemActivated() && ImGui.IsMouseClicked(ImGuiMouseButton.Left) && !line.IsHeader)
         {
             PressTrack(line, hit, entity, view, mouseTime, mouse);
@@ -517,9 +535,14 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
                 ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeEW);
             }
 
-            ImGui.SetItemTooltip(TimelineModel.Describe(hit) + "\n\nClick to select it, Shift+click to add it. Drag " +
-                                 "to move it, or drag an edge to change its start or its length. Double-click to move " +
-                                 "the playhead to it. Right-click for more.");
+            // A mark of diamonds that overlap on the screen lists all of them.
+            var mark = hit.IsBar ? null : marks.FirstOrDefault(m => m.Events.Contains(hit));
+            var text = mark is { Events.Count: > 1 }
+                ? $"{mark.Events.Count} events here:\n" + string.Join("\n\n", mark.Events.Select(TimelineModel.Describe)) +
+                  "\n\nClick to select the last one, Shift+click to add it. Drag a box to select all of them."
+                : TimelineModel.Describe(hit) + "\n\nClick to select it, Shift+click to add it.";
+            ImGui.SetItemTooltip(text + " Drag to move it, or drag an edge to change its start or its length. " +
+                                 "Double-click to move the playhead to it. Right-click for more.");
         }
 
         drawList.PushClipRect(new Vector2(left, min.Y), rowMax, true);
@@ -529,23 +552,39 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         }
         else if (line.Row is { } row)
         {
-            foreach (var ev in row.Events.Where(e => e.IsBar))
+            foreach (var ev in line.Events.Where(e => e.IsBar))
             {
                 Bar(drawList, view, row, ev, left, min.Y, rowHeight, selection.Events.Contains(ev.Ref.Id),
                     ReferenceEquals(ev, hit));
             }
 
-            foreach (var ev in row.Events.Where(e => !e.IsBar))
+            foreach (var mark in marks)
             {
-                Diamond(drawList, view.XOf(ev.Time, left), min.Y + rowHeight / 2, EventFill(row.Kind, ev, 0.9f),
-                    selection.Events.Contains(ev.Ref.Id) || ReferenceEquals(ev, hit));
+                var last = mark.Events[^1];
+                var outlined = mark.Events.Any(e => selection.Events.Contains(e.Ref.Id) || ReferenceEquals(e, hit));
+                var x = view.XOf(mark.Time, left);
+                Diamond(drawList, x, min.Y + rowHeight / 2, EventFill(row.Kind, last, 0.9f), outlined);
+                if (mark.Events.Count > 1)
+                {
+                    drawList.AddText(new Vector2(x + (DiamondHalf + 2) * scale, min.Y + (rowHeight - ImGui.GetTextLineHeight()) / 2),
+                        TextColor, mark.Events.Count.ToString(CultureInfo.InvariantCulture));
+                }
             }
         }
 
         drawList.PopClipRect();
-        PixelLine.Horizontal(drawList, rowMax.Y - 1, min.X, rowMax.X, LineColor);
+        // The line under a row draws only under its last sub-row.
+        if (line.Row == null || line.SubRow == line.Row.SubRows - 1)
+        {
+            PixelLine.Horizontal(drawList, rowMax.Y - 1, min.X, rowMax.X, LineColor);
+        }
+
         return hit;
     }
+
+    /// <summary>The width of a diamond in seconds at the zoom of a view: diamonds closer than this overlap on the
+    /// screen.</summary>
+    private static double MarkWidth(TimelineView view) => 2 * DiamondHalf * ImGuiHelper.Scale / view.PixelsPerSecond;
 
     /// <summary>
     /// A press of the left button on a track. On an event: Shift adds or removes it, and else it joins the selection
@@ -660,7 +699,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException)
         {
-            window.Log.Add(ConsoleSeverity.Warning, EditController.Source, $"The drag did not start: {e.Message}");
+            window.Log.Add(ConsoleSeverity.Warning, EditController.Source, $"The drag did not start: {ErrorText.Of(e)}");
         }
     }
 
@@ -685,7 +724,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         }
         catch (InvalidOperationException e)
         {
-            window.Log.Add(ConsoleSeverity.Warning, EditController.Source, $"The drag did not start: {e.Message}");
+            window.Log.Add(ConsoleSeverity.Warning, EditController.Source, $"The drag did not start: {ErrorText.Of(e)}");
         }
     }
 
@@ -698,7 +737,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         }
         catch (InvalidOperationException e)
         {
-            window.Log.Add(ConsoleSeverity.Error, EditController.Source, $"The drag stopped: {e.Message}");
+            window.Log.Add(ConsoleSeverity.Error, EditController.Source, $"The drag stopped: {ErrorText.Of(e)}");
             drag!.Cancel();
             drag = null;
         }
@@ -734,8 +773,8 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
                 continue;
             }
 
-            picked.AddRange(TimelineModel.EventsIn(g.Lines[i], selecting.Time, view.TimeAt(mouse.X, left), tolerance)
-                .Select(e => e.Ref.Id));
+            picked.AddRange(TimelineModel.EventsIn(g.Lines[i], selecting.Time, view.TimeAt(mouse.X, left), tolerance,
+                MarkWidth(view)).Select(e => e.Ref.Id));
         }
 
         var events = selecting.Add ? workspace.SelectedEvents.Select(e => e.Id).Concat(picked) : picked;
@@ -1091,8 +1130,9 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
         view.Frame(events.Min(e => e.Time), events.Max(e => e.End), model.End, width);
     }
 
-    /// <summary>The index of the lane or the row of a name in the lines, or -1.</summary>
-    private static int IndexOf(IReadOnlyList<TimelineLine> lines, string name)
+    /// <summary>The index of the lane or the row of a name in the lines, or -1. For a row with sub-rows, it is the
+    /// index of the first sub-row.</summary>
+    internal static int IndexOf(IReadOnlyList<TimelineLine> lines, string name)
     {
         for (var i = 0; i < lines.Count; i++)
         {

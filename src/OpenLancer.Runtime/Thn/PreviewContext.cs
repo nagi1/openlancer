@@ -238,7 +238,7 @@ public sealed record PreviewContext(PreviewContextKind Kind, string? Base, strin
 
     /// <summary>Two contexts with the same kind, room and fixture. The nicknames compare without case, as the game data
     /// finds them.</summary>
-    private static bool Same(PreviewContext a, PreviewContext b) =>
+    public static bool Same(PreviewContext a, PreviewContext b) =>
         a.Kind == b.Kind && string.Equals(a.Base, b.Base, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(a.Room, b.Room, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(a.Fixture, b.Fixture, StringComparison.OrdinalIgnoreCase);

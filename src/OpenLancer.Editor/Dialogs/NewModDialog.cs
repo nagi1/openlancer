@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using ImGuiNET;
 using OpenLancer.Data.Mods;
+using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Dialogs;
 
@@ -67,7 +68,7 @@ internal sealed class NewModDialog : ModalDialog
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            error = e.Message;
+            error = ErrorText.Of(e);
             return;
         }
 

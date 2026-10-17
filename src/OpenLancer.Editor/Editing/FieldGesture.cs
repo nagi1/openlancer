@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
+using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Editing;
@@ -100,7 +101,7 @@ internal abstract class LineEditGesture : FieldGesture
         }
         catch (Exception e) when (e is ArgumentException or InvalidOperationException)
         {
-            Error = e.Message;
+            Error = ErrorText.Of(e);
             return false;
         }
     }
@@ -191,7 +192,7 @@ internal sealed class NumberLineGesture : LineEditGesture
         }
         catch (ArgumentException e)
         {
-            Error = e.Message;
+            Error = ErrorText.Of(e);
             return;
         }
 

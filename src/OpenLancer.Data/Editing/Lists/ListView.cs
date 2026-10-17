@@ -24,6 +24,15 @@ public sealed record ListEntry(string Value, SectionRef? Section, ValueOrigin Or
     /// <summary>True for an entry of the active mod that the mod files do not have yet: a section of an edit that is
     /// not saved.</summary>
     public bool Unsaved { get; init; }
+
+    /// <summary>True when the entry is not <see cref="Usable"/> and the active mod made it so: the active mod adds or
+    /// changes the section of the entry, or for a repeated name of a unique list, one of the sections with the name. A
+    /// section of a whole file of the active mod counts too.</summary>
+    public bool UnusableByActiveMod { get; init; }
+
+    /// <summary>The display name of an entry without a section, for example the file name of a cutscene without its
+    /// extension. Null for an entry of a section, whose name comes from the section.</summary>
+    public string? Name { get; init; }
 }
 
 /// <summary>One line value that names an entry of a list (see <see cref="DataLists.ReferencesTo"/>).</summary>
@@ -42,6 +51,14 @@ public sealed record ListReference(SectionRef Section, string Key, int Line, int
 /// path when the edit is not saved.</param>
 public sealed record RemovedEntry(string List, string Value, SectionRef LowerSection, string ModPath);
 
+/// <summary>Why the engine cannot use an entry (see <see cref="DataLists.Unusable"/>).</summary>
+/// <param name="Reason">What is wrong with the entry, as a clause that ends with a period.</param>
+/// <param name="Consequence">What the game does with the entry, or null when the rule of the line that names the
+/// entry tells it.</param>
+/// <param name="ByActiveMod">True when the active mod made the entry unusable. Then each line of any layer under a
+/// closed rule that names the entry is an error.</param>
+internal sealed record Unusability(string Reason, string? Consequence, bool ByActiveMod);
+
 /// <summary>
 /// The entries of one list for one scope, as W gives them now. A list of a rule with more than one list holds the
 /// entries of each list in order, and the first list with a name gives the entry.
@@ -52,8 +69,13 @@ public sealed class ListView
 
     private readonly Dictionary<string, ListEntry> byValue;
 
+    // The key of a value for a look-up, or null to compare the value text without letter case.
+    private readonly Func<string, string?>? keyOf;
+
+    /// <param name="keyOf">The key of a value, for a list whose values compare in another way than as text without
+    /// letter case, for example as paths. Null for the text.</param>
     internal ListView(string id, string label, string kind, bool closed, bool isEnum, IReadOnlyList<ListEntry> entries,
-        IReadOnlyList<IReadOnlyList<string>> collisions)
+        IReadOnlyList<IReadOnlyList<string>> collisions, Func<string, string?>? keyOf = null)
     {
         Id = id;
         Label = label;
@@ -62,9 +84,13 @@ public sealed class ListView
         IsEnum = isEnum;
         Entries = entries;
         Collisions = collisions;
+        this.keyOf = keyOf;
         byValue = new Dictionary<string, ListEntry>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in entries)
-            byValue.TryAdd(entry.Value, entry);
+        {
+            if (Key(entry.Value) is { } key)
+                byValue.TryAdd(key, entry);
+        }
     }
 
     /// <summary>The list of the names of a C# enum, for example a key of an engine-fixed set. The names of an enum do not
@@ -100,8 +126,11 @@ public sealed class ListView
     public IReadOnlyList<IReadOnlyList<string>> Collisions { get; }
 
     /// <summary>The entry with the name, or null when the name is outside the list. The name compares without letter
-    /// case.</summary>
-    public ListEntry? Find(string value) => byValue.GetValueOrDefault(value.Trim());
+    /// case. A list of paths compares the values as paths, so <c>scripts\bases\X.thn</c> and
+    /// <c>Scripts/Bases/x.THN</c> name one entry.</summary>
+    public ListEntry? Find(string value) => Key(value) is { } key ? byValue.GetValueOrDefault(key) : null;
+
+    private string? Key(string value) => keyOf == null ? value.Trim() : keyOf(value.Trim());
 
     /// <summary>The groups of names with one FLHash that hold the name.</summary>
     public IEnumerable<IReadOnlyList<string>> CollisionsOf(string value) =>

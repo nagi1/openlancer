@@ -213,6 +213,17 @@ public sealed class CutscenePlayer : ICutscenePlayer
             obj.Light?.Light.Color, path);
     }
 
+    /// <summary>
+    /// The voice and the actor of the scene object with a name, or null when the scene has no such object. A
+    /// <c>VoiceProfile_</c> sound with a speaker plays its line with the voice of the scene object of the speaker
+    /// (ThnSound.cs:78-102). A bound NPC gives the object its voice. The names compare without letter case.
+    /// </summary>
+    public (string? Voice, string? Actor)? VoiceOf(string name)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return cutscene.GetObject(name) is { } obj ? (obj.Voice, obj.Actor) : null;
+    }
+
     public void Dispose()
     {
         if (disposed)

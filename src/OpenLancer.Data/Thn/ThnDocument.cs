@@ -59,7 +59,17 @@ internal readonly record struct ThnPin(ThnElementId? Element, ThnPath Path)
 
 /// <summary>The state of the working copy of a cutscene: W and the pins. The state cannot change, so the edit history
 /// keeps old states to undo edits.</summary>
-internal sealed record ThnDocumentState(ThnScriptModel Working, ImmutableHashSet<ThnPin> Pins) : IFileState;
+internal sealed record ThnDocumentState(ThnScriptModel Working, ImmutableHashSet<ThnPin> Pins) : IFileState
+{
+    /// <summary>The state of a new cutscene before New cutscene, and after an undo of it: no script, and an empty
+    /// W (decision D134 of the M8b design).</summary>
+    public static readonly ThnDocumentState Absent =
+        new(new ThnScriptModel(ThnTable.Empty, 0, [], []), []) { Exists = false };
+
+    /// <summary>False for the state of a new cutscene that the user did not make yet, or whose New cutscene an undo
+    /// took back. The session then gives no W for the cutscene, and a save deletes its file.</summary>
+    public bool Exists { get; init; } = true;
+}
 
 /// <summary>The text that a save writes for a cutscene, or why the save cannot write it.</summary>
 /// <param name="Text">The ASCII text of the patch or of the whole file, or null to delete the patch file.</param>
@@ -197,9 +207,21 @@ internal sealed class ThnDocument : IEditFile
     }
 
     /// <summary>
+    /// The document of a new cutscene of the active mod, at a path that the edit view does not have (decision D134 of
+    /// the M8b design). It starts absent: no file, no B and an empty W, and <see cref="ThnEdits.NewCutscene"/> makes the
+    /// script. A save of an absent document writes nothing, or deletes the file of an earlier save.
+    /// </summary>
+    /// <param name="path">The install path, in <see cref="VfsPath.Normalize"/> form.</param>
+    public static ThnDocument New(string path, IThnEvaluator thn) => New(path, thn, ThnElementId.Counter());
+
+    private static ThnDocument New(string path, IThnEvaluator thn, Func<ThnElementId> ids) =>
+        new(path, null, ThnFileKind.NewHere, ThnDocumentState.Absent, "", false, null, null, thn, ids);
+
+    /// <summary>
     /// The document that a saved file of the active mod gives, with the same B. The editor uses it after a save, so
     /// that W is what a reload of the saved files gives (rule F14). The elements that the load makes keep the ids of
-    /// the elements of W in their order, so a selection survives a save.
+    /// the elements of W in their order, so a selection survives a save. A new cutscene without content gives the
+    /// absent document, for example after a save that deleted its file.
     /// </summary>
     /// <param name="content">The bytes of the patch or of the whole file, or null when the active mod has no patch
     /// now.</param>
@@ -208,6 +230,8 @@ internal sealed class ThnDocument : IEditFile
     /// not evaluate. A save checks its content first, so this does not occur after a save.</exception>
     public ThnDocument Reopen(byte[]? content, string file)
     {
+        if (content == null && Kind == ThnFileKind.NewHere)
+            return New(Path, thn, ids);
         (string File, byte[] Bytes)? source = content == null ? null : (file, content);
         return Load(Path, Base, IsWholeFile ? source : null, IsWholeFile ? null : source, thn, ids, ReusedIds(), out var problem)
                ?? throw new InvalidOperationException(problem);
@@ -269,6 +293,9 @@ internal sealed class ThnDocument : IEditFile
     {
         if (ReadOnlyReason != null || state == Initial)
             return null;
+        // An absent new cutscene deletes the file of an earlier save, and else changes nothing.
+        if (!state.Exists)
+            return SourceHash == null ? null : new ThnFileText(null, null);
         var text = Text(state);
         initialText ??= Text(Initial);
         return text.Problem == null && initialText.Problem == null && text.Text == initialText.Text ? null : text;
@@ -283,6 +310,9 @@ internal sealed class ThnDocument : IEditFile
     public string? SaveProblem(ThnFileText text)
     {
         const string start = "The saved text does not give the edited cutscene";
+        // An absent new cutscene has no file.
+        if (!state.Exists)
+            return text.Text == null ? null : $"{start}: the cutscene does not exist, so its file has no text.";
         var globals = Working.ToGlobals();
         ThnScriptModel? result;
         try
@@ -390,7 +420,7 @@ internal sealed class ThnDocument : IEditFile
     }
 
     /// <summary>The model with the origin -1 for each element, as for the elements of a whole file.</summary>
-    private static ThnScriptModel WithoutOrigins(ThnScriptModel model) => model with
+    internal static ThnScriptModel WithoutOrigins(ThnScriptModel model) => model with
     {
         Entities = [.. model.Entities.Select(e => e with { Origin = -1 })],
         Events = [.. model.Events.Select(e => e with { Origin = -1 })],
@@ -409,6 +439,8 @@ internal sealed class ThnDocument : IEditFile
 
     private ThnFileText Text(ThnDocumentState s)
     {
+        if (!s.Exists)
+            return new ThnFileText(null, null);
         try
         {
             if (IsWholeFile)

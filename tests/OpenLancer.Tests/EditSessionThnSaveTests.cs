@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
@@ -345,6 +346,84 @@ public sealed class EditSessionThnSaveTests
         // The camera has no userprops in B, so the patch sets the new record.
         var set = Assert.Single(Assert.Single(Patch(ws).Entities).Sets);
         Assert.Equal(("userprops", (ThnValue)Record(F("note", T("a \"b\" \\ c")))), (set.Path.Text, set.Value));
+    }
+
+    /// <summary>
+    /// Decision D137 of the M8b design: an error of the checks of a cutscene that W adds stops the save and Play, with
+    /// the message that the game crashes and the place of the error. A fix makes the save pass.
+    /// </summary>
+    [Fact]
+    public void ANewCutsceneErrorStopsTheSaveWithTheCrashMessageAndThePlace()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var cam = Entity(session, "Cam_A");
+        session.Execute(ThnEdits.Set(cam, Fovh, T("wide")));
+
+        var error = Assert.Single(session.CutsceneErrors(ScriptPath));
+        Assert.Equal(DiagnosticSeverity.Error, error.Severity);
+        Assert.StartsWith("The game crashes when it plays this cutscene. entity \"Cam_A\", cameraprops.fovh: ",
+            error.Message);
+        Assert.Equal((ThnElementKind.Entity, "cameraprops.fovh", "\"Cam_A\""),
+            (error.Cutscene!.Kind, error.Cutscene.Value, error.Cutscene.Key));
+        Assert.Equal(cam.Id, error.Cutscene.ElementIn(W(session))!.Id);
+        var result = session.Save();
+        Assert.False(result.Saved);
+        Assert.Contains(error, result.Problems);
+        Assert.Null(PatchText(ws));
+        // Play saves first, and the same gate stops it.
+        Assert.NotNull(Editor.Editing.EditController.Gate(session));
+
+        session.Execute(ThnEdits.Set(cam, Fovh, N(30)));
+        Assert.Empty(session.CutsceneErrors(ScriptPath));
+        AssertSaved(session.Save());
+    }
+
+    /// <summary>An error that the lower cutscene already has is not an edit of the active mod, so it does not stop the
+    /// save (<see cref="Diagnostic.NewIn"/>).</summary>
+    [Fact]
+    public void AnErrorThatTheLowerCutsceneHasDoesNotStopTheSave()
+    {
+        using var ws = Workspace(script: Script.Replace("cameraprops = { fovh = 10,", "cameraprops = { fovh = \"wide\","));
+        var session = ws.Session("act");
+        session.Execute(ThnEdits.Set(Entity(session, "Cam_A"), Hvaspect, N(2)));
+
+        Assert.Empty(session.CutsceneErrors(ScriptPath));
+        AssertSaved(session.Save());
+    }
+
+    /// <summary>The gate skips a cutscene that the editor cannot change: here the active mod has a whole file and a
+    /// patch for it. Such a file gets the merge error instead.</summary>
+    [Fact]
+    public void TheGateSkipsAReadOnlyCutscene()
+    {
+        using var ws = Workspace(new()
+        {
+            [WholeFile] = Script.Replace("cameraprops = { fovh = 10,", "cameraprops = { fovh = \"wide\","),
+            [PatchFile] = "ol_thn_patch = 1\n",
+        });
+        var session = ws.Session("act");
+
+        Assert.NotNull(session.CutsceneReadOnlyReason(ScriptPath));
+        Assert.DoesNotContain(session.SaveProblems(), p => p.Message.StartsWith(EditSession.CutsceneCrash));
+    }
+
+    /// <summary>A whole cutscene file of the active mod that does not evaluate stops the save. The engine reads it with
+    /// the same Thorn VM and throws when the game plays it. A modder can write such a file outside the editor.</summary>
+    [Fact]
+    public void AWholeFileThatDoesNotEvaluateStopsTheSave()
+    {
+        using var ws = Workspace(new() { [WholeFile] = "duration = (" });
+        var session = ws.Session("act");
+
+        var result = session.Save();
+
+        Assert.False(result.Saved);
+        var error = Assert.Single(result.Problems);
+        Assert.Equal(ScriptPath, error.Source);
+        Assert.StartsWith("The game crashes when it plays this cutscene. The editor cannot read the cutscene file of " +
+                          "the active mod: ", error.Message);
+        Assert.Equal(ScriptPath, error.Cutscene!.Path);
     }
 
     /// <summary>The engine evaluator, but each number 20 of a THN patch that it reads gives 21.</summary>

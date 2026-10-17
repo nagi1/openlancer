@@ -542,4 +542,99 @@ public sealed class RemovedEntriesTests
         Assert.Empty(session.Lists.Removed());
         Assert.Equal(ListProblemKind.Missing, Assert.Single(session.Lists.Problems(ListWorkspace.Li01("ring1"))).Kind);
     }
+
+    /// <summary>
+    /// The files source of the list of the cutscenes (decision D136): each .thn file of the edit view, as a path below
+    /// the data folder in the letter case of the file, and each new cutscene of W. The name is the file name without its
+    /// extension. An undo of New cutscene takes the new entry away.
+    /// </summary>
+    [Fact]
+    public void TheCutsceneListHoldsTheThnFilesOfTheEditViewAndTheNewCutscenesOfW()
+    {
+        using var ws = RoomWorkspace.Create(lowerFiles: new()
+        {
+            [@"files\DATA\MODS\lower\CUTSCENES\low.thn"] = "duration = 1\nentities = {}\nevents = {}\n",
+        });
+        var session = ws.Session("act");
+
+        var list = session.Lists.List("cutscene")!;
+        Assert.True(list.Closed);
+        Assert.Equal(["Li_01_bar_ambi_int_01", "Li_01_bar_ambi_int_s", "Li_01_bar_enter_01", "Li_01_bar_hardpoint_01",
+            "Li_01_deck_hardpoint_01", "Li_01_deck_land_01", "Li_01_deck_launch_01", "low"],
+            list.Entries.Select(e => e.Name!).Order(StringComparer.OrdinalIgnoreCase));
+        var bar = list.Find(@"Scripts\Bases\Li_01_bar_hardpoint_01.thn")!;
+        Assert.Equal(@"SCRIPTS\BASES\Li_01_bar_hardpoint_01.thn", bar.Value);
+        Assert.Equal((ValueOrigin.Base, (string?)null, false), (bar.Origin, bar.ModId, bar.Unsaved));
+        Assert.Equal((ValueOrigin.LowerMod, "lower"), (list.Find(@"MODS\lower\CUTSCENES\low.thn")!.Origin,
+            list.Find(@"MODS\lower\CUTSCENES\low.thn")!.ModId));
+
+        session.Execute(Data.Thn.ThnEdits.NewCutscene(@"DATA\MODS\act\CUTSCENES\bar_shot.thn",
+            Data.Thn.ThnTemplates.NewScript()));
+        var added = session.Lists.List("cutscene")!.Find(@"mods/ACT/cutscenes/BAR_SHOT.thn")!;
+        Assert.Equal((@"MODS\act\CUTSCENES\bar_shot.thn", "bar_shot", ValueOrigin.ActiveMod, true),
+            (added.Value, added.Name, added.Origin, added.Unsaved));
+
+        session.Undo();
+        Assert.Null(session.Lists.List("cutscene")!.Find(@"MODS\act\CUTSCENES\bar_shot.thn"));
+    }
+
+    /// <summary>The values of the list of the cutscenes compare as paths below the data folder: without letter case,
+    /// with either separator, and without empty parts or "." parts, as the engine finds the files.</summary>
+    [Theory]
+    [InlineData(@"Scripts\Bases\Li_01_bar_enter_01.thn")]
+    [InlineData(@"scripts/bases/LI_01_BAR_ENTER_01.THN")]
+    [InlineData(@"Scripts\\Bases\.\Li_01_bar_enter_01.thn")]
+    [InlineData(@" Scripts\Bases\Li_01_bar_enter_01.thn ")]
+    public void TheValuesOfTheCutsceneListCompareAsPaths(string value)
+    {
+        using var ws = RoomWorkspace.Create();
+        var session = ws.Session("act");
+
+        Assert.Equal("Li_01_bar_enter_01", session.Lists.List("cutscene")!.Find(value)?.Name);
+    }
+
+    /// <summary>
+    /// The scene rule reads the value that the engine reads, by its place: value 1, or value 2 after <c>all</c>,
+    /// whatever its text (RoomInfo.cs:27-41). A rule that took the first value that ends with .thn would read the
+    /// script of <c>all, x.thn, ambient</c>, where the engine reads <c>ambient</c>, and no value of a script without the
+    /// .thn ending.
+    /// </summary>
+    [Theory]
+    [InlineData("all, ambient, x.thn", 2)]
+    [InlineData("ambient, x.thn, TRAFFIC_PRIORITY", 1)]
+    [InlineData("ALL, ambient, x.thn, TRAFFIC_PRIORITY", 2)]
+    [InlineData("all, x.thn, ambient", 2)]
+    [InlineData(@"ambient, Scripts\x", 1)]
+    [InlineData("all, ambient", -1)]
+    [InlineData("x.thn", -1)]
+    public void TheSceneRuleReadsTheValueByItsPlace(string line, int index)
+    {
+        var rule = ListRules.Retail.Rules("room", "Room_Info", "scene").Single();
+        var entry = new LibreLancer.Data.Ini.Entry(new Section("Room_Info"), "scene");
+        foreach (var value in line.Split(','))
+            entry.Add(new StringValue(value.Trim()));
+
+        Assert.True(rule.Scene);
+        Assert.Equal(index, rule.IndexIn(entry));
+        // The values of a line of the Inspector give the same place, so a pick replaces the value that the rule reads.
+        Assert.Equal(index, rule.IndexIn(entry.ToList()));
+        Assert.Equal(0, ListRules.Retail.Rules("room", "Room_Info", "set_script").Single().IndexIn(entry));
+    }
+
+    /// <summary>The reverse index of the list of the cutscenes holds the place of the value of each scene line.</summary>
+    [Fact]
+    public void TheReferencesOfAScriptHoldThePlaceOfTheSceneValue()
+    {
+        using var ws = RoomWorkspace.Create();
+        var session = ws.Session("act");
+
+        var all = Assert.Single(session.Lists.ReferencesTo("cutscene", @"Scripts\Bases\Li_01_bar_ambi_int_01.thn"));
+        Assert.Equal(("scene", 0, 2), (all.Key, all.Line, all.Index));
+        // The line spells the path in another way than the file.
+        var priority = Assert.Single(session.Lists.ReferencesTo("cutscene", @"SCRIPTS\BASES\Li_01_bar_ambi_int_s.thn"));
+        Assert.Equal(("scene", 1, 1), (priority.Key, priority.Line, priority.Index));
+        var start = Assert.Single(session.Lists.ReferencesTo("cutscene", @"Scripts\Bases\Li_01_bar_enter_01.thn"));
+        Assert.Equal("start_script", start.Key);
+        Assert.Empty(session.Lists.Problems(RoomWorkspace.Section(session, RoomWorkspace.BarPath, "Room_Info")));
+    }
 }

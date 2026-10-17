@@ -53,13 +53,20 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     private double catchUpWall;
     private double catchUpStart;
 
-    // The timeline of W, made again when W or the context changes.
-    private (ThnScriptModel? Working, ScriptPlay Play, TimelineModel? Model) timeline;
+    // The timeline of W, made again when W or the context changes, and at the end of a gesture, which pinned the
+    // sub-rows of the bars.
+    private (ThnScriptModel? Working, ScriptPlay Play, TimelineModel? Model, bool Pinned) timeline;
 
     // The selection of the tab of the center group that does not show, and the tab that showed in the last frame.
     private object? parkedScene;
     private object? parkedCutscene;
     private bool cutsceneShown;
+
+    // The sound of the preview (section 5.3 of the M8b design): the engine output, the scheduler, and the timeline
+    // whose cues the scheduler has. A null timeline makes the next frame set the cues and start their decode.
+    private readonly CutsceneSound sound = new(window);
+    private TimelineAudio? audio;
+    private TimelineModel? cueModel;
 
     /// <summary>The install path of the open cutscene, in normal form, or null.</summary>
     public string? Path { get; private set; }
@@ -117,7 +124,8 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     public double Duration => Path != null && session?.Edits.Cutscene(Path) is { } working ? working.Duration : 0;
 
     /// <summary>The timeline of W in the context, or null when no cutscene is open or the session cannot read
-    /// it.</summary>
+    /// it. The sub-rows of the bars stay where they can, and they stay pinned while a gesture is open (decision
+    /// D131).</summary>
     public TimelineModel? Timeline
     {
         get
@@ -128,9 +136,12 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
             }
 
             var play = Plan?.PlayOf(Path) ?? ScriptPlay.Normal;
-            if (!ReferenceEquals(timeline.Working, working) || timeline.Play != play || timeline.Model == null)
+            var pin = window.IsEditing;
+            if (!ReferenceEquals(timeline.Working, working) || timeline.Play != play || timeline.Model == null ||
+                timeline.Pinned && !pin)
             {
-                timeline = (working, play, TimelineModel.Build(Path, working, ThornEvaluator.Instance.Symbols, play));
+                timeline = (working, play, TimelineModel.Build(Path, working, ThornEvaluator.Instance.Symbols, play,
+                    timeline.Model, pin), pin);
             }
 
             return timeline.Model;
@@ -172,9 +183,8 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         }
 
         session.Edits.Changed += Changed;
-        var package = window.Settings.PlayPackageOf(session.Profile.FilePath);
-        Choices = PreviewContext.Choices(Path, References(), data.Items).Select(c => c with { ShipPackage = package })
-            .ToList();
+        UseSound(data);
+        Choices = MakeChoices(data);
         SetContext(Choices[0]);
         SelectRoot();
         // The line goes to the Console and to the log file, so that the bench records it too.
@@ -446,6 +456,9 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
 
         var previous = Transport;
         DropPreview();
+        // The context decides which events run, so the cues change.
+        audio?.StopAll();
+        cueModel = null;
         Context = context;
         try
         {
@@ -453,7 +466,7 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         }
         catch (ArgumentException e)
         {
-            Problem = e.Message;
+            Problem = ErrorText.Of(e);
             return;
         }
 
@@ -468,13 +481,15 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     }
 
     /// <summary>
-    /// Runs the clock for one editor frame. While the game data loads again, nothing builds or steps, because a build
-    /// loads models with the resources of the session.
+    /// Runs the clock for one editor frame, then the sound of the preview. While the game data loads again, nothing
+    /// builds or steps, because a build loads models with the resources of the session, and no sound plays.
     /// </summary>
     public void Frame(double elapsed)
     {
         if (Transport == null || clock == null || session is not { GameData: not null, IsBusy: false })
         {
+            // Else the sound plays on while the picture waits for the reload after a save.
+            audio?.StopAll();
             return;
         }
 
@@ -497,16 +512,100 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         }
 
         Progress(elapsed);
+        Sound();
     }
 
-    /// <summary>The game data loaded again after a save. The plan reads the new data, and the clock builds
-    /// again.</summary>
+    /// <summary>
+    /// A frame in which the preview does not run, because neither the Cutscene tab nor the Timeline shows. The clock
+    /// waits, so the sound stops too. Else it plays on without the picture. The next frame that runs starts the active
+    /// sounds again at the playhead.
+    /// </summary>
+    public void Wait() => audio?.StopAll();
+
+    /// <summary>
+    /// The sound of one frame (decision D132): the cues of the timeline, and a play that goes on or starts again. The
+    /// sound plays only while the preview plays forward: not in the pre-roll, not during a catch-up and not during a
+    /// drag of the playhead, and only while the Sound toggle is on.
+    /// </summary>
+    private void Sound()
+    {
+        audio ??= new TimelineAudio(sound);
+        var model = Timeline;
+        if (!ReferenceEquals(model, cueModel))
+        {
+            var first = cueModel == null;
+            cueModel = model;
+            var cues = model != null && session?.Edits.Cutscene(Path!) is { } working
+                ? TimelineAudio.Cues(model, working)
+                : [];
+            audio.SetCues(cues);
+            if (first)
+            {
+                sound.Preload(cues);
+            }
+        }
+
+        audio.Frame(Transport!.Time, Transport.Jumps, Transport.PlaysSound && window.Settings.PreviewSound,
+            Transport.Speed);
+    }
+
+    /// <summary>Plays the sound of a SOUND entity of the open cutscene once from its start, for the Preview row of the
+    /// Inspector. Returns false when the entity has no sound to play.</summary>
+    public bool PlaySound(ThnRef entity)
+    {
+        if (Element(entity) is not { } element || TimelineAudio.CueOf(element.Table, element.Id) is not { } cue)
+        {
+            return false;
+        }
+
+        sound.PlayOnce(cue);
+        return true;
+    }
+
+    /// <summary>Stops the sound of the Preview row of the Inspector.</summary>
+    public void StopSound() => sound.StopSingle();
+
+    /// <summary>The sound uses a load of the game data. A new load gets a new sound manager, so the next play reads the
+    /// sounds of the new data.</summary>
+    private void UseSound(GameDataManager data)
+    {
+        audio?.StopAll();
+        sound.Use(data);
+        sound.Scene = name => Visible?.VoiceOf(name);
+        cueModel = null;
+    }
+
+    /// <summary>
+    /// The game data loaded again after a save. The sound gets a new sound manager, the contexts that fit the cutscene
+    /// come again from the INI files, the plan reads the new data, and the clock builds again. So the room of a room
+    /// line that the save wrote is a choice now. The chosen context stays when it is still a choice.
+    /// </summary>
     public void DataReplaced()
     {
+        if (Path == null || window.Session?.GameData is not { } data)
+        {
+            return;
+        }
+
+        UseSound(data);
         if (Context != null)
         {
-            SetContext(Context);
+            Choices = MakeChoices(data);
+            SetContext(ContextAfterReload(Choices, Context));
         }
+    }
+
+    /// <summary>The context after a reload of the game data: the chosen context when the new choices still have it,
+    /// else the first choice.</summary>
+    internal static PreviewContext ContextAfterReload(IReadOnlyList<PreviewContext> choices, PreviewContext chosen) =>
+        choices.FirstOrDefault(c => PreviewContext.Same(c, chosen)) ?? choices[0];
+
+    /// <summary>The contexts that fit the open cutscene in the game data, with the ship package of Play.</summary>
+    private List<PreviewContext> MakeChoices(GameDataManager data)
+    {
+        var package = window.Settings.PlayPackageOf(session!.Profile.FilePath);
+        return PreviewContext.Choices(Path!, References(), data.Items).Select(c => c with { ShipPackage = package })
+            .ToList();
     }
 
     /// <summary>
@@ -541,6 +640,9 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         }
 
         DropPreview();
+        audio?.StopAll();
+        sound.StopSingle();
+        cueModel = null;
         Context = null;
         Path = null;
         session = null;
@@ -548,16 +650,22 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         timeline = default;
     }
 
-    /// <summary>Closes the cutscene and forgets the references and the kept selections, for example when the profile
-    /// closes.</summary>
+    /// <summary>Closes the cutscene and forgets the references, the kept selections and the sound manager of the game
+    /// data, for example when the profile closes.</summary>
     public void Reset()
     {
         Close();
+        sound.Use(null);
         scan = default;
         (parkedScene, parkedCutscene, cutsceneShown) = (null, null, false);
     }
 
-    public void Dispose() => Reset();
+    /// <summary>Closes the cutscene and frees the audio of the window.</summary>
+    public void Dispose()
+    {
+        Reset();
+        sound.Dispose();
+    }
 
     /// <summary>Disposes the clock and forgets the preview of the context.</summary>
     private void DropPreview()
@@ -621,6 +729,15 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     /// </summary>
     private void Changed(EditChange change)
     {
+        // An undo of New cutscene takes the open cutscene away, so the clock cannot build it.
+        if (Path != null && change.Cutscenes.Contains(Path, VfsPath.Comparer) && session?.Edits.Cutscene(Path) == null)
+        {
+            window.Log.Add(ConsoleSeverity.Info, EditorWindow.EditorSource,
+                $"Closed cutscene {Path}, because it does not exist now.");
+            Close();
+            return;
+        }
+
         if (clock == null || Plan == null || !change.Cutscenes.Any(UsedByPlan))
         {
             return;

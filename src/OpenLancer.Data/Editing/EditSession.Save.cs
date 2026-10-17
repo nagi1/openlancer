@@ -140,19 +140,28 @@ public sealed partial class EditSession
     /// its patches: the errors of the field checks (<see cref="Check(SectionRef)"/>, decision D110) and of the list
     /// checks (<see cref="CheckLists"/>). A section that the editor cannot change is not checked.</item>
     /// <item>Each line of any layer under a closed rule that names an entry that the active mod removed (decision
-    /// D81).</item>
+    /// D81), or that the active mod made unusable without a delete (decision D82, as the user decided it on
+    /// 2026-10-18). For example, the active mod removes the points of a curve, and a retail light names the curve.
+    /// See <see cref="DataLists.ReferrerErrors"/>.</item>
     /// <item>Each FLHash collision of a hash list that the active mod adds a name to.</item>
+    /// <item>The errors of the checks of each cutscene that the active mod changes, that the lower cutscene does not
+    /// have, and each whole cutscene file of the active mod that does not evaluate (decision D137 of the M8b design,
+    /// see <see cref="CutsceneErrors"/>). The game crashes when it plays such a cutscene.</item>
     /// </list>
+    /// <para>Each list error tells what the game does with the data, for example "The game stops loading with this
+    /// value."</para>
     /// </remarks>
     public IReadOnlyList<Diagnostic> SaveProblems()
     {
         if (ActiveMod is not { } active)
             return [];
         var problems = new List<Diagnostic>();
-        var seen = new HashSet<(SectionRef?, string?, string)>();
+        // The place of a cutscene error tells two cutscenes with the same message apart.
+        var seen = new HashSet<(SectionRef?, string?, string, ThnLocation?)>();
         void Add(Diagnostic problem)
         {
-            if (problem.Severity == DiagnosticSeverity.Error && seen.Add((problem.Target, problem.Key?.ToLowerInvariant(), problem.Message)))
+            if (problem.Severity == DiagnosticSeverity.Error &&
+                seen.Add((problem.Target, problem.Key?.ToLowerInvariant(), problem.Message, problem.Cutscene)))
                 problems.Add(problem);
         }
 
@@ -176,15 +185,8 @@ public sealed partial class EditSession
             }
         }
 
-        foreach (var removed in Lists.Removed())
-        {
-            var scope = Lists.IsScoped(removed.List) ? removed.LowerSection.Path : null;
-            foreach (var reference in Lists.ReferencesTo(removed.List, removed.Value, scope).Where(r => r.Rule.Closed))
-            {
-                foreach (var problem in Lists.Problems(reference.Section).Where(p => p.Kind == ListProblemKind.Removed))
-                    Add(problem.Diagnostic);
-            }
-        }
+        foreach (var problem in Lists.ReferrerErrors())
+            Add(problem.Diagnostic);
 
         var changed = ActiveChangedPaths().ToHashSet(VfsPath.Comparer);
         foreach (var definition in Lists.RuleData.Lists.Values.Where(d => d is { Hash: true, Source.Role: not null }))
@@ -200,6 +202,9 @@ public sealed partial class EditSession
                     Add(problem.Diagnostic);
             }
         }
+
+        foreach (var problem in CutsceneGateErrors(active))
+            Add(problem);
         return problems;
     }
 
@@ -275,11 +280,9 @@ public sealed partial class EditSession
         var path = cutscene.Path;
         if (cutscene.ChangedFile() is not { } file)
             return null;
-        if (cutscene.IsWholeFile && RepoCheck.RepoRoot(active.Folder) is { } repo)
+        if (cutscene.IsWholeFile && WholeCutsceneInRepo(active) is { } inRepo)
         {
-            problems.Add(Diagnostic.Error(path, $"The mod '{active.Id}' is in the OpenLancer repo {repo}. The editor writes " +
-                                                "no whole cutscene file into it, because the content scan cannot tell such a " +
-                                                "file from a copy of a retail script (decision D70)."));
+            problems.Add(Diagnostic.Error(path, inRepo));
             return null;
         }
         if ((file.Problem ?? cutscene.SaveProblem(file)) is { } problem)
@@ -308,6 +311,13 @@ public sealed partial class EditSession
                                                     "comments at the top of the file and drops the other comments."));
         return new PlannedFile(new FileChange(target, file.ToBytes()), cutscene.SourceHash, cutscene);
     }
+
+    /// <summary>Why the editor writes no whole cutscene file into a mod, or null: the mod is in the OpenLancer repo
+    /// (decision D70).</summary>
+    internal static string? WholeCutsceneInRepo(Mod mod) => RepoCheck.RepoRoot(mod.Folder) is { } repo
+        ? $"The mod '{mod.Id}' is in the OpenLancer repo {repo}. The editor writes no whole cutscene file into it, " +
+          "because the content scan cannot tell such a file from a copy of a retail script (decision D70)."
+        : null;
 
     /// <summary>
     /// Stops a save because the lower layer changed (F11), and keeps the unsaved edits in the recovery file.

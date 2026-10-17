@@ -253,6 +253,7 @@ internal static class ObjectKinds
         "curve" => Lists.Curve,
         "fuse" => Lists.Fuse,
         "enum" => Lists.Enum,
+        "cutscene" => Thn.Script,
         _ => OtherObject,
     };
 

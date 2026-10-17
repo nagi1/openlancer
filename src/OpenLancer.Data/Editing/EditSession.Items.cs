@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using LibreLancer.Data.Ini;
+using LibreLancer.Data.Schema.Universe;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Strings;
@@ -94,7 +95,8 @@ public sealed partial class EditSession
     private SectionSchema? SchemaOf(SectionRef target) =>
         Items.KindOf(target.Path) is { } kind
             ? SchemaCatalog.Section(ItemIndex.SchemaOf(kind), target.Id.Type)
-            : Systems.SchemaOf(target.Path, target.Id.Type);
+            : Systems.SchemaOf(target.Path, target.Id.Type) ??
+              (Rooms.Contains(target.Path) ? SchemaCatalog.Section(typeof(Room), target.Id.Type) : null);
 
     /// <summary>True when a value of a line of the section is a text placeholder. Most sections have no placeholder,
     /// so the check of rule S8 can skip them. This is important for the catch-up of a system in the scene, which

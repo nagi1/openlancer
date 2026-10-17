@@ -107,7 +107,7 @@ public sealed class ListChecksTests
 
         var problem = Single(session, missile);
         Assert.Equal((ListProblemKind.RequiredMissing, true), (problem.Kind, problem.IsError));
-        Assert.Contains("A section with 'motor' needs it. The engine stops with an error", problem.Diagnostic.Message);
+        Assert.EndsWith("A section with 'motor' needs it. The game stops loading without this key.", problem.Diagnostic.Message);
         Assert.Empty(session.Lists.Problems(ammo));
     }
 
@@ -264,7 +264,7 @@ public sealed class DeleteUndoTests
 
         var problem = Assert.Single(session.Lists.Problems(missile));
         Assert.Equal((ListProblemKind.Removed, true, "motor"), (problem.Kind, problem.IsError, problem.Diagnostic.Key));
-        Assert.Contains("The engine stops with an error when it loads the game data.", problem.Diagnostic.Message);
+        Assert.EndsWith("The game stops loading with this value.", problem.Diagnostic.Message);
         var result = session.Save();
         Assert.False(result.Saved);
         Assert.Contains(result.Problems, p => p.Target == missile && p.Key == "motor");
@@ -349,5 +349,88 @@ public sealed class EditSessionSaveGateTests
         var recovery = RecoveryFile.Read(RecoveryFile.PathOf(ws.ModFolder("act")));
         Assert.Contains("loadout = lo_nothing", Assert.Single(recovery.Files).Text);
         Assert.False(session.Save().Saved);
+    }
+
+    /// <summary>
+    /// The room rules (decision D136 of the M8b design): a set script of the active mod that names no cutscene crashes
+    /// the game when the player enters the room, so it is an error that stops the save. So is a room of the active mod
+    /// without set_script. The same in a lower layer is a warning.
+    /// </summary>
+    [Fact]
+    public void AnActiveModSetScriptOutsideTheListIsAnErrorWithTheCrashMessage()
+    {
+        using var ws = RoomWorkspace.Create();
+        var session = ws.Session("act");
+        var info = RoomWorkspace.Section(session, RoomWorkspace.BarPath, "Room_Info");
+
+        session.Execute(EditCommand.SetLinesFromText(info, "set_script", [@"Scripts\Bases\no_such_file.thn"]));
+
+        var problem = Assert.Single(session.Lists.Problems(info));
+        Assert.Equal((ListProblemKind.Missing, true, RuleEffect.Crash), (problem.Kind, problem.IsError, problem.Effect));
+        Assert.Equal(@"[Room_Info]: 'set_script = Scripts\Bases\no_such_file.thn': no cutscene has the name " +
+                     @"'Scripts\Bases\no_such_file.thn'. The game crashes when the player enters this room.",
+            problem.Diagnostic.Message);
+        Assert.Contains(session.SaveProblems(), p => p.Message == problem.Diagnostic.Message);
+        Assert.False(session.Save().Saved);
+    }
+
+    [Fact]
+    public void AnActiveModRoomWithoutSetScriptIsAnErrorAndALowerOneIsAWarning()
+    {
+        using var ws = RoomWorkspace.Create();
+        var session = ws.Session("act");
+        // The shop of the base data has no set_script: a warning.
+        var shop = RoomWorkspace.Section(session, RoomWorkspace.ShopPath, "Room_Info");
+        var lower = Assert.Single(session.Lists.Problems(shop));
+        Assert.Equal((ListProblemKind.RequiredMissing, false), (lower.Kind, lower.IsError));
+        Assert.Empty(session.SaveProblems());
+
+        var info = RoomWorkspace.Section(session, RoomWorkspace.BarPath, "Room_Info");
+        session.Execute(EditCommand.RemoveName(info, "set_script"));
+
+        var problem = Assert.Single(session.Lists.Problems(info));
+        Assert.Equal((ListProblemKind.RequiredMissing, true), (problem.Kind, problem.IsError));
+        Assert.Equal("[Room_Info]: the key 'set_script' is missing. The game crashes when the player enters this room.",
+            problem.Diagnostic.Message);
+        Assert.False(session.Save().Saved);
+    }
+
+    [Fact]
+    public void AnActiveModStartScriptOutsideTheListIsAnErrorWithTheSkipMessageAndALowerOneIsAWarning()
+    {
+        using var ws = RoomWorkspace.Create(lowerFiles: new()
+        {
+            [@"patches\" + RoomWorkspace.DeckPath] = "[PlayerShipPlacement]\nlanding_script = Scripts\\lower_typo.thn\n",
+        });
+        var session = ws.Session("act");
+        var deck = RoomWorkspace.Section(session, RoomWorkspace.DeckPath, "PlayerShipPlacement");
+        var lower = Assert.Single(session.Lists.Problems(deck));
+        Assert.Equal((ListProblemKind.NotListed, false), (lower.Kind, lower.IsError));
+
+        var placement = RoomWorkspace.Section(session, RoomWorkspace.BarPath, "CharacterPlacement");
+        session.Execute(EditCommand.SetLinesFromText(placement, "start_script", [@"Scripts\Bases\typo.thn"]));
+
+        var problem = Assert.Single(session.Lists.Problems(placement));
+        Assert.Equal((ListProblemKind.Missing, true), (problem.Kind, problem.IsError));
+        Assert.EndsWith("no cutscene has the name 'Scripts\\Bases\\typo.thn'. The game skips this script when the " +
+                        "player enters the room.", problem.Diagnostic.Message);
+    }
+
+    /// <summary>The scene rule reads the value by its place: in <c>all, x.thn, ambient</c> the engine reads
+    /// <c>ambient</c>, which names no file, so the line is an error.</summary>
+    [Fact]
+    public void ASceneLineIsCheckedAtThePlaceThatTheEngineReads()
+    {
+        using var ws = RoomWorkspace.Create();
+        var session = ws.Session("act");
+        var info = RoomWorkspace.Section(session, RoomWorkspace.BarPath, "Room_Info");
+
+        session.Execute(EditCommand.SetLinesFromText(info, "scene",
+            [@"all, Scripts\Bases\Li_01_bar_ambi_int_01.thn, ambient", @"ambient, Scripts\Bases\Li_01_bar_enter_01"]));
+
+        var problems = session.Lists.Problems(info);
+        Assert.Equal([("ambient", 0), (@"Scripts\Bases\Li_01_bar_enter_01", 1)], problems.Select(p => (p.Value!, p.Line)));
+        Assert.All(problems, p => Assert.True(p.IsError));
+        Assert.StartsWith("[Room_Info]: line 1: 'scene = all, ", problems[0].Diagnostic.Message);
     }
 }

@@ -546,7 +546,8 @@ internal sealed partial class EditorWindow : Game
     /// <summary>
     /// The cutscene part of a frame, before the panels draw, with the tabs that showed in the last frame: the
     /// selection follows the center tab, and while the Cutscene tab or the Timeline shows, the preview reads its keys
-    /// and runs its clock. So the Timeline plays the preview also while the Scene tab shows.
+    /// and runs its clock. So the Timeline plays the preview also while the Scene tab shows. While neither tab shows,
+    /// the preview waits, and its sound stops.
     /// </summary>
     private void CutsceneFrame(double elapsed)
     {
@@ -556,6 +557,10 @@ internal sealed partial class EditorWindow : Game
         {
             Cutscenes.Keys(IsFocused(CutsceneView.PanelId) || IsFocused(TimelinePanel.PanelId));
             Cutscenes.Frame(elapsed);
+        }
+        else
+        {
+            Cutscenes.Wait();
         }
     }
 

@@ -44,6 +44,8 @@ public sealed class ListRulesTests
         ["markets"] = typeof(MarketsIni),
         ["costumes"] = typeof(CostumesIni),
         ["system"] = typeof(StarSystem),
+        // The room files of the bases (decision D135 of the M8b design).
+        ["room"] = typeof(Room),
     };
 
     /// <summary>The section classes of the files that the engine reads itself and gives section by section to a
@@ -121,6 +123,13 @@ public sealed class ListRulesTests
                 continue;
             }
             var source = list.Source!;
+            // A files list has no sections: its entries are the paths of files (section 5.6 of the M8b design).
+            if (source.Files != null)
+            {
+                Assert.Equal(".thn", source.Files);
+                continue;
+            }
+
             var role = source.Scoped ? "system" : source.Role!;
             Assert.True(Rules.Roles.ContainsKey(role), list.Id);
             if (!Rules.Roles[role].Engine)
@@ -149,7 +158,8 @@ public sealed class ListRulesTests
     }
 
     /// <summary>Decisions D109 and D82: a closed rule needs an engine line and a list whose files the engine reads. A
-    /// required rule needs an engine line and the effect drop or loadBreak.</summary>
+    /// required rule needs an engine line and the effect drop, crash or loadBreak. A room without set_script crashes the
+    /// game (review finding R3 of the M8b design).</summary>
     [Fact]
     public void ClosedAndRequiredRulesHaveEvidence()
     {
@@ -171,9 +181,33 @@ public sealed class ListRulesTests
             if (rule.Required || rule.RequiredWith != null)
             {
                 Assert.False(string.IsNullOrWhiteSpace(rule.Evidence), name);
-                Assert.Contains(rule.Effect, new[] { RuleEffect.Drop, RuleEffect.LoadBreak });
+                Assert.Contains(rule.Effect, new[] { RuleEffect.Drop, RuleEffect.Crash, RuleEffect.LoadBreak });
             }
+            // A crash rule tells when the game crashes, for example when the player docks.
+            if (rule.Effect == RuleEffect.Crash)
+                Assert.False(string.IsNullOrWhiteSpace(rule.Consequence), name);
         }
+    }
+
+    /// <summary>Each error tells what the game does with the data, in plain words (decision D82, as decided on
+    /// 2026-10-18).</summary>
+    [Fact]
+    public void EachClosedRuleTellsWhatTheGameDoes()
+    {
+        foreach (var rule in Rules.All.Where(r => r.Closed))
+        {
+            var name = $"{rule.Role} [{rule.Section}] {rule.Key} ({rule.Index})";
+            Assert.False(rule.ConsequenceText.Contains("engine", StringComparison.OrdinalIgnoreCase), name);
+            Assert.EndsWith(".", rule.ConsequenceText);
+            Assert.EndsWith(".", rule.MissingText);
+        }
+        var curve = Assert.Single(Rules.Rules("system", "LightSource", "atten_curve"));
+        Assert.Equal("The game stops loading with this value.", curve.ConsequenceText);
+        var explosion = Assert.Single(Rules.Rules("equipment", "Munition", "explosion_arch"));
+        Assert.Equal("The game stops loading without this key.", explosion.MissingText);
+        var dock = Assert.Single(Rules.Rules("system", "Object", "dock_with"));
+        Assert.Equal((RuleEffect.Crash, "The game crashes when the player docks here."), (dock.Effect, dock.ConsequenceText));
+        Assert.Equal("The game drops this object.", Assert.Single(Rules.Rules("system", "Object", "archetype")).ConsequenceText);
     }
 
     [Fact]

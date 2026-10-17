@@ -99,6 +99,12 @@ internal sealed class EditorSettings
     public bool ShowStarsphere { get; set; } = true;
     public bool Wireframe { get; set; }
 
+    /// <summary>
+    /// The sound of the cutscene preview (decision D132 of the M8b design). It is on by default, as the sound of the
+    /// Unity Game view is on until the user turns on Mute Audio.
+    /// </summary>
+    public bool PreviewSound { get; set; } = true;
+
     /// <summary>The tool of the gizmo.</summary>
     [JsonIgnore]
     public GizmoTool Tool { get; set; } = DefaultTool;

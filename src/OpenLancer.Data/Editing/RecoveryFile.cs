@@ -22,7 +22,8 @@ internal enum RecoveredKind
 /// <param name="Path">The install path, in <see cref="VfsPath.Normalize"/> form.</param>
 /// <param name="KnownHash">The hash of the file of the mod that the edits change (see <see cref="ContentHash"/>), or
 /// null when the mod had no such file.</param>
-/// <param name="Text">The text of the file, or null for no patch.</param>
+/// <param name="Text">The text of the file, or null for no patch. A whole file without text is the delete of a new
+/// cutscene: an undo of New cutscene after its save (section 5.4 of the M8b design).</param>
 internal sealed record RecoveredFile(string Path, RecoveredKind Kind, string? KnownHash, string? Text);
 
 /// <summary>The text of the mod with unsaved edits.</summary>
@@ -118,7 +119,7 @@ internal sealed record RecoveryFile(IReadOnlyList<RecoveredFile> Files, Recovere
         RecoveredKind? kind = entry.Kind switch
         {
             null or PatchKind => RecoveredKind.Patch,
-            WholeFileKind when entry.Text != null => RecoveredKind.WholeFile,
+            WholeFileKind => RecoveredKind.WholeFile,
             _ => null,
         };
         return kind is { } k ? new RecoveredFile(entry.Path, k, entry.KnownHash, entry.Text) : null;

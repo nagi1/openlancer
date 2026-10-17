@@ -118,6 +118,7 @@ internal static class EditorIcons
     // The entity types of a cutscene, and the tools of the Timeline and the Cutscene view.
     public const char User = '\uf007';
     public const char VolumeUp = '\uf028';
+    public const char VolumeMute = '\uf6a9';
     public const char Desktop = '\uf108';
     public const char Image = '\uf03e';
     public const char Filter = '\uf0b0';

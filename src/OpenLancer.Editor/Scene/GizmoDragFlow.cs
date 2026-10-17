@@ -3,6 +3,7 @@ using System.Numerics;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Scene;
@@ -147,7 +148,7 @@ internal sealed class GizmoDragFlow
                 }
                 catch (Exception e) when (e is ArgumentException or InvalidOperationException)
                 {
-                    problem = new GizmoProblem(ConsoleSeverity.Error, $"The drag of the gizmo stopped: {e.Message}",
+                    problem = new GizmoProblem(ConsoleSeverity.Error, $"The drag of the gizmo stopped: {ErrorText.Of(e)}",
                         Key!);
                     Finish(commit: false);
                     State = GizmoDragState.Ended;
