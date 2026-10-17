@@ -1,7 +1,10 @@
 OpenLancer
 Copyright (c) 2026 OpenLancer contributors. Licensed under the MIT License (see LICENSE).
 
-OpenLancer is not affiliated with or endorsed by Microsoft. Freelancer is a Microsoft product.
+OpenLancer is an independent project. It is not affiliated with, endorsed by or sponsored by Microsoft, Digital Anvil,
+the Librelancer project or any holder of a "Freelancer" trademark. Freelancer (2003) is a game by Digital Anvil,
+published by Microsoft. OpenLancer uses the name "Freelancer" only to identify that game. All trademarks belong to
+their owners.
 This repository contains no Microsoft game files. Each user supplies the game data from their own copy.
 
 Third-party software
@@ -26,7 +29,7 @@ Librelancer includes these projects under external/Librelancer/extern. Each keep
   SimpleMesh                 Apache License 2.0
   SPIRV-Cross                Apache License 2.0
   StringSquash               MIT License
-  thorncompiler              no license file at its root (check before redistribution)
+  thorncompiler              Lua 3.2 license, Copyright (c) 1994-1999 TeCGraf, PUC-Rio (extern/thorncompiler/lua/COPYRIGHT)
   wattlescript               BSD 3-Clause License
 
 LibreLancer.ImUI embeds these fonts. The OpenLancer editor uses them for its text and icons:

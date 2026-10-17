@@ -4,6 +4,12 @@ OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a
 
 OpenLancer contains no Microsoft game files. You supply the game data from your own copy of Freelancer.
 
+## Legal
+
+OpenLancer is an independent project. It is not affiliated with, endorsed by or sponsored by Microsoft, Digital Anvil, the Librelancer project or any holder of a "Freelancer" trademark. OpenLancer uses the name "Freelancer" only to identify the 2003 game that it works with. All trademarks belong to their owners.
+
+This repository contains no game files and no game data. You need your own copy of Freelancer (2003). OpenLancer is licensed under the MIT License (see LICENSE). The third-party notices are in NOTICE.
+
 ## Folder layout
 
 The repo is one folder in a larger workspace. The game data stays outside the repo.
@@ -24,7 +30,7 @@ The repo is one folder in a larger workspace. The game data stays outside the re
 
 1. Clone with submodules: `git clone --recursive <url> OpenLancer`.
 2. Extract the game data to `GameData\base` and check it with `python tools\verify_base.py ..\GameData\base`. The English v1.0 retail disc gives `8418 5b4ee64cf64bb9c5525cee786f54380170dbde5617d1aaf5ef3655237c9cfaeb`.
-3. Apply OpenLancer's local Librelancer fixes and build Librelancer once. See [docs/UPSTREAM.md](docs/UPSTREAM.md).
+3. Build the engine submodule once. See "Build the submodule" in [docs/UPSTREAM.md](docs/UPSTREAM.md).
 4. Run `dotnet test OpenLancer.slnx`.
 
 The data tests read `..\GameData\base`. Set `OPENLANCER_BASE` to use a different folder. Without game data, the data tests are skipped.
