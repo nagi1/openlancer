@@ -42,9 +42,9 @@ internal readonly record struct FieldKey(object Owner, string Name, int Line)
 /// change of its text goes to the edit, and the end of the field ends the edit. One edit is open at a time.
 /// </summary>
 /// <remarks>
-/// <para>The field gives the gesture of its edit: a <see cref="LineGesture"/> shows each change at once, and a
-/// <see cref="CommitGesture"/> runs its edit when the field ends. While an edit of either kind is open, the edit
-/// history, the save and the recovery file wait.</para>
+/// <para>The field gives the gesture of its edit: a <see cref="LineGesture"/> shows each change at once, and so does a
+/// <see cref="NumberLineGesture"/> of a label drag or a color picker. A <see cref="CommitGesture"/> runs its edit when
+/// the field ends. While an edit of any kind is open, the edit history, the save and the recovery file wait.</para>
 /// <para>An edit belongs to one widget, by its ImGui id, and to one key. More than one widget can edit a key, for
 /// example the X, Y and Z fields of a vector. ImGui tells the end of a field one frame late when the user moves
 /// directly to the next field. So only the widget of the open edit can change or end it.</para>
@@ -120,8 +120,8 @@ internal sealed class FieldEditRouter(Action<string> warn)
     public void End(bool keep) => End(keep, interactive: true);
 
     /// <summary>
-    /// Ends the open edit when the window closes, and keeps its text, so that the recovery file keeps the edit. The
-    /// editor cannot ask a question then, so the edit takes the choice that changes the least.
+    /// Ends the open edit when the window closes, and keeps its text, so that the close prompt and the recovery file
+    /// see the edit. The close prompt is the only question then, so the edit takes the choice that changes the least.
     /// </summary>
     public void EndAtClose() => End(keep: true, interactive: false);
 
@@ -143,9 +143,12 @@ internal sealed class FieldEditRouter(Action<string> warn)
     public string? ErrorOf(FieldKey key) => Open is { Error: { } error } edit && edit.Key.Equals(key) ? error : null;
 
     /// <summary>The key of the open edit as it was at the start of the edit, when the open edit changes the lines of
-    /// the same key as <paramref name="field"/>. Otherwise null.</summary>
+    /// the same key as <paramref name="field"/>: a text, a label drag or a color picker. Otherwise null.</summary>
     public FieldBinding? StartOf(FieldBinding field) =>
-        Open is LineGesture edit && edit.Key.Equals(field.FieldKey) ? edit.Binding : null;
+        Open is LineEditGesture edit && edit.Key.Equals(field.FieldKey) ? edit.Binding : null;
+
+    /// <summary>True when the open edit belongs to the widget with the ImGui id <paramref name="id"/>.</summary>
+    public bool IsOpenFor(uint id) => Open != null && widget == id;
 
     private void Begin(uint id, Func<FieldGesture> begin, int frame)
     {

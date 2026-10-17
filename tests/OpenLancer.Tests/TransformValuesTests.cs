@@ -157,6 +157,45 @@ public sealed class TransformValuesTests
         Assert.Throws<ArgumentOutOfRangeException>(() => TransformValues.Line(null, new Vector3(float.NaN, 0, 0)));
     }
 
+    /// <summary>A changed angle wraps into the range from -180 to 180 and rounds to 0.001 degree, as
+    /// <see cref="TransformValues.EulerNear"/> writes it. The rounding can give -180, and -0 becomes 0.</summary>
+    [Theory]
+    [InlineData(190, -170)]
+    [InlineData(179.9996, 180)]
+    [InlineData(-179.9996, -180)]
+    [InlineData(180, 180)]
+    [InlineData(-180, 180)]
+    [InlineData(540, 180)]
+    [InlineData(270, -90)]
+    [InlineData(12.34567, 12.346)]
+    public void AnAngleWrapsThenRounds(double degrees, float expected)
+    {
+        Assert.Equal(expected, TransformValues.Angle(degrees));
+    }
+
+    [Fact]
+    public void AnAngleOfMinus0Is0()
+    {
+        Assert.Equal(0, BitConverter.SingleToInt32Bits(TransformValues.Angle(-0.0004)));
+        Assert.Equal(0, BitConverter.SingleToInt32Bits(TransformValues.Angle(-0.0)));
+    }
+
+    /// <summary>A helper writes only lines whose values the engine reads as finite numbers.</summary>
+    [Fact]
+    public void ANumberIsAFiniteFloatAsTheEngineReadsIt()
+    {
+        Assert.True(TransformValues.TryNumber(new Int32Value(-38675), out var integer));
+        Assert.Equal(-38675f, integer);
+        Assert.True(TransformValues.TryNumber(new SingleValue(0.784314f, null), out var single));
+        Assert.Equal(0.784314f, single);
+        Assert.True(TransformValues.TryNumber(new StringValue("1.5"), out var text));
+        Assert.Equal(1.5f, text);
+
+        Assert.False(TransformValues.TryNumber(new StringValue("5x"), out _));
+        Assert.False(TransformValues.TryNumber(new StringValue("NaN"), out _));
+        Assert.False(TransformValues.TryNumber(new StringValue("1e40"), out _));
+    }
+
     /// <summary>The patch text of a line in a binary file, as a save writes it.</summary>
     private static string Text(string name, IReadOnlyList<ValueBase> values)
     {

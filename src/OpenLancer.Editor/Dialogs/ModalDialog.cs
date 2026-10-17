@@ -48,22 +48,32 @@ internal abstract class ModalDialog
         var open = true;
         if (!ImGui.BeginPopupModal(Title, ref open, ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings))
         {
-            // The close button of the title bar, or Escape, closed it.
+            // The close button of the title bar closed it, or another popup replaced it.
             IsOpen = false;
             Cancelled();
             return;
         }
 
+        // ImGui does not close a modal popup on Escape, so the dialog does it. While a text field is active, Escape
+        // only ends the field, so the check comes before the fields draw.
+        var escape = ImGui.IsKeyPressed(ImGuiKey.Escape, false) && !ImGui.IsAnyItemActive();
         ImGui.PushTextWrapPos(MathF.Truncate(TextWidth * ImGuiHelper.Scale));
         Body();
         ImGui.PopTextWrapPos();
+        if (escape && IsOpen)
+        {
+            Close();
+            Cancelled();
+        }
+
         ImGui.EndPopup();
     }
 
     /// <summary>Draws the content and the buttons. Call <see cref="Close"/> to close the dialog.</summary>
     protected abstract void Body();
 
-    /// <summary>Runs when the close button of the title bar closes the dialog. It is the same as Cancel.</summary>
+    /// <summary>Runs when Escape or the close button of the title bar closes the dialog. It is the same as
+    /// Cancel.</summary>
     protected virtual void Cancelled()
     {
     }

@@ -30,9 +30,10 @@ internal sealed record RecoveredFile(string Path, RecoveredKind Kind, string? Kn
 internal sealed record RecoveredText(string? KnownHash, ModText Text);
 
 /// <summary>
-/// The unsaved edits of an editor session, in <c>.olsave\recovery.json</c> of the active mod. The engine has no hook
-/// that stops the window from closing (roadmap decision D78), so the editor keeps this file while it has unsaved edits,
-/// and offers to restore them at the next open (decision D8).
+/// The unsaved edits of an editor session, in <c>.olsave\recovery.json</c> of the active mod. The editor keeps this
+/// file while it has unsaved edits, and offers to restore them at the next open (decision D8). A close of the window
+/// asks to save the edits first (roadmap decision D78), so the file is for a crash or a kill of the editor. Don't Save
+/// at the close deletes the file.
 /// </summary>
 /// <remarks>
 /// <para>The file holds the text that a save would write for each changed file, and the text of the mod. Each part

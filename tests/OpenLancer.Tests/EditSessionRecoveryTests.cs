@@ -11,8 +11,8 @@ using static OpenLancer.Tests.EditSessionTests;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The recovery file keeps unsaved edits when the window closes without a prompt (decision D8, roadmap decision
-/// D78).
+/// The recovery file keeps unsaved edits when the editor stops without a save, for example after a crash (decision
+/// D8). A close of the window asks first (roadmap decision D78, see <see cref="ClosePromptTests"/>).
 /// </summary>
 public sealed class EditSessionRecoveryTests
 {
@@ -28,8 +28,8 @@ public sealed class EditSessionRecoveryTests
         return session;
     }
 
-    /// <summary>The window closes: the editor writes the recovery file, then the session releases the lock of the
-    /// mod.</summary>
+    /// <summary>The editor stops without a save, for example after a crash: it writes the recovery file, then the
+    /// session releases the lock of the mod.</summary>
     private static void Close(EditSession session)
     {
         Assert.Empty(session.WriteRecovery());
@@ -47,7 +47,7 @@ public sealed class EditSessionRecoveryTests
         var recovery = RecoveryFile.PathOf(ws.ModFolder("act"));
         Assert.True(File.Exists(recovery));
 
-        // The window closes. The next session finds the edits.
+        // The editor stopped. The next session finds the edits.
         var session = ws.Session("act");
 
         Assert.True(session.HasRecovery);

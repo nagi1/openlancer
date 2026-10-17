@@ -128,13 +128,28 @@ public static class TransformValues
         var result = new float[3];
         for (var i = 0; i < 3; i++)
         {
-            var angle = Wrap(angles[i]);
-            result[i] = Math.Abs(Wrap(angle - start[i])) <= AngleStep
+            result[i] = Math.Abs(Wrap(Wrap(angles[i]) - start[i])) <= AngleStep
                 ? (float)start[i]
-                : (float)Math.Round(angle, 3) + 0f;
+                : Angle(angles[i]);
         }
         return new Vector3(result[0], result[1], result[2]);
     }
+
+    /// <summary>
+    /// A changed angle as a drag writes it: wrapped into the range from -180 (not included) to 180, then rounded to
+    /// 0.001 degree (<see cref="Math.Round(double, int)"/>). The rounding can give -180, for example for -179.9996. -0
+    /// becomes 0. <see cref="EulerNear"/> uses this step for each angle that changed, and so does a label drag of the
+    /// Inspector.
+    /// </summary>
+    public static float Angle(double degrees) => (float)Math.Round(Wrap(degrees), 3) + 0f;
+
+    /// <summary>
+    /// Reads a value as the engine reads a float from a binary file, and accepts only a finite result. An Int32, a
+    /// Single and a text that is an invariant float number pass. A text that is not a number, for example <c>5x</c>,
+    /// and a value that is not finite, for example <c>NaN</c> or <c>1e40</c>, do not.
+    /// </summary>
+    public static bool TryNumber(ValueBase value, out float number) =>
+        SceneBuild.TryFloat(value, out number) && float.IsFinite(number);
 
     /// <summary>
     /// A position that moved a whole number of steps from the start: along the world axes, or along the local axes of

@@ -66,8 +66,9 @@ internal sealed class ThnPathKeysEditor(EditorWindow window, PropertyGrid grid)
                     workspace.SelectedPathKey = selected ? null : (entity, index);
                 }
             });
-            grid.ThnComponentRow("  Point", field with { Kind = ThnKeyKind.Vector, Value = ThnPose.Vector(key.Point), Line = 2 * i },
-                null, PropertyGrid.Axes, value => PointParse(keys, index, value));
+            var point = field with { Kind = ThnKeyKind.Vector, Value = ThnPose.Vector(key.Point), Line = 2 * i };
+            grid.ThnComponentRow("  Point", point, null, PropertyGrid.Axes, value => PointParse(keys, index, value),
+                FieldDrag.KindOf(point.Kind, point.Path.Text));
             if (key.Orientation is { } orientation)
             {
                 grid.ThnComponentRow("  Orientation",

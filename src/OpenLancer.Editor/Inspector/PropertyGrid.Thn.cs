@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Text;
 using ImGuiNET;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
@@ -78,8 +79,14 @@ internal sealed partial class PropertyGrid
     /// A row with one field for each value of a list, each with its label in front of it, for example the X, Y and Z of
     /// a position. Each field edits one value, and the other values come from the text at the start of the edit.
     /// </summary>
+    /// <remarks>A row whose value is a finite number for each label gets the field helpers of its kinds: a label drag
+    /// on each label, and a color swatch with the picker at the right of the fields. A row without a value, or with
+    /// another value, gets no helper, because a helper has no start to change.</remarks>
+    /// <param name="drag">The kind of the label drag (see <see cref="FieldDrag.KindOf(ThnKeyKind, string)"/>), or null
+    /// for no label drag.</param>
+    /// <param name="color">The form of a color (see <see cref="ThnKeyRow.Color"/>), or null for no picker.</param>
     public void ThnComponentRow(string label, ThnFieldState field, string? note, IReadOnlyList<ComponentLabel> labels,
-        Func<string, ThnFieldParse> parse)
+        Func<string, ThnFieldParse> parse, DragKind? drag = null, ColorForm? color = null)
     {
         ThnRow(label, field, note, () =>
         {
@@ -91,13 +98,28 @@ internal sealed partial class PropertyGrid
                 return;
             }
 
+            // The numbers of the value, which the helpers start from.
+            var helpers = field.Value != null && FieldDrag.TryParse(text, labels.Count, out var numbers) ? numbers : null;
+            var kind = helpers != null ? drag : null;
+            var form = helpers != null ? color : null;
+            var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
             ComponentFields(values, labels, (index, value, width) =>
+                {
+                    var edited = value;
+                    ImGui.SetNextItemWidth(width);
+                    var changed = ImGui.InputText("##value", ref edited, Capacity(edited));
+                    ThnRoute(field, changed, parse, start => ComponentText(start, labels.Count, index, edited));
+                }, form == null ? 0 : SwatchWidth + spacing,
+                kind is { } k
+                    ? (index, size) => DragLabel(field.Key, k, labels[index].Text, helpers, null, index,
+                        () => ThnBegin(field, parse), size)
+                    : null);
+            if (form is { } f)
             {
-                var edited = value;
-                ImGui.SetNextItemWidth(width);
-                var changed = ImGui.InputText("##value", ref edited, Capacity(edited));
-                ThnRoute(field, changed, parse, start => ComponentText(start, labels.Count, index, edited));
-            });
+                ImGui.SameLine(0, spacing);
+                var (picker, reason) = ColorForms.ToPicker(helpers!, f);
+                ColorSwatch(field.Key, f, picker, reason, () => ThnBegin(field, parse));
+            }
         });
     }
 
@@ -123,8 +145,15 @@ internal sealed partial class PropertyGrid
     /// field.</param>
     private void ThnRoute(ThnFieldState field, bool changed, Func<string, ThnFieldParse> parse, Func<string, string> text,
         ThnFieldCommand? command = null) =>
-        Route(field.Key, changed, () => new ThnFieldGesture(window.Session!.Edits, field.Key,
-            ThnFieldEdit.Format(field.Kind, field.Value), parse, command ?? ThnFieldCommand.Set(field.Target, field.Path)), text);
+        Route(field.Key, changed, () => ThnBegin(field, parse, command), text);
+
+    /// <summary>Starts the field edit of a cutscene value, from the text of the value in this frame.</summary>
+    /// <param name="command">The edit of a value, or null for <see cref="ThnFieldCommand.Set"/> of the path of the
+    /// field.</param>
+    private ThnFieldGesture ThnBegin(ThnFieldState field, Func<string, ThnFieldParse> parse,
+        ThnFieldCommand? command = null) =>
+        new(window.Session!.Edits, field.Key, ThnFieldEdit.Format(field.Kind, field.Value), parse,
+            command ?? ThnFieldCommand.Set(field.Target, field.Path));
 
     /// <summary>The error of the open edit of a field below the field.</summary>
     private void ThnError(ThnFieldState field)

@@ -144,6 +144,62 @@ public sealed class PropertyGridTests
         Assert.Empty(PropertyGrid.LayoutView(session, depot, null)!.Lines("comment"));
     }
 
+    /// <summary>
+    /// The widget of an editable bound row comes from the schema type of its key and the shape of its lines. A color key
+    /// with one line gets the swatch of the picker. A color key without a line, with two lines or with multiline lines
+    /// gets only the text field (section 6.2 of the M20 design).
+    /// </summary>
+    [Fact]
+    public void EachBoundKeyGetsTheWidgetOfItsType()
+    {
+        var color = new KeySchema("color", typeof(Color4), false, false, 3, false, null);
+        var vector = new KeySchema("spin", typeof(System.Numerics.Vector3), false, false, 1, false, null);
+        var flag = new KeySchema("separable", typeof(bool), false, false, 0, false, null);
+        var shape = new KeySchema("shape", typeof(ShapeKind), false, false, 1, false, null);
+        PropertyGrid.BoundWidget Widget(KeySchema key, int lines, int values) =>
+            PropertyGrid.WidgetOf(key, lines, values, PropertyGrid.DefaultLabels(key));
+
+        Assert.Equal(PropertyGrid.BoundWidget.Color, Widget(color, 1, 3));
+        Assert.Equal(PropertyGrid.BoundWidget.Color, Widget(color, 1, 4));
+        Assert.Equal(PropertyGrid.BoundWidget.Components, Widget(vector, 1, 3));
+        Assert.Equal(PropertyGrid.BoundWidget.Bool, Widget(flag, 1, 1));
+        Assert.Equal(PropertyGrid.BoundWidget.Enum, Widget(shape, 0, 0));
+
+        Assert.Equal(PropertyGrid.BoundWidget.Text, Widget(color, 0, 0));
+        Assert.Equal(PropertyGrid.BoundWidget.Text, Widget(color, 2, 3));
+        Assert.Equal(PropertyGrid.BoundWidget.Text, Widget(color with { Multiline = true }, 1, 3));
+        Assert.Equal(PropertyGrid.BoundWidget.Text, Widget(vector, 1, 1));
+        // The size of a sphere has its own labels.
+        Assert.Equal(PropertyGrid.BoundWidget.Components,
+            PropertyGrid.WidgetOf(vector, 1, 1, count => PropertyGrid.SizeLabels(ShapeKind.Sphere, count)));
+    }
+
+    /// <summary>While a label drag or a picker edits a key, the page lays out its rows from the section at the start
+    /// of the edit, and the row keeps the widgets of the key at that start.</summary>
+    [Fact]
+    public void TheRowsOfASectionStayWhileADragIsOpen()
+    {
+        using var ws = SystemWorkspace.Create();
+        var session = ws.Session("act");
+        var depot = SystemWorkspace.Li01Section("Object", "Li01_depot");
+        var pos = FieldBinding.Create(session, depot, session.Get(depot)!, "pos");
+        var router = new FieldEditRouter(_ => { });
+
+        router.Route(1, pos.FieldKey, new FieldEvents(true, true, false, false, false),
+            () => new NumberLineGesture(session, pos, 3), start => start, 1);
+        router.Route(1, pos.FieldKey, new FieldEvents(false, true, true, false, false),
+            () => throw new InvalidOperationException(), _ => "-37675, 0, -27705", 2);
+
+        var gesture = Assert.IsType<NumberLineGesture>(router.Open);
+        Assert.Equal("-37675, 0, -27705", FieldEdit.Format(session.Get(depot)!.Lines("pos")));
+        Assert.Same(gesture.StartSection, PropertyGrid.LayoutView(session, depot, gesture));
+        Assert.Equal("-38675, 0, -27705", FieldEdit.Format(PropertyGrid.LayoutView(session, depot, gesture)!.Lines("pos")));
+        var now = FieldBinding.Create(session, depot, session.Get(depot)!, "pos");
+        Assert.Same(gesture.Binding, router.StartOf(now));
+        router.End(keep: true);
+        Assert.Null(router.StartOf(now));
+    }
+
     private static string Axis(System.Numerics.Vector4 color) =>
         color == EditorTheme.AxisX ? "X" : color == EditorTheme.AxisY ? "Y" : color == EditorTheme.AxisZ ? "Z" : "?";
 }

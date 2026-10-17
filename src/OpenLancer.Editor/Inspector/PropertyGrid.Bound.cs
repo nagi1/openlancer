@@ -21,8 +21,9 @@ namespace OpenLancer.Editor.Inspector;
 /// </summary>
 /// <remarks>
 /// <para>Numbers and text edit as text with invariant parsing, so a float value stays exact. A bool gets a checkbox,
-/// an enum a list, a vector three fields, and the size of a zone one labeled field for each value. A text key, for
-/// example <c>ids_name</c>, edits the text of the active mod.</para>
+/// an enum a list, a vector three fields, and the size of a zone one labeled field for each value. A drag on the label
+/// of such a field changes its value, and a color key gets a swatch with a color picker in front of its text field (see
+/// <c>PropertyGrid.Helpers.cs</c>). A text key, for example <c>ids_name</c>, edits the text of the active mod.</para>
 /// <para>A page draws the rows of the values of other files, for example the model of an archetype, in a
 /// <c>Bind(null)</c> scope. A reference row shows the lines of its key with the button that selects the item. Below a
 /// row, a problem of the scene shows, for example an archetype that does not exist.</para>
@@ -129,7 +130,8 @@ internal sealed partial class PropertyGrid
     /// </summary>
     /// <param name="open">The open field edit, or null.</param>
     internal static SectionView? LayoutView(EditSession edits, SectionRef section, FieldGesture? open) =>
-        (open is LineGesture edit && edit.Key.Owner.Equals(section) ? edit.StartSection : null) ?? edits.Get(section);
+        (open is LineEditGesture edit && edit.Key.Owner.Equals(section) ? edit.StartSection : null) ??
+        edits.Get(section);
 
     /// <summary>The end of a <see cref="Bind"/> scope.</summary>
     internal readonly struct BindScope(PropertyGrid grid, BoundSection? previous) : IDisposable
@@ -222,23 +224,29 @@ internal sealed partial class PropertyGrid
             // A read-only field has one line, so a bar separates the lines of the key.
             Field(field.Text.Replace("\n", " | "), FillWidth, field.Lines.Count == 0 ? hint : "None");
         }
-        else if (field.Key?.ClrType == typeof(bool) && shape.Lines.Count <= 1)
-        {
-            BoolField(field, unset);
-        }
-        else if (field.Key?.ClrType is { IsEnum: true } type && shape.Lines.Count <= 1)
-        {
-            EnumField(field, type, hint);
-        }
-        else if (shape.Lines.Count == 1 &&
-                 (labels ?? DefaultLabels(field.Key))?.Invoke(FieldEdit.Values(shape.Text).Length) is { } components)
-        {
-            // An edit of one value keeps the number of values, because an empty value is not valid.
-            ComponentField(field, components);
-        }
         else
         {
-            TextField(field, shape.Lines.Count, hint);
+            var labelsOf = labels ?? DefaultLabels(field.Key);
+            var values = FieldEdit.Values(shape.Text).Length;
+            switch (WidgetOf(field.Key, shape.Lines.Count, values, labelsOf))
+            {
+                case BoundWidget.Bool:
+                    BoolField(field, unset);
+                    break;
+                case BoundWidget.Enum:
+                    EnumField(field, field.Key!.ClrType!, hint);
+                    break;
+                case BoundWidget.Components:
+                    // An edit of one value keeps the number of values, because an empty value is not valid.
+                    ComponentField(field, labelsOf!(values)!);
+                    break;
+                case BoundWidget.Color:
+                    ColorField(field, ColorForms.Of(field.Key)!.Value, hint);
+                    break;
+                default:
+                    TextField(field, shape.Lines.Count, hint);
+                    break;
+            }
         }
 
         reserve = 0;
@@ -252,6 +260,26 @@ internal sealed partial class PropertyGrid
         EndRow();
         NoteShown(field);
         return true;
+    }
+
+    /// <summary>
+    /// The widget of an editable bound row: a checkbox for a bool, a list for an enum, a labeled field for each value
+    /// of a line with component labels, a color swatch with the text field for a one-line color key, else a text field.
+    /// </summary>
+    /// <param name="lines">The number of lines of the key at the start of an open edit of it, or now.</param>
+    /// <param name="values">The number of values of the first line, in the same state.</param>
+    /// <param name="labels">The labels of the values of a line with a number of values (see <see cref="BoundRow"/>),
+    /// with the default already applied.</param>
+    internal static BoundWidget WidgetOf(KeySchema? key, int lines, int values,
+        Func<int, IReadOnlyList<ComponentLabel>?>? labels)
+    {
+        if (key?.ClrType == typeof(bool) && lines <= 1)
+            return BoundWidget.Bool;
+        if (key?.ClrType is { IsEnum: true } && lines <= 1)
+            return BoundWidget.Enum;
+        if (lines == 1 && labels?.Invoke(values) != null)
+            return BoundWidget.Components;
+        return lines == 1 && ColorForms.Of(key) != null ? BoundWidget.Color : BoundWidget.Text;
     }
 
     /// <summary>The labels of the values of a line of a key without its own labels: X, Y and Z for a line of three
@@ -352,8 +380,11 @@ internal sealed partial class PropertyGrid
 
     /// <summary>One field for each value of the line, each with its label in front of it. Each field edits one value
     /// of the line, and each field is its own field edit.</summary>
+    /// <remarks>A key with a drag kind (see <see cref="FieldDrag.KindOf(KeySchema, string)"/>) also gets a label drag
+    /// on each label.</remarks>
     private void ComponentField(FieldBinding field, IReadOnlyList<ComponentLabel> labels)
     {
+        var kind = FieldDrag.KindOf(field.Key, field.Section.Id.Type);
         ComponentFields(FieldEdit.Values(field.Text), labels, (index, text, width) =>
         {
             var value = text;
@@ -361,7 +392,7 @@ internal sealed partial class PropertyGrid
             var changed = ImGui.InputText("##value", ref value, Capacity(value));
             // The other values come from the line at the start of the edit.
             Route(field, changed, start => FieldEdit.WithValue(start, index, value));
-        }, reserve);
+        }, reserve, kind is { } drag ? (index, size) => BoundDragLabel(field, drag, labels, index, size) : null);
         FieldError(field);
     }
 
@@ -492,8 +523,15 @@ internal sealed partial class PropertyGrid
         var deactivated = ImGui.IsItemDeactivated();
         var events = new FieldEvents(ImGui.IsItemActivated(), ImGui.IsItemActive(), changed, deactivated,
             deactivated && ImGui.IsKeyPressed(ImGuiKey.Escape, false));
-        fieldEdits.Route(ImGui.GetItemID(), key, events, begin, text, ImGui.GetFrameCount());
+        RouteEvents(ImGui.GetItemID(), key, events, begin, text);
     }
+
+    /// <summary>Gives the events of a widget to the field edits. A label drag and a color picker make their events
+    /// themselves (see <see cref="LabelDrag"/> and <see cref="PickerSession"/>).</summary>
+    /// <param name="id">The ImGui id of the widget.</param>
+    private void RouteEvents(uint id, FieldKey key, FieldEvents events, Func<FieldGesture> begin,
+        Func<string, string> text) =>
+        fieldEdits.Route(id, key, events, begin, text, ImGui.GetFrameCount());
 
     /// <summary>The error of the open edit of a field, below the field.</summary>
     private void FieldError(FieldBinding field)
@@ -617,6 +655,16 @@ internal sealed partial class PropertyGrid
 
             return field;
         }
+    }
+
+    /// <summary>The widget of an editable bound row (see <see cref="WidgetOf"/>).</summary>
+    internal enum BoundWidget
+    {
+        Text,
+        Bool,
+        Enum,
+        Components,
+        Color,
     }
 
     /// <summary>Formats a number for the text of a row that is not set.</summary>

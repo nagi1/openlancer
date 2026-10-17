@@ -1,11 +1,15 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
+using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Editing;
 
 /// <summary>
-/// One edit of a text field, from the activation of its widget to its deactivation (see <see cref="FieldEditRouter"/>).
-/// The edit becomes at most one entry of the edit history.
+/// One edit of a field: a text, a label drag or a color picker, from the activation of its widget to its deactivation
+/// (see <see cref="FieldEditRouter"/>). The edit becomes at most one entry of the edit history.
 /// </summary>
 internal abstract class FieldGesture : IDisposable
 {
@@ -41,18 +45,17 @@ internal abstract class FieldGesture : IDisposable
 }
 
 /// <summary>
-/// The edit of the lines of a bound key: one transaction. Each change of the text shows at once in the edit view.
+/// The edit of the lines of a bound key as one transaction, with the key and the section as they were at its start.
+/// Each change shows at once in the edit view. While the edit is open, the Inspector lays out the rows of the section
+/// from its start (see <see cref="Inspector.PropertyGrid.LayoutView"/>).
 /// </summary>
-/// <remarks>
-/// A text that equals the value at the start puts back the edit view as it was, so the edit removes no pin and adds
-/// no entry. A text that is not valid keeps the last valid state and sets <see cref="FieldGesture.Error"/>.
-/// </remarks>
-internal sealed class LineGesture : FieldGesture
+internal abstract class LineEditGesture : FieldGesture
 {
     private readonly EditTransaction transaction;
 
     /// <exception cref="InvalidOperationException">The session takes no edits, or a transaction is open.</exception>
-    public LineGesture(EditSession session, FieldBinding binding) : base(binding.FieldKey, binding.Text)
+    private protected LineEditGesture(EditSession session, FieldBinding binding, string startText)
+        : base(binding.FieldKey, startText)
     {
         Binding = binding;
         StartSection = session.Get(binding.Section);
@@ -66,29 +69,8 @@ internal sealed class LineGesture : FieldGesture
     /// it.</summary>
     public SectionView? StartSection { get; }
 
-    /// <summary>Shows the text of the field in the edit view, or sets <see cref="FieldGesture.Error"/>.</summary>
-    public override void Change(string text)
-    {
-        var parse = FieldEdit.Parse(Binding.Key, text);
-        if (parse.Lines == null)
-        {
-            Error = parse.Error;
-            return;
-        }
-        try
-        {
-            transaction.Apply(Binding.Holds(parse.Lines) ? EditCommand.Group("", []) : Binding.EditLines(parse.Lines));
-            Error = null;
-        }
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException)
-        {
-            // The transaction is back at the state before the edit.
-            Error = e.Message;
-        }
-    }
-
     /// <summary>
-    /// Ends the edit. When the last text is valid, the edit becomes one entry of the history. Otherwise the edit view
+    /// Ends the edit. When the last change is valid, the edit becomes one entry of the history. Otherwise the edit view
     /// goes back to its state before the edit, and the result is the error.
     /// </summary>
     public override string? End(bool keep, bool interactive)
@@ -103,6 +85,146 @@ internal sealed class LineGesture : FieldGesture
     }
 
     public override void Dispose() => transaction.Cancel();
+
+    /// <summary>Shows a command in the edit view, in place of the command of the last change. An
+    /// <see cref="ArgumentException"/> or an <see cref="InvalidOperationException"/> of the command sets
+    /// <see cref="FieldGesture.Error"/>, and the edit view goes back to its state before the edit.</summary>
+    /// <returns>True when the command applied.</returns>
+    private protected bool Apply(EditCommand command)
+    {
+        try
+        {
+            transaction.Apply(command);
+            Error = null;
+            return true;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException)
+        {
+            Error = e.Message;
+            return false;
+        }
+    }
+}
+
+/// <summary>
+/// The edit of the lines of a bound key from the text of a field.
+/// </summary>
+/// <remarks>
+/// A text that equals the value at the start puts back the edit view as it was, so the edit removes no pin and adds
+/// no entry. A text that is not valid keeps the last valid state and sets <see cref="FieldGesture.Error"/>.
+/// </remarks>
+internal sealed class LineGesture : LineEditGesture
+{
+    /// <exception cref="InvalidOperationException">The session takes no edits, or a transaction is open.</exception>
+    public LineGesture(EditSession session, FieldBinding binding) : base(session, binding, binding.Text)
+    {
+    }
+
+    /// <summary>Shows the text of the field in the edit view, or sets <see cref="FieldGesture.Error"/>.</summary>
+    public override void Change(string text)
+    {
+        var parse = FieldEdit.Parse(Binding.Key, text);
+        if (parse.Lines == null)
+        {
+            Error = parse.Error;
+            return;
+        }
+        Apply(Binding.Holds(parse.Lines) ? EditCommand.Group("", []) : Binding.EditLines(parse.Lines));
+    }
+}
+
+/// <summary>
+/// The edit of the first values of the one line of a bound key by a label drag or a color picker. The text of a change
+/// is the numbers of these values (see <see cref="FieldDrag.Text"/>). The values go into the line by the number rules
+/// of a drag (<see cref="TransformValues.Line(IReadOnlyList{ValueBase}, ReadOnlySpan{float})"/>), so a label drag and
+/// a gizmo drag write the same text.
+/// </summary>
+/// <remarks>
+/// <para>The edit reads its start line from the edit view when it starts. It is the only source of the start of the
+/// drag, because the end of an edit before it can change the edit view.</para>
+/// <para>A change to the numbers that the edit view holds does nothing. A change back to the start numbers puts back
+/// the edit view as it was, so the edit removes no pin and adds no entry. Each start value after the written values
+/// stays, for example the alpha of a color.</para>
+/// </remarks>
+internal sealed class NumberLineGesture : LineEditGesture
+{
+    private readonly IReadOnlyList<ValueBase> start;
+    private readonly float[] startNumbers;
+    private float[] applied;
+
+    /// <summary>Starts the edit of the first <paramref name="count"/> values of the line of the key.</summary>
+    /// <exception cref="InvalidOperationException">The key does not have exactly one line, one of the first
+    /// <paramref name="count"/> values is not a finite number (see <see cref="TransformValues.TryNumber"/>), the
+    /// session takes no edits, or a transaction is open. No edit starts.</exception>
+    public NumberLineGesture(EditSession session, FieldBinding binding, int count)
+        : this(session, StartOf(session, binding, count))
+    {
+    }
+
+    private NumberLineGesture(EditSession session, Start at) : base(session, at.Binding, FieldDrag.Text(at.Numbers))
+    {
+        start = at.Line;
+        startNumbers = at.Numbers;
+        applied = at.Numbers;
+    }
+
+    /// <summary>The number of values that the edit writes.</summary>
+    public int Count => startNumbers.Length;
+
+    /// <summary>Shows the numbers of the text in the line, or sets <see cref="FieldGesture.Error"/>.</summary>
+    public override void Change(string text)
+    {
+        if (!FieldDrag.TryParse(text, Count, out var numbers))
+        {
+            // A guard: the label drag and the picker make the text.
+            Error = $"'{text}' is not {Count} finite numbers separated by commas.";
+            return;
+        }
+
+        if (Same(numbers, applied) && Error == null)
+            return;
+
+        IReadOnlyList<ValueBase> line;
+        try
+        {
+            line = TransformValues.Line(start, numbers);
+        }
+        catch (ArgumentException e)
+        {
+            Error = e.Message;
+            return;
+        }
+
+        var unchanged = line.Count == start.Count && line.Select((v, i) => ReferenceEquals(v, start[i])).All(s => s);
+        applied = Apply(unchanged ? EditCommand.Group("", []) : EditCommand.SetLines(Binding.Section, Binding.Name, [line]))
+            ? numbers
+            : startNumbers;
+    }
+
+    /// <summary>The binding, the line and the numbers of the key in the edit view now.</summary>
+    private static Start StartOf(EditSession session, FieldBinding binding, int count)
+    {
+        var view = session.Get(binding.Section) ??
+                   throw new InvalidOperationException($"The edit view has no section {binding.Section.Id}.");
+        var lines = view.Lines(binding.Name);
+        if (lines.Count != 1)
+        {
+            throw new InvalidOperationException(lines.Count == 0
+                ? $"'{binding.Name}' has no line. Type a value in the field first."
+                : $"'{binding.Name}' has {lines.Count} lines. Correct the key in the field first.");
+        }
+
+        var values = lines[0].Values;
+        if (FieldDrag.NumbersOf(values, count, out var numbers) is { } reason)
+            throw new InvalidOperationException($"The editor cannot change '{binding.Name}' with a drag or a picker. {reason}");
+        return new Start(FieldBinding.Create(session, binding.Section, view, binding.Name), values, numbers);
+    }
+
+    /// <summary>True when two lists of numbers have the same bits.</summary>
+    private static bool Same(float[] a, float[] b) =>
+        a.Length == b.Length && a.Select((v, i) => BitConverter.SingleToInt32Bits(v) == BitConverter.SingleToInt32Bits(b[i])).All(s => s);
+
+    private sealed record Start(FieldBinding Binding, IReadOnlyList<ValueBase> Line, float[] Numbers);
 }
 
 /// <summary>

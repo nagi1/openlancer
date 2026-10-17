@@ -339,6 +339,38 @@ public sealed class ThnFieldEditTests
         Assert.Equal("'1, 2' is not 3 numbers separated by commas.", ThnPathKeysEditor.PointParse(keys, 1, "1, 2").Error);
     }
 
+    /// <summary>
+    /// A label drag of a cutscene row changes one value of the text of the row (section 6.5 of the M20 design). A drag
+    /// of 0 units gives the start text, so a drag back to its start is no edit. A drag of the yaw of an orientation by
+    /// 40 points turns it by 20 degrees and writes the matrix of the new angles.
+    /// </summary>
+    [Fact]
+    public void ALabelDragOfACutsceneRowChangesOneValueOfItsText()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var cam = Entity(session, "Cam_A");
+        var pos = new ThnPath("spatialprops.pos");
+        var orient = new ThnPath("spatialprops.orient");
+
+        var start = ThnFieldEdit.Format(ThnKeyKind.Vector, Value(session, cam, pos.Text));
+        Assert.Equal(start, FieldDrag.DragText(DragKind.Scaled, start, 3, 1, 0));
+        Assert.Equal("0.05, 0, 0", FieldDrag.DragText(DragKind.Scaled, start, 3, 0, 5));
+        Assert.Equal("12.5, 3.3, -40", FieldDrag.DragText(DragKind.Scaled, "12.5, 3.2, -40", 3, 1, 1));
+
+        var angles = ThnFieldEdit.Format(ThnKeyKind.Orient, Value(session, cam, orient.Text));
+        Assert.Equal("0, 0, 0", angles);
+        var kind = FieldDrag.KindOf(ThnKeyKind.Orient, orient.Text)!.Value;
+        var drag = new ThnFieldGesture(session, new FieldKey(cam, orient.Text, FieldKey.AllLines), angles,
+            text => ThnFieldEdit.Parse(ThnKeyKind.Orient, text, Evaluator), ThnFieldCommand.Set(cam, orient));
+        drag.Change(FieldDrag.DragText(kind, drag.StartText, 3, 1, 40));
+        Assert.Null(drag.End(keep: true, interactive: true));
+
+        Assert.Equal(ThnPose.Orient(MathHelper.MatrixFromEulerDegrees(new Vector3(0, 20, 0))),
+            Value(session, cam, orient.Text));
+        Assert.Equal("Set spatialprops.orient", session.UndoLabel);
+    }
+
     private static ThnFieldGesture Gesture(EditSession session, ThnRef target, string start) =>
         new(session, new FieldKey(target, Fovh.Text, FieldKey.AllLines), start,
             text => ThnFieldEdit.Parse(ThnKeyKind.Number, text, Evaluator), ThnFieldCommand.Set(target, Fovh));

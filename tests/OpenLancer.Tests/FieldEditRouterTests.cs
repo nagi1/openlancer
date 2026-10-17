@@ -22,6 +22,10 @@ public sealed class FieldEditRouterTests
     // The ImGui ids of two widgets.
     private const uint X = 11;
     private const uint Y = 12;
+    private const uint Z = 13;
+
+    // The ImGui id of the drag button of a label.
+    private const uint Label = 14;
 
     private static readonly FieldEvents Activated = new(Activated: true, Active: true, Changed: false,
         Deactivated: false, Cancelled: false);
@@ -458,6 +462,80 @@ public sealed class FieldEditRouterTests
         Assert.Equal("0, -1, 20, 20, 0, 1", MarketEdits.ValuesText(Line("eng1")));
         Assert.Equal("0, -1, 10, 10, 0, 1", MarketEdits.ValuesText(Line("s1_hull")));
     }
+
+    /// <summary>
+    /// A label drag and the text fields of a vector edit one key. A press on the label ends the text edit of the row
+    /// and keeps its text, and the drag starts from that line. A text edit after the drag starts from the line of the
+    /// drag. Each edit is one entry of the history (section 6.3 of the M20 design).
+    /// </summary>
+    [Fact]
+    public void ALabelDragAndTheTextFieldsOfAVectorShareTheirKey()
+    {
+        using var ws = Layers();
+        var session = ws.Session("act");
+        session.Execute(Bind(session, Ship("s1"), "steering_torque").Edit("1, 2, 3"));
+        var warnings = new List<string>();
+        var router = new FieldEditRouter(warnings.Add);
+        FieldBinding Torque() => Bind(session, Ship("s1"), "steering_torque");
+
+        Route(router, session, X, Torque(), Activated, start => FieldEdit.WithValue(start, 0, "1"), 1);
+        Route(router, session, X, Torque(), Typed, start => FieldEdit.WithValue(start, 0, "5"), 2);
+        // Frame 3: the drag of the Y label passes the threshold. ImGui tells the end of the X field one frame late.
+        Drag(router, session, Label, Torque(), Activated, 1, 0, 3);
+        Route(router, session, X, Torque(), Ended, start => FieldEdit.WithValue(start, 0, "5"), 4);
+        Assert.True(router.IsOpenFor(Label));
+        Assert.False(router.IsOpenFor(X));
+        Assert.Equal("5, 2, 3", router.Open!.StartText);
+        // 10 points with the step of the line: 0.01 for the largest value 5.
+        Drag(router, session, Label, Torque(), Typed, 1, 10, 4);
+        Assert.Equal("5, 2.1, 3", Torque().Text);
+        Drag(router, session, Label, Torque(), Ended, 1, 10, 5);
+        Assert.False(router.IsOpenFor(Label));
+
+        Route(router, session, Z, Torque(), Activated, start => FieldEdit.WithValue(start, 2, "3"), 6);
+        Route(router, session, Z, Torque(), TypedAndEnded, start => FieldEdit.WithValue(start, 2, "7"), 7);
+
+        Assert.Empty(warnings);
+        Assert.Equal("5, 2.1, 7", Torque().Text);
+        session.Undo();
+        Assert.Equal("5, 2.1, 3", Torque().Text);
+        session.Undo();
+        Assert.Equal("5, 2, 3", Torque().Text);
+    }
+
+    /// <summary>
+    /// The end of a text edit with an error puts back the line before it. A drag that starts in that frame reads its
+    /// start from the edit view after that end, not from the line that the row showed (finding R4 of the M20 design).
+    /// </summary>
+    [Fact]
+    public void ADragAfterATextWithAnErrorStartsFromTheEditView()
+    {
+        using var ws = Layers();
+        var session = ws.Session("act");
+        session.Execute(Bind(session, Ship("s1"), "steering_torque").Edit("1, 2, 3"));
+        var warnings = new List<string>();
+        var router = new FieldEditRouter(warnings.Add);
+        FieldBinding Torque() => Bind(session, Ship("s1"), "steering_torque");
+        Route(router, session, X, Torque(), Activated, start => FieldEdit.WithValue(start, 0, "1"), 1);
+        Route(router, session, X, Torque(), Typed, start => FieldEdit.WithValue(start, 0, "4"), 2);
+        Route(router, session, X, Torque(), Typed, start => FieldEdit.WithValue(start, 0, "4x"), 3);
+        Assert.Equal("4, 2, 3", Torque().Text);
+
+        // The binding of the row is from before the end of the text edit.
+        var row = Torque();
+        Drag(router, session, Label, row, Activated, 0, 0, 4);
+        Drag(router, session, Label, row, Typed, 0, 10, 4);
+
+        Assert.StartsWith("'steering_torque' did not change:", Assert.Single(warnings));
+        Assert.Equal("1, 2, 3", router.Open!.StartText);
+        Assert.Equal("1.1, 2, 3", Torque().Text);
+    }
+
+    /// <summary>Routes the events of a label drag of a value of a vector, as the Inspector does.</summary>
+    private static void Drag(FieldEditRouter router, EditSession session, uint id, FieldBinding field,
+        FieldEvents events, int index, decimal units, int frame) =>
+        router.Route(id, field.FieldKey, events, () => new NumberLineGesture(session, field, 3),
+            start => FieldDrag.DragText(DragKind.Scaled, start, 3, index, units), frame);
 
     /// <summary>Routes the events of a widget that changes the lines of a bound key, as the Inspector does.</summary>
     private static void Route(FieldEditRouter router, EditSession session, uint id, FieldBinding field,

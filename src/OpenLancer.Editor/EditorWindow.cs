@@ -79,6 +79,7 @@ internal sealed partial class EditorWindow : Game
         Settings = options.Bench ? EditorSettings.Transient() : EditorSettings.Load();
         Cutscenes = new CutsceneWorkspace(this);
         Edits = new EditController(this);
+        closePrompt = new ClosePrompt(this);
         Play = new PlayController(this, PlayProcess.Command, () => playClock.Elapsed);
         playMenu = new PlayMenu(this);
         // The window gets this title when it is made. The shaders compile before the first frame, and the window
@@ -241,16 +242,13 @@ internal sealed partial class EditorWindow : Game
         }
 
         Settings.Save();
-        // The window closes without a question (roadmap decision D78). So the unsaved edits go into the recovery
-        // file, and the next open of the mod offers to restore them (decision D8). An open field edit or drag ends
-        // first, so that the file keeps it. When no unsaved edits remain, for example after an undo, the write deletes
-        // the file.
+        // A close of the window asks about unsaved edits first (see ClosePrompt, roadmap decision D78). A crash comes
+        // here without the question (see Game.Crashed). Then the unsaved edits go into the recovery file, and the next
+        // open of the mod offers to restore them (decision D8). An open field edit or drag ends first, so that the
+        // file keeps it. When no unsaved edits remain, for example after an undo, the write deletes the file.
         if (Session is { } session)
         {
-            inspector.EndEdit();
-            Scene.EndDrag();
-            timeline.EndDrag();
-            cutsceneView.EndDrag();
+            EndOpenEdits();
             if (session.RecoveryOutdated)
             {
                 Edits.WriteRecovery(session);
@@ -261,6 +259,19 @@ internal sealed partial class EditorWindow : Game
         Cutscenes.Dispose();
         Scene.Dispose();
         Session?.Dispose();
+    }
+
+    /// <summary>The user closes the window: the close button, Alt+F4 or the taskbar. With unsaved edits, the window
+    /// stays open and the close prompt asks first (OL-0027, see <see cref="ClosePrompt"/>).</summary>
+    protected override bool OnCloseRequested() => closePrompt.Request();
+
+    /// <summary>Ends an open field edit or drag and keeps its change, before the window closes.</summary>
+    private void EndOpenEdits()
+    {
+        inspector.EndEdit();
+        Scene.EndDrag();
+        timeline.EndDrag();
+        cutsceneView.EndDrag();
     }
 
     /// <summary>Asks for a profile file and opens it.</summary>
@@ -691,9 +702,9 @@ internal sealed partial class EditorWindow : Game
         }
 
         ImGui.Separator();
-        if (Theme.IconMenuItem(EditorIcons.DoorOpen, "Exit", true))
+        if (Theme.IconMenuItem(EditorIcons.DoorOpen, "Exit", true) && closePrompt.Request())
         {
-            Edits.Leave("closing the editor", Exit);
+            Exit();
         }
     }
 

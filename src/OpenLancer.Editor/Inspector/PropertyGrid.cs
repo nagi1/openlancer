@@ -648,8 +648,11 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// </summary>
     /// <param name="field">Draws field i with its text, in the width that it gets.</param>
     /// <param name="reserve">The width to leave free at the right of the fields.</param>
+    /// <param name="dragLabel">Draws the button of label i in the size of its prefix, and returns true when the button
+    /// is hovered or active (see <see cref="DragLabel"/>). Null for labels without a button. Label i and field i share
+    /// the id scope i.</param>
     private static void ComponentFields(IReadOnlyList<string> components, IReadOnlyList<ComponentLabel> labels,
-        Action<int, string, float> field, float reserve = 0)
+        Action<int, string, float> field, float reserve = 0, Func<int, Vector2, bool>? dragLabel = null)
     {
         var style = ImGui.GetStyle();
         var spacing = style.ItemInnerSpacing.X;
@@ -668,14 +671,24 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             }
 
             // The label is centered in its prefix space, at the height of the field text.
+            ImGui.PushID(i);
             var min = ImGui.GetCursorScreenPos();
             var labelWidth = ImGui.CalcTextSize(labels[i].Text).X;
             var labelPosition = new Vector2(min.X + MathF.Truncate((layout.Prefix - labelWidth) / 2),
                 min.Y + style.FramePadding.Y);
-            drawList.AddText(labelPosition, ImGui.GetColorU32(labels[i].Color), labels[i].Text);
-            ImGui.Dummy(new Vector2(layout.Prefix, height));
+            var hot = false;
+            if (dragLabel != null)
+            {
+                hot = dragLabel(i, new Vector2(layout.Prefix, height));
+            }
+            else
+            {
+                ImGui.Dummy(new Vector2(layout.Prefix, height));
+            }
+
+            drawList.AddText(labelPosition, ImGui.GetColorU32(hot ? HotLabel(labels[i].Color) : labels[i].Color),
+                labels[i].Text);
             ImGui.SameLine(0, 0);
-            ImGui.PushID(i);
             field(i, texts[i], layout.Field);
             ImGui.PopID();
         }

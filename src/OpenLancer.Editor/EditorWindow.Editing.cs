@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ImGuiNET;
@@ -15,11 +16,31 @@ using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor;
 
-/// <summary>The edits of the active mod: the Edit and Mod menus, their keys and their dialogs.</summary>
-internal sealed partial class EditorWindow
+/// <summary>The edits of the active mod: the Edit and Mod menus, their keys and their dialogs, and the save prompt
+/// when the window closes.</summary>
+internal sealed partial class EditorWindow : IClosePromptHost
 {
     private readonly NewModDialog newModDialog = new();
     private readonly NewFromTemplateDialog templateDialog = new();
+
+    // The close prompt has its own dialog. When another dialog replaces it, its cancel action still runs, so the next
+    // close request asks again.
+    private readonly ChoiceDialog closeDialog = new();
+    private readonly ClosePrompt closePrompt;
+
+    void IClosePromptHost.EndEdits() => EndOpenEdits();
+
+    string? IClosePromptHost.UnsavedMod =>
+        Session is { Edits: { IsDirty: true, ActiveMod: { } mod } } ? mod.Manifest.Name : null;
+
+    void IClosePromptHost.Save(Action saved) => Edits.Save(saved);
+
+    void IClosePromptHost.DiscardRecovery() => Edits.DiscardRecovery();
+
+    void IClosePromptHost.Close() => Exit();
+
+    void IClosePromptHost.Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel) =>
+        closeDialog.Show(title, message, choices, cancel);
 
     /// <summary>
     /// The section of the edit view that an item shows: the <c>[Ship]</c> of a ship, the section of equipment, the
@@ -282,10 +303,11 @@ internal sealed partial class EditorWindow
         Choice.Draw();
         newModDialog.Draw();
         templateDialog.Draw();
+        closeDialog.Draw();
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
-    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || templateDialog.IsOpen;
+    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || templateDialog.IsOpen || closeDialog.IsOpen;
 
     /// <summary>
     /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5 and Shift+F5. They

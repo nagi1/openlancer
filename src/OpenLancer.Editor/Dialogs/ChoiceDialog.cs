@@ -9,8 +9,8 @@ namespace OpenLancer.Editor.Dialogs;
 internal sealed record Choice(string Label, Action Action);
 
 /// <summary>
-/// A message with buttons, for example Save, Discard and Cancel. The first button is the default button. The close
-/// button of the title bar runs the cancel action.
+/// A message with buttons, for example Save, Discard and Cancel. The first button is the default button. Escape and the
+/// close button of the title bar run the cancel action.
 /// </summary>
 internal sealed class ChoiceDialog : ModalDialog
 {
@@ -22,7 +22,7 @@ internal sealed class ChoiceDialog : ModalDialog
     protected override string Title => title;
 
     /// <param name="title">The title. Two dialogs that can show at the same time need different titles.</param>
-    /// <param name="cancel">What the close button of the title bar does, or null for nothing.</param>
+    /// <param name="cancel">What Escape and the close button of the title bar do, or null for nothing.</param>
     public void Show(string title, string message, IReadOnlyList<Choice> choices, Action? cancel = null)
     {
         this.title = title;

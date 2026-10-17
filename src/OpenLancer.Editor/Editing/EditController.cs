@@ -37,8 +37,9 @@ internal sealed record SaveOutcome(bool Saved, int Number, bool Incomplete)
 /// <para>A save writes the files of the active mod at once. Then the game data loads again in the background from a
 /// new file system of the edit view (review finding F5, roadmap rule R5). One reload runs at a time, and a save
 /// during a reload queues one more. The validation runs in an oltool process (see <see cref="ValidationRunner"/>).</para>
-/// <para>The engine has no hook that stops the window from closing (roadmap decision D78). So the editor writes the
-/// unsaved edits to the recovery file a moment after each edit, and when the window closes.</para>
+/// <para>A close of the window with unsaved edits asks first: Save, Don't Save or Cancel (see
+/// <see cref="ClosePrompt"/>, roadmap decision D78). A crash or a kill of the editor cannot ask. So the editor also
+/// writes the unsaved edits to the recovery file a moment after each edit, and in the cleanup after a crash.</para>
 /// </remarks>
 internal sealed class EditController(EditorWindow window) : IDisposable
 {
@@ -161,6 +162,13 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// </summary>
     /// <returns>What the save did. A save of the Overwrite dialog comes later and is not part of it.</returns>
     public SaveOutcome Save() => Save(overwrite: false, leave: null);
+
+    /// <summary>
+    /// Saves as <see cref="Save()"/> does, then runs <paramref name="leave"/>, an action that ends the session, for
+    /// example the close of the window. It runs when the save saved, also after the Overwrite dialog. The game data
+    /// then does not load again, and no validation runs. After a save that fails, it does not run.
+    /// </summary>
+    public void Save(Action leave) => Save(overwrite: false, leave);
 
     /// <param name="overwrite">True to replace the files of the active mod that changed outside the editor.</param>
     /// <param name="leave">The action that ends the session after the save, for example a close of the profile, or
@@ -443,6 +451,16 @@ internal sealed class EditController(EditorWindow window) : IDisposable
             ]);
             return null;
         };
+
+    /// <summary>Deletes the recovery file of the open session, for example when the user closes the window without a
+    /// save.</summary>
+    public void DiscardRecovery()
+    {
+        if (window.Session is { } session)
+        {
+            Discard(session);
+        }
+    }
 
     /// <summary>Deletes the recovery file: the unsaved edits of an earlier session, or of this session.</summary>
     private void Discard(EditorSession session)

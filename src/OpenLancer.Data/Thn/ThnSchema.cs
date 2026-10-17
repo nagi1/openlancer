@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using OpenLancer.Data.Editing;
 
 namespace OpenLancer.Data.Thn;
 
@@ -149,6 +150,10 @@ public sealed record ThnKeyRow(ThnElementKind Element, IReadOnlyList<string>? Ty
 
     /// <summary>A note for the Inspector row, or null.</summary>
     public string? Note { get; init; }
+
+    /// <summary>The form of the channels of a <see cref="ThnKeyKind.Vector"/> key that is a color, or null when the
+    /// key is not a color. The row of such a key has a color picker that writes the channels in this form.</summary>
+    public ColorForm? Color { get; init; }
 
     /// <summary>True when the Inspector shows the row also for an element without the key, so that a value can be
     /// set. Else the row shows only when the element has the key.</summary>
@@ -389,8 +394,15 @@ public static class ThnSchema
             Note = "A LIGHT without a type does not load (ThnScript.cs:452-453).",
         };
         yield return Entity(light, "lightprops.on", ThnKeyKind.Bool, "ThnScript.cs:426-430", "on");
-        yield return Entity(light, "lightprops.diffuse", ThnKeyKind.Vector, "ThnScript.cs:455-456", "diffuse");
-        yield return Entity(light, "lightprops.ambient", ThnKeyKind.Vector, "ThnScript.cs:457-458", "ambient");
+        // The engine applies the light colors of a cutscene as they are, so their channels go from 0 to 1.
+        yield return Entity(light, "lightprops.diffuse", ThnKeyKind.Vector, "ThnScript.cs:455-456", "diffuse") with
+        {
+            Color = ColorForm.Unit,
+        };
+        yield return Entity(light, "lightprops.ambient", ThnKeyKind.Vector, "ThnScript.cs:457-458", "ambient") with
+        {
+            Color = ColorForm.Unit,
+        };
         yield return Entity(light, "lightprops.specular", ThnKeyKind.Vector, "ThnScript.cs:421-474", "specular") with
         {
             Read = false, Note = NotRead,
@@ -442,8 +454,9 @@ public static class ThnSchema
         };
 
         string[] scene = ["SCENE"];
+        // The engine divides the ambient color of a SCENE by 255 (Cutscene.cs:84).
         yield return Entity(scene, "ambient", ThnKeyKind.Vector, "ThnScript.cs:273-276, ThnScriptInstance.cs:211-213",
-            "ambient");
+            "ambient") with { Color = ColorForm.Byte };
         yield return Entity(scene, "up", ThnKeyKind.Symbol, "ThnScript.cs:278-281", "up") with { Group = AxisGroup };
         yield return Entity(scene, "front", ThnKeyKind.Symbol, "ThnScript.cs:283-286", "front") with { Group = AxisGroup };
         foreach (var (key, kind) in new[]
@@ -456,6 +469,8 @@ public static class ThnSchema
             yield return Entity(scene, key, kind, "ThnScript.cs:253-487", key) with
             {
                 Group = kind == ThnKeyKind.Symbol ? "FogModes" : null,
+                // The engine does not read it here. A START_FOG_PROP_ANIM divides its fogcolor by 255.
+                Color = key == "fogcolor" ? ColorForm.Byte : null,
                 Read = false,
                 Note = "The engine does not read the fog of a SCENE entity. A START_FOG_PROP_ANIM sets the fog " +
                        "(StartFogPropAnimEvent.cs:42-55).",
@@ -700,8 +715,14 @@ public static class ThnSchema
         string[] startLight = ["START_LIGHT_PROP_ANIM"];
         yield return Event(startLight, "props.lightprops", ThnKeyKind.Record, $"{lightAnim}:39", "Light");
         yield return Event(startLight, "props.lightprops.on", ThnKeyKind.Bool, $"{lightAnim}:41", "on");
-        yield return Event(startLight, "props.lightprops.diffuse", ThnKeyKind.Vector, $"{lightAnim}:42", "diffuse");
-        yield return Event(startLight, "props.lightprops.ambient", ThnKeyKind.Vector, $"{lightAnim}:43", "ambient");
+        yield return Event(startLight, "props.lightprops.diffuse", ThnKeyKind.Vector, $"{lightAnim}:42", "diffuse") with
+        {
+            Color = ColorForm.Unit,
+        };
+        yield return Event(startLight, "props.lightprops.ambient", ThnKeyKind.Vector, $"{lightAnim}:43", "ambient") with
+        {
+            Color = ColorForm.Unit,
+        };
         yield return Event(startLight, "props.lightprops.theta", ThnKeyKind.Number, $"{lightAnim}:44", "theta");
         yield return Event(startLight, "props.lightprops.cutoff", ThnKeyKind.Number, $"{lightAnim}:45", "cutoff");
         yield return Event(startLight, "props.lightprops.range", ThnKeyKind.Number, $"{lightAnim}:46", "range");
@@ -718,7 +739,10 @@ public static class ThnSchema
         yield return Event(startFog, "props.fogprops", ThnKeyKind.Record, $"{fog}:42", "Fog");
         yield return Event(startFog, "props.fogprops.fogon", ThnKeyKind.Bool, $"{fog}:44", "fogon");
         yield return Event(startFog, "props.fogprops.fogmode", ThnKeyKind.Symbol, $"{fog}:45", "fogmode") with { Group = "FogModes" };
-        yield return Event(startFog, "props.fogprops.fogcolor", ThnKeyKind.Vector, $"{fog}:47-52", "fogcolor");
+        yield return Event(startFog, "props.fogprops.fogcolor", ThnKeyKind.Vector, $"{fog}:47-52", "fogcolor") with
+        {
+            Color = ColorForm.Byte,
+        };
         yield return Event(startFog, "props.fogprops.fogdensity", ThnKeyKind.Number, $"{fog}:53", "fogdensity");
         yield return Event(startFog, "props.fogprops.fogstart", ThnKeyKind.Number, $"{fog}:54", "fogstart");
         yield return Event(startFog, "props.fogprops.fogend", ThnKeyKind.Number, $"{fog}:55", "fogend");

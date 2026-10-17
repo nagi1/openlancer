@@ -542,7 +542,8 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         {
             case ThnKeyKind.Vector:
             case ThnKeyKind.Orient:
-                grid.ThnComponentRow(label, field, note, PropertyGrid.Axes, Parser(row.Kind));
+                grid.ThnComponentRow(label, field, note, PropertyGrid.Axes, Parser(row.Kind),
+                    FieldDrag.KindOf(row.Kind, path.Text), row.Color);
                 break;
             case ThnKeyKind.Quaternion:
                 grid.ThnComponentRow(label, field, note, QuaternionLabels, Parser(row.Kind));

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using LibreLancer.Thn;
 using LibreLancer.Thn.Events;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 using Xunit;
 using static OpenLancer.Tests.ThnScripts;
@@ -191,5 +192,36 @@ public sealed class ThnSchemaTests
         var type = ThnSchema.Find(ThnElementKind.Entity, "LIGHT", new ThnPath("lightprops.type"))!;
         Assert.True(ThnSchema.Fits(type, S("L_SPOT"), Evaluator.Symbols));
         Assert.False(ThnSchema.Fits(type, S("CAMERA"), Evaluator.Symbols));
+    }
+
+    /// <summary>
+    /// Seven rows of cutscene colors have the form of their channels (decision D105 of the M20 design): the light
+    /// colors are from 0 to 1, because the engine applies them as they are, and the SCENE ambient and the fog color
+    /// are from 0 to 255, because the engine divides them by 255. No other row has a form.
+    /// </summary>
+    [Fact]
+    public void TheColorRowsHaveTheFormOfTheirChannels()
+    {
+        (ThnElementKind Element, string Type, string Path, ColorForm Form)[] expected =
+        [
+            (ThnElementKind.Entity, "LIGHT", "lightprops.diffuse", ColorForm.Unit),
+            (ThnElementKind.Entity, "LIGHT", "lightprops.ambient", ColorForm.Unit),
+            (ThnElementKind.Entity, "SCENE", "ambient", ColorForm.Byte),
+            (ThnElementKind.Entity, "SCENE", "fogcolor", ColorForm.Byte),
+            (ThnElementKind.Event, "START_LIGHT_PROP_ANIM", "props.lightprops.diffuse", ColorForm.Unit),
+            (ThnElementKind.Event, "START_LIGHT_PROP_ANIM", "props.lightprops.ambient", ColorForm.Unit),
+            (ThnElementKind.Event, "START_FOG_PROP_ANIM", "props.fogprops.fogcolor", ColorForm.Byte),
+        ];
+
+        foreach (var (element, type, path, form) in expected)
+        {
+            var row = ThnSchema.Find(element, type, new ThnPath(path))!;
+            Assert.Equal(form, row.Color);
+            Assert.Equal(ThnKeyKind.Vector, row.Kind);
+        }
+
+        Assert.Equal(expected.Length, ThnSchema.Rows.Count(r => r.Color != null));
+        Assert.Null(ThnSchema.Find(ThnElementKind.Entity, "LIGHT", new ThnPath("lightprops.specular"))!.Color);
+        Assert.Null(ThnSchema.Find(ThnElementKind.Entity, "LIGHT", new ThnPath("lightprops.color"))!.Color);
     }
 }

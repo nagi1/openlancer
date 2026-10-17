@@ -6,7 +6,7 @@ OpenLancer runs on a fork of [Librelancer](https://codeberg.org/Librelancer/Libr
 
 - The branch `openlancer` starts at the upstream commit in "Base commit" below. Each OpenLancer change to the engine is a normal commit on that branch. OpenLancer code that does not have to be in the engine stays in OpenLancer's own projects.
 - Commit in the submodule first. Then commit the new submodule commit in OpenLancer.
-- The subject of each fork commit starts with its change number, for example `OL-0012`. This table and the other documents use these numbers. The next free number is `OL-0027`.
+- The subject of each fork commit starts with its change number, for example `OL-0012`. This table and the other documents use these numbers. The next free number is `OL-0028`.
 - The fork commits are never submitted upstream. Librelancer does not accept AI-written issues or pull requests, and automated tools must not open them.
 - The fork is the private repository `https://github.com/spool1/openlancer-engine` (remote `origin` of the submodule). Push each new fork commit there before you commit the submodule pointer in OpenLancer, so that a new clone can get it. Keep the repository private.
 - The remote `upstream` of the submodule is Librelancer on Codeberg, `https://codeberg.org/Librelancer/Librelancer.git`. Librelancer moved there from GitHub on 2026-10-10, and its GitHub repository holds only a notice now.
@@ -43,6 +43,7 @@ Each commit applies on top of all commits before it, and it can change lines tha
 | OL-0024 `17f0c273` | Merge of upstream `4bf6765b`: an embedded server has `UseDatabase = false`, so `GameServer.Database` stays null. The hot reload read `Database` to know if the server thread still runs, so every reload refused. `GameServer.Running` is true from `Start` until `Stop`, and `PlayReload.CheckLeave` reads it. Changes outside OpenLancer: none. |
 | OL-0025 `e7c8a6e8` | The retail tests of the fork (`RetailData`) used a fixed `GameData\base` folder of one machine when `OPENLANCER_BASE` was not set. Now they use the nearest `GameData\base` folder above the test binaries, as the OpenLancer tests do, and skip when there is none. Changes outside OpenLancer: none. |
 | OL-0026 `f2714306` | `Shader.targets` quotes the response file paths that it gives to `LLShaderCompiler`, so the shader step works in a path with a space (see "Fixed: `BuildAll` failed when the path has a space"). Changes outside OpenLancer: a build in such a path works. |
+| OL-0027 `9e4a45cc` | The editor asks about unsaved edits when the user closes its window (roadmap decision D78). Before, a host could not keep the window open: the SDL quit event always ended the loop. `Game.OnCloseRequested` is a new protected virtual method. The SDL2 and SDL3 hosts call it for the quit event, which the close button, Alt+F4, the taskbar close and other quit requests send. When it returns `false`, the window stays open and `WillClose` does not run. The default returns `true`, so a game without an override closes as before. `Exit` does not call it. Changes outside OpenLancer: none. |
 
 OL-0001 to OL-0022 were local patch files before the fork. Their numbers did not change.
 

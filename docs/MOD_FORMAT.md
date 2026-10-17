@@ -319,6 +319,29 @@ The editor checks the text against the type that the engine reads: a number, a w
 
 Each field edit is one entry of the edit history (Edit > Undo, `Ctrl+Z`, and Redo, `Ctrl+Y` or `Ctrl+Shift+Z`). Each of the X, Y and Z fields of a vector is a field of its own. A field that ends with the text it started with is no edit. So it keeps the line of the patch. Escape ends a field and cancels its edit.
 
+A vector row and the size row of a zone have a label in front of each value: X, Y and Z, or Radius, Height, Outer and Inner. Drag a label to the left or to the right to change its value. Each point of mouse motion changes the value by one step. `Shift` gives steps of 0.1 times the step, and `Ctrl` gives steps of 10 times the step. When you hold both keys, `Shift` wins. A key that you press during a drag changes the speed from that point on, and the value does not jump. The tooltip of a label gives the steps of its value.
+
+| Value | Keys | Step for each point | `Shift` | `Ctrl` |
+|---|---|---|---|---|
+| Position | `pos` | 10 | 1 | 100 |
+| Rotation | `rotate` | 0.5 degree | 0.05 degree | 5 degrees |
+| Size of a zone | `size` of a `[Zone]` | 10 | 1 | 100 |
+| Coefficient | `attenuation`, `emit_attenuation` | From the dragged value. 0.0000056 gives 0.00000001. A value of 0 takes the step of its line, as in the next row. | step x 0.1 | step x 10 |
+| Other vector | for example `spin`, `direction`, `rotation_inertia` | From the largest value of the line. 2800 gives 10, 1 gives 0.01, and 0.002 gives 0.00001. A line of zeros gives 0.01. | step x 0.1 | step x 10 |
+
+A step that comes from a value is its power of 10 divided by 100: 10^(e-2) for a value from 10^e to 10^(e+1). The step of the other vectors goes from 0.000001 to 10,000. The step of a coefficient goes from 0.000000001 to 10,000. The step stays the same from the start of a drag to its end. So after a drag from 950 to 1050, the next drag has a step 10 times larger. In the Scene, `Ctrl` reverses the snap. In the Inspector, `Ctrl` gives large steps.
+
+One drag is one entry of the edit history. The Scene shows each change at once. `Esc` or the right mouse button cancels the drag, and the value goes back. A drag that ends where it started, or that comes back to its start, is no edit. The drag goes on when the mouse leaves the editor window, up to the edge of the screen. To go farther, release the button and drag again. A label does not drag when the row is read-only, or when a value of the line is not a number. Then its tooltip tells why. Correct the value in the field first. A single number, for example `edge_fraction`, has no label drag.
+
+A color row with one line has a swatch in front of its text field. Click the swatch to open the color picker. The picker keeps the form of the key:
+
+- Whole numbers from 0 to 255 for most color keys, for example `color` of a `[LightSource]`, `space_color`, `burn_color` and `property_fog_color`. The inputs of the picker show 0 to 255.
+- Numbers from 0 to 1 with 3 decimals for a `FloatColor` key: `inner_color` and `outer_color` of a `[star_glow]` in `stararch.ini`. The inputs of the picker show 0 to 1. No Inspector page shows that file yet.
+
+The picker changes the first three values of the line. A fourth value, for example the alpha `128` of `color = 120, 250, 255, 128`, stays. The text field can change it. The Scene shows each change at once, for example the light of the system. A click outside the picker keeps the color. One opening of the picker is one entry of the edit history. `Esc` puts back the color of the opening, also while an input of the picker is active. **Original** in the picker shows the color of the opening, and a click on it puts back that color.
+
+The swatch is disabled, and its tooltip tells why, when the line has fewer than three values, when one of the first three values is not a number, or when one of them is outside the range of the form, for example `color = 300, 0, 0`. Correct such a line in the text field. A key without a line, or with two lines or more, has no swatch. Type the first value in the text field. A `Vector3` color factor, for example `color_shift`, has the label drag and no swatch.
+
 Each change of the text shows at once. While a field is active, it stays in its place, also when its text adds or removes the key. After the field ends, the key moves to its list, for example from "Unset keys" to "Keys". Two kinds of field change the data only when the field ends: the text of a key that holds a text id, for example a name, and a market line.
 
 A blue label marks a value that the active mod sets. The tooltip of the label names the layer that sets the value: the base data, a mod that loads before the active mod, or the active mod. A lock tells why a row cannot change, for example the key of a section, or a section that format version 1 cannot patch.
@@ -354,6 +377,8 @@ The numbers that a drag writes:
 - The drag writes only its key. The other lines of the section stay as they are, and so does each value of the line that the drag does not change.
 - A changed value is an integer when it is a whole number from -16777216 to 16777216 and it replaces an integer or no value. Each other changed value is a float, also a whole number that replaces a float, for example `200.0`. `-0` becomes `0`.
 - A changed angle of `rotate` rounds to 0.001 degree. Each rotation has two sets of angles. The drag takes the set that is nearest to the angles before the drag, from -180 to 180 degrees.
+- A label drag in the Inspector and the color picker follow the same rules (see "Edits in the Inspector"). A label drag adds its steps to the exact text of the value at its start, so a drag of `0.3` by one step of 0.1 writes `0.4`. A changed angle wraps into the range from -180 to 180 degrees, then rounds to 0.001 degree. So a drag of `170` by 20 degrees writes `-170`. A changed size of a zone is 1 or more, as for a scale in the Scene.
+- The picker rounds only the channels that it changes: to a whole number from 0 to 255, or to 3 decimals from 0 to 1. A channel whose rounded value does not change keeps its value, also a value that is not on that grid, for example `0.784314` or `120.5`.
 
 For example, a snapped move of `Li01_14_depot_water` by 1,000 along the world X axis writes `pos = -37675, 0, -27705`. The save then writes `patches/DATA/Universe/Systems/Li01/Li01.ini` with the `nickname` line and the `pos` line of the depot.
 
@@ -426,7 +451,11 @@ A save also stops in these cases:
 - The active mod is in the OpenLancer repo, and the save would write a whole cutscene file into it. The content scan cannot tell such a file from a copy of a retail script. A THN patch is allowed.
 - A light of a star system file that the session edited names an attenuation curve (`atten_curve`) that the engine cannot load: no graph has the name, more than one graph has it, or the graph has no points. The engine stops with an error when it loads such a light, so each later load of the profile would fail. The Console names the light, the curve and the file. While no game data is loaded, the editor cannot check the curves, and the Console tells it before the save.
 
-While the editor has unsaved edits, it keeps them in `.olsave/recovery.json`: a moment after each edit, and when the window closes. When the window closes, an active field ends first, so that the file keeps its edit. The window cannot ask then, so a new text goes only to the section of the field, also when other sections of the item show the same text. When no unsaved edits remain, for example after an undo, the editor deletes the file. A close of the profile, a change of the active mod and File > Exit ask first: Save, Discard or Cancel. After a save, the action continues, also when the save needed your confirmation to overwrite a file. The close button of the window cannot ask, so the next open of the mod offers to restore the edits. The editor restores them only when the files of the mod did not change after it wrote the recovery file. Until you restore or discard them, the editor does not take new edits for the mod. So a second recovery file is never necessary.
+While the editor has unsaved edits, it keeps them in `.olsave/recovery.json`, a moment after each edit. When no unsaved edits remain, for example after an undo, the editor deletes the file. A close of the profile and a change of the active mod ask first: Save, Discard or Cancel. After a save, the action continues, also when the save needed your confirmation to overwrite a file.
+
+A close of the editor window asks too: the close button, `Alt+F4`, the taskbar and File > Exit. An active field or drag ends first. With unsaved edits, the window stays open, and the dialog asks `Save changes to <mod name> before you close?`. The name is the `name` of `mod.json`, or its `id` when it has no `name`. Save is the save of `Ctrl+S`, with its checks. When the save succeeds, the window closes. When the save fails or a check stops it, the window stays open, and the Console tells why. Don't Save closes the window and deletes the recovery file, so the next open does not offer the edits. Cancel and `Esc` keep the window open. Without unsaved edits, the window closes at once. The field that ends at the close asks no question, so a new text goes only to the section of the field, also when other sections of the item show the same text.
+
+A crash or a kill of the editor cannot ask. Then the recovery file keeps the unsaved edits, and the next open of the mod offers to restore them. The editor restores them only when the files of the mod did not change after it wrote the recovery file. Until you restore or discard them, the editor does not take new edits for the mod. So a second recovery file is never necessary.
 
 One editor at a time edits a mod. While an editor has a mod open as the active mod, it holds a lock on `.olsave/lock`, and `.olsave/lock.json` names its process and the time it opened the mod. A second editor on the same mod shows the data, but it takes no edits and does not save. Its Console names the first editor. The second editor does not change the save files or the recovery file of the first editor. A crash can leave the two lock files, but they do not block the next editor.
 
