@@ -227,11 +227,15 @@ public sealed class ItemTemplatesTests
     public void ACopyInABinaryFileWritesItsBoolStringsInLowercaseAndSaves()
     {
         using var ws = Create();
+        // The engine drops a gun without a munition, so the save gate needs one (milestone M21).
+        var munition = new Section("Munition");
+        munition.Add(new Entry(munition, "nickname") { new StringValue("gun1_ammo") });
         var gun = new Section("Gun");
         gun.Add(new Entry(gun, "nickname") { new StringValue("gun1") });
         gun.Add(new Entry(gun, "lootable") { new StringValue("True") });
         gun.Add(new Entry(gun, "hit_pts") { new Int32Value(400) });
-        ws.WriteBaseBini(WeaponsPath, gun);
+        gun.Add(new Entry(gun, "projectile_archetype") { new StringValue("gun1_ammo") });
+        ws.WriteBaseBini(WeaponsPath, munition, gun);
         var session = ws.Session("act");
 
         session.Execute(ItemTemplates.Build(ItemTemplates.Plan(session, Gun("gun1"), "gun2")));
@@ -240,7 +244,10 @@ public sealed class ItemTemplatesTests
         Assert.True(result.Saved, string.Join("\n", result.Problems));
         Assert.Equal(["true"], Firsts(session, Gun("gun2"), "lootable"));
         Assert.Equal(["True"], Firsts(session, Gun("gun1"), "lootable"));
-        Assert.Equal("[Gun]\r\nol.new = true\r\nnickname = gun2\r\nlootable = true\r\nhit_pts = 400\r\n",
+        // The copy of a gun copies its munition too.
+        Assert.Equal("[Munition]\r\nol.new = true\r\nnickname = gun2_ammo\r\n\r\n" +
+                     "[Gun]\r\nol.new = true\r\nnickname = gun2\r\nlootable = true\r\nhit_pts = 400\r\n" +
+                     "projectile_archetype = gun2_ammo\r\n",
             File.ReadAllText(Path.Combine(ws.ModFolder("act"), "patches", WeaponsPath)));
         session.Dispose();
         Assert.Empty(ws.Session("act").Check(Gun("gun2")));

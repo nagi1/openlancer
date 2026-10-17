@@ -214,6 +214,10 @@ internal sealed partial class PropertyGrid
         // active widget stays, also when the edit changes the number of lines.
         var shape = fieldEdits.StartOf(field) ?? field;
         var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+        // A key with a data list asks the lists before the widget of its type (milestone M21). A reference row keeps
+        // its own follow target, and a listed value gets a button that selects its entry.
+        var rules = field.Key?.TextKind == null ? ListRules(field) : [];
+        follow ??= ListFollow(field, rules);
         reserve = follow == null ? 0 : ToolbarItems.IconWidth + spacing;
         if (field.Key?.TextKind is { } kind)
         {
@@ -226,15 +230,25 @@ internal sealed partial class PropertyGrid
         }
         else
         {
-            var labelsOf = labels ?? DefaultLabels(field.Key);
+            // A multiline key keeps its text field. Pickers for each line come with M28 (decision D122).
+            var single = field.Key?.Multiline != true;
+            var slots = single ? SlotLabels(rules) : null;
+            var labelsOf = slots ?? labels ?? DefaultLabels(field.Key);
             var values = FieldEdit.Values(shape.Text).Length;
-            switch (WidgetOf(field.Key, shape.Lines.Count, values, labelsOf))
+            var listed = single && IsListed(rules) && ListOf(field, rules[0]) != null;
+            switch (WidgetOf(field.Key, shape.Lines.Count, values, labelsOf, listed))
             {
                 case BoundWidget.Bool:
                     BoolField(field, unset);
                     break;
                 case BoundWidget.Enum:
                     EnumField(field, field.Key!.ClrType!, hint);
+                    break;
+                case BoundWidget.List:
+                    ListField(field, rules[0], hint);
+                    break;
+                case BoundWidget.Components when slots != null:
+                    ListSlots(field, rules, slots(values)!);
                     break;
                 case BoundWidget.Components:
                     // An edit of one value keeps the number of values, because an empty value is not valid.
@@ -256,23 +270,27 @@ internal sealed partial class PropertyGrid
             FollowButton(button);
         }
 
-        RowProblems(field);
+        RowProblems(field, reason);
         EndRow();
         NoteShown(field);
         return true;
     }
 
     /// <summary>
-    /// The widget of an editable bound row: a checkbox for a bool, a list for an enum, a labeled field for each value
-    /// of a line with component labels, a color swatch with the text field for a one-line color key, else a text field.
+    /// The widget of an editable bound row: a picker for a key with a data list, a checkbox for a bool, a list for an
+    /// enum, a labeled field for each value of a line with component labels, a color swatch with the text field for a
+    /// one-line color key, else a text field.
     /// </summary>
     /// <param name="lines">The number of lines of the key at the start of an open edit of it, or now.</param>
     /// <param name="values">The number of values of the first line, in the same state.</param>
     /// <param name="labels">The labels of the values of a line with a number of values (see <see cref="BoundRow"/>),
     /// with the default already applied.</param>
+    /// <param name="listed">True for a key with one list rule on its first value (see <see cref="IsListed"/>).</param>
     internal static BoundWidget WidgetOf(KeySchema? key, int lines, int values,
-        Func<int, IReadOnlyList<ComponentLabel>?>? labels)
+        Func<int, IReadOnlyList<ComponentLabel>?>? labels, bool listed = false)
     {
+        if (listed && lines <= 1)
+            return BoundWidget.List;
         if (key?.ClrType == typeof(bool) && lines <= 1)
             return BoundWidget.Bool;
         if (key?.ClrType is { IsEnum: true } && lines <= 1)
@@ -328,28 +346,43 @@ internal sealed partial class PropertyGrid
     }
 
     /// <summary>
-    /// The problems of the scene below a row of their key, for example an archetype that does not exist or an unknown
-    /// attenuation curve (see <see cref="Runtime.Scene.SceneApplier.Problems"/>).
+    /// The problems below a row of their key: the problems of the data lists with their fixes (see
+    /// <see cref="ListRowProblems"/>), or else the problems of the scene, for example the model of an archetype that
+    /// does not load (see <see cref="Runtime.Scene.SceneApplier.Problems"/>). A value that only W has is in its list,
+    /// so its scene problem gives the note that the Scene shows it after the save (review finding R15).
     /// </summary>
-    private void RowProblems(FieldBinding field)
+    /// <param name="reason">Why the row cannot change the key, or null. A read-only row shows no fix.</param>
+    private void RowProblems(FieldBinding field, string? reason)
     {
-        foreach (var problem in window.Scene.Problems(field.Section))
+        if (ListRowProblems(field, reason))
         {
-            if (field.Name.Equals(problem.Key, StringComparison.OrdinalIgnoreCase))
-            {
-                ProblemText(problem);
-            }
+            return;
         }
+
+        var scene = window.Scene.Problems(field.Section)
+            .Where(p => field.Name.Equals(p.Key, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (scene.Count > 0 && HasListedValue(field))
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+            ImGui.TextWrapped($"{EditorIcons.InfoCircle} {WOnlyNote}");
+            ImGui.PopStyleColor();
+            return;
+        }
+
+        scene.ForEach(ProblemText);
     }
 
     /// <summary>A problem of the scene as a warning, without the section at the start of its message.</summary>
-    internal static void ProblemText(Diagnostic problem)
+    internal static void ProblemText(Diagnostic problem) => ProblemText(problem, EditorTheme.Warning);
+
+    /// <summary>A problem in a color, without the section at the start of its message.</summary>
+    internal static void ProblemText(Diagnostic problem, Vector4 color)
     {
         var prefix = problem.Target == null ? null : $"{problem.Target.Id}: ";
         var message = prefix != null && problem.Message.StartsWith(prefix, StringComparison.Ordinal)
             ? problem.Message[prefix.Length..]
             : problem.Message;
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Warning);
+        ImGui.PushStyleColor(ImGuiCol.Text, color);
         ImGui.TextWrapped($"{EditorIcons.ExclamationTriangle} {message}");
         ImGui.PopStyleColor();
     }
@@ -412,28 +445,6 @@ internal sealed partial class PropertyGrid
             ImGui.SameLine();
             ImGui.TextDisabled("Not set");
         }
-    }
-
-    private void EnumField(FieldBinding field, Type type, string hint)
-    {
-        ImGui.SetNextItemWidth(FillWidth);
-        var preview = field.Lines.Count == 0 ? hint : field.Text;
-        EditorTheme.PushMenuColors();
-        if (ImGui.BeginCombo("##value", preview))
-        {
-            foreach (var name in System.Enum.GetNames(type))
-            {
-                var selected = name.Equals(field.Text, StringComparison.OrdinalIgnoreCase);
-                if (ImGui.Selectable(name, selected) && !selected)
-                {
-                    window.Edits.Execute(field.EditLines([name]));
-                }
-            }
-
-            ImGui.EndCombo();
-        }
-
-        EditorTheme.PopMenuColors();
     }
 
     /// <summary>
@@ -527,7 +538,7 @@ internal sealed partial class PropertyGrid
     }
 
     /// <summary>Gives the events of a widget to the field edits. A label drag and a color picker make their events
-    /// themselves (see <see cref="LabelDrag"/> and <see cref="PickerSession"/>).</summary>
+    /// themselves (see <see cref="LabelDrag"/> and <see cref="PopupSession"/>).</summary>
     /// <param name="id">The ImGui id of the widget.</param>
     private void RouteEvents(uint id, FieldKey key, FieldEvents events, Func<FieldGesture> begin,
         Func<string, string> text) =>
@@ -665,6 +676,9 @@ internal sealed partial class PropertyGrid
         Enum,
         Components,
         Color,
+
+        /// <summary>The picker of a key with a data list.</summary>
+        List,
     }
 
     /// <summary>Formats a number for the text of a row that is not set.</summary>

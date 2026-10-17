@@ -148,6 +148,7 @@ public sealed partial class EditSession
         if (problems.Count > 0)
         {
             text = change.Undo(FileAt) ?? text;
+            Revision++;
             return problems;
         }
         change.NoteStructural();

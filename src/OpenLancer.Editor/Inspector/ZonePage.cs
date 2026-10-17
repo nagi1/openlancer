@@ -11,7 +11,8 @@ namespace OpenLancer.Editor.Inspector;
 /// <summary>
 /// The Inspector page of a zone: identity and the items that use the zone, transform, shape and size, flags and
 /// environment, and the encounters of a population or patrol zone. With the section of the zone in W, the rows edit its
-/// keys, and the page ends with the keys that no row shows and the INI text (see <see cref="SectionExtras"/>).
+/// keys, and the page ends with the keys that no row shows. The panel adds the raw INI block (see
+/// <see cref="SectionExtras"/>).
 /// </summary>
 /// <remarks>In a bound scope, a row of a key that not every zone has shows when the section has a line of the key (see
 /// <see cref="PropertyGrid.Shows(bool, string[])"/>). The encounter lines are read-only, because their lines belong

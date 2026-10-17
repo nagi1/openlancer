@@ -11,9 +11,10 @@ namespace OpenLancer.Data.Editing;
 public sealed partial class EditSession
 {
     private ItemIndex? items;
+    private IReadOnlyList<Section>? freelancerIni;
 
     /// <summary>The item files of the edit view: the ship, equipment, goods and market files.</summary>
-    internal ItemIndex Items => items ??= new ItemIndex(ItemIndex.ReadPaths(ReadFreelancerIni()), OpenDocument);
+    internal ItemIndex Items => items ??= new ItemIndex(ItemIndex.ReadPaths(DataFiles), Table, () => Revision);
 
     /// <summary>
     /// The section of the files of a kind with a nickname, or null when no section has it, or when more than one
@@ -111,6 +112,10 @@ public sealed partial class EditSession
         return false;
     }
 
+    /// <summary>The sections of the <c>freelancer.ini</c> of the edit view, read at the first use. Format version 1
+    /// cannot patch the file, so it does not change in a session.</summary>
+    private IReadOnlyList<Section> FreelancerIni => freelancerIni ??= ReadFreelancerIni();
+
     /// <summary>The sections of the <c>freelancer.ini</c> of the edit view, or none when it has no such file.</summary>
     private IReadOnlyList<Section> ReadFreelancerIni()
     {
@@ -121,6 +126,7 @@ public sealed partial class EditSession
         return IniDocument.Parse(ModOverlay.FreelancerIniPath, bytes).Sections;
     }
 
-    /// <summary>The document of an install path, or null when the edit view has no such INI file.</summary>
-    private EditDocument? OpenDocument(string path) => TryDocument(path, out var document) ? document : null;
+    /// <summary>The document of an install path, or null when the edit view has no such INI file. It opens the file at
+    /// its first use.</summary>
+    internal EditDocument? OpenDocument(string path) => TryDocument(path, out var document) ? document : null;
 }

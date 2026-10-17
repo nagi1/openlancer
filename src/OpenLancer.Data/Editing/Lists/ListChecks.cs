@@ -1,0 +1,200 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using LibreLancer.Data.Ini;
+using OpenLancer.Data.Ini;
+
+namespace OpenLancer.Data.Editing.Lists;
+
+/// <summary>The kind of a list problem.</summary>
+public enum ListProblemKind
+{
+    /// <summary>The value is outside a closed list: "Missing (Type)".</summary>
+    Missing,
+
+    /// <summary>The value is outside an open list, or a value of a lower layer is outside a list.</summary>
+    NotListed,
+
+    /// <summary>The value names an entry that the active mod removed.</summary>
+    Removed,
+
+    /// <summary>The value names an entry that the engine cannot use, for example a curve without points.</summary>
+    Unusable,
+
+    /// <summary>A required key has no valid line.</summary>
+    RequiredMissing,
+
+    /// <summary>The name of the section has the FLHash of another name of the list.</summary>
+    HashCollision,
+}
+
+/// <summary>One result of the list checks of a section.</summary>
+/// <param name="Diagnostic">The problem, with the section as its target and the key as its key.</param>
+/// <param name="Rule">The rule of the value, or null for a hash collision.</param>
+/// <param name="Line">The position of the line among the lines of the key, from 0, or -1 for a missing key.</param>
+/// <param name="Value">The value, or null for a missing key.</param>
+/// <param name="List">The list of the value, or null when the problem has no list.</param>
+public sealed record ListProblem(Diagnostic Diagnostic, ListProblemKind Kind, ListRule? Rule, int Line, string? Value,
+    ListView? List)
+{
+    public bool IsError => Diagnostic.Severity == DiagnosticSeverity.Error;
+}
+
+/// <summary>
+/// The list checks of one section (layer 2 of roadmap section 5.4, section 11.1 of the M21 design). The checks never
+/// refuse an edit command. They report.
+/// </summary>
+/// <remarks>
+/// <list type="bullet">
+/// <item>A value of the active mod outside a closed list is an error (decision D96). Outside an open list, it is a
+/// warning: unlisted values are allowed.</item>
+/// <item>A value of any layer under a closed rule that names an entry that the active mod removed is an error
+/// (decision D81, D108 amended).</item>
+/// <item>A required key without a valid line, in a section that the active mod adds or changes, is an error (D82).</item>
+/// <item>A value of the active mod that names an entry that the engine cannot use is an error (D34, D82).</item>
+/// <item>The name of a section of the active mod with the FLHash of another name of a hash list is an error (D82).</item>
+/// <item>A value of a lower layer outside a list is a warning (D108).</item>
+/// </list>
+/// </remarks>
+internal static class ListChecks
+{
+    public static IReadOnlyList<ListProblem> Check(EditSession session, DataLists lists, SectionRef target)
+    {
+        if (session.OpenDocument(target.Path) is not { } document || document.IndexOf(target.Id) is not (>= 0 and var index))
+            return [];
+        var section = document.Working[index];
+        var result = new List<ListProblem>();
+        var byKey = session.DataFiles.RolesOf(target.Path)
+            .SelectMany(r => lists.RuleData.ByRoleAndSection.GetValueOrDefault((r.ToLowerInvariant(),
+                section.Name.ToLowerInvariant())) ?? [])
+            .GroupBy(r => r.Key, StringComparer.OrdinalIgnoreCase);
+        var lower = document.BaseSection(document.IdentityAt(index));
+        var changedSection = lower == null || !ReferenceEquals(lower, section);
+        foreach (var keyRules in byKey)
+        {
+            var key = keyRules.Key;
+            var lines = section.Where(e => Is(e.Name, key)).ToList();
+            var origin = session.Origin(target, key);
+            var active = origin.Origin == ValueOrigin.ActiveMod;
+            // The engine reads each line of a multiline key, and only the last line with a value of another key.
+            var read = session.Schema(target, key) is { Multiline: false }
+                ? lines.Select((l, i) => (Line: l, Index: i)).Where(p => p.Line.Count > 0).TakeLast(1).ToList()
+                : lines.Select((l, i) => (Line: l, Index: i)).ToList();
+            foreach (var rule in keyRules.OrderBy(r => r.Index))
+                CheckRule(lists, target, section, key, lines.Count, read, rule, active, origin, changedSection, result);
+        }
+        CheckHash(lists, target, section, document, index, result);
+        // The editor cannot change a whole file of the active mod, so its results never stop the save (review finding
+        // R22). W of such a file has the lower data.
+        if (session.ActiveMod is { } mod && mod.Files.ContainsKey(document.Path))
+        {
+            return result.Select(p => p.IsError
+                ? p with { Diagnostic = p.Diagnostic with { Severity = DiagnosticSeverity.Warning } }
+                : p).ToList();
+        }
+        return result;
+    }
+
+    /// <param name="count">The number of lines of the key.</param>
+    /// <param name="read">The lines that the engine reads, with their positions among the lines of the key.</param>
+    private static void CheckRule(DataLists lists, SectionRef target, Section section, string key, int count,
+        List<(Entry Line, int Index)> read, ListRule rule, bool active, (ValueOrigin Origin, string? ModId) origin,
+        bool changedSection, List<ListProblem> result)
+    {
+        var required = rule.Required || rule.RequiredWith != null && section.Any(e => Is(e.Name, rule.RequiredWith));
+        var valid = false;
+        foreach (var (line, i) in read)
+        {
+            var value = rule.Index < line.Count ? line[rule.Index].ToString().Trim() : "";
+            if (value.Length == 0)
+                continue;
+            valid = true;
+            var values = line.ToList();
+            if (lists.List(rule, target, values) is not { } list)
+                continue;
+            var prefix = count > 1 ? $"line {i + 1}: " : "";
+            var shown = $"'{line.Name} = {string.Join(", ", values.Select(v => v.ToString()))}'";
+            if (list.Find(value) is { } entry)
+            {
+                if (entry.Usable)
+                    continue;
+                var severity = active && rule.Closed ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
+                Add(result, severity, target, key, ListProblemKind.Unusable, rule, i, value, list,
+                    $"{prefix}{shown}: {entry.Problem} {rule.ConsequenceText}");
+                continue;
+            }
+            if (list.IsEnum)
+            {
+                // A value outside an enum is an error of the field checks.
+                continue;
+            }
+            _ = lists.ScopeOf(rule, target.Path, values, out var scope);
+            if (rule.Closed && list.Closed &&
+                rule.Lists.Select(l => lists.RemovedOf(l, scope, value)).FirstOrDefault(r => r != null) is { } removed)
+            {
+                Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.Removed, rule, i, value, list,
+                    $"{prefix}{shown}: the active mod removes the {Lower(list.Label)} '{value}' ({removed.ModPath}). " +
+                    rule.ConsequenceText);
+                continue;
+            }
+            if (active && rule.Closed && list.Closed)
+            {
+                Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.Missing, rule, i, value, list,
+                    $"{prefix}{shown}: no {Lower(list.Label)} has the name '{value}'. {rule.ConsequenceText}");
+            }
+            else if (active)
+            {
+                Add(result, DiagnosticSeverity.Warning, target, key, ListProblemKind.NotListed, rule, i, value, list,
+                    $"{prefix}{shown}: '{value}' is not in the {Lower(list.Label)} list. Unlisted values are allowed.");
+            }
+            else
+            {
+                var layer = origin.Origin == ValueOrigin.LowerMod ? $"mod '{origin.ModId}'" : "the base data";
+                Add(result, DiagnosticSeverity.Warning, target, key, ListProblemKind.NotListed, rule, i, value, list,
+                    $"{prefix}{shown}: '{value}' is not in the {Lower(list.Label)} list. The value comes from {layer}.");
+            }
+        }
+        if (required && !valid && !(rule.Empty && count > 0))
+        {
+            var severity = changedSection ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
+            var why = rule.Required ? "" : $" A section with '{rule.RequiredWith}' needs it.";
+            Add(result, severity, target, key, ListProblemKind.RequiredMissing, rule, -1, null, null,
+                $"the key '{key}' is missing.{why} {rule.ConsequenceText}");
+        }
+    }
+
+    /// <summary>An error for a section of the active mod whose name has the FLHash of another name of a hash
+    /// list.</summary>
+    private static void CheckHash(DataLists lists, SectionRef target, Section section, EditDocument document, int index,
+        List<ListProblem> result)
+    {
+        if (document.InBase(document.IdentityAt(index)))
+            return;
+        foreach (var definition in lists.SourcesOf(target.Path, section.Name).Where(d => d.Hash))
+        {
+            if (lists.List(definition.Id) is not { Collisions.Count: > 0 } list)
+                continue;
+            foreach (var name in DataLists.Names(section, definition.Source!))
+            {
+                foreach (var group in list.CollisionsOf(name))
+                {
+                    var others = string.Join(", ", group.Where(n => !Is(n, name)).Select(n => $"'{n}'"));
+                    var key = SectionKeys.For(section.Name).KeyEntry ?? SectionKeys.DefaultKey;
+                    Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.HashCollision, null, 0, name, list,
+                        $"the name '{name}' has the FLHash of {others}. The engine stops with an error when it loads " +
+                        "the game data. Give the section another name.");
+                }
+            }
+        }
+    }
+
+    private static void Add(List<ListProblem> result, DiagnosticSeverity severity, SectionRef target, string key,
+        ListProblemKind kind, ListRule? rule, int line, string? value, ListView? list, string message) =>
+        result.Add(new ListProblem(
+            new Diagnostic(severity, target.Path, $"{target.Id}: {message}") { Target = target, Key = key },
+            kind, rule, line, value, list));
+
+    private static string Lower(string label) => label.Length == 0 ? label : char.ToLowerInvariant(label[0]) + label[1..];
+
+    private static bool Is(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+}

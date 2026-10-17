@@ -5,13 +5,11 @@ using System.Linq;
 using System.Threading.Tasks;
 using LibreLancer;
 using LibreLancer.Data;
-using LibreLancer.Data.Schema;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Logs;
-using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Editing;
 
@@ -188,8 +186,15 @@ internal sealed class EditController(EditorWindow window) : IDisposable
             return SaveOutcome.NotSaved;
         }
 
-        if (!CanSave(session.Edits, session.GameData?.Items.Ini.Graphs, problem => Log.Add(problem)))
+        // The save gate runs first, so that a refused save does not stop the validation for nothing (review finding
+        // R21 of the M21 design). EditSession.Save runs it again.
+        if (Gate(session.Edits) is { } refused)
         {
+            foreach (var line in SaveReport.Lines(refused, mod.Id, mod.Folder, 0))
+            {
+                Log.Add(line.Severity, line.Source, line.Message, line.Target);
+            }
+
             return SaveOutcome.NotSaved;
         }
 
@@ -235,45 +240,15 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     }
 
     /// <summary>
-    /// Runs the checks before a save and gives each problem to <paramref name="log"/>. Returns false when a check finds
-    /// an error: then the save must write nothing. Each light of an edited star system file must name an attenuation
-    /// curve that the engine can load (decision D34, see <see cref="SceneChecks.Curves"/>). Without loaded game data,
-    /// the check cannot run. Then a warning tells it when the session edited a system file, and the save goes on.
+    /// The result of a save that the save gate refuses (see <see cref="EditSession.SaveProblems"/>), or null when the gate
+    /// finds no error. The result tells nothing about the files, because the save does not start.
     /// </summary>
-    /// <param name="graphs">The graphs of the loaded game data, or null while no game data is loaded.</param>
-    internal static bool CanSave(EditSession edits, GraphIni? graphs, Action<Diagnostic> log)
+    internal static SaveResult? Gate(EditSession edits)
     {
-        var problems = SaveChecks(edits, graphs);
-        foreach (var problem in problems)
-        {
-            log(problem);
-        }
-
-        return problems.All(p => p.Severity != DiagnosticSeverity.Error);
-    }
-
-    /// <summary>The problems of the checks before a save (see <see cref="CanSave"/>).</summary>
-    private static IReadOnlyList<Diagnostic> SaveChecks(EditSession edits, GraphIni? graphs)
-    {
-        if (graphs == null)
-        {
-            return edits.EditedPaths.Any(edits.IsSystemFile)
-                ? [Diagnostic.Warning(Source, "The game data is not loaded, so the editor cannot check the attenuation " +
-                                              "curves of the lights before the save. The save goes on.")]
-                : [];
-        }
-
-        var curves = SceneChecks.Curves(edits, graphs);
-        return curves.Count == 0
-            ? []
-            :
-            [
-                ..curves,
-                Diagnostic.Error(Source, $"The save wrote nothing: {curves.Count} " +
-                                         $"{(curves.Count == 1 ? "light names" : "lights name")} an attenuation curve " +
-                                         "that the engine cannot load, and each later load of the profile would stop " +
-                                         "with an error. Correct the atten_curve lines, then save again."),
-            ];
+        var problems = edits.SaveProblems();
+        return problems.Any(p => p.Severity == DiagnosticSeverity.Error)
+            ? new SaveResult(false, [], [], problems, [])
+            : null;
     }
 
     /// <summary>

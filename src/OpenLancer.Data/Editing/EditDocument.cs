@@ -63,6 +63,7 @@ internal sealed class EditDocument : IEditFile
     private KeyCounts? baseCounts;
     private KeyCounts? workingCounts;
     private PatchText? initialText;
+    private HashSet<SectionIdentity>? initialIds;
 
     private EditDocument(string path, IniDocument b, DocumentState state, PatchSource? source, Diagnostic? refusal,
         string? sourceHash)
@@ -163,6 +164,11 @@ internal sealed class EditDocument : IEditFile
 
     /// <summary>True when B has a section with this identity.</summary>
     public bool InBase(SectionIdentity id) => BaseIndexOf(id) >= 0;
+
+    /// <summary>True when W had a section with this identity when the document opened or the last save reopened it, so
+    /// the mod files have it.</summary>
+    public bool InInitial(SectionIdentity id) =>
+        (initialIds ??= SectionIdentity.Identify(Initial.Working).ToHashSet()).Contains(id);
 
     /// <summary>The section of B with this identity, or null.</summary>
     public Section? BaseSection(SectionIdentity id) => BaseIndexOf(id) is >= 0 and var i ? b.Sections[i] : null;

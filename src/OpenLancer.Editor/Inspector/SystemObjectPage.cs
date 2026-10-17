@@ -9,7 +9,7 @@ namespace OpenLancer.Editor.Inspector;
 /// <summary>
 /// The Inspector page of a system object: identity, transform, archetype and loadout, docking, faction, visit flags
 /// and appearance. With the section of the object in W, the rows edit its keys, and the page ends with the keys that
-/// no row shows and the INI text (see <see cref="SectionExtras"/>).
+/// no row shows, and the panel adds the raw INI block (see <see cref="SectionExtras"/>).
 /// </summary>
 /// <remarks>In a bound scope, a row of a key that not every object has shows when the section has a line of the key
 /// (see <see cref="PropertyGrid.Shows(bool, string[])"/>). Rows of the values of other files, for example the model

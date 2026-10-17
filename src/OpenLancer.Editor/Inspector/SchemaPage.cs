@@ -11,7 +11,7 @@ namespace OpenLancer.Editor.Inspector;
 /// The Inspector page of a section of an item file, for example a good, a hull good, a package or a new item that the
 /// game data does not have yet. It shows the links to the related sections, the keys that the section sets in the
 /// declaration order of the schema, a closed list of the keys that the section does not set, the bases that sell a
-/// good, then the keys that the schema does not know and the INI text of the section (see
+/// good, then the keys that the schema does not know. The panel adds the raw INI block of the section (see
 /// <see cref="SectionExtras"/>).
 /// </summary>
 internal sealed class SchemaPage(EditorWindow window, PropertyGrid grid)

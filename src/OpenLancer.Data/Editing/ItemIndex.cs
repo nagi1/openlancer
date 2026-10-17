@@ -63,8 +63,9 @@ public sealed record MarketLine(SectionRef Section, string Base, int Line, IRead
 /// sections. The index reads W of each file, so it shows the edits.
 /// </summary>
 /// <remarks>
-/// <para>The index keeps the sections of each file until W of the file changes. A W state cannot change, so the
-/// index compares the section list by reference.</para>
+/// <para>The index reads the table of each file from the shared <see cref="SectionTable"/>, and builds its maps again
+/// only when the table of one of its own files changes. A call at the revision of W of the last refresh reads no file
+/// (decision D121).</para>
 /// <para>Each kind of file has its own nicknames: a gun and its good have the same nickname. A nickname that two
 /// sections of one kind share is ambiguous, because the engine uses only one of them. <see cref="Find"/> then gives
 /// null.</para>
@@ -91,44 +92,47 @@ internal sealed class ItemIndex
         [ItemFileKind.Markets] = typeof(MarketsIni),
     };
 
+    /// <summary>The role of the rule data of each kind of item file (see <see cref="DataFiles"/>).</summary>
+    private static readonly (ItemFileKind Kind, string Role)[] Roles =
+    [
+        (ItemFileKind.Ships, "ships"),
+        (ItemFileKind.Equipment, "equipment"),
+        (ItemFileKind.Goods, "goods"),
+        (ItemFileKind.Markets, "markets"),
+    ];
+
     private readonly IReadOnlyList<(string Path, ItemFileKind Kind)> files;
-    private readonly Func<string, EditDocument?> open;
-    private readonly Dictionary<string, FileItems> indexed = new(VfsPath.Comparer);
+    private readonly SectionTable table;
+    private readonly Func<int> revision;
+
+    /// <summary>The table of each file of <see cref="files"/> at the last refresh, or null for a file that the edit
+    /// view does not have.</summary>
+    private readonly FileTable?[] indexed;
+
+    private int checkedRevision = int.MinValue;
     private Dictionary<ItemFileKind, List<Item>> byKind = [];
     private Dictionary<(ItemFileKind, string), List<Item>> byNickname = [];
     private Dictionary<SectionRef, Item> byRef = [];
 
     /// <param name="files">The item files in load order.</param>
-    /// <param name="open">Gives the document of an install path, or null when the edit view has no such file.</param>
-    public ItemIndex(IReadOnlyList<(string Path, ItemFileKind Kind)> files, Func<string, EditDocument?> open)
+    /// <param name="table">The shared section index of the edit view.</param>
+    /// <param name="revision">Gives the revision of W (see <see cref="EditSession.Revision"/>). A call at the revision
+    /// of the last refresh reads no file.</param>
+    public ItemIndex(IReadOnlyList<(string Path, ItemFileKind Kind)> files, SectionTable table, Func<int> revision)
     {
         this.files = files;
-        this.open = open;
+        this.table = table;
+        this.revision = revision;
+        indexed = new FileTable?[files.Count];
     }
 
     /// <summary>
-    /// The item files that <c>freelancer.ini</c> lists, in load order, as the engine finds them: the
+    /// The item files that <c>freelancer.ini</c> lists, in load order for each kind, as the engine finds them: the
     /// <c>[Data]</c> entries <c>ships</c>, <c>equipment</c>, <c>goods</c> and <c>markets</c> in the folder of
     /// <c>data path</c>.
     /// </summary>
-    public static List<(string Path, ItemFileKind Kind)> ReadPaths(IReadOnlyList<Section> freelancerIni)
-    {
-        var result = new List<(string, ItemFileKind)>();
-        foreach (var (name, path) in DataPaths.Entries(freelancerIni))
-        {
-            ItemFileKind? kind = name.ToLowerInvariant() switch
-            {
-                "ships" => ItemFileKind.Ships,
-                "equipment" => ItemFileKind.Equipment,
-                "goods" => ItemFileKind.Goods,
-                "markets" => ItemFileKind.Markets,
-                _ => null,
-            };
-            if (kind != null)
-                result.Add((path, kind.Value));
-        }
-        return result;
-    }
+    public static List<(string Path, ItemFileKind Kind)> ReadPaths(DataFiles dataFiles) =>
+        Roles.SelectMany(r => dataFiles.Paths(r.Role).Select(path => (path, r.Kind))).ToList();
 
     /// <summary>The <c>[ParsedIni]</c> class that reads the files of a kind.</summary>
     public static Type SchemaOf(ItemFileKind kind) => Schemas[kind];
@@ -155,14 +159,14 @@ internal sealed class ItemIndex
     public Section? Section(SectionRef target) => Get(target)?.Section;
 
     /// <summary>True when the file of a section is a binary (BINI) file.</summary>
-    public bool IsBinary(SectionRef target) => open(target.Path)?.IsBinary ?? false;
+    public bool IsBinary(SectionRef target) => table.File(target.Path)?.Document?.IsBinary ?? false;
 
     /// <summary>The child sections that follow a section in its file.</summary>
     public IReadOnlyList<Section> Children(SectionRef target)
     {
         if (Get(target) is not { } item)
             return [];
-        var working = indexed[item.File].Working;
+        var working = item.File.Working;
         return working.Skip(item.Index + 1).Take(SectionKeys.ChildCount(working, item.Index)).ToList();
     }
 
@@ -296,39 +300,37 @@ internal sealed class ItemIndex
         return byNickname.GetValueOrDefault((kind, nickname.ToLowerInvariant())) ?? [];
     }
 
-    /// <summary>Indexes the files whose W changed since the last call.</summary>
+    /// <summary>Indexes the files whose W changed since the last call. A call at the same revision reads no
+    /// file.</summary>
     private void Refresh()
     {
-        var changed = false;
-        foreach (var (path, kind) in files)
+        var now = revision();
+        if (now == checkedRevision)
+            return;
+        var changed = checkedRevision == int.MinValue;
+        checkedRevision = now;
+        for (var i = 0; i < files.Count; i++)
         {
-            var document = open(path);
-            if (document == null)
-            {
-                changed |= indexed.Remove(path);
-                continue;
-            }
-            if (indexed.TryGetValue(path, out var known) && ReferenceEquals(known.Working, document.Working))
-                continue;
-            indexed[path] = new FileItems(document.Path, document.Working,
-                Enumerable.Range(0, document.Working.Count).Select(document.IdentityAt).ToArray());
-            changed = true;
+            var current = table.File(files[i].Path);
+            changed |= !ReferenceEquals(current, indexed[i]);
+            indexed[i] = current;
         }
-        if (!changed && byKind.Count > 0)
+        if (!changed)
             return;
         byKind = [];
         byNickname = [];
         byRef = [];
-        foreach (var (path, kind) in files)
+        for (var f = 0; f < files.Count; f++)
         {
-            if (!indexed.TryGetValue(path, out var file))
+            if (indexed[f] is not { } file)
                 continue;
+            var kind = files[f].Kind;
             var list = byKind.TryGetValue(kind, out var l) ? l : byKind[kind] = [];
             for (var i = 0; i < file.Working.Count; i++)
             {
                 if (SectionKeys.IsChild(file.Working[i].Name))
                     continue;
-                var item = new Item(new SectionRef(file.Path, file.Ids[i]), kind, file.Working[i], path, i);
+                var item = new Item(file.Ref(i), kind, file.Working[i], file, i);
                 list.Add(item);
                 byRef[item.Ref] = item;
                 if (item.Nickname is { } nickname)
@@ -350,12 +352,9 @@ internal sealed class ItemIndex
 
     private sealed record Reference(ItemFileKind Source, string Name, ItemFileKind Target);
 
-    /// <summary>The sections of one file, as one W state gives them.</summary>
-    private sealed record FileItems(string Path, IReadOnlyList<Section> Working, SectionIdentity[] Ids);
-
-    /// <param name="File">The install path of the file, as <see cref="files"/> has it.</param>
+    /// <param name="File">The table of the W state of the file that holds the section.</param>
     /// <param name="Index">The index of the section in W of its file.</param>
-    private sealed record Item(SectionRef Ref, ItemFileKind Kind, Section Section, string File, int Index)
+    private sealed record Item(SectionRef Ref, ItemFileKind Kind, Section Section, FileTable File, int Index)
     {
         public string? Nickname => Ref.Id.Key;
     }

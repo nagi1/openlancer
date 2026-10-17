@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using LibreLancer.Data.GameData.Items;
@@ -17,7 +18,7 @@ namespace OpenLancer.Editor.Inspector;
 /// </remarks>
 internal sealed class EquipmentPage(EditorWindow window, PropertyGrid grid)
 {
-    private readonly RawFields definition = new(grid, "Definition", EditorIcons.Th, "Definition");
+    private readonly RawFields definition = new(grid, "Definition", EditorIcons.Th, "Loaded definition (read-only)");
     private readonly MarketSection market = new(window, grid);
 
     /// <summary>Forgets the last definition. Call it when the profile closes.</summary>
@@ -51,6 +52,20 @@ internal sealed class EquipmentPage(EditorWindow window, PropertyGrid grid)
         {
             market.Draw(nickname, "Equipment.SoldAt");
         }
+    }
+
+    /// <summary>The sections of an equipment item in W, for the raw block of the page: the equipment section, its good,
+    /// its munition and the good of the munition.</summary>
+    public IReadOnlyList<SectionRef> RawSections(Equipment equipment)
+    {
+        if (window.Session?.Edits is not { } edits || Find(equipment.Nickname) is not { } section)
+        {
+            return [];
+        }
+
+        var munitions = edits.Related(section, ItemRelation.Munition);
+        return new[] { section }.Concat(edits.Related(section, ItemRelation.Good)).Concat(munitions)
+            .Concat(munitions.SelectMany(m => edits.Related(m, ItemRelation.Good))).Distinct().ToList();
     }
 
     /// <summary>The equipment section of the edit view with a nickname, or null.</summary>

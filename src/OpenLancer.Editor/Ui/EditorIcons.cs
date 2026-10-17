@@ -126,4 +126,5 @@ internal static class EditorIcons
     public const char ArrowsAltH = '\uf337';
     public const char Eye = '\uf06e';
     public const char Link = '\uf0c1';
+    public const char Smog = '\uf75f';
 }

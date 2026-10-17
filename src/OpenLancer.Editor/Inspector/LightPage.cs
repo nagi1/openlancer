@@ -9,7 +9,7 @@ namespace OpenLancer.Editor.Inspector;
 /// The Inspector page of a light source. It shows only the fields that the kind of the light uses: attenuation for a
 /// point light, direction for a directional light and a spotlight, the cone for a spotlight, and the attenuation curve
 /// when the light names one. With the section of the light in W, the rows edit its keys, and the page ends with the keys
-/// that no row shows and the INI text (see <see cref="SectionExtras"/>).
+/// that no row shows, and the panel adds the raw INI block (see <see cref="SectionExtras"/>).
 /// </summary>
 /// <remarks>In a bound scope, the attenuation, the direction and the curve show when the section has a line of their
 /// key, and not from the kind of the light (see <see cref="Rows"/>). An INI light is a point or a directional light

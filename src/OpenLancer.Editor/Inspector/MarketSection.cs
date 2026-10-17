@@ -2,8 +2,8 @@ using System;
 using System.Linq;
 using System.Text;
 using ImGuiNET;
-using LibreLancer;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
 
@@ -20,7 +20,7 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
         "A market line of a lower layer. Format version 1 cannot change or remove it. Use a whole-file override for that.";
 
     private readonly FilterList<string> bases = new();
-    private GameDataManager? basesData;
+    private ListView? basesList;
 
     /// <param name="good">The nickname of the good.</param>
     /// <param name="key">The key of the open state of the section in the settings, "Type.Section".</param>
@@ -85,20 +85,23 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
         }
     }
 
-    /// <summary>A list of the bases. The chosen base gets a line that sells the good.</summary>
+    /// <summary>A list of the bases of the data list (milestone M21), so a base that the active mod adds and did not save
+    /// is in it. The chosen base gets a line that sells the good.</summary>
     private void AddToBase(EditorSession session, string good)
     {
-        if (!ReferenceEquals(session.GameData, basesData))
+        var list = session.Edits.Lists.List("base");
+        if (!ReferenceEquals(list, basesList))
         {
-            basesData = session.GameData;
-            bases.Entries = basesData == null
+            basesList = list;
+            bases.Entries = list == null
                 ? []
-                : FilterList<string>.Sorted(basesData.Items.Bases.Select(b => new FilterEntry<string>(b.Nickname,
-                    session.Name(b.IdsName) is { Length: > 0 } name ? name : b.Nickname, b.Nickname, EditorIcons.Building)));
+                : FilterList<string>.Sorted(list.Entries.Select(b => new FilterEntry<string>(b.Value,
+                    b.Section != null && session.SectionName(b.Section) is { Length: > 0 } name ? name : b.Value, b.Value,
+                    EditorIcons.Building)));
         }
 
         ImGui.SetNextItemWidth(-1);
-        ImGui.BeginDisabled(!session.CanEdit || basesData == null);
+        ImGui.BeginDisabled(!session.CanEdit || list == null);
         EditorTheme.PushMenuColors();
         if (ImGui.BeginCombo("##add-base", "Choose a base...", ImGuiComboFlags.HeightLargest))
         {

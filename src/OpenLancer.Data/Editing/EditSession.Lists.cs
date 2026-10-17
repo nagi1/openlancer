@@ -1,0 +1,94 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using LibreLancer.Data.Ini;
+using OpenLancer.Data.Editing.Lists;
+using OpenLancer.Data.Ini;
+using OpenLancer.Data.IO;
+
+namespace OpenLancer.Data.Editing;
+
+public sealed partial class EditSession
+{
+    private SectionTable? table;
+    private DataFiles? dataFiles;
+    private DataLists? lists;
+
+    /// <summary>
+    /// A number that changes at each change of W: each command, each step and end of a transaction, an undo, a redo, a
+    /// restore of unsaved edits and a save. The caches of the lists and of the item index compare it, so a call at the
+    /// same revision reads no file.
+    /// </summary>
+    internal int Revision { get; private set; }
+
+    /// <summary>The shared index of the sections of the edit view (decision D121).</summary>
+    internal SectionTable Table => table ??= new SectionTable(OpenDocument);
+
+    /// <summary>The files of each role of the rule data.</summary>
+    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ListRules.Retail, Systems);
+
+    /// <summary>The data lists of the edit view, and the reverse index of their references (milestone M21).</summary>
+    public DataLists Lists => lists ??= new DataLists(this, ListRules.Retail);
+
+    /// <summary>
+    /// The list checks of a section (layer 2 of the checks): values outside their lists, values that name an entry
+    /// that the active mod removed, required keys without a valid line, and FLHash collisions. Each problem has the
+    /// section as its target and the key as its key. The list is empty when the edit view has no such section.
+    /// </summary>
+    public IReadOnlyList<Diagnostic> CheckLists(SectionRef target) =>
+        Lists.Problems(target).Select(p => p.Diagnostic).ToList();
+
+    /// <summary>
+    /// True when the editor knows the schema of the file: an item file, <c>universe.ini</c> or a star system file. The
+    /// editor reads the other files only for the lists, so the Inspector shows their sections read-only (decision
+    /// D123).
+    /// </summary>
+    public bool KnowsSchema(string path) =>
+        Items.KindOf(path) != null ||
+        UniversePath is { } universe && VfsPath.Comparer.Equals(VfsPath.Normalize(path), universe) ||
+        IsSystemFile(path);
+
+    /// <summary>
+    /// The layer that gives an entry of a list: the active mod when it adds the section, else the last lower mod that
+    /// changes the key entry or the section, else the base data. Also tells if W has the section, and if the entry is a
+    /// section of an edit that is not saved.
+    /// </summary>
+    internal (ValueOrigin Origin, string? ModId, bool InW, bool Unsaved) EntryOrigin(FileTable source, int index,
+        string keyName)
+    {
+        var id = source.Ids[index];
+        if (source.Document is not { } document)
+        {
+            // A whole file of the active mod: W has the lower data of the file.
+            var inW = OpenDocument(source.Path) is { } w && w.IndexOf(id) >= 0;
+            return (ValueOrigin.ActiveMod, ActiveMod?.Id, inW, false);
+        }
+        if (ActiveMod != null && !document.InBase(id))
+            return (ValueOrigin.ActiveMod, ActiveMod.Id, true, !document.InInitial(id));
+        var owner = lowerView.Ledger.Owner(document.Path, id, keyName);
+        return owner == null ? (ValueOrigin.Base, null, true, false) : (ValueOrigin.LowerMod, owner, true, false);
+    }
+
+    /// <summary>The sections of a file as the edit view gives it, or null when it has no such INI file. For a whole
+    /// file of the active mod, this is the only view of its content: W has the lower data.</summary>
+    internal IReadOnlyList<Section>? EditViewSections(string path)
+    {
+        var fs = EditView.CreateFileSystem();
+        if (!fs.FileExists(path))
+            return null;
+        return IniDocument.Parse(path, fs.ReadAllBytes(path)).Sections;
+    }
+
+    /// <summary>The INI files that the active mod changes: the files that a command changed, and the files of its
+    /// patches and its whole files.</summary>
+    internal IReadOnlyList<string> ActiveChangedPaths()
+    {
+        if (ActiveMod is not { } active)
+            return [];
+        return touched.Concat(active.Patches.Keys).Concat(active.Files.Keys)
+            .Select(p => VfsPath.Normalize(p) ?? p)
+            .Where(p => p.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
+            .Distinct(VfsPath.Comparer)
+            .ToList();
+    }
+}

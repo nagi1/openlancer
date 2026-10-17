@@ -339,6 +339,7 @@ internal sealed class SceneView : IDisposable
         // moves the item in the same frame.
         sync.Flush();
         renderer.DrawNebulae = window.Settings.ShowNebulae;
+        renderer.DrawFog = window.Settings.ShowFog;
         renderer.BackgroundOverride = System.BackgroundColor;
         renderer.SystemLighting.Ambient = new Color4(System.AmbientColor, 1);
         world.RenderUpdate(elapsed);
@@ -376,6 +377,8 @@ internal sealed class SceneView : IDisposable
             s => s.ShowZones, (s, v) => s.ShowZones = v),
         new("lights", EditorIcons.Lightbulb, "Lights", s => s.ShowLights, (s, v) => s.ShowLights = v),
         new("nebulae", EditorIcons.Cloud, "Nebulae", s => s.ShowNebulae, (s, v) => s.ShowNebulae = v),
+        new("fog", EditorIcons.Smog, "Fog: the fog of the nebula that holds the camera", s => s.ShowFog,
+            (s, v) => s.ShowFog = v),
         new("starsphere", EditorIcons.Star, "Starsphere", s => s.ShowStarsphere, (s, v) => s.ShowStarsphere = v),
         new("wireframe", EditorIcons.Th, "Wireframe", s => s.Wireframe, (s, v) => s.Wireframe = v),
     ];

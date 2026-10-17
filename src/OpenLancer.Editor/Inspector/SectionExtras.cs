@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Text;
 using ImGuiNET;
+using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
@@ -11,14 +13,23 @@ namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
 /// The sections at the end of an Inspector page that edits sections of the edit view: "More keys" with the keys of the
-/// schema that no row above shows, "Other keys" with the keys that the schema does not know, and "INI text" with the
-/// lines of the sections. So the page can edit each key of its sections. A page of more than one section gets a
-/// subheading for each section.
+/// schema that no row above shows, "Other keys" with the keys that the schema does not know, and the editable "Raw INI"
+/// block with the lines of the sections (see <see cref="Raw"/>). So the page can edit each key of its sections. A page
+/// of more than one section gets a subheading for each section.
 /// </summary>
 internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
 {
     private const string MoreKeysHeading = "Keys that no row above shows";
     private const string OtherKeysHeading = "Keys that the engine does not read";
+
+    /// <summary>The name of the field key of a raw block. It is not an INI key, so it cannot clash with one.</summary>
+    internal const string RawKey = "Raw INI";
+
+    /// <summary>The most text lines that a raw block shows before it scrolls.</summary>
+    private const int RawLines = 18;
+
+    private readonly Dictionary<SectionRef, string> rawTexts = [];
+    private (EditorSession? Session, int Version) rawVersion;
 
     /// <param name="sections">The sections of the page. A section that the edit view does not have shows nothing.</param>
     /// <param name="key">The first part of the settings keys of the sections, "Type".</param>
@@ -43,7 +54,6 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
         // A section rarely has such keys, so the list is open until the user closes it.
         Keys(key + ".Other", EditorIcons.Th, "Other keys", OtherKeysHeading, true, sections.Count > 1,
             lists.Select(l => (l.Section, l.Keys.Unknown)));
-        IniText(sections, key + ".Ini");
     }
 
     /// <summary>The keys of "More keys" of a section in this frame (see <see cref="MoreKeys"/>).</summary>
@@ -104,38 +114,140 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
         grid.EndSection();
     }
 
-    /// <summary>The sections as INI text, to read and to copy.</summary>
-    private void IniText(IReadOnlyList<SectionRef> sections, string key)
+    /// <summary>
+    /// The "Raw INI" section, the last section of a page that edits sections (decision D115): one editable block for each
+    /// section, with a subheading for each section of a page with more than one. The text is <c>[Type]</c> and one
+    /// <c>name = values</c> line for each line of W. One raw edit is one entry of the edit history (see
+    /// <see cref="RawSectionEdit"/>). A block is read-only when the session or the section is read-only, or when the
+    /// editor does not know the schema of the file (decision D123).
+    /// </summary>
+    /// <param name="key">The first part of the settings key of the section, "Type". The settings keep the open state
+    /// for each page type.</param>
+    public void Raw(IReadOnlyList<SectionRef> sections, string key)
     {
-        var views = sections.Select(s => window.Session!.Edits.Get(s)).OfType<SectionView>().ToList();
-        if (views.Count == 0 || !grid.BeginSection(key, EditorIcons.Th, "INI text", defaultOpen: false))
+        if (window.Session is not { } session)
         {
             return;
         }
 
-        var text = new StringBuilder();
-        foreach (var view in views)
+        var views = sections.Select(s => (Section: s, View: session.Edits.Get(s))).Where(v => v.View != null).ToList();
+        if (views.Count == 0 || !grid.BeginSection(key + ".RawIni", EditorIcons.Th, "Raw INI"))
         {
-            if (text.Length > 0)
+            return;
+        }
+
+        foreach (var (section, view) in views)
+        {
+            if (views.Count > 1)
             {
-                text.Append("\n\n");
+                grid.SubHeading(section.Id.ToString());
             }
 
-            text.Append($"[{view.Type}]");
-            foreach (var entry in view.Entries)
+            grid.Row("INI", () => RawBlock(session, section, view!));
+        }
+
+        grid.EndSection();
+    }
+
+    /// <summary>The text field of one section, its problems while the user types, and the problems of the section with
+    /// their line numbers.</summary>
+    private void RawBlock(EditorSession session, SectionRef section, SectionView view)
+    {
+        var text = RawText(session, section, view);
+        var reason = session.NoEditReason ?? FieldBinding.SectionLock(session.Edits, section, view);
+        var lines = Math.Clamp(text.Count(c => c == '\n') + 2, 3, RawLines);
+        var size = new Vector2(-1, lines * ImGui.GetTextLineHeight() + 2 * ImGui.GetStyle().FramePadding.Y);
+        var edited = text;
+        if (reason != null)
+        {
+            ImGui.InputTextMultiline("##raw", ref edited, (uint)Encoding.UTF8.GetByteCount(edited) + 1, size,
+                ImGuiInputTextFlags.ReadOnly);
+            ImGui.SetItemTooltip($"{EditorIcons.Lock} {reason}");
+        }
+        else
+        {
+            var changed = ImGui.InputTextMultiline("##raw", ref edited, (uint)Encoding.UTF8.GetByteCount(edited) + 1024,
+                size);
+            var active = ImGui.IsItemActive();
+            grid.CommitField(new FieldKey(section, RawKey, FieldKey.AllLines), changed, text, edited,
+                (end, _) => Commit(session, section, text, end));
+            ImGui.SetItemTooltip("Edit the lines, then click outside. One edit is one entry of the history. Esc puts " +
+                                 "back the text.");
+            if (active && !string.Equals(edited, text, StringComparison.Ordinal))
             {
-                text.Append('\n').Append(FieldEdit.IniText(entry.Name, [entry]));
+                foreach (var problem in RawSectionEdit.Plan(session.Edits, section, text, edited).Problems)
+                {
+                    ImGui.TextColored(EditorTheme.Error, $"{EditorIcons.ExclamationTriangle} {problem}");
+                }
             }
         }
 
-        var ini = text.ToString();
-        grid.Row("INI", () =>
+        foreach (var (line, problem) in SectionProblems(session.Edits, section, view))
         {
-            var lines = Math.Min(ini.Count(c => c == '\n') + 1, 16);
-            var height = lines * ImGui.GetTextLineHeight() + 2 * ImGui.GetStyle().FramePadding.Y;
-            ImGui.InputTextMultiline("##ini", ref ini, (uint)Encoding.UTF8.GetByteCount(ini) + 1,
-                new System.Numerics.Vector2(-1, height), ImGuiInputTextFlags.ReadOnly);
-        });
-        grid.EndSection();
+            ImGui.TextColored(problem.Severity == DiagnosticSeverity.Error ? EditorTheme.Error : EditorTheme.Warning,
+                $"{EditorIcons.ExclamationTriangle} {(line > 0 ? $"Line {line}: " : "")}{Short(problem)}");
+        }
+    }
+
+    /// <summary>
+    /// Runs a raw edit at the end of the field. An edit with a problem keeps nothing (decision D114): the Console line
+    /// holds the problem and the whole draft text, so the user can copy it back.
+    /// </summary>
+    private string? Commit(EditorSession session, SectionRef section, string start, string end)
+    {
+        var plan = RawSectionEdit.Plan(session.Edits, section, start, end);
+        if (plan.Problems.Count > 0)
+        {
+            return $"{string.Join(" ", plan.Problems)} The draft text:\n{end}";
+        }
+
+        if (plan.Command != null)
+        {
+            window.Edits.Execute(plan.Command);
+        }
+
+        return null;
+    }
+
+    /// <summary>The text of a section, built once for each version of the edit view.</summary>
+    private string RawText(EditorSession session, SectionRef section, SectionView view)
+    {
+        if (rawVersion != (session, session.Version))
+        {
+            rawTexts.Clear();
+            rawVersion = (session, session.Version);
+        }
+
+        if (!rawTexts.TryGetValue(section, out var text))
+        {
+            text = RawSectionEdit.Format(view);
+            rawTexts[section] = text;
+        }
+
+        return text;
+    }
+
+    /// <summary>The problems of a section for its raw block: the field checks and the list checks, each with the line of
+    /// its key in the text, or 0.</summary>
+    internal static IEnumerable<(int Line, Diagnostic Problem)> SectionProblems(EditSession edits, SectionRef section,
+        SectionView view)
+    {
+        foreach (var problem in edits.Check(section).Concat(edits.CheckLists(section)))
+        {
+            var index = problem.Key == null
+                ? -1
+                : view.Entries.ToList().FindIndex(e => e.Name.Equals(problem.Key, StringComparison.OrdinalIgnoreCase));
+            // Line 1 of the text is the header.
+            yield return (index < 0 ? 0 : index + 2, problem);
+        }
+    }
+
+    /// <summary>The message of a problem without the section at its start.</summary>
+    private static string Short(Diagnostic problem)
+    {
+        var prefix = problem.Target == null ? null : $"{problem.Target.Id}: ";
+        return prefix != null && problem.Message.StartsWith(prefix, StringComparison.Ordinal)
+            ? problem.Message[prefix.Length..]
+            : problem.Message;
     }
 }

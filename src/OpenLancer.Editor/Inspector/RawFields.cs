@@ -10,9 +10,9 @@ using OpenLancer.Editor.Ui;
 namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
-/// A section that shows each public field and property of an object, found by reflection. The "All fields (raw)"
-/// section at the end of each Inspector page uses it, so each GameData field shows somewhere, also before a page shows
-/// it. The section is closed until the user opens it.
+/// A section that shows each public field and property of an object, found by reflection. The "Loaded values
+/// (read-only)" section near the end of each Inspector page uses it, so each GameData field shows somewhere, also
+/// before a page shows it. The section is closed until the user opens it.
 /// </summary>
 /// <param name="section">The second part of the section key "Type.Section".</param>
 internal sealed class RawFields(PropertyGrid grid, string section, char icon, string title)
@@ -26,8 +26,8 @@ internal sealed class RawFields(PropertyGrid grid, string section, char icon, st
     private object? item;
     private (string Name, string Value)[] fields = [];
 
-    /// <summary>The "All fields (raw)" section of an Inspector page.</summary>
-    public RawFields(PropertyGrid grid) : this(grid, "Raw", EditorIcons.Table, "All fields (raw)")
+    /// <summary>The "Loaded values (read-only)" section of an Inspector page. It comes above the raw INI block.</summary>
+    public RawFields(PropertyGrid grid) : this(grid, "Raw", EditorIcons.Table, "Loaded values (read-only)")
     {
     }
 

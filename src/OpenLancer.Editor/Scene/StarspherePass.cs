@@ -12,7 +12,7 @@ namespace OpenLancer.Editor.Scene;
 /// opaque hook, which the engine calls at the same place in the frame.
 /// </summary>
 /// <remarks>
-/// The pass follows the starsphere block of <c>SystemRenderer.Draw</c> (SystemRenderer.cs:408-469 at the pinned
+/// The pass follows the starsphere block of <c>SystemRenderer.Draw</c> (SystemRenderer.cs:411-472 at the pinned
 /// commit), with public members only. A submodule update that changes that block must change this pass too. The pass
 /// does not cull parts. The engine culls only to save fill rate, and a starsphere has few parts.
 /// </remarks>
@@ -24,18 +24,19 @@ internal static class StarspherePass
     internal readonly record struct SkyPlan(bool Stars, bool FogTint);
 
     /// <summary>
-    /// The rule of the engine. A nebula that holds the camera counts only when the nebulae draw. The stars draw when
-    /// the Starsphere toggle is on and the camera is not fully in the fog of that nebula. In full fog, the renderer
-    /// clears the view with the fog color. The fog tint draws after the stars when a nebula counts.
+    /// The rule of the engine. A nebula that holds the camera counts only when the nebulae and the fog draw. The stars
+    /// draw when the Starsphere toggle is on and the camera is not fully in the fog of that nebula. In full fog, the
+    /// renderer clears the view with the fog color. The fog tint draws after the stars when a nebula counts.
     /// </summary>
     /// <param name="showStarsphere">The Starsphere toggle of the view.</param>
     /// <param name="showNebulae">The nebulae draw (<see cref="SystemRenderer.DrawNebulae"/>).</param>
+    /// <param name="showFog">The fog draws (<see cref="SystemRenderer.DrawFog"/>).</param>
     /// <param name="inNebula">The zone of a nebula holds the camera.</param>
     /// <param name="fullyFogged">The camera is fully in the fog of that nebula
     /// (<see cref="NebulaRenderer.FogTransitioned"/>).</param>
-    internal static SkyPlan Plan(bool showStarsphere, bool showNebulae, bool inNebula, bool fullyFogged)
+    internal static SkyPlan Plan(bool showStarsphere, bool showNebulae, bool showFog, bool inNebula, bool fullyFogged)
     {
-        var nebula = showNebulae && inNebula;
+        var nebula = showNebulae && showFog && inNebula;
         var stars = showStarsphere && !(nebula && fullyFogged);
         return new SkyPlan(stars, stars && nebula);
     }
@@ -51,10 +52,11 @@ internal static class StarspherePass
     public static void Draw(SystemRenderer renderer, ICamera sky, bool showStarsphere)
     {
         var nebula = renderer.ObjectInNebula(sky.Position);
-        // The engine reads the fog only when the nebulae draw (SystemRenderer.CheckNebulae). The fog of a cylinder or
-        // ring zone logs an error (Zone.ScaledDistance), so the pass does not read it when the nebulae do not draw.
-        var fullyFogged = nebula != null && renderer.DrawNebulae && nebula.FogTransitioned();
-        var plan = Plan(showStarsphere, renderer.DrawNebulae, nebula != null, fullyFogged);
+        // The engine reads the fog only when the nebulae and the fog draw (SystemRenderer.CheckNebulae). The fog of a
+        // cylinder or ring zone logs an error (Zone.ScaledDistance), so the pass does not read it in the other cases.
+        var fog = renderer.DrawNebulae && renderer.DrawFog;
+        var fullyFogged = nebula != null && fog && nebula.FogTransitioned();
+        var plan = Plan(showStarsphere, renderer.DrawNebulae, renderer.DrawFog, nebula != null, fullyFogged);
         if (!plan.Stars)
         {
             return;

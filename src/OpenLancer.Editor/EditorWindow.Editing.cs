@@ -66,11 +66,12 @@ internal sealed partial class EditorWindow : IClosePromptHost
          section.Equals(session.Edits.Find(ItemFileKind.Ships, key)) ||
          section.Equals(session.Edits.Find(ItemFileKind.Equipment, key)));
 
-    /// <summary>True when Revert can put back the section as the lower layer has it.</summary>
+    /// <summary>True when Revert can put back the section as the lower layer has it. A section of a file whose schema
+    /// the editor does not know is read-only (decision D123), so it has no Revert.</summary>
     public bool CanRevert(SectionRef? section) =>
         section != null && Session is { CanEdit: true } session &&
         session.Edits.Get(section) is { IsChanged: true, IsNew: false, ReadOnlyReason: null } &&
-        FieldBinding.RevertLock(session.Edits, section) == null;
+        session.Edits.KnowsSchema(section.Path) && FieldBinding.RevertLock(session.Edits, section) == null;
 
     /// <summary>The tooltip of Revert: what it does, or why it cannot run for the section.</summary>
     public string RevertTooltip(SectionRef? section) =>

@@ -227,6 +227,53 @@ internal static class ObjectKinds
     };
 
     /// <summary>
+    /// The kind of the entries of a data list, from the <c>kind</c> of the list in the rule data (milestone M21). An
+    /// unknown kind gets the kind of other objects.
+    /// </summary>
+    public static ObjectKind OfList(string kind) => kind.ToLowerInvariant() switch
+    {
+        "solararchetype" => Lists.SolarArchetype,
+        "ship" => Ship,
+        "loadout" => Lists.Loadout,
+        "faction" => Lists.Faction,
+        "system" => StarSystem,
+        "base" => Lists.Base,
+        "object" => OtherObject,
+        "zone" => Zones.Other,
+        "encounter" => Zones.Population,
+        "star" => Sun,
+        "starpart" => Lists.StarPart,
+        "pilot" => Lists.Pilot,
+        "voice" or "sound" => Lists.Sound,
+        "effect" => Equip.Effect,
+        "explosion" => Lists.Explosion,
+        "equipment" => AnyEquipment,
+        "good" => Good,
+        "bodypart" => Lists.BodyPart,
+        "curve" => Lists.Curve,
+        "fuse" => Lists.Fuse,
+        "enum" => Lists.Enum,
+        _ => OtherObject,
+    };
+
+    /// <summary>The kinds of the entries of the data lists that no other kind fits.</summary>
+    private static class Lists
+    {
+        public static readonly ObjectKind SolarArchetype = new("Solar archetype", EditorIcons.Building, Station.Color);
+        public static readonly ObjectKind Loadout = new("Loadout", EditorIcons.Boxes, EditorTheme.Text);
+        public static readonly ObjectKind Faction = new("Faction", EditorIcons.Users, EditorTheme.Text);
+        public static readonly ObjectKind Base = new("Base", EditorIcons.DoorOpen, Station.Color);
+        public static readonly ObjectKind StarPart = new("Star part", EditorIcons.Star, Sun.Color);
+        public static readonly ObjectKind Pilot = new("Pilot", EditorIcons.User, EditorTheme.Text);
+        public static readonly ObjectKind Sound = new("Sound", EditorIcons.VolumeUp, EditorTheme.Text);
+        public static readonly ObjectKind Explosion = new("Explosion", EditorIcons.Bomb, EditorTheme.Text);
+        public static readonly ObjectKind BodyPart = new("Body part", EditorIcons.User, EditorTheme.Text);
+        public static readonly ObjectKind Curve = new("Curve", EditorIcons.Stream, EditorTheme.Text);
+        public static readonly ObjectKind Fuse = new("Fuse", EditorIcons.Fire, EditorTheme.Text);
+        public static readonly ObjectKind Enum = new("Name", EditorIcons.List, EditorTheme.Text);
+    }
+
+    /// <summary>
     /// The kinds of the entities of a cutscene, in the groups of the Timeline and the Hierarchy (section 7.3 of the M8
     /// design). The Cutscene view draws its overlay glyphs with them.
     /// </summary>

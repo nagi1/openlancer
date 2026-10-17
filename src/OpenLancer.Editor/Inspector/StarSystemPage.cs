@@ -70,6 +70,9 @@ internal sealed class StarSystemPage(EditorWindow window, PropertyGrid grid)
         }
     }
 
+    /// <summary>The sections of a system in W, for the raw block of the page.</summary>
+    public IReadOnlyList<SectionRef> RawSections(StarSystem selected) => Sections(selected.Nickname).All;
+
     private void Identity(StarSystem system, SystemSections parts)
     {
         if (!grid.BeginSection("StarSystem.Identity", EditorIcons.Tag, "Identity"))

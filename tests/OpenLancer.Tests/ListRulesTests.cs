@@ -1,0 +1,274 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using LibreLancer.Data.Schema.Audio;
+using LibreLancer.Data.Schema.Characters;
+using LibreLancer.Data.Schema.Effects;
+using LibreLancer.Data.Schema.Equipment;
+using LibreLancer.Data.Schema.Fuses;
+using LibreLancer.Data.Schema.Goods;
+using LibreLancer.Data.Schema.InitialWorld;
+using LibreLancer.Data.Schema.Pilots;
+using LibreLancer.Data.Schema.Ships;
+using LibreLancer.Data.Schema.Solar;
+using LibreLancer.Data.Schema.Universe;
+using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Lists;
+using OpenLancer.Data.Ini;
+using Xunit;
+
+namespace OpenLancer.Tests;
+
+/// <summary>
+/// The rule data of the data lists (section 20.1 item 1 of the M21 design). A renamed key or class of an upstream merge
+/// breaks a rule here, in the build, and not in the hands of a user.
+/// </summary>
+public sealed class ListRulesTests
+{
+    /// <summary>The <c>[ParsedIni]</c> class of each role whose files the generated parsers read.</summary>
+    private static readonly Dictionary<string, Type> Parsed = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["solar"] = typeof(SolararchIni),
+        ["stars"] = typeof(StararchIni),
+        ["loadouts"] = typeof(LoadoutsIni),
+        ["groups"] = typeof(InitialWorldIni),
+        ["pilots"] = typeof(PilotsIni),
+        ["sounds"] = typeof(AudioIni),
+        ["effects"] = typeof(EffectsIni),
+        ["explosions"] = typeof(ExplosionsIni),
+        ["fuses"] = typeof(FuseIni),
+        ["equipment"] = typeof(EquipmentIni),
+        ["ships"] = typeof(ShiparchIni),
+        ["goods"] = typeof(GoodsIni),
+        ["markets"] = typeof(MarketsIni),
+        ["costumes"] = typeof(CostumesIni),
+        ["system"] = typeof(StarSystem),
+    };
+
+    /// <summary>The section classes of the files that the engine reads itself and gives section by section to a
+    /// generated parser.</summary>
+    private static readonly Dictionary<(string Role, string Section), Type> Classes = new()
+    {
+        [("universe", "system")] = typeof(LibreLancer.Data.Schema.Universe.StarSystem),
+        [("universe", "base")] = typeof(Base),
+        [("bodyparts", "head")] = typeof(Bodypart),
+        [("bodyparts", "body")] = typeof(Bodypart),
+        [("bodyparts", "lefthand")] = typeof(Bodypart),
+        [("bodyparts", "righthand")] = typeof(Bodypart),
+        [("bodyparts", "accessory")] = typeof(Accessory),
+    };
+
+    /// <summary>The keys that a hand parser reads, for the files without a section class (VoicesIni.cs:32-44,
+    /// GraphIni.cs:24-63).</summary>
+    private static readonly Dictionary<(string Role, string Section), string[]> HandKeys = new()
+    {
+        [("voices", "voice")] = ["nickname", "extend"],
+        [("igraph", "igraph")] = ["nickname", "type", "point"],
+    };
+
+    private static readonly ListRules Rules = ListRules.Retail;
+
+    /// <summary>The schema of a section type of a role, or null when the role has none (a data-only role).</summary>
+    private static SectionSchema? Schema(string role, string section)
+    {
+        if (Parsed.TryGetValue(role, out var ini))
+            return SchemaCatalog.Section(ini, section);
+        return Classes.TryGetValue((role, section.ToLowerInvariant()), out var type)
+            ? SchemaCatalog.SectionClass(type, section)
+            : null;
+    }
+
+    private static bool Knows(string role, string section, string key) =>
+        Schema(role, section)?.Key(key) != null ||
+        HandKeys.TryGetValue((role, section.ToLowerInvariant()), out var keys) &&
+        keys.Contains(key, StringComparer.OrdinalIgnoreCase);
+
+    [Fact]
+    public void TheResourceParses()
+    {
+        Assert.NotEmpty(Rules.Roles);
+        Assert.NotEmpty(Rules.Lists);
+        Assert.NotEmpty(Rules.All);
+        Assert.Throws<InvalidDataException>(() => ListRules.Parse("{ \"roles\": {} }"));
+    }
+
+    [Fact]
+    public void EachRuleNamesASectionTypeAndAKeyOfTheSchemaOfItsRole()
+    {
+        foreach (var rule in Rules.All)
+        {
+            var name = $"{rule.Role} [{rule.Section}] {rule.Key}";
+            Assert.True(Rules.Roles.ContainsKey(rule.Role), name);
+            var schema = Schema(rule.Role, rule.Section);
+            Assert.True(schema != null, $"{name}: the schema of the role has no section type [{rule.Section}].");
+            var key = schema.Key(rule.Key);
+            Assert.True(key != null, $"{name}: the schema has no key '{rule.Key}'.");
+            // The line type of the key is a string, a string array, or an entry handler.
+            Assert.True(key.ClrType == null || key.ClrType == typeof(string) || key.ClrType == typeof(string[]),
+                $"{name}: the key reads {key.ClrType}.");
+        }
+    }
+
+    [Fact]
+    public void EachListSourceNamesSectionTypesAndKeysOfItsRole()
+    {
+        foreach (var list in Rules.Lists.Values)
+        {
+            if (list.Enum != null)
+            {
+                Assert.True(typeof(LibreLancer.Data.FLHash).Assembly.GetType(list.Enum) is { IsEnum: true }, list.Id);
+                continue;
+            }
+            var source = list.Source!;
+            var role = source.Scoped ? "system" : source.Role!;
+            Assert.True(Rules.Roles.ContainsKey(role), list.Id);
+            if (!Rules.Roles[role].Engine)
+                continue;
+            foreach (var section in source.Sections)
+            {
+                var keys = (source.Keys ?? [SectionKeys.For(section).KeyEntry!]).Concat(source.Where.Keys)
+                    .Concat(list.Requires).Concat(list.Detail);
+                foreach (var key in keys)
+                    Assert.True(Knows(role, section, key), $"{list.Id}: [{section}] {key} in role {role}");
+            }
+        }
+    }
+
+    [Fact]
+    public void EachRuleNamesKnownListsAndNoTwoRulesShareAnAddress()
+    {
+        foreach (var rule in Rules.All)
+        {
+            Assert.NotEmpty(rule.Lists);
+            Assert.All(rule.Lists, l => Assert.True(Rules.Lists.ContainsKey(l), $"{rule.Key}: list {l}"));
+        }
+        var addresses = Rules.All.GroupBy(r => (r.Role.ToLowerInvariant(), r.Section.ToLowerInvariant(),
+            r.Key.ToLowerInvariant(), r.Index)).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+        Assert.Empty(addresses);
+    }
+
+    /// <summary>Decisions D109 and D82: a closed rule needs an engine line and a list whose files the engine reads. A
+    /// required rule needs an engine line and the effect drop or loadBreak.</summary>
+    [Fact]
+    public void ClosedAndRequiredRulesHaveEvidence()
+    {
+        foreach (var rule in Rules.All)
+        {
+            var name = $"{rule.Role} [{rule.Section}] {rule.Key} ({rule.Index})";
+            if (rule.Closed)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(rule.Evidence), name);
+                Assert.False(rule.Evidence!.StartsWith("Open", StringComparison.Ordinal), name);
+                foreach (var list in rule.Lists.Select(l => Rules.Lists[l]))
+                {
+                    var role = list.Source is { Scoped: false, Role: { } r } ? r : null;
+                    Assert.True(role == null || Rules.Roles[role].Engine, $"{name}: list {list.Id} is data only.");
+                }
+            }
+            else
+                Assert.Equal(RuleEffect.None, rule.Effect);
+            if (rule.Required || rule.RequiredWith != null)
+            {
+                Assert.False(string.IsNullOrWhiteSpace(rule.Evidence), name);
+                Assert.Contains(rule.Effect, new[] { RuleEffect.Drop, RuleEffect.LoadBreak });
+            }
+        }
+    }
+
+    [Fact]
+    public void ARuleWithValuesGivesOneRuleForEachValue()
+    {
+        var gotos = Rules.Rules("system", "OBJECT", "GoTo");
+        Assert.Equal([0, 1, 2], gotos.Select(r => r.Index));
+        Assert.Equal(["System", "Exit object", "Tunnel"], gotos.Select(r => r.Label));
+        Assert.Equal(0, gotos[1].SystemValue);
+        Assert.True(gotos[1].Closed);
+        Assert.False(gotos[2].Closed);
+        Assert.Equal(["solar_archetype", "ship"], Assert.Single(Rules.Rules("loadouts", "Loadout", "archetype")).Lists);
+        Assert.Empty(Rules.Rules("system", "Object", "no_such_key"));
+    }
+}
+
+/// <summary>The files of the roles, as the engine finds them (section 20.1 item 2 of the M21 design).</summary>
+public sealed class DataFilesTests
+{
+    private const string FreelancerIni = """
+        [Freelancer]
+        data path = ..\data
+
+        [Data]
+        solar = solar\solararch.ini
+        SOLAR = solar\more_solar.ini
+        stars = solar\first_stars.ini
+        stars = solar\last_stars.ini
+        explosions = fx\explosions.ini
+        debris = fx\explosions.ini
+        equipment = equipment\weapon_equip.ini
+        WeaponModDB = equipment\WeaponModDB.ini
+        universe = universe\universe.ini
+        """;
+
+    /// <summary>Install paths compare without letter case.</summary>
+    private static readonly StringComparer IgnoreCase = StringComparer.OrdinalIgnoreCase;
+
+    private static DataFiles Files(TestWorkspace ws, string freelancerIni)
+    {
+        ws.WriteBase(@"EXE\freelancer.ini", freelancerIni);
+        return ws.Session("act").DataFiles;
+    }
+
+    [Fact]
+    public void TheRolesGiveTheFilesAsTheEngineFindsThem()
+    {
+        using var ws = SystemWorkspace.Create();
+        var files = Files(ws, FreelancerIni);
+
+        // All entries of a name, in load order, without letter case.
+        Assert.Equal([@"DATA\solar\solararch.ini", @"DATA\solar\more_solar.ini"], files.Paths("solar"), IgnoreCase);
+        // The last entry of a name.
+        Assert.Equal([@"DATA\solar\last_stars.ini"], files.Paths("stars"), IgnoreCase);
+        // Fixed paths, relative to the data folder. The engine reads initialworld.ini without a [Data] entry.
+        Assert.Equal([@"DATA\initialworld.ini"], files.Paths("groups"), IgnoreCase);
+        Assert.Equal([@"DATA\MISSIONS\pilots_population.ini", @"DATA\MISSIONS\pilots_story.ini"], files.Paths("pilots"),
+            IgnoreCase);
+        // A data-only role: retail reads the file, the fork does not. The [Data] entry WeaponModDB does not count.
+        Assert.Equal([@"DATA\EQUIPMENT\WeaponModDB.ini"], files.Paths("weapon_mod"), IgnoreCase);
+        Assert.False(files.Engine("weapon_mod"));
+        Assert.True(files.Engine("equipment"));
+        // The universe and the system files.
+        Assert.Equal([SystemWorkspace.UniversePath], files.Paths("universe"), IgnoreCase);
+        Assert.Contains(SystemWorkspace.Li01Path, files.Paths("system"), StringComparer.OrdinalIgnoreCase);
+        Assert.Empty(files.Paths("no_such_role"));
+    }
+
+    [Fact]
+    public void APathCanHaveMoreThanOneRole()
+    {
+        using var ws = SystemWorkspace.Create();
+        var files = Files(ws, FreelancerIni);
+
+        Assert.Equal(["explosions"], files.RolesOf(@"data\FX\EXPLOSIONS.INI"));
+        Assert.Equal(["system"], files.RolesOf(SystemWorkspace.Li01Path));
+        Assert.Equal(["universe"], files.RolesOf(SystemWorkspace.UniversePath));
+        Assert.Empty(files.RolesOf(@"DATA\solar\first_stars.ini"));
+        Assert.Equal(["equipment"], files.RolesOf(@"DATA\EQUIPMENT\weapon_equip.ini"));
+    }
+
+    [Fact]
+    public void TheLastEntryFallsBackToTheEngineDefault()
+    {
+        using var ws = SystemWorkspace.Create();
+        var files = Files(ws, """
+            [Freelancer]
+            data path = ..\data
+
+            [Data]
+            solar = solar\solararch.ini
+            """);
+
+        Assert.Equal([@"DATA\SOLAR\stararch.ini"], files.Paths("stars"), IgnoreCase);
+        Assert.Empty(files.Paths("bodyparts"));
+        Assert.Empty(files.Paths("universe"));
+    }
+}

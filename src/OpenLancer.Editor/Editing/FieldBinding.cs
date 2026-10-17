@@ -18,6 +18,9 @@ internal sealed class FieldBinding
     private const string SystemFileReason =
         "Changing the file of a system moves all its contents. A later milestone does this.";
 
+    /// <summary>Why a section of a file without a known schema is read-only (decision D123).</summary>
+    public const string NoSchemaReason = "The editor cannot edit this file yet. It reads it for the lists.";
+
     private FieldBinding(SectionRef section, string name, KeySchema? key, IReadOnlyList<EntryView> lines,
         ValueOrigin origin, string? originMod, IReadOnlyList<string> laterMods, string? readOnlyReason, bool canRevert)
     {
@@ -79,17 +82,25 @@ internal sealed class FieldBinding
     {
         var key = session.Schema(section, name);
         var (origin, mod) = session.Origin(section, name);
-        var reason = view.ReadOnlyReason ?? KeyLock(session, section, view, key, name);
+        var reason = SectionLock(session, section, view) ?? KeyLock(session, section, view, key, name);
         return new FieldBinding(section, key?.Name ?? name, key, view.Lines(name), origin, mod,
             session.LaterModsThatChange(section, name), reason,
             reason == null && origin == ValueOrigin.ActiveMod && !view.IsNew);
     }
 
     /// <summary>
+    /// Why the Inspector cannot change a section, or null: the section is read-only in the edit view, or the editor does
+    /// not know the schema of its file. The editor reads such a file only for the lists, for example the
+    /// <c>[Solar]</c> that the follow button of an archetype selects (decision D123).
+    /// </summary>
+    public static string? SectionLock(EditSession session, SectionRef section, SectionView view) =>
+        view.ReadOnlyReason ?? (session.KnowsSchema(section.Path) ? null : NoSchemaReason);
+
+    /// <summary>
     /// Why a row cannot change one key of a section that takes edits, or null. A row cannot change the key entry that a
     /// patch finds the section by, a key of a group of lines that belong together, or the file of a system.
     /// </summary>
-    private static string? KeyLock(EditSession session, SectionRef section, SectionView view, KeySchema? key, string name)
+    internal static string? KeyLock(EditSession session, SectionRef section, SectionView view, KeySchema? key, string name)
     {
         if (key?.IsKeyEntry == true)
             return $"'{name}' is the key that finds the section. The editor does not change it in format version 1.";

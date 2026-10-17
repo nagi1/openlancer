@@ -12,7 +12,7 @@ namespace OpenLancer.Editor.Inspector;
 /// <summary>
 /// The field helpers of the grid (milestone M20): a drag on the label of a value, and a color picker on the swatch of a
 /// color row. Both go through the field edits, so one drag and one opening of the picker are each one entry of the edit
-/// history (see <see cref="LabelDrag"/> and <see cref="PickerSession"/>).
+/// history (see <see cref="LabelDrag"/> and <see cref="PopupSession"/>).
 /// </summary>
 /// <remarks>
 /// <para>A drag on a label changes its value by steps for each point of mouse motion: Shift gives fine steps, and Ctrl
@@ -44,7 +44,7 @@ internal sealed partial class PropertyGrid
     private static readonly Vector3 NoColor = new(0.25f);
 
     private readonly LabelDrag labelDrag = new();
-    private readonly PickerSession pickerSession = new();
+    private readonly PopupSession pickerSession = new();
 
     // The color of the picker, and the color at the opening of the picker. ImGui reads the four floats of the
     // reference from its X. The picker keeps its float color for the whole opening, so its hue does not move.

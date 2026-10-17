@@ -89,6 +89,13 @@ internal sealed class EditorSettings
     public bool ShowZones { get; set; } = true;
     public bool ShowLights { get; set; } = true;
     public bool ShowNebulae { get; set; } = true;
+
+    /// <summary>
+    /// The fog of the nebula that holds the camera. It is on by default, as the fog of the Unity Scene view: the scene
+    /// then looks as the game does. When it is off, each nebula draws as seen from outside, so that the area of a
+    /// nebula shows also from inside it.
+    /// </summary>
+    public bool ShowFog { get; set; } = true;
     public bool ShowStarsphere { get; set; } = true;
     public bool Wireframe { get; set; }
 

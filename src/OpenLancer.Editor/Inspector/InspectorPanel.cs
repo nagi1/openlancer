@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
@@ -7,9 +8,11 @@ using LibreLancer.Data.GameData;
 using LibreLancer.Data.GameData.Items;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
+using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
+using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Inspector;
@@ -37,6 +40,7 @@ internal sealed class InspectorPanel
     private readonly EditorWindow window;
     private readonly PropertyGrid grid;
     private readonly RawFields rawFields;
+    private readonly SectionExtras rawBlock;
     private readonly SystemObjectPage systemObjectPage;
     private readonly ZonePage zonePage;
     private readonly LightPage lightPage;
@@ -51,6 +55,7 @@ internal sealed class InspectorPanel
         this.window = window;
         grid = new PropertyGrid(window);
         rawFields = new RawFields(grid);
+        rawBlock = new SectionExtras(window, grid);
         systemObjectPage = new SystemObjectPage(window, grid);
         zonePage = new ZonePage(window, grid);
         lightPage = new LightPage(window, grid);
@@ -102,6 +107,11 @@ internal sealed class InspectorPanel
             SceneProblems(sceneSection);
         }
 
+        if (window.SectionOf(item) is { } itemSection)
+        {
+            SaveErrors(itemSection);
+        }
+
         // The sections have no window padding, so their headers run from edge to edge.
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
         var visible = ImGui.BeginChild("##sections", Vector2.Zero);
@@ -141,6 +151,10 @@ internal sealed class InspectorPanel
             {
                 rawFields.Draw(item);
             }
+
+            // The raw INI block is the last section of each page that edits sections (decision D115).
+            var (rawKey, rawSections) = RawSections(item, sceneSection);
+            rawBlock.Raw(rawSections, rawKey);
         }
 
         ImGui.EndChild();
@@ -285,9 +299,9 @@ internal sealed class InspectorPanel
         var session = window.Session;
         var reason = session?.NoEditReason;
         var section = window.SectionOf(item);
-        if (reason == null && section != null)
+        if (reason == null && section != null && session!.Edits.Get(section) is { } view)
         {
-            reason = session!.Edits.Get(section)?.ReadOnlyReason;
+            reason = FieldBinding.SectionLock(session.Edits, section, view);
         }
 
         if (session == null || section == null)
@@ -363,6 +377,44 @@ internal sealed class InspectorPanel
         if (problems.Count > 0)
         {
             Strip("##problems", () => problems.ForEach(PropertyGrid.ProblemText));
+        }
+    }
+
+    /// <summary>The settings key and the sections of the raw block of the page of an item. No section for an item whose
+    /// page edits no section.</summary>
+    /// <param name="sceneSection">The section of an object, a zone or a light of the open system, or null.</param>
+    private (string Key, IReadOnlyList<SectionRef> Sections) RawSections(object item, SectionRef? sceneSection) => item switch
+    {
+        SystemObject or Zone or LightSource => (item.GetType().Name, sceneSection == null ? [] : [sceneSection]),
+        StarSystem system => (nameof(StarSystem), starSystemPage.RawSections(system)),
+        Ship ship => (nameof(Ship), shipPage.RawSections(ship)),
+        Equipment equipment => (nameof(Equipment), equipmentPage.RawSections(equipment)),
+        SectionRef section => ($"Section.{section.Id.Type}", [section]),
+        _ => ("", []),
+    };
+
+    /// <summary>
+    /// The number of errors of the section that block the save, above the sections (section 11.2 of the M21 design): the
+    /// errors of the data lists, and the errors of the field checks of a section that the active mod adds or changes.
+    /// The rows show each error below its key.
+    /// </summary>
+    private void SaveErrors(SectionRef section)
+    {
+        if (window.Session is not { Edits.ActiveMod: not null } session || session.Edits.Get(section) is not { } view)
+        {
+            return;
+        }
+
+        var errors = session.Edits.CheckLists(section).Count(p => p.Severity == DiagnosticSeverity.Error);
+        if (view.IsChanged)
+        {
+            errors += session.Edits.Check(section).Count(p => p.Severity == DiagnosticSeverity.Error);
+        }
+
+        if (errors > 0)
+        {
+            Strip("##save-errors", () => ImGui.TextColored(EditorTheme.Error,
+                $"{EditorIcons.ExclamationTriangle}  {(errors == 1 ? "1 error blocks" : $"{errors} errors block")} the save."));
         }
     }
 

@@ -382,7 +382,7 @@ The numbers that a drag writes:
 
 For example, a snapped move of `Li01_14_depot_water` by 1,000 along the world X axis writes `pos = -37675, 0, -27705`. The save then writes `patches/DATA/Universe/Systems/Li01/Li01.ini` with the `nickname` line and the `pos` line of the depot.
 
-The Scene shows each edit of an item or of a section of the system in the next frame. This includes a drag, an edit in the Inspector, an undo, a redo and a restore of the unsaved edits of an earlier session. A key that loads a model, for example `archetype` or `loadout`, shows after the field or the drag ends. While the game data loads again after a save, it shows after the load. A new name shows in the label, the Hierarchy, the window title and the system list before the save. The unsaved edits stay in the Scene when you open another system and then open the system again. When the Scene cannot show the state of a section, it keeps the last valid state of the item. The Inspector and the Console tell why. For example, the game drops an object whose `archetype` does not exist, and the editor keeps its last model.
+The Scene shows each edit of an item or of a section of the system in the next frame. This includes a drag, an edit in the Inspector, an undo, a redo and a restore of the unsaved edits of an earlier session. A key that loads a model, for example `archetype` or `loadout`, shows after the field or the drag ends. While the game data loads again after a save, it shows after the load. A new name shows in the label, the Hierarchy, the window title and the system list before the save. The unsaved edits stay in the Scene when you open another system and then open the system again. When the Scene cannot show the state of a section, it keeps the last valid state of the item. The Inspector and the Console tell why. For example, the game drops an object whose `archetype` does not exist, and the editor keeps its last model. Such an archetype is an error that stops the save (see "The save gate"). An archetype that the active mod adds and did not save is in the list, so it is no error. The Scene shows it after the save and the game data reload.
 
 In these cases a section is read-only. The gizmo does not show, and the lock of each row tells why.
 
@@ -398,6 +398,36 @@ These keys are locked, and the other keys of the section take edits:
 - The `file` of a `[system]` of `universe.ini`, because a change moves all the contents of the system.
 
 The gizmo also does not show when a line that it reads has an error, for example a `pos` line with text. Correct the line in the Inspector first.
+
+### Data lists and pickers
+
+A key that names another section, for example the `archetype`, the `loadout` or the `reputation` of an `[Object]`, gets a picker. The picker lists the sections that the engine reads for the key: the base data, the mods that load before the active mod, and the active mod with its unsaved edits. So a loadout that the active mod adds is in the list before a save. A mod extends a list when it adds sections. Only a set that the engine fixes, for example the type of a docking sphere, comes from the editor.
+
+Click the field to open the picker. Type to filter the rows by name or nickname. A click on a row sets the value at once, and so do the up and down arrow keys. The Scene shows each value. `Enter` sets the selected row and closes the picker. A double-click and a click outside close the picker and keep the value. `Esc` closes it and puts back the value of the opening. One opening is one entry of the edit history. The first row is "None" for a key that the engine does not need. "None" removes the line. The footer tells the file of the hovered entry, the layer that gives it, and the number of lines that name it. A button at the right of the field selects the section of the entry.
+
+A line with more than one listed value, for example `goto = Li02, Li02_to_Li01, gate_tunnel_bretonia`, gets one slot for each value: System, Exit object and Tunnel. The list of the exit object holds the objects of the system of the first value. A key with more than one line, for example `equip` of a `[Loadout]`, keeps its text field. The check marks each bad line with its number, and "Pick..." sets the first bad line.
+
+A value outside its list shows as "Missing (Loadout): li_foo" in red, as Unity shows a missing reference. The row then offers Pick..., None and Revert. The rule data marks the lists that the engine uses to find the value. For these lists, a value of the active mod outside the list is an error. For the other lists, it is a warning: unlisted values are allowed. A value of a lower layer outside a list is a warning, because the active mod did not set it.
+
+The editor reads some files only for the lists, for example `solararch.ini` and `loadouts.ini`. Their sections are read-only in the Inspector until a later milestone gives them their pages.
+
+### The raw INI block
+
+Each Inspector page that edits sections ends with "Loaded values (read-only)" and then "Raw INI". The raw block shows `[Type]` and one `name = values` line for each line of the section. Edit the lines, then click outside the block. The edit changes only the names whose lines you changed. One raw edit is one entry of the edit history, and one Undo puts back all its lines. The order of different names stays the file order. A new name goes at the end of the section.
+
+The block refuses an edit and keeps nothing when the text has a problem: a second header, a comment, a line without `=`, a changed nickname line, a line that the type of its key cannot hold, or a key that no row can change. The Console line then holds the problem and your whole text, so you can copy it back. When the section changed while you typed, for example by an undo, the block also refuses the edit. A value outside its list does not stop the edit: the row above then shows the error. The block is read-only when the section is read-only.
+
+### The save gate
+
+Each save runs the save gate first, also a save with nothing to write, and also the save before Play. A save writes nothing while the gate finds an error:
+
+- A value of the active mod outside a list that the engine uses to find it, for example an `archetype` or a `loadout` that no section has.
+- A required key without a valid line in a section that the active mod adds or changes, for example an `[Object]` without an `archetype`. The game drops such an object.
+- A value of any layer that names an entry that the active mod removes, for example a retail object whose loadout the active mod deletes with `ol.delete`.
+- A light of the active mod that names a curve that the engine cannot load, or a name of the active mod with the FLHash of another name of its list. The engine load stops.
+- A problem of the field checks in a section that the active mod adds or changes, for example a number that the engine cannot read.
+
+The Console lists each error with its section. A click on the line selects the section, and the Inspector shows the error below the row of its key. An edit with an error stays in the editor and in the recovery file until you correct it or undo it. A delete never stops at a check: the references to the deleted entry show as "Missing", as in Unity, and one Undo heals them.
 
 ### Cutscenes in the editor
 
@@ -449,7 +479,7 @@ A save also stops in these cases:
 - A patch line of a key that holds a text id holds the id of a text of a mod as a number. The id comes from the position of the text in the generated DLL, so it changes when a mod adds text. Copy this text into the mod and use its placeholder.
 - A file that the save writes is a folder now, a folder of its path is a file, or the file is read-only.
 - The active mod is in the OpenLancer repo, and the save would write a whole cutscene file into it. The content scan cannot tell such a file from a copy of a retail script. A THN patch is allowed.
-- A light of a star system file that the session edited names an attenuation curve (`atten_curve`) that the engine cannot load: no graph has the name, more than one graph has it, or the graph has no points. The engine stops with an error when it loads such a light, so each later load of the profile would fail. The Console names the light, the curve and the file. While no game data is loaded, the editor cannot check the curves, and the Console tells it before the save.
+- The save gate finds an error (see "The save gate"). For example, a light of the active mod names an attenuation curve (`atten_curve`) that the engine cannot load: no FLOAT graph of `igraph.ini` has the name, more than one graph has it, or the graph has no points. The engine stops with an error when it loads such a light, so each later load of the profile would fail. The Console names the light, the curve and the file. The gate reads the curves from the edit view, so it needs no loaded game data.
 
 While the editor has unsaved edits, it keeps them in `.olsave/recovery.json`, a moment after each edit. When no unsaved edits remain, for example after an undo, the editor deletes the file. A close of the profile and a change of the active mod ask first: Save, Discard or Cancel. After a save, the action continues, also when the save needed your confirmation to overwrite a file.
 
@@ -528,6 +558,8 @@ When the deploy folder path has characters outside ASCII, lancer.exe reads the p
 ## What the validator checks
 
 Some broken references stop the engine load. Many others make the engine drop data and log nothing. The validator reports both. It compares the merged data with vanilla, so it reports only the problems that the mods add.
+
+The editor also checks the references before each save, with the data lists (see "Data lists and pickers" and "The save gate"). The rule data of the lists is `src/OpenLancer.Data/Editing/Lists/list-rules.json`. Each rule maps one value of one key to a list. A rule is closed only when a line of the engine shows that the engine finds the value through the list. Each closed rule names that line. A rule of a file that Librelancer does not read, for example `gate_tunnel.ini`, stays open. The retail data gives no list error and four warnings: two `parent` lines in Li01 that name an object that does not exist, and two `lens_glow` lines in `stararch.ini`.
 
 First, the INI checks:
 

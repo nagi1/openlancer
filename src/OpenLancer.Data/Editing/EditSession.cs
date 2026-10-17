@@ -344,6 +344,7 @@ public sealed partial class EditSession : IDisposable
         ThrowIfTransaction();
         var change = history.Undo();
         text = change.Undo(FileAt) ?? text;
+        Revision++;
         Changed?.Invoke(change.Change);
     }
 
@@ -353,6 +354,7 @@ public sealed partial class EditSession : IDisposable
         ThrowIfTransaction();
         var change = history.Redo();
         text = change.Redo(FileAt) ?? text;
+        Revision++;
         Changed?.Invoke(change.Change);
     }
 
@@ -366,6 +368,7 @@ public sealed partial class EditSession : IDisposable
         }
         finally
         {
+            Revision++;
             // Also when the command throws: the edit view is then back at its state before the transaction, not at
             // the state of the step before.
             if (!change.IsEmpty)
@@ -376,6 +379,7 @@ public sealed partial class EditSession : IDisposable
     internal void EndTransaction(ChangeSet change, bool commit)
     {
         transaction = null;
+        Revision++;
         if (commit)
         {
             Push(change);
@@ -398,11 +402,17 @@ public sealed partial class EditSession : IDisposable
             text = change.Undo(FileAt) ?? text;
             throw;
         }
+        finally
+        {
+            // Also a command that throws: it changed W and put back the states before.
+            Revision++;
+        }
     }
 
     /// <summary>Adds a change set to the history, when it changed anything.</summary>
     private void Push(ChangeSet change)
     {
+        Revision++;
         change.Finish(FileAt, text);
         // A transaction whose last step threw ends in its state before, so it can change nothing.
         if (!change.ChangesState)

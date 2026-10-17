@@ -15,7 +15,7 @@ public sealed partial class EditSession
     private SystemFiles? systems;
 
     /// <summary>The star system files of the edit view, and <c>universe.ini</c>.</summary>
-    internal SystemFiles Systems => systems ??= new SystemFiles(SystemFiles.ReadUniversePath(ReadFreelancerIni()), OpenDocument);
+    internal SystemFiles Systems => systems ??= new SystemFiles(SystemFiles.ReadUniversePath(FreelancerIni), OpenDocument);
 
     /// <summary>The install path of the <c>universe.ini</c> that the <c>freelancer.ini</c> of the edit view names, or
     /// null when it names none.</summary>

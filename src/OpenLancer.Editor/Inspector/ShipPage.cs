@@ -55,6 +55,18 @@ internal sealed class ShipPage(EditorWindow window, PropertyGrid grid)
         }
     }
 
+    /// <summary>The sections of a ship in W, for the raw block of the page: the <c>[Ship]</c>, its hull goods and its
+    /// packages.</summary>
+    public IReadOnlyList<SectionRef> RawSections(Ship ship)
+    {
+        if (window.Session?.Edits is not { } edits || edits.Find(ItemFileKind.Ships, ship.Nickname) is not { } section)
+        {
+            return [];
+        }
+
+        return [section, .. edits.Related(section, ItemRelation.Hull), .. edits.Related(section, ItemRelation.Package)];
+    }
+
     /// <summary>The hull goods and the packages of the ship, as links, and the bases that sell each package.</summary>
     private void Goods(EditSession edits, SectionRef section, IReadOnlyList<SectionRef> hulls)
     {

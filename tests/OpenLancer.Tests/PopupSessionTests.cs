@@ -7,7 +7,7 @@ namespace OpenLancer.Tests;
 /// One opening of the color picker as one field edit, without ImGui (section 8.4 of the M20 design). Each test scripts
 /// the frames of the popup of one or two color rows.
 /// </summary>
-public sealed class PickerSessionTests
+public sealed class PopupSessionTests
 {
     // The ImGui ids of the popups of two color rows.
     private const uint Light = 31;
@@ -16,7 +16,7 @@ public sealed class PickerSessionTests
     [Fact]
     public void AnOpeningOfThePickerIsOneFieldEdit()
     {
-        var session = new PickerSession();
+        var session = new PopupSession();
 
         Assert.Equal(default, session.Frame(Light, 1, open: false, escape: false, changed: false, owned: false));
         Assert.Equal(new FieldEvents(true, true, false, false, false), session.Frame(Light, 2, true, false, false, false));
@@ -32,7 +32,7 @@ public sealed class PickerSessionTests
     [Fact]
     public void EscapeCancelsTheOpeningAlsoInTheFrameThatThePopupCloses()
     {
-        var session = new PickerSession();
+        var session = new PopupSession();
         session.Frame(Light, 1, true, false, false, false);
         session.Frame(Light, 2, true, false, true, true);
 
@@ -48,7 +48,7 @@ public sealed class PickerSessionTests
     [Fact]
     public void ASessionThatDoesNotOwnTheOpenEditCloses()
     {
-        var session = new PickerSession();
+        var session = new PopupSession();
         session.Frame(Light, 1, true, false, false, false);
 
         Assert.Equal(default, session.Frame(Light, 2, true, false, true, false));
@@ -60,7 +60,7 @@ public sealed class PickerSessionTests
     [Fact]
     public void AGapOfFramesOrTheOpeningOfAnotherRowResetsTheSession()
     {
-        var session = new PickerSession();
+        var session = new PopupSession();
         session.Frame(Light, 1, true, false, false, false);
         Assert.Equal(default, session.Frame(Sun, 1, false, false, false, false));
         Assert.True(session.IsOpenFor(Light));

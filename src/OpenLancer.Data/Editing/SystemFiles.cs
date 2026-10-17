@@ -36,6 +36,7 @@ internal sealed class SystemFiles
     private IReadOnlyList<Section>? indexed;
     private Dictionary<string, List<SystemEntry>> byNickname = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> files = new(VfsPath.Comparer);
+    private List<string> ordered = [];
 
     /// <param name="universePath">The install path of <c>universe.ini</c>, or null when <c>freelancer.ini</c> names
     /// none.</param>
@@ -63,6 +64,17 @@ internal sealed class SystemFiles
     /// <summary>The <c>[system]</c> section of a system, or null when no section or more than one has the
     /// nickname.</summary>
     public SectionRef? SectionOf(string nickname) => One(nickname)?.Section;
+
+    /// <summary>The files that the <c>[system]</c> sections name, in the order of the sections, without
+    /// repeats.</summary>
+    public IReadOnlyList<string> Files
+    {
+        get
+        {
+            Refresh();
+            return ordered;
+        }
+    }
 
     /// <summary>True when a <c>[system]</c> section names the file, also when its nickname is ambiguous.</summary>
     public bool IsSystemFile(string path)
@@ -96,6 +108,7 @@ internal sealed class SystemFiles
         indexed = document?.Working;
         byNickname = new Dictionary<string, List<SystemEntry>>(StringComparer.OrdinalIgnoreCase);
         files = new HashSet<string>(VfsPath.Comparer);
+        ordered = [];
         if (document == null)
             return;
         var folder = VfsPath.Parent(document.Path);
@@ -108,8 +121,8 @@ internal sealed class SystemFiles
             var file = document.Working[i].LastOrDefault(e => e.Name.Equals("file", StringComparison.OrdinalIgnoreCase) &&
                                                                e.Count > 0)?[0].ToString();
             var path = file == null ? null : VfsPath.Normalize($@"{folder}\{file}");
-            if (path != null)
-                files.Add(path);
+            if (path != null && files.Add(path))
+                ordered.Add(path);
             (byNickname.TryGetValue(id.Key, out var named) ? named : byNickname[id.Key] = [])
                 .Add(new SystemEntry(new SectionRef(document.Path, id), path));
         }

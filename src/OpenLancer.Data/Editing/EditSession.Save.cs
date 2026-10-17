@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
@@ -76,7 +77,13 @@ public sealed partial class EditSession
             // The completed save changed the files of the mod.
             ActiveMod = activeNow;
             EditView = BuildEditView(activeNow);
+            Revision++;
         }
+
+        // The save gate runs on each save, also when no file changes, so that Play never starts with an error.
+        problems.AddRange(SaveProblems());
+        if (problems.Any(IsError))
+            return NotSaved(problems);
 
         var plan = Plan(active, activeNow, problems);
         if (problems.Any(IsError))
@@ -121,6 +128,79 @@ public sealed partial class EditSession
             writes.Where(p => p.Change.Content != null).Select(p => p.Change.Path).ToList(),
             writes.Where(p => p.Change.Content == null).Select(p => p.Change.Path).ToList(),
             problems, []) { Incomplete = incomplete != null };
+    }
+
+    /// <summary>
+    /// The errors of the save gate (section 11.3 of the M21 design). A save writes nothing while it has one. An edit with
+    /// an error stays a draft in W and in the recovery file, and never reaches the mod files.
+    /// </summary>
+    /// <remarks>
+    /// <list type="number">
+    /// <item>The sections that the active mod adds or changes, in the files that a command changed and in the files of
+    /// its patches: the errors of the field checks (<see cref="Check(SectionRef)"/>, decision D110) and of the list
+    /// checks (<see cref="CheckLists"/>). A section that the editor cannot change is not checked.</item>
+    /// <item>Each line of any layer under a closed rule that names an entry that the active mod removed (decision
+    /// D81).</item>
+    /// <item>Each FLHash collision of a hash list that the active mod adds a name to.</item>
+    /// </list>
+    /// </remarks>
+    public IReadOnlyList<Diagnostic> SaveProblems()
+    {
+        if (ActiveMod is not { } active)
+            return [];
+        var problems = new List<Diagnostic>();
+        var seen = new HashSet<(SectionRef?, string?, string)>();
+        void Add(Diagnostic problem)
+        {
+            if (problem.Severity == DiagnosticSeverity.Error && seen.Add((problem.Target, problem.Key?.ToLowerInvariant(), problem.Message)))
+                problems.Add(problem);
+        }
+
+        var paths = touched.Concat(active.Patches.Keys).Select(p => VfsPath.Normalize(p) ?? p)
+            .Where(p => p.EndsWith(".ini", StringComparison.OrdinalIgnoreCase)).Distinct(VfsPath.Comparer);
+        foreach (var path in paths)
+        {
+            if (OpenDocument(path) is not { ReadOnlyReason: null } document)
+                continue;
+            for (var i = 0; i < document.Working.Count; i++)
+            {
+                var id = document.IdentityAt(i);
+                if (document.BaseSection(id) is { } lower && ReferenceEquals(lower, document.Working[i]) ||
+                    document.ReadOnlyReasonAt(i) != null)
+                    continue;
+                var target = new SectionRef(document.Path, id);
+                if (SchemaOf(target) is { } schema)
+                    Check(target, schema, document, i).ForEach(Add);
+                foreach (var problem in Lists.Problems(target))
+                    Add(problem.Diagnostic);
+            }
+        }
+
+        foreach (var removed in Lists.Removed())
+        {
+            var scope = Lists.IsScoped(removed.List) ? removed.LowerSection.Path : null;
+            foreach (var reference in Lists.ReferencesTo(removed.List, removed.Value, scope).Where(r => r.Rule.Closed))
+            {
+                foreach (var problem in Lists.Problems(reference.Section).Where(p => p.Kind == ListProblemKind.Removed))
+                    Add(problem.Diagnostic);
+            }
+        }
+
+        var changed = ActiveChangedPaths().ToHashSet(VfsPath.Comparer);
+        foreach (var definition in Lists.RuleData.Lists.Values.Where(d => d is { Hash: true, Source.Role: not null }))
+        {
+            if (!DataFiles.Paths(definition.Source!.Role!).Any(changed.Contains) ||
+                Lists.List(definition.Id) is not { Collisions.Count: > 0 } list)
+                continue;
+            // An entry of a whole file of the active mod gives a warning only (review finding R22).
+            foreach (var entry in list.Collisions.SelectMany(g => g).Select(list.Find).OfType<ListEntry>()
+                         .Where(e => e is { Origin: ValueOrigin.ActiveMod, Section: not null }))
+            {
+                foreach (var problem in Lists.Problems(entry.Section!).Where(p => p.Kind == ListProblemKind.HashCollision))
+                    Add(problem.Diagnostic);
+            }
+        }
+        return problems;
     }
 
     /// <summary>
@@ -281,6 +361,7 @@ public sealed partial class EditSession
         }
         savedText = text;
         history.MarkSaved();
+        Revision++;
 
         if (plan.Any(p => !p.SameAsDisk))
         {
