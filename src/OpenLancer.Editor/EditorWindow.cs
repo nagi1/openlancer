@@ -241,7 +241,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         Settings.Save();
-        // Without local patch 0017, the window closes without a question. So the unsaved edits go into the recovery
+        // The window closes without a question (roadmap decision D78). So the unsaved edits go into the recovery
         // file, and the next open of the mod offers to restore them (decision D8). An open field edit or drag ends
         // first, so that the file keeps it. When no unsaved edits remain, for example after an undo, the write deletes
         // the file.

@@ -1,10 +1,10 @@
 # Vendored Librelancer files
 
-OpenLancer copies some files from Librelancer into its own projects, so that it does not have to change the Librelancer submodule. This file lists each copied file, its Librelancer source and the changes that OpenLancer made to it.
+OpenLancer copies some files from Librelancer into its own projects. This file lists each copied file, its Librelancer source and the changes that OpenLancer made to it. The copies were made when the submodule could not change. Now the engine is our fork (docs/UPSTREAM.md), so a new port is a copy or a fork commit, whichever costs less at the next upstream merge. Before you port a LancerEdit class, compare the copy with a fork commit that removes its `MainWindow` dependency.
 
 In vendored file headers, LICENSE means the Librelancer license below.
 
-All files come from Librelancer commit `dcbcf8080dec4a10ebe1ef28b89a0a6d122fe415`. Each file starts with a Librelancer copyright header and a line that names its source path and this commit.
+All files below come from Librelancer commit `dcbcf8080dec4a10ebe1ef28b89a0a6d122fe415`, the base commit of the fork. Each file starts with a Librelancer copyright header and a line that names its source path and this commit.
 
 | OpenLancer path | Librelancer source path | OpenLancer changes |
 |---|---|---|

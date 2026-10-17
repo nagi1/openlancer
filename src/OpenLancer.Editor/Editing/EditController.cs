@@ -37,8 +37,8 @@ internal sealed record SaveOutcome(bool Saved, int Number, bool Incomplete)
 /// <para>A save writes the files of the active mod at once. Then the game data loads again in the background from a
 /// new file system of the edit view (review finding F5, roadmap rule R5). One reload runs at a time, and a save
 /// during a reload queues one more. The validation runs in an oltool process (see <see cref="ValidationRunner"/>).</para>
-/// <para>Without local patch 0017, the editor cannot stop the window from closing. So the editor writes the unsaved
-/// edits to the recovery file a moment after each edit, and when the window closes.</para>
+/// <para>The engine has no hook that stops the window from closing (roadmap decision D78). So the editor writes the
+/// unsaved edits to the recovery file a moment after each edit, and when the window closes.</para>
 /// </remarks>
 internal sealed class EditController(EditorWindow window) : IDisposable
 {

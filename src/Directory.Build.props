@@ -7,4 +7,11 @@
     <Authors>OpenLancer contributors</Authors>
     <Copyright>Copyright (c) OpenLancer contributors 2026</Copyright>
   </PropertyGroup>
+  <!-- A Release build maps the repo folder to a neutral path, so the binaries and PDBs do not hold the folder of the
+       build machine. Source Link is off, because its map holds the same folder and the URLs of the private repos.
+       Debug builds keep the real paths for the debugger. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))=/_/</PathMap>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
 </Project>

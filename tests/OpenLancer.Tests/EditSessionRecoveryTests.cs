@@ -11,8 +11,8 @@ using static OpenLancer.Tests.EditSessionTests;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The recovery file keeps unsaved edits when the window closes without a prompt (decision D8, without local patch
-/// 0017).
+/// The recovery file keeps unsaved edits when the window closes without a prompt (decision D8, roadmap decision
+/// D78).
 /// </summary>
 public sealed class EditSessionRecoveryTests
 {

@@ -13,7 +13,7 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// Smoke test: the unmodified Librelancer engine loads the extracted vanilla data.
+/// Smoke test: the engine loads the extracted vanilla data.
 /// </summary>
 public sealed class VanillaLoadTests(ITestOutputHelper output)
 {

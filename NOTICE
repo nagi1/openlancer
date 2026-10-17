@@ -13,7 +13,7 @@ Librelancer code. docs/UPSTREAM.md lists the changes and the reason for each one
   Copyright (c) Callum McGing, Librelancer Contributors 2013-2026
   Portions Copyright (c) Malte Rupprecht 2011-2012
   Portions Copyright (c) Mono.Xna Team 2006
-  https://github.com/Librelancer/Librelancer
+  https://codeberg.org/Librelancer/Librelancer
 
 Librelancer includes these projects under external/Librelancer/extern. Each keeps its own license file:
   bepuphysics2               Apache License 2.0
