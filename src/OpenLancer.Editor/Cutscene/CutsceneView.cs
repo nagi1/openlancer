@@ -125,7 +125,7 @@ internal sealed class CutsceneView
             : (null, null), GizmoSteps.Room);
     }
 
-    /// <summary>True while a drag of the gizmo is open. Undo, redo and save wait for its end.</summary>
+    /// <summary>True while a drag of the gizmo is open. Undo and redo wait for its end. A save ends it first.</summary>
     public bool IsDragging => gizmo.IsDragging;
 
     /// <summary>Ends an open drag of the gizmo with the pose of its last frame (a forced end).</summary>

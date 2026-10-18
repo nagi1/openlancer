@@ -105,6 +105,9 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     // The center group, with the Scene, has the focus when the editor starts, as in Unity.
     private bool focusCenter = true;
 
+    // The group that gets the focus at its next draw, or null (see KeepFocus).
+    private EditorPanelGroup? focusRequest;
+
     // The panels whose tabs must become the selected tabs of their groups. A tab clears its request when it applies it.
     private readonly HashSet<string> selectRequests = [];
 
@@ -123,6 +126,12 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     /// its header before the body of its panel, so the body reads the focus of the same frame.
     /// </summary>
     public bool IsFocused(string panelId) => Groups.Any(g => g.Focused && g.Shown?.Id == panelId);
+
+    /// <summary>
+    /// Gives the focus back to the group that has it now, at the next draw. Call it after a call that takes the focus
+    /// from all windows, for example to end the edit of a text field.
+    /// </summary>
+    public void KeepFocus() => focusRequest = Groups.FirstOrDefault(g => g.Focused) ?? focusRequest;
 
     /// <summary>True when the panel is the selected tab of its group in the last draw.</summary>
     public bool IsShown(string panelId) => Groups.Any(g => g.Shown?.Id == panelId);
@@ -149,14 +158,19 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
                                    ImGuiWindowFlags.NoBackground);
         ImGui.PopStyleVar();
 
-        DrawGroup(hierarchyGroup, position, new Vector2(s.HierarchyWidth, s.TopHeight), false);
+        if (focusCenter)
+        {
+            focusRequest = center;
+            focusCenter = false;
+        }
+
+        DrawGroup(hierarchyGroup, position, new Vector2(s.HierarchyWidth, s.TopHeight));
         DrawGroup(center, position + new Vector2(s.HierarchyWidth + s.Gap, 0),
-            new Vector2(s.LeftWidth - s.HierarchyWidth - s.Gap, s.TopHeight), focusCenter);
-        DrawGroup(bottom, position + new Vector2(0, s.TopHeight + s.Gap), new Vector2(s.LeftWidth, s.BottomHeight),
-            false);
+            new Vector2(s.LeftWidth - s.HierarchyWidth - s.Gap, s.TopHeight));
+        DrawGroup(bottom, position + new Vector2(0, s.TopHeight + s.Gap), new Vector2(s.LeftWidth, s.BottomHeight));
         DrawGroup(inspectorGroup, position + new Vector2(s.LeftWidth + s.Gap, 0),
-            new Vector2(s.InspectorWidth, size.Y), false);
-        focusCenter = false;
+            new Vector2(s.InspectorWidth, size.Y));
+        focusRequest = null;
 
         // A splitter starts a drag from the size that shows. It changes the value only while the user drags it, and
         // then the new value goes into the settings.
@@ -222,10 +236,10 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     }
 
     /// <summary>Draws a panel group: the header strip, the toolbar strip of the selected panel and its body.</summary>
-    private void DrawGroup(EditorPanelGroup group, Vector2 min, Vector2 size, bool focus)
+    private void DrawGroup(EditorPanelGroup group, Vector2 min, Vector2 size)
     {
         ImGui.SetCursorScreenPos(min);
-        if (focus)
+        if (group == focusRequest)
         {
             ImGui.SetNextWindowFocus();
         }

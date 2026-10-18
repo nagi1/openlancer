@@ -99,6 +99,23 @@ public sealed class ConsoleLogTests
         Assert.Equal(0, log.Count(ConsoleSeverity.Error));
     }
 
+    /// <summary>The status bar shows the summary of a save also when it is an info entry. A newer info entry does not
+    /// replace it, but a newer warning does.</summary>
+    [Fact]
+    public void AStatusEntryIsLastAlsoAsAnInfoEntry()
+    {
+        var log = new ConsoleLog();
+        log.Add(ConsoleSeverity.Error, "Save", "error");
+
+        var status = log.AddStatus(ConsoleSeverity.Info, "Save", "Saved mod 'act'. No file changed.");
+        Assert.Same(status, log.Last);
+        log.Add(ConsoleSeverity.Info, "Validation", "Validating save 1...");
+        Assert.Same(status, log.Last);
+        var warning = log.Add(ConsoleSeverity.Warning, "Edit", "warning");
+        Assert.Same(warning, log.Last);
+        Assert.Equal(3, log.Count(ConsoleSeverity.Info) + log.Count(ConsoleSeverity.Warning));
+    }
+
     [Fact]
     public void DropsTheOldestEntryAtTheCapacityAndCorrectsTheCounts()
     {

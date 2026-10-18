@@ -90,7 +90,7 @@ internal sealed class TimelinePanel(EditorWindow window, CutsceneWorkspace works
     private MenuTarget? menu;
     private bool openMenu;
 
-    /// <summary>True while a drag is open. Undo, redo and save wait for its end.</summary>
+    /// <summary>True while a drag is open. Undo and redo wait for its end. A save ends it first.</summary>
     public bool IsDragging => drag != null;
 
     /// <summary>Forgets the views of the cutscenes. Call it when the profile closes.</summary>

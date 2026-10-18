@@ -87,8 +87,8 @@ internal sealed class TransformGizmo
         }
     }
 
-    /// <summary>True while a drag is open. Undo, redo, save, the recovery file and the model loads of the scene wait
-    /// for its end.</summary>
+    /// <summary>True while a drag is open. Undo, redo, the recovery file and the model loads of the scene wait for its
+    /// end. A save ends it first.</summary>
     public bool IsDragging => flow.State == GizmoDragState.Open;
 
     /// <summary>True when a native library exports the function of fork commit OL-0019.</summary>

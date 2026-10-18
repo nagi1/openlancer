@@ -58,7 +58,8 @@ internal sealed partial class ConsoleLog
     /// <summary>A number that changes each time an entry is added or removed.</summary>
     public int Version { get; private set; }
 
-    /// <summary>The newest warning or error, or null when the log has none.</summary>
+    /// <summary>The newest warning, error or status entry (see <see cref="AddStatus"/>), or null when the log has none.
+    /// The status bar shows it.</summary>
     public ConsoleEntry? Last { get; private set; }
 
     /// <summary>The warnings since the user last looked at the Console.</summary>
@@ -82,6 +83,17 @@ internal sealed partial class ConsoleLog
     public ConsoleEntry Add(ConsoleSeverity severity, string source, string message, SectionRef? target = null,
         ThnLocation? cutscene = null) =>
         Add(new ConsoleEntry(severity, source, message, DateTime.Now) { Target = target, Cutscene = cutscene });
+
+    /// <summary>
+    /// Adds the result of an action of the user, for example a save. The status bar shows the entry also when it is an
+    /// info entry, until a newer warning, error or status entry comes.
+    /// </summary>
+    public ConsoleEntry AddStatus(ConsoleSeverity severity, string source, string message)
+    {
+        var entry = Add(severity, source, message);
+        Last = entry;
+        return entry;
+    }
 
     /// <summary>Adds an entry. When the log is full, the oldest entry goes.</summary>
     private ConsoleEntry Add(ConsoleEntry entry)

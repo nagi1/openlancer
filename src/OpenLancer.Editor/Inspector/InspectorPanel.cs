@@ -73,8 +73,8 @@ internal sealed class InspectorPanel
         assetPage = new AssetPage(window);
     }
 
-    /// <summary>True while a field edit or a drag of a curve point is open. The edit history and the save wait for its
-    /// end.</summary>
+    /// <summary>True while a field edit or a drag of a curve point is open. The edit history waits for its end. A save
+    /// ends it first.</summary>
     public bool IsEditing => grid.IsEditing || thnPage.IsDragging;
 
     /// <summary>Ends an open field edit and keeps its text, and an open drag of a curve point, for example when the

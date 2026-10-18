@@ -822,7 +822,20 @@ The Cutscenes tab lists the cutscene scripts, and the Cutscene tab previews one.
 
 ### After a save
 
-`Ctrl+S` saves the edits of the active mod. The Console lists the files that the save wrote and deleted, with the number of the save, or the problems that stopped it. After a save that changed files, the game data loads again in the background, and `oltool validate --active <mod> --json` checks the save in its own process. One validation runs at a time. The oltool process reads the files of the mod, so a save of new edits stops the validation of the save before it, before the save moves files. When that save then changes no file, the stopped validation starts again. The Console labels each result with the number of its save. A click on a problem of a cutscene opens the cutscene and selects the element of the problem (see "The validation of cutscenes").
+File > Save and `Ctrl+S` save the edits of the active mod. As in Unity, `Ctrl+S` also works while a text field has the keyboard. An open field edit or drag ends first and keeps its value, and then the save starts. That end asks no question, so a new text goes only to the section of the field. Only a dialog stops `Ctrl+S`. In a text field, `Ctrl+Z` and `Ctrl+Y` stay the undo and redo of the text.
+
+Each save shows its result in the status bar and as the last Console line of the save:
+
+| Result | Message |
+|---|---|
+| The save changed files | `Saved mod 'my-mod' (save 2): 3 files written, 0 files deleted.` |
+| No unsaved edits | `Mod 'my-mod' has no unsaved edits. No file changed.` |
+| Errors stop the save | `The editor did not save mod 'my-mod' because of 2 errors. The Console lists them.` |
+| Files changed outside the editor | `The editor did not save mod 'my-mod'. Something outside the editor changed 1 file of the mod. Select Overwrite or Cancel in the dialog.` |
+| The active mod is None | `The editor did not save. Mod > None is read-only. Select a mod in the Mod menu, then save again.` |
+| The session is read-only, for example because the mod is in the game folder | `The editor did not save mod 'my-mod' because it is read-only.` and the reason |
+
+Above the result, the Console lists the files that the save wrote and deleted, or the problems that stopped it. After a save that changed files, the game data loads again in the background, and `oltool validate --active <mod> --json` checks the save in its own process. One validation runs at a time. The oltool process reads the files of the mod, so a save of new edits stops the validation of the save before it, before the save moves files. When that save then changes no file, the stopped validation starts again. The Console labels each result with the number of its save. A click on a problem of a cutscene opens the cutscene and selects the element of the problem (see "The validation of cutscenes").
 
 When a file does not move into place, for example because a program uses it, the save is not complete. The game data then does not load again, and no validation runs. The next save completes the files first. Then the game data loads again, and the validation runs.
 

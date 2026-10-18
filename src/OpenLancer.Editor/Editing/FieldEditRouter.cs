@@ -44,7 +44,8 @@ internal readonly record struct FieldKey(object Owner, string Name, int Line)
 /// <remarks>
 /// <para>The field gives the gesture of its edit: a <see cref="LineGesture"/> shows each change at once, and so does a
 /// <see cref="NumberLineGesture"/> of a label drag or a color picker. A <see cref="CommitGesture"/> runs its edit when
-/// the field ends. While an edit of any kind is open, the edit history, the save and the recovery file wait.</para>
+/// the field ends. While an edit of any kind is open, the edit history and the recovery file wait. A save ends the
+/// edit first (see <see cref="SaveCommand"/>).</para>
 /// <para>An edit belongs to one widget, by its ImGui id, and to one key. More than one widget can edit a key, for
 /// example the X, Y and Z fields of a vector. ImGui tells the end of a field one frame late when the user moves
 /// directly to the next field. So only the widget of the open edit can change or end it.</para>

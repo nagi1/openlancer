@@ -155,7 +155,8 @@ internal sealed partial class EditorWindow : Game
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Product.Name, "thumbnails");
 
     /// <summary>True while a field edit of the Inspector, a drag of a gizmo, a drag on the Timeline or a drag of a curve
-    /// point is open. Undo, redo, save, the recovery file and the model loads of the scene wait for its end.</summary>
+    /// point is open. Undo, redo, the recovery file and the model loads of the scene wait for its end. A save ends it
+    /// first (see <see cref="SaveCommand"/>).</summary>
     public bool IsEditing => inspector.IsEditing || Scene.IsDragging || timeline.IsDragging || cutsceneView.IsDragging;
 
     /// <summary>The dialog for the questions of the editor, for example Save, Discard or Cancel.</summary>
@@ -844,6 +845,8 @@ internal sealed partial class EditorWindow : Game
             ImGui.SetItemTooltip(loadingTip);
         }
 
+        ImGui.Separator();
+        SaveMenuItem();
         ImGui.Separator();
         if (Theme.IconMenuItem(EditorIcons.DoorOpen, "Exit", true) && closePrompt.Request())
         {

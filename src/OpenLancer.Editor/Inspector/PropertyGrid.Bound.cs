@@ -58,7 +58,7 @@ internal sealed partial class PropertyGrid
     // The width that the value widgets of a bound row leave free at their right, for the button of a reference.
     private float reserve;
 
-    /// <summary>True while a field edit is open. The edit history and the save wait for its end.</summary>
+    /// <summary>True while a field edit is open. The edit history waits for its end. A save ends it first.</summary>
     public bool IsEditing => fieldEdits.Open != null;
 
     /// <summary>The open field edit, or null.</summary>

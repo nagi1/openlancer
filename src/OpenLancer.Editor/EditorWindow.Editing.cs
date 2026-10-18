@@ -17,9 +17,9 @@ using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor;
 
-/// <summary>The edits of the active mod: the Edit and Mod menus, their keys and their dialogs, and the save prompt
-/// when the window closes.</summary>
-internal sealed partial class EditorWindow : IClosePromptHost
+/// <summary>The edits of the active mod: the Edit and Mod menus, File > Save, their keys and their dialogs, and the save
+/// prompt when the window closes.</summary>
+internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 {
     private readonly NewModDialog newModDialog = new();
     private readonly NewFromTemplateDialog templateDialog = new();
@@ -43,6 +43,22 @@ internal sealed partial class EditorWindow : IClosePromptHost
 
     void IClosePromptHost.Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel) =>
         closeDialog.Show(title, message, choices, cancel);
+
+    bool ISaveCommandHost.DialogOpen => DialogOpen;
+
+    bool ISaveCommandHost.EditOpen => IsEditing;
+
+    /// <summary>Ends the open field edit or drag as the close prompt does. Then no window has the focus for a moment,
+    /// so ImGui ends the active text field as after a click outside it. The panel gets the focus again at the next
+    /// frame.</summary>
+    void ISaveCommandHost.EndEdits()
+    {
+        EndOpenEdits();
+        layout.KeepFocus();
+        ImGui.SetWindowFocus(null);
+    }
+
+    void ISaveCommandHost.Save() => Edits.Save();
 
     /// <summary>
     /// The section of the edit view that an item shows: the <c>[Ship]</c> of a ship, the section of equipment, the
@@ -179,15 +195,6 @@ internal sealed partial class EditorWindow : IClosePromptHost
         }
 
         ImGui.Separator();
-        if (ImGui.MenuItem($"{EditorIcons.Save}   Save", "Ctrl+S", false, session is { CanEdit: true } && idle))
-        {
-            Edits.Save();
-        }
-
-        ImGui.SetItemTooltip(session?.NoEditReason ?? (edits?.ActiveMod is { } mod
-            ? $"Writes the edits as patches of the mod '{mod.Id}'."
-            : "No profile is open."));
-        ImGui.Separator();
         var section = SectionOf(Selection);
         if (Theme.IconMenuItem(EditorIcons.Clone, "New from template...", CanCopy(section)))
         {
@@ -213,6 +220,20 @@ internal sealed partial class EditorWindow : IClosePromptHost
         }
 
         SceneEdits.ItemMenu(Selection);
+    }
+
+    /// <summary>File > Save, as in Unity. It runs the save of Ctrl+S, and the status bar shows the result, also when the
+    /// session is read-only.</summary>
+    private void SaveMenuItem()
+    {
+        var session = Session;
+        if (ImGui.MenuItem($"{EditorIcons.Save}   Save", "Ctrl+S", false, session != null))
+        {
+            SaveCommand.Run(this);
+        }
+
+        ImGui.SetItemTooltip(session == null ? "No profile is open."
+            : session.NoEditReason ?? $"Writes the edits as patches of the mod '{session.Edits.ActiveMod!.Id}'.");
     }
 
     private void ModMenu()
@@ -377,17 +398,27 @@ internal sealed partial class EditorWindow : IClosePromptHost
                                SceneEdits.IsOpen || closeDialog.IsOpen || exportDialog?.IsOpen == true;
 
     /// <summary>
-    /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5, Ctrl+F5 (Play in the
-    /// game) and Shift+F5. They wait while a text field or a dialog takes the keys.
+    /// The keys of the editor. Ctrl+S (File > Save) also works while a text field has the keyboard or a field edit is
+    /// open, as in Unity (see <see cref="SaveCommand"/>). The keys of the Edit menu, Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z,
+    /// and the keys of Play, F5, Ctrl+F5 (Play in the game) and Shift+F5, wait while a text field has the keyboard. So
+    /// Ctrl+Z and Ctrl+Y stay the undo and redo of the text field. They also wait while a field edit or a dialog is open.
     /// </summary>
     private void Shortcuts()
     {
+        const ImGuiInputFlags global = ImGuiInputFlags.RouteGlobal;
+        // A global route of a key with Ctrl also fires while a text field is active. The text field has no route for
+        // Ctrl+S, and ImGui types no character while Ctrl is down.
+        if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.S), global))
+        {
+            SaveCommand.Run(this);
+            return;
+        }
+
         if (Session == null || ImGui.GetIO().WantTextInput || IsEditing || DialogOpen)
         {
             return;
         }
 
-        const ImGuiInputFlags global = ImGuiInputFlags.RouteGlobal;
         if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.Z), global))
         {
             Edits.Undo();
@@ -396,10 +427,6 @@ internal sealed partial class EditorWindow : IClosePromptHost
                  ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.ImGuiMod_Shift | ImGuiKey.Z), global))
         {
             Edits.Redo();
-        }
-        else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.S), global))
-        {
-            Edits.Save();
         }
         else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.F5), global))
         {

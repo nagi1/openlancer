@@ -7,6 +7,7 @@ using LibreLancer;
 using LibreLancer.Data;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Mods;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Logs;
@@ -161,9 +162,10 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     }
 
     /// <summary>
-    /// Saves the edits of the active mod and writes the report to the Console. A save that changed files starts the
-    /// reload of the game data and the validation. When files of the mod changed outside the editor, a dialog asks to
-    /// overwrite them.
+    /// Saves the edits of the active mod and writes the report to the Console. The status bar shows the summary of the
+    /// report, also when the save does not start, for example without an active mod. A save that changed files starts
+    /// the reload of the game data and the validation. When files of the mod changed outside the editor, a dialog asks
+    /// to overwrite them.
     /// </summary>
     /// <returns>What the save did. A save of the Overwrite dialog comes later and is not part of it.</returns>
     public SaveOutcome Save() => Save(overwrite: false, leave: null);
@@ -181,33 +183,38 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// not load again, and no validation runs.</param>
     private SaveOutcome Save(bool overwrite, Action? leave)
     {
-        if (window.Session is not { Edits.ActiveMod: { } mod } session)
+        if (window.Session is not { } session)
         {
+            Log.AddStatus(ConsoleSeverity.Info, SaveReport.Source, SaveReport.NoProfile);
             return SaveOutcome.NotSaved;
         }
 
-        // A mod in the OpenLancer repo needs the confirmation of the session before a save (decision D5).
+        if (session.Edits.ActiveMod is not { } mod)
+        {
+            Log.AddStatus(ConsoleSeverity.Warning, SaveReport.Source, SaveReport.NoActiveMod);
+            return SaveOutcome.NotSaved;
+        }
+
+        // A session that takes no edits does not save, for example when the mod is in the game folder (the write guard)
+        // or when the mod is in the OpenLancer repo and the session has no confirmation (decision D5).
         if (session.NoEditReason is { } reason)
         {
-            Log.Add(ConsoleSeverity.Warning, Source, reason);
+            Log.AddStatus(ConsoleSeverity.Warning, SaveReport.Source, SaveReport.ReadOnly(mod.Id, reason));
             return SaveOutcome.NotSaved;
         }
 
+        var hadEdits = session.Edits.IsDirty;
         // The save gate runs first, so that a refused save does not stop the validation for nothing (review finding
         // R21 of the M21 design). EditSession.Save runs it again.
         if (Gate(session.Edits) is { } refused)
         {
-            foreach (var line in SaveReport.Lines(refused, mod.Id, mod.Folder, 0))
-            {
-                Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene);
-            }
-
+            Report(refused, mod, 0, hadEdits);
             return SaveOutcome.NotSaved;
         }
 
         // The oltool process of an earlier validation reads the files of the mod. So it stops before a save of the edits
         // moves files, because a file that another process has open cannot move (review finding F16).
-        var stopped = session.Edits.IsDirty ? StopValidation() : null;
+        var stopped = hadEdits ? StopValidation() : null;
         SaveResult result;
         try
         {
@@ -215,16 +222,13 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
         catch (InvalidOperationException e)
         {
-            Log.Add(ConsoleSeverity.Warning, Source, e.Message);
+            Log.AddStatus(ConsoleSeverity.Warning, SaveReport.Source, SaveReport.NotStarted(mod.Id, e.Message));
             return SaveOutcome.NotSaved;
         }
 
         var changedFiles = result.Saved && result.Written.Count + result.Deleted.Count > 0;
         var number = result.Saved ? session.Saved(changedFiles) : 0;
-        foreach (var line in SaveReport.Lines(result, mod.Id, mod.Folder, number))
-        {
-            Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene);
-        }
+        Report(result, mod, number, hadEdits);
 
         if (!result.Saved && result.ChangedOnDisk.Count > 0)
         {
@@ -256,6 +260,20 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         return problems.Any(p => p.Severity == DiagnosticSeverity.Error)
             ? new SaveResult(false, [], [], problems, [])
             : null;
+    }
+
+    /// <summary>Writes the report of a save to the Console. The summary comes last, so the status bar shows it.</summary>
+    /// <param name="number">The number of the save, or 0 when it changed no file.</param>
+    /// <param name="hadEdits">True when the session had unsaved edits before the save.</param>
+    private void Report(SaveResult result, Mod mod, int number, bool hadEdits)
+    {
+        foreach (var line in SaveReport.Lines(result, mod.Folder))
+        {
+            Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene);
+        }
+
+        var summary = SaveReport.Summary(result, mod.Id, number, hadEdits);
+        Log.AddStatus(summary.Severity, summary.Source, summary.Message);
     }
 
     /// <summary>

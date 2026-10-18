@@ -19,7 +19,8 @@ namespace OpenLancer.Editor.Ui;
 /// The status bar at the bottom of the window. Segments at the right show the load task, the profile, the linked game,
 /// the system and the game of Play. Then they show the game and the test server of a play copy, the selection, the
 /// camera and the frame rate. A thin line separates them, and each one has a tooltip with the full text. The left part
-/// shows the newest warning or error of the Console.
+/// shows the newest warning or error of the Console, or the result of the last save (see
+/// <see cref="ConsoleLog.AddStatus"/>).
 /// </summary>
 /// <remarks>
 /// Each segment is made again only when the thing that it shows changes, so a frame without changes makes no text.
@@ -365,9 +366,9 @@ internal sealed class StatusBar(EditorWindow window)
     }
 
     /// <summary>
-    /// Draws the newest warning or error of the Console at the left: its severity glyph and the first line of its
-    /// message, cut before the segments. While a profile is open, a click shows it in the Console. Without a profile
-    /// the Console does not show, so the message is only text.
+    /// Draws the newest warning, error or status entry of the Console at the left: its severity glyph and the first
+    /// line of its message, cut before the segments. While a profile is open, a click shows it in the Console. Without
+    /// a profile the Console does not show, so the message is only text.
     /// </summary>
     private void DrawLastMessage(Vector2 position, float right, float height)
     {
