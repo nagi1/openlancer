@@ -44,3 +44,8 @@ exports/
 *.olthumb
 # A THN patch of a mod holds only keys and changed values (decision D70). tools/content_scan.py checks it.
 !**/patches/**/*.thn
+
+# Personal mods stay out of git. Only the committed sample mods are tracked. Make your own mods in
+# Documents\OpenLancer\mods or ..\GameData\mods (both outside the repo).
+/samples/mods/*
+!/samples/mods/ol-sample/
