@@ -6,3 +6,4 @@ assets/icon/openlancer.ico	binary	original OpenLancer icon (assets/icon/openlanc
 assets/icon/openlancer-256.png	binary	original OpenLancer icon (assets/icon/openlancer.svg)
 external/Librelancer/src/Editor/LibreLancer.ImUI/file.png	binary	OL-0037: file icon drawn for the fork, no source image (R1-D20)
 external/Librelancer/src/Editor/LibreLancer.ImUI/folder.png	binary	OL-0037: folder icon drawn for the fork, no source image (R1-D20)
+docs/images/*	binary	README screenshots and GIFs of the OpenLancer editor (taken by the owner)

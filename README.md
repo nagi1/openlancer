@@ -2,6 +2,8 @@
 
 OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a load order, and an editor for the game content. The editor has data editors, a 3D scene editor for star systems, and a cutscene editor. OpenLancer runs on its own fork of the [Librelancer](https://codeberg.org/Librelancer/Librelancer) engine. The fork is a git submodule at `external/Librelancer` (see docs/UPSTREAM.md).
 
+![The OpenLancer editor: the Scene view of New York (Li01) with the Hierarchy and the Assets panel](docs/images/editor-view.gif)
+
 > **No game files are in this repository.** It holds only OpenLancer's own code and documentation. There is no game data, no game executable and no game DLL. To use OpenLancer, you link your own copy of Freelancer (2003).
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Fork the repository and open a pull request. The owner reviews each pull request before it goes into `master`. [ROADMAP.md](ROADMAP.md) shows the milestones.
@@ -55,6 +57,10 @@ The data tests read `..\GameData\base`. Set `OPENLANCER_BASE` to use a different
 
 ## Make a mod
 
+![The system editor: the Hierarchy of New Tokyo (Ku01), the Scene with the gizmo on Planet Kitadake, the Inspector with named fields, and the Assets panel with rendered thumbnails](docs/images/system-editor.png)
+
+*Select an object in the Hierarchy or the Scene, change it in the Inspector, or drag an asset from the Assets panel into the Scene.*
+
 See [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md). `samples/mods/ol-sample` is a complete example: it changes a price, and it adds a new ship that Manhattan sells.
 
 1. Make a profile, for example `GameData\profiles\my.json` with `{ "mods": [ "../mods/my-mod" ] }`.
@@ -73,3 +79,8 @@ To play the mods in your own retail game, pick **Play > Play in HD Edition 0.7.1
 ## Study and edit cutscenes
 
 Open the Cutscenes tab of the editor to browse the retail cutscenes and the cutscenes of the mods. Open one to preview it on a timeline and to see each value. With Mod > None (read-only), the editor takes no edits. With an active mod, a save writes the changes of a cutscene as a small THN patch. See [docs/CUTSCENES.md](docs/CUTSCENES.md).
+
+
+![The cutscene editor: a free camera flies through the retail cutscene s002xe on Manhattan, with its cameras, markers, paths and timeline](docs/images/cutscene-editor.gif)
+
+![The cutscene editor: the entities of the cutscene, the preview with cameras and markers, the timeline of events and the Inspector of a character](docs/images/cutscene-editor.png)
