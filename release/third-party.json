@@ -35,14 +35,7 @@
       "files": ["LibreLancer.dll", "LibreLancer.*.dll"],
       "texts": ["repo:external/Librelancer/LICENSE"],
       "holders": ["Callum McGing", "Librelancer Contributors", "Malte Rupprecht", "Mono.Xna Team", "Lazrius", "@Giperionn"],
-      "note": "Includes the Mono.Xna portions, and empty-bullet.ttf, bell.ogg and checkerboard.png in LibreLancer.ImUI.dll (R1-D7). The thorncompiler wrapper in x64/thorncompiler.dll has no license file. The Librelancer maintainer wrote it, so it is listed here."
-    },
-    {
-      "id": "librelancer-icons", "name": "file.png and folder.png in LibreLancer.ImUI.dll", "version": "fork commit of this release", "license": "MIT (Librelancer), origin not stated",
-      "files": ["LibreLancer.ImUI.dll"],
-      "texts": ["repo:external/Librelancer/LICENSE"],
-      "status": "check",
-      "note": "R1-D20: no file states the origin of the two icons. The fork commit OL-0037 replaces them with new images. The submodule pointer moves to OL-0037 when the owner approves the content scan entries of the two images. Then remove this component."
+      "note": "Includes the Mono.Xna portions, and empty-bullet.ttf, bell.ogg and checkerboard.png in LibreLancer.ImUI.dll (R1-D7). file.png and folder.png in LibreLancer.ImUI.dll are new images of the fork commit OL-0037 (R1-D20). The thorncompiler wrapper in x64/thorncompiler.dll has no license file. The Librelancer maintainer wrote it, so it is listed here."
     },
     {
       "id": "sdl2-cs", "name": "SDL2# (C# bindings by Ethan Lee)", "version": "in LibreLancer.Base", "license": "Zlib",
