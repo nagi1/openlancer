@@ -7,6 +7,8 @@ using ImGuiNET;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Games;
+using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
@@ -14,8 +16,8 @@ using OpenLancer.Editor.Scene;
 namespace OpenLancer.Editor.Ui;
 
 /// <summary>
-/// The status bar at the bottom of the window. Segments at the right show the load task, the profile, the system, the
-/// game of Play, the selection, the camera and the frame rate. A thin line separates them, and each one has a tooltip with the full
+/// The status bar at the bottom of the window. Segments at the right show the load task, the profile, the linked game,
+/// the system, the game of Play, the selection, the camera and the frame rate. A thin line separates them, and each one has a tooltip with the full
 /// text. The left part shows the newest warning or error of the Console.
 /// </summary>
 /// <remarks>
@@ -55,6 +57,7 @@ internal sealed class StatusBar(EditorWindow window)
 
     // The segments of the last frame, and the things that they show.
     private (EditorSession? Session, Segment? Task, Segment? Profile) profileSegments;
+    private (EditorSession? Session, GameReport? Report, LinkedGame? Entry, bool Checking, Segment? Segment) gameSegment;
     private (StarSystem? System, Segment? Segment) systemSegment;
     private (string? Text, Segment? Segment) playSegment;
     private (object? Item, SystemIndex? Index, Segment? Segment) selectionSegment;
@@ -121,6 +124,10 @@ internal sealed class StatusBar(EditorWindow window)
         }
 
         segments.Add(profileSegments.Profile ?? NoProfile);
+        if (session != null && LinkedGameSegment(session) is { } game)
+        {
+            segments.Add(game);
+        }
 
         var scene = window.Scene;
         if (scene.System != systemSegment.System)
@@ -196,6 +203,56 @@ internal sealed class StatusBar(EditorWindow window)
         var modList = profile.Mods.Count == 0 ? "none" : string.Join(", ", profile.Mods.Select(m => m.Id));
         return new Segment(EditorIcons.LayerGroup, $"{profile.Name} - {mods}",
             $"Profile: {profile.Name}\nFile: {profile.FilePath}\nBase: {profile.BaseFolder}\nMods: {modList}");
+    }
+
+    /// <summary>
+    /// The segment of the linked game of the open profile (section 9 of the M11a design): the Link glyph in the color of
+    /// the severity and the short name of the game. It is made again only when the report, the entry or the check
+    /// changes. Null in the bench, which checks no game.
+    /// </summary>
+    private Segment? LinkedGameSegment(EditorSession session)
+    {
+        var links = window.Links;
+        var root = session.Profile.BaseFolder;
+        var (report, entry, checking) = (links.ReportOf(root), links.Find(root), links.IsChecking(root));
+        if (session != gameSegment.Session || !ReferenceEquals(report, gameSegment.Report) || entry != gameSegment.Entry ||
+            checking != gameSegment.Checking)
+        {
+            gameSegment = (session, report, entry, checking, GameSegment(root, report, entry, checking));
+        }
+
+        return gameSegment.Segment;
+    }
+
+    private const string ClickHint = "Click to open Game link.";
+
+    private Segment? GameSegment(string root, GameReport? report, LinkedGame? entry, bool checking)
+    {
+        if (report == null && entry == null && !checking)
+        {
+            return null;
+        }
+
+        var state = GameLook.State(report, checking);
+        var name = GameLook.Name(report, entry);
+        Action click = window.ShowGameLink;
+        if (entry == null)
+        {
+            var reason = report is { IsGame: false } ? state : "The game folder of this profile is not linked.";
+            return checking && report == null
+                ? new Segment(EditorIcons.Link, "Checking game", $"Folder: {root}\nState: {state}\n{ClickHint}",
+                    Click: click)
+                : new Segment(EditorIcons.Link, "Not linked", $"Folder: {root}\nState: {reason}\n{ClickHint}",
+                    EditorTheme.Warning, click);
+        }
+
+        var text = report == null ? entry.LastName
+            : report.FolderMissing ? "Not found"
+            : !report.IsGame ? "Not valid"
+            : report.ShortName;
+        var color = report == null ? (Vector4?)null : GameLook.Of(report).Color;
+        return new Segment(EditorIcons.Link, text, $"Game: {name}\nFolder: {root}\nState: {state}\n{ClickHint}", color,
+            click);
     }
 
     private Segment SystemSegment(StarSystem system)

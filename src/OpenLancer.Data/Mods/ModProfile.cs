@@ -9,7 +9,8 @@ namespace OpenLancer.Data.Mods;
 
 /// <summary>
 /// A named set of mods, stored as <c>&lt;name&gt;.json</c>: <c>{ "base": "../base", "mods": [ "path/to/mod", ... ] }</c>.
-/// Paths are relative to the profile file. <c>base</c> is the extracted vanilla data, by default <c>../base</c>.
+/// Paths are relative to the profile file. <c>base</c> is the game folder or the extracted game data, by default
+/// <c>../base</c>. It can be an absolute path, for example the linked game folder of a player.
 /// </summary>
 public sealed class ModProfile
 {
@@ -34,7 +35,7 @@ public sealed class ModProfile
 
     public string FilePath { get; }
 
-    /// <summary>The extracted vanilla data that the mods apply to.</summary>
+    /// <summary>The game folder or the extracted game data that the mods apply to. Nothing writes into it.</summary>
     public string BaseFolder { get; }
 
     /// <summary>The mods in load order. A later mod wins over an earlier one.</summary>
@@ -67,32 +68,50 @@ public sealed class ModProfile
         return Mods.Take(index + 1).ToList();
     }
 
-    /// <exception cref="ModLoadException">The profile, a mod, or the mod order is not valid.</exception>
+    /// <exception cref="ModLoadException">The profile, a mod, or the mod order is not valid. When the base folder does
+    /// not exist, <see cref="ModLoadException.MissingBaseFolder"/> names it.</exception>
     public static ModProfile Load(string path)
     {
         path = Path.GetFullPath(path);
-        if (!File.Exists(path))
-            throw new ModLoadException(path, "File not found.");
-
-        ProfileJson? json;
-        try
-        {
-            json = JsonSerializer.Deserialize<ProfileJson>(SharedFile.ReadAllText(path), JsonOptions);
-        }
-        catch (JsonException e)
-        {
-            throw new ModLoadException(path, e.Message);
-        }
-
+        var json = Read(path);
         var folder = Path.GetDirectoryName(path)!;
-        var baseFolder = Path.GetFullPath(Path.Combine(folder, json?.Base ?? DefaultBase));
+        var baseFolder = BaseOf(path, json);
         if (!Directory.Exists(baseFolder))
-            throw new ModLoadException(path, $"The base folder {baseFolder} does not exist.");
+            throw new ModLoadException(path, $"The base folder {baseFolder} does not exist.") { MissingBaseFolder = baseFolder };
         if ((json?.Mods ?? []).Any(string.IsNullOrWhiteSpace))
             throw new ModLoadException(path, "The mods list must not contain empty entries.");
         var mods = (json?.Mods ?? []).Select(m => Mod.Load(Path.Combine(folder, m))).ToList();
         return new ModProfile(Path.GetFileNameWithoutExtension(path), path, baseFolder, ResolveOrder(mods, path));
     }
+
+    /// <summary>
+    /// The full path of the base folder of a profile file. It does not check that the folder exists, and it loads no mod.
+    /// So it also reads a profile whose game folder moved.
+    /// </summary>
+    /// <exception cref="ModLoadException">The file is not found, or it is not a valid profile.</exception>
+    public static string BaseFolderOf(string profilePath)
+    {
+        profilePath = Path.GetFullPath(profilePath);
+        return BaseOf(profilePath, Read(profilePath));
+    }
+
+    /// <exception cref="ModLoadException">The file is not found, or it is not valid JSON of a profile.</exception>
+    private static ProfileJson? Read(string path)
+    {
+        if (!File.Exists(path))
+            throw new ModLoadException(path, "File not found.");
+        try
+        {
+            return JsonSerializer.Deserialize<ProfileJson>(SharedFile.ReadAllText(path), JsonOptions);
+        }
+        catch (JsonException e)
+        {
+            throw new ModLoadException(path, e.Message);
+        }
+    }
+
+    private static string BaseOf(string path, ProfileJson? json) =>
+        Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, json?.Base ?? DefaultBase));
 
     /// <summary>
     /// Sorts the mods so that each mod loads after the mods in its <c>dependsOn</c> and <c>loadAfter</c> lists.

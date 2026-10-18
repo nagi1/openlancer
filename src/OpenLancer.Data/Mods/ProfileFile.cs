@@ -11,6 +11,7 @@ namespace OpenLancer.Data.Mods;
 internal static class ProfileFile
 {
     private const string ModsField = "mods";
+    private const string BaseField = "base";
 
     /// <summary>
     /// Adds a mod folder to the end of the mods list, as a path relative to the profile file. The profile must load
@@ -42,6 +43,34 @@ internal static class ProfileFile
             file.Root[ModsField] = mods = new JsonArray();
         }
         mods.Add(Path.GetRelativePath(Path.GetDirectoryName(profilePath)!, modFolder).Replace(Path.DirectorySeparatorChar, '/'));
+        AtomicFile.WriteAllBytes(profilePath, file.ToBytes());
+    }
+
+    /// <summary>
+    /// Sets the base folder of a profile to an absolute path, for example after the game folder moved. Only the new base
+    /// folder must exist, because the old one is usually gone.
+    /// </summary>
+    /// <exception cref="ModLoadException">The file is not a valid profile, it has a comment, or the new base folder does
+    /// not exist.</exception>
+    public static void SetBase(string profilePath, string baseFolder)
+    {
+        profilePath = Path.GetFullPath(profilePath);
+        baseFolder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder));
+        // The same checks of the JSON as a load, without the checks of the old base folder and the mods.
+        ModProfile.BaseFolderOf(profilePath);
+        JsonFile file;
+        try
+        {
+            file = JsonFile.Read(profilePath);
+        }
+        catch (InvalidDataException e)
+        {
+            throw new ModLoadException(profilePath, e.Message);
+        }
+
+        if (!Directory.Exists(baseFolder))
+            throw new ModLoadException(profilePath, $"The base folder {baseFolder} does not exist.");
+        file.Root[BaseField] = baseFolder;
         AtomicFile.WriteAllBytes(profilePath, file.ToBytes());
     }
 }

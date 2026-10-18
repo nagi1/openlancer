@@ -287,7 +287,7 @@ internal sealed partial class EditorWindow : IClosePromptHost
     {
         var path = session.Profile.FilePath;
         var modsFolder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "..", "mods"));
-        newModDialog.Show(modsFolder, path, id =>
+        newModDialog.Show(modsFolder, path, session.Profile.BaseFolder, id =>
         {
             Log.Add(ConsoleSeverity.Info, EditController.Source, $"Made mod '{id}' in {modsFolder} and added it to the profile.");
             Edits.Leave("making the new mod the active mod", () =>
@@ -303,12 +303,14 @@ internal sealed partial class EditorWindow : IClosePromptHost
     {
         Choice.Draw();
         newModDialog.Draw();
+        newProfileDialog.Draw();
         templateDialog.Draw();
         closeDialog.Draw();
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
-    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || templateDialog.IsOpen || closeDialog.IsOpen;
+    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || templateDialog.IsOpen ||
+                               closeDialog.IsOpen;
 
     /// <summary>
     /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5 and Shift+F5. They

@@ -1,6 +1,6 @@
 # OpenLancer mod format (version 2)
 
-An OpenLancer mod changes the game data without a change to the base files. A profile lists the mods. OpenLancer merges them over the extracted vanilla data in load order. The result is a merged view of the data. The base folder never changes.
+An OpenLancer mod changes the game data without a change to the base files. A profile lists the mods. OpenLancer merges them over the game data in load order: the folder of your linked game, or the extracted game data of a developer workspace. The result is a merged view of the data. The base folder never changes.
 
 Format version 2 adds the tier and the targets of a mod to `mod.json`. The patch rules are the same for both versions. OpenLancer also reads mods of format version 1.
 
@@ -343,7 +343,9 @@ A profile is a JSON file:
 { "base": "../base", "mods": [ "../mods/my-mod", "../mods/other-mod" ] }
 ```
 
-Paths are relative to the profile file. `base` defaults to `../base`.
+Paths are relative to the profile file. `base` defaults to `../base`. `base` can also be an absolute path, for example the folder of your game: `{ "base": "C:\\Program Files (x86)\\Microsoft Games\\Freelancer", "mods": [ "../mods/my-mod" ] }`. The base folder is the folder that contains the `EXE` and `DATA` folders.
+
+The editor makes new profiles in the workspace folder, by default `Documents\OpenLancer`: the profile goes to `profiles\<name>.json` with the absolute path of the game as its `base`, and its first mod, `my-mod`, goes to `mods\my-mod`. See [GAME_LINK.md](GAME_LINK.md). OpenLancer never writes into the base folder. So the editor refuses a workspace folder whose `profiles` or `mods` folder is in a game folder. A profile file or an active mod in its base folder opens read-only, and Play and Mod > New mod refuse such a profile.
 
 ## The editor
 

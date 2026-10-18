@@ -107,11 +107,13 @@ public static class ProfileDeployer
                 throw new DeployException($"{dir.FullName} is a link. The deploy folder and its parents must be plain folders.");
         }
         // The base folder or a mod folder can be a link, so compare the real paths too.
-        if (Overlaps(target, overlay.BaseFolder) || Overlaps(target, RealPath(overlay.BaseFolder)))
+        if (PathRules.Overlaps(target, overlay.BaseFolder) ||
+            PathRules.Overlaps(target, PathRules.RealPath(overlay.BaseFolder)))
             throw new DeployException($"The deploy folder {target} overlaps the base folder {overlay.BaseFolder}.");
-        foreach (var mod in overlay.Mods.Where(m => Overlaps(target, m.Folder) || Overlaps(target, RealPath(m.Folder))))
+        foreach (var mod in overlay.Mods.Where(m => PathRules.Overlaps(target, m.Folder) ||
+                                                     PathRules.Overlaps(target, PathRules.RealPath(m.Folder))))
             throw new DeployException($"The deploy folder {target} overlaps the folder of mod '{mod.Id}'.");
-        if (PathRules.IsInside(profile.FilePath, target) || PathRules.IsInside(RealPath(profile.FilePath), target))
+        if (PathRules.IsInside(profile.FilePath, target) || PathRules.IsInside(PathRules.RealPath(profile.FilePath), target))
             throw new DeployException($"The deploy folder {target} contains the profile file.");
         if (!Directory.Exists(target))
             return;
@@ -126,21 +128,6 @@ public static class ProfileDeployer
             if (info is FileInfo { IsReadOnly: true })
                 throw new DeployException($"{info.FullName} is read-only. The deploy does not change it, because it can be a link to the base data.");
         }
-    }
-
-    /// <summary>The path with every link in it replaced by its final target.</summary>
-    private static string RealPath(string path)
-    {
-        var full = Path.GetFullPath(path);
-        var current = Path.GetPathRoot(full)!;
-        foreach (var part in full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-        {
-            current = Path.Combine(current, part);
-            FileSystemInfo info = Directory.Exists(current) ? new DirectoryInfo(current) : new FileInfo(current);
-            if (info.Exists && info.LinkTarget != null)
-                current = info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? current;
-        }
-        return current;
     }
 
     /// <summary>
@@ -237,6 +224,4 @@ public static class ProfileDeployer
         }
         File.WriteAllLines(configPath, lines, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
-
-    private static bool Overlaps(string a, string b) => PathRules.IsInside(a, b) || PathRules.IsInside(b, a);
 }

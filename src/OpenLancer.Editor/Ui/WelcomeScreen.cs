@@ -8,13 +8,15 @@ using System.Threading.Tasks;
 using ImGuiNET;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Mods;
+using OpenLancer.Editor.Games;
 
 namespace OpenLancer.Editor.Ui;
 
 /// <summary>
 /// The start page that shows while no profile is open. A card in the middle of the workspace has the open button, the
-/// recent profiles and the other profiles of the workspace. When an open failed, a banner at the top of the card
-/// shows the error.
+/// linked games, the recent profiles and the other profiles of the workspace. At the first start, the first-run screen
+/// replaces the card (see <see cref="FirstRunCard"/>). When an open failed, a banner at the top of the card shows the
+/// error.
 /// </summary>
 /// <remarks>
 /// The details of a recent profile (its mods and its base folder) load in the background, once each time the page
@@ -37,6 +39,9 @@ internal sealed class WelcomeScreen(EditorWindow window)
     private const float ModsColumnWidth = 40;
     private const float AgeColumnWidth = 96;
 
+    // The Welcome page shows at most this number of linked games. The Game link window shows all.
+    private const int MaxGameLines = 3;
+
     // The interval of the background check for missing files and new workspace profiles, in seconds.
     private const double CheckInterval = 2;
 
@@ -52,6 +57,9 @@ internal sealed class WelcomeScreen(EditorWindow window)
     private int lastFrame = -2;
     private float cardHeight;
     private string? selectedPath;
+
+    /// <summary>The first-run screen (section 7 of the M11a design).</summary>
+    public FirstRunCard FirstRun { get; } = new(window);
 
     /// <summary>The details of a recent profile file.</summary>
     /// <param name="Error">The reason why the profile did not load, or null when it loaded.</param>
@@ -100,6 +108,12 @@ internal sealed class WelcomeScreen(EditorWindow window)
             Banner(error);
         }
 
+        if (window.ShowsFirstRun)
+        {
+            FirstRun.Draw();
+            return;
+        }
+
         var scale = ImGuiHelper.Scale;
         ImGui.PushFont(null, EditorTheme.HeroSize);
         ImGui.Text("OpenLancer Editor");
@@ -108,6 +122,7 @@ internal sealed class WelcomeScreen(EditorWindow window)
         ImGui.Text("Look at the game data of a mod profile: its star systems, ships and equipment.");
         ImGui.Text("A profile names the base game data and the mods that go on top of it.");
         ImGui.PopStyleColor();
+        LinkedGames();
         ImGui.Dummy(new Vector2(0, MathF.Truncate(SectionGap * scale)));
 
         var columnWidth = MathF.Truncate(ButtonColumnWidth * scale);
@@ -145,6 +160,11 @@ internal sealed class WelcomeScreen(EditorWindow window)
         ImGui.PushTextWrapPos(wrap);
         ImGui.TextWrapped(error);
         ImGui.PopTextWrapPos();
+        if (window.OpenErrorMissingBase != null && ImGui.TextLink("Open Game link"))
+        {
+            window.ShowGameLink();
+        }
+
         ImGui.EndGroup();
         var bottom = ImGui.GetItemRectMax().Y + padding;
         ImGui.SetCursorScreenPos(new Vector2(start.X + width - padding - dismissWidth, start.Y + padding));
@@ -159,6 +179,54 @@ internal sealed class WelcomeScreen(EditorWindow window)
         drawList.ChannelsMerge();
         ImGui.SetCursorScreenPos(new Vector2(start.X, bottom));
         ImGui.Dummy(new Vector2(width, MathF.Truncate(SectionGap * scale)));
+    }
+
+    /// <summary>
+    /// One line for each linked game, at most three: its glyph, its name and its folder. Then the links to the Game link
+    /// window and to New profile.
+    /// </summary>
+    private void LinkedGames()
+    {
+        var links = window.Links;
+        ImGui.Dummy(new Vector2(0, MathF.Truncate(BannerPadding * ImGuiHelper.Scale)));
+        foreach (var game in links.Games.Take(MaxGameLines))
+        {
+            var report = links.ReportOf(game.Path);
+            var (glyph, color) = GameLook.Of(report);
+            ImGui.TextColored(color, glyph.ToString());
+            ImGui.SameLine();
+            ImGui.Text(GameLook.Name(report, game));
+            ImGui.SameLine();
+            ImGui.TextDisabled(TextFit.CutLeft(game.Path, ImGui.GetContentRegionAvail().X, t => ImGui.CalcTextSize(t).X));
+            ImGui.SetItemTooltip($"{game.Path}\n{GameLook.State(report, links.IsChecking(game.Path))}");
+        }
+
+        if (links.Games.Count == 0)
+        {
+            ImGui.TextDisabled("There is no linked game.");
+        }
+
+        if (ImGui.TextLink("Game link..."))
+        {
+            window.ShowGameLink();
+        }
+
+        ImGui.SetItemTooltip("Shows the linked game folders, their versions and their profiles.");
+        ImGui.SameLine(0, MathF.Truncate(ColumnGap * ImGuiHelper.Scale));
+        var games = window.LinkedGameReports();
+        ImGui.BeginDisabled(games.Count == 0);
+        if (ImGui.TextLink("New profile..."))
+        {
+            window.ShowNewProfile(games);
+        }
+
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(games.Count == 0
+                ? "Link a game folder first."
+                : "Makes a profile with an empty mod for a linked game, and opens it.");
+        }
     }
 
     /// <summary>The primary button that opens a profile file, and a hint below it.</summary>
@@ -179,7 +247,8 @@ internal sealed class WelcomeScreen(EditorWindow window)
         ImGui.PopStyleColor(4);
         ImGui.PushFont(null, EditorTheme.CaptionSize);
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
-        ImGui.TextDisabled("Select a profile .json file. The profiles of this workspace are in GameData\\profiles.");
+        ImGui.TextDisabled("Select a profile .json file. Your profiles are in " +
+                           $"{Path.Combine(window.Settings.WorkspaceOrDefault, ModWorkspace.ProfilesFolder)}.");
         ImGui.PopTextWrapPos();
         ImGui.PopFont();
     }
@@ -420,6 +489,7 @@ internal sealed class WelcomeScreen(EditorWindow window)
 
         checking = true;
         var paths = window.Settings.RecentProfiles.Select(r => r.Path).ToArray();
+        var workspace = window.Settings.WorkspaceOrDefault;
         Task.Run(() =>
         {
             HashSet<string>? gone = null;
@@ -427,7 +497,7 @@ internal sealed class WelcomeScreen(EditorWindow window)
             try
             {
                 gone = paths.Where(p => !File.Exists(p)).ToHashSet();
-                profiles = EditorWindow.ProfileFiles();
+                profiles = EditorWindow.ProfileFiles(workspace);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {

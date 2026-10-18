@@ -12,6 +12,9 @@
   <ItemGroup>
     <!-- The rule data of the data lists (milestone M21, decision D112). -->
     <EmbeddedResource Include="Editing\Lists\list-rules.json" LogicalName="OpenLancer.Data.Editing.Lists.list-rules.json" />
+    <!-- The file lists of the known game builds (milestone M11a). The file name is the build id. They hold paths, sizes
+         and hashes only. -->
+    <EmbeddedResource Include="..\..\data-manifest\*.tsv" LogicalName="OpenLancer.Data.Games.%(Filename).tsv" />
   </ItemGroup>
 
   <ItemGroup>

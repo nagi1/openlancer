@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
@@ -162,10 +163,14 @@ public sealed partial class EditSession : IDisposable
             if (active < 0)
                 throw new ArgumentException($"The profile {profile.Name} has no mod '{activeModId}'.", nameof(activeModId));
         }
+        // OpenLancer never writes into the game folder (decisions D204 and D214). The lock and the recovery write into
+        // the active mod, and a save, Play and New mod write next to the profile file. So when one of them is in the
+        // base folder, the session takes no lock, completes no save, and is read-only.
+        var guardReason = WriteGuard(profile, active);
         // The lock comes before the recovery, so that the session never completes or deletes the files of a save that
         // another editor runs now.
-        string? lockReason = null;
-        var modLock = active < 0 ? null : ModLock.TryTake(profile.Mods[active], out lockReason);
+        string? lockReason = guardReason;
+        var modLock = active < 0 || guardReason != null ? null : ModLock.TryTake(profile.Mods[active], out lockReason);
         try
         {
             var problems = new List<Diagnostic>();
@@ -182,6 +187,17 @@ public sealed partial class EditSession : IDisposable
                     problems.Add(Diagnostic.Error(mod.Folder, message));
                     if (i <= active)
                         failure ??= message;
+                }
+
+                // The recovery writes into the mod folder, so it never runs for a mod in the base folder. A session
+                // that must not write completes no save of any mod.
+                var modInGame = GameFolders.Overlaps(mod.Folder, profile.BaseFolder);
+                if (guardReason != null || modInGame)
+                {
+                    if (SaveTransaction.HasJournal(mod.Folder))
+                        NotComplete(GameTexts.SaveNotRecovered(mod.Id, modInGame));
+                    mods.Add(mod);
+                    continue;
                 }
 
                 try
@@ -207,6 +223,15 @@ public sealed partial class EditSession : IDisposable
             throw;
         }
     }
+
+    /// <summary>Why the session must not write, or null: the active mod or the profile file is in the base folder,
+    /// also through a link.</summary>
+    private static string? WriteGuard(ModProfile profile, int active) =>
+        active >= 0 && GameFolders.Overlaps(profile.Mods[active].Folder, profile.BaseFolder) ? GameTexts.ActiveModInGame
+        : PathRules.IsInside(profile.FilePath, profile.BaseFolder) ||
+          PathRules.IsInside(PathRules.RealPath(profile.FilePath), PathRules.RealPath(profile.BaseFolder))
+            ? GameTexts.ProfileInGame
+            : null;
 
     /// <summary>
     /// Completes a save of a mod that stopped after its commit point, and deletes the staged files of a save that

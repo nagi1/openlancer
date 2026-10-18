@@ -19,6 +19,24 @@ internal static class PathRules
                  relative.StartsWith(".." + Path.AltDirectorySeparatorChar));
     }
 
+    /// <summary>True when one path is the other or is inside it. It compares the paths as they are given.</summary>
+    public static bool Overlaps(string a, string b) => IsInside(a, b) || IsInside(b, a);
+
+    /// <summary>The path with every link in it replaced by its final target.</summary>
+    public static string RealPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var current = Path.GetPathRoot(full)!;
+        foreach (var part in full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, part);
+            FileSystemInfo info = Directory.Exists(current) ? new DirectoryInfo(current) : new FileInfo(current);
+            if (info.Exists && info.LinkTarget != null)
+                current = info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? current;
+        }
+        return current;
+    }
+
     /// <summary>
     /// Gives a normal install path (see <see cref="VfsPath"/>) the letter case of the files and folders that exist
     /// under <paramref name="root"/>. A part that does not exist keeps its letter case, and so do the parts after it.

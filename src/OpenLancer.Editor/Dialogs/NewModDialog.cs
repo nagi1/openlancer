@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using ImGuiNET;
+using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Editor.Ui;
 
@@ -17,16 +18,18 @@ internal sealed class NewModDialog : ModalDialog
     private string? error;
     private string modsFolder = "";
     private string profilePath = "";
+    private string? baseFolder;
     private Action<string>? created;
 
     protected override string Title => "New mod";
 
     /// <param name="modsFolder">The folder that gets the folder of the mod.</param>
     /// <param name="profilePath">The profile file that gets the mod.</param>
+    /// <param name="baseFolder">The base folder of the profile. OpenLancer does not write into it (decision D204).</param>
     /// <param name="created">Gets the id of the new mod.</param>
-    public void Show(string modsFolder, string profilePath, Action<string> created)
+    public void Show(string modsFolder, string profilePath, string baseFolder, Action<string> created)
     {
-        (this.modsFolder, this.profilePath, this.created) = (modsFolder, profilePath, created);
+        (this.modsFolder, this.profilePath, this.baseFolder, this.created) = (modsFolder, profilePath, baseFolder, created);
         (id, name, error) = ("", "", null);
         Open();
     }
@@ -61,10 +64,18 @@ internal sealed class NewModDialog : ModalDialog
 
     private void Create()
     {
+        // The mod goes into the profile file, so a profile file in the game folder would change a file of the game
+        // (decision D214).
+        if (baseFolder != null && GameFolders.Overlaps(profilePath, baseFolder))
+        {
+            error = GameTexts.ProfileInGame;
+            return;
+        }
+
         string folder;
         try
         {
-            folder = ModWorkspace.CreateMod(modsFolder, id, name);
+            folder = ModWorkspace.CreateMod(modsFolder, id, name, baseFolder);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {

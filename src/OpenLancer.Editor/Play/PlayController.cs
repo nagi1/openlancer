@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using OpenLancer.Data;
+using OpenLancer.Data.Games;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Runtime.Play;
@@ -281,6 +282,14 @@ internal sealed class PlayController : IDisposable
         if (editor.Session is not { } session)
         {
             Log(ConsoleSeverity.Warning, "Play needs an open profile whose game data loaded.");
+            return;
+        }
+
+        // Play writes its config and saves next to the profile file, so a profile file in the game folder would make it
+        // write into the game folder (decision D214).
+        if (session.BaseFolder != null && GameFolders.Overlaps(session.ProfilePath, session.BaseFolder))
+        {
+            Log(ConsoleSeverity.Error, GameTexts.PlayRefused);
             return;
         }
 

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OpenLancer.Data.Mods;
 using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor;
@@ -13,10 +14,19 @@ namespace OpenLancer.Editor;
 /// <param name="LastOpenedUtc">The time when the editor opened the profile for the last time.</param>
 internal sealed record RecentProfile(string Path, DateTime LastOpenedUtc);
 
+/// <summary>A linked game folder (decision D190). The check of each start finds the game again, so the entry keeps no
+/// evidence.</summary>
+/// <param name="Path">The full path of the game root, without a final separator. It is the key of the entry.</param>
+/// <param name="LinkedUtc">The time of the link.</param>
+/// <param name="LastName">The name of the game at the last check, for example "Freelancer 1.1 with JFLP". The editor
+/// shows it until the check of this start ends.</param>
+/// <param name="LastBuild">The build id of the game at the last check, or null.</param>
+internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastName, string? LastBuild);
+
 /// <summary>
 /// Editor preferences that persist between sessions: the UI scale, the panel sizes, the view options, the gizmo tool
-/// and its snap, the Database category, the open Inspector sections, the ImGui table state, the recent profiles, and
-/// the active mod and the Play ship of each profile.
+/// and its snap, the Database category, the open Inspector sections, the ImGui table state, the recent profiles, the
+/// active mod and the Play ship of each profile, the linked games and the workspace folder.
 /// </summary>
 internal sealed class EditorSettings
 {
@@ -70,6 +80,20 @@ internal sealed class EditorSettings
 
     /// <summary>The recent profiles, the newest first.</summary>
     public List<RecentProfile> RecentProfiles { get; set; } = [];
+
+    /// <summary>The linked game folders, in the order of their links (decision D190).</summary>
+    public List<LinkedGame> Games { get; set; } = [];
+
+    /// <summary>
+    /// The folder of new profiles and mods (decision D191), or an empty text for the default, <c>Documents\OpenLancer</c>.
+    /// A change applies to new profiles only (decision D216).
+    /// </summary>
+    public string WorkspaceFolder { get; set; } = "";
+
+    /// <summary>The workspace folder, or the default when it is empty.</summary>
+    [JsonIgnore]
+    public string WorkspaceOrDefault =>
+        string.IsNullOrWhiteSpace(WorkspaceFolder) ? ModWorkspace.DefaultFolder : WorkspaceFolder;
 
     /// <summary>
     /// The active mod of each profile, by the full path of the profile file. An empty id means no active mod: the
@@ -207,6 +231,11 @@ internal sealed class EditorSettings
         if (settings.RecentProfiles.Any(r => r is null || string.IsNullOrWhiteSpace(r.Path)))
         {
             throw new JsonException("The list of recent profiles has an entry without a path.");
+        }
+
+        if (settings.Games.Any(g => g is null || string.IsNullOrWhiteSpace(g.Path)))
+        {
+            throw new JsonException("The list of linked games has an entry without a path.");
         }
 
         // A drag with snapping needs a finite step above 0 (see GizmoDrag.Update). Another step, for example a step of

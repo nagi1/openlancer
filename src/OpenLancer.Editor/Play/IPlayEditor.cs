@@ -61,12 +61,14 @@ internal interface IPlayEditor : IUIThread
 /// <param name="NoEditReason">Why the editor takes no edits for the active mod now, or null.</param>
 /// <param name="LaterMods">The ids of the mods that load after the active mod. Play does not include them (decision
 /// D38).</param>
+/// <param name="BaseFolder">The base folder of the profile, or null when it is not known. Play does not start when the
+/// profile file is in it (decision D214).</param>
 internal sealed record PlaySession(string ProfilePath, string? ActiveMod, int Saves, int IncompleteSave,
-    string? NoEditReason, IReadOnlyList<string> LaterMods)
+    string? NoEditReason, IReadOnlyList<string> LaterMods, string? BaseFolder = null)
 {
     /// <summary>The snapshot of an open profile. The edit session gives the profile and the mods. The editor gives the
     /// other values, because the edit session does not keep them.</summary>
     public static PlaySession Of(EditSession edits, int saves, int incompleteSave, string? noEditReason) =>
         new(edits.Profile.FilePath, edits.ActiveMod?.Id, saves, incompleteSave, noEditReason,
-            edits.LaterMods.Select(m => m.Id).ToList());
+            edits.LaterMods.Select(m => m.Id).ToList(), edits.Profile.BaseFolder);
 }

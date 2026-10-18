@@ -2,11 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using LibreLancer;
 using LibreLancer.Data.Ini;
 using LibreLancer.Data.IO;
 using OpenLancer.Data;
 using OpenLancer.Data.Dump;
+using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
@@ -32,6 +36,11 @@ internal static class Program
 
         Commands:
           verify-base <folder>              Print the data digest. Exit 1 if it is not retail v1.0 or a file is writable.
+          game <folder> [--json] [--hashes]
+                                            Tell which game and version a folder holds. Exit 1 if it holds no game.
+                                            --json: write the report as JSON, and nothing else.
+                                            --hashes: add the manifest lines of the code files and the marker DLLs.
+                                            The lines hold paths, sizes and hashes only, no game content.
           build <profile.json>              Merge the profile's mods and print the problems and the changed files.
           validate <profile.json> [--active <mod id>] [--json]
                                             Build, then report the data problems that the mods add to vanilla.
@@ -69,6 +78,7 @@ internal static class Program
             return args switch
             {
                 ["verify-base", var folder] => VerifyBase(folder),
+                ["game", var folder, .. var options] => Game(folder, options),
                 ["build", var profile] => Build(profile),
                 ["validate", var profile, .. var options] => Validate(profile, options),
                 ["deploy", var profile] => Deploy(profile),
@@ -99,6 +109,73 @@ internal static class Program
         Out.WriteLine(isRetail ? "Matches the retail v1.0 data." : "Does NOT match the retail v1.0 data.");
         Out.WriteLine(writable == 0 ? "All files are read-only." : $"{writable} files are writable.");
         return isRetail && writable == 0 ? ExitOk : ExitProblems;
+    }
+
+    /// <summary>Prints the report of the game folder check (section 11 of the M11a design).</summary>
+    private static int Game(string folder, string[] options)
+    {
+        var json = false;
+        var hashes = false;
+        foreach (var option in options)
+        {
+            switch (option)
+            {
+                case "--json" when !json:
+                    json = true;
+                    break;
+                case "--hashes" when !hashes:
+                    hashes = true;
+                    break;
+                default:
+                    return Fail(Usage);
+            }
+        }
+
+        if (!Directory.Exists(folder) && !File.Exists(folder))
+            return Fail($"The folder {folder} does not exist.");
+        var report = GameDetector.Detect(folder);
+        var lines = hashes && report.Root != null ? GameDetector.HashLines(report.Root) : [];
+        if (json)
+        {
+            var node = JsonSerializer.SerializeToNode(report, ReportJson)!.AsObject();
+            if (hashes)
+                node["Hashes"] = new JsonArray(lines.Select(l => (JsonNode?)JsonValue.Create(l)).ToArray());
+            Out.WriteLine(node.ToJsonString(ReportJson));
+        }
+        else
+        {
+            foreach (var line in GameReportText(report))
+                Out.WriteLine(line);
+            foreach (var line in lines)
+                Out.WriteLine(line);
+        }
+        return report.IsGame ? ExitOk : ExitProblems;
+    }
+
+    private static readonly JsonSerializerOptions ReportJson = new()
+    {
+        WriteIndented = true,
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    /// <summary>The lines of a report as text, in the order of the M11a design.</summary>
+    private static IEnumerable<string> GameReportText(GameReport report)
+    {
+        yield return $"Game: {report.Name}";
+        if (report.Root != null)
+        {
+            yield return $"Root: {report.Root}";
+            yield return $"Build: {report.Build} (proof: {report.Proof.ToString().ToLowerInvariant()})";
+            yield return $"Export target: {report.Target ?? "none"}";
+            yield return report.ExePath == null ? "Game program: not found (game data only)" : $"Game program: {report.ExePath}";
+            yield return report.Data == DataState.NotCompared
+                ? report.DataText
+                : $"{report.DataText} ({report.ComparedFiles} INI files compared with {report.Reference})";
+            foreach (var file in report.DataFiles)
+                yield return $"  {file}";
+        }
+        foreach (var finding in report.Findings)
+            yield return $"{finding.Severity}: {finding.Text}";
     }
 
     private static int Build(string profilePath)

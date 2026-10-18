@@ -30,12 +30,26 @@ The repo is one folder in a larger workspace. The game data stays outside the re
 
 ## Set up
 
+### Players
+
+You need your own installed copy of Freelancer (2003): the retail game 1.0 or 1.1, with or without JFLP, or Freelancer: HD Edition.
+
+1. Unzip the OpenLancer release to a folder of your choice.
+2. Start `OpenLancer.Editor.exe`.
+3. On the page "Link your Freelancer game", click **Select game folder...**. Select the folder that contains the `EXE` and `DATA` folders of your game, for example `C:\Program Files (x86)\Microsoft Games\Freelancer`. You can also drag the folder to the editor window.
+4. The editor shows the game and the version that it found. Click **Create profile and open**.
+
+The editor makes a profile for your game and an empty mod, `my-mod`, and opens the profile. Your edits go into `my-mod`. OpenLancer reads the files of the game folder. It never changes them. Your profiles and mods go to `Documents\OpenLancer`. **File > Game link...** shows the linked games and their profiles. When you move the game, **Relink...** in that window gives the profiles the new folder. See [docs/GAME_LINK.md](docs/GAME_LINK.md).
+
+### Developers
+
 1. Clone with submodules: `git clone --recursive <url> OpenLancer`.
 2. Extract the game data to `GameData\base` and check it with `python tools\verify_base.py ..\GameData\base`. The English v1.0 retail disc gives `8418 5b4ee64cf64bb9c5525cee786f54380170dbde5617d1aaf5ef3655237c9cfaeb`.
 3. Build the engine submodule once. See "Build the submodule" in [docs/UPSTREAM.md](docs/UPSTREAM.md).
 4. Run `dotnet test OpenLancer.slnx`.
+5. Run `start.bat` to build and start the editor. The editor lists the profiles of `GameData\profiles` and of the workspace folder. To link the game as a player does, click **File > Game link... > Link a game folder...** and select `GameData`. The editor finds `GameData\base`.
 
-The data tests read `..\GameData\base`. Set `OPENLANCER_BASE` to use a different folder. Without game data, the data tests are skipped.
+The data tests read `..\GameData\base`. Set `OPENLANCER_BASE` to use a different folder. Without game data, the data tests are skipped. `oltool game <folder>` prints the check of a game folder (see [docs/GAME_LINK.md](docs/GAME_LINK.md)).
 
 ## Make a mod
 

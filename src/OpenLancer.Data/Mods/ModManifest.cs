@@ -186,4 +186,8 @@ public static class ModTargets
 public sealed class ModLoadException(string path, string message) : Exception($"{path}: {message}")
 {
     public string Path { get; } = path;
+
+    /// <summary>The full path of the base folder of a profile when the folder does not exist, else null. The editor
+    /// then offers a relink of the game.</summary>
+    public string? MissingBaseFolder { get; init; }
 }

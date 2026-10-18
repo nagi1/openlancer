@@ -234,6 +234,21 @@ public sealed class PlayControllerTests : IDisposable
         StopAndRunToIdle();
     }
 
+    /// <summary>Play writes next to the profile file, so a profile file in its base folder starts no game and saves
+    /// nothing (decision D214 of the M11a design).</summary>
+    [Fact]
+    public void PlayRefusesAProfileFileInItsBaseFolder()
+    {
+        editor.Session = new PlaySession(Path.Combine(ws.Base, "p.json"), "proof", 0, 0, null, [], ws.Base);
+
+        RequestPlay();
+
+        Assert.Equal(0, editor.SaveCalls);
+        Assert.Empty(starts);
+        Assert.Equal(PlayStatus.Idle, play.Status);
+        Assert.Contains(OpenLancer.Data.Games.GameTexts.PlayRefused, Console);
+    }
+
     /// <summary>(7) A request while a field or a dialog is open runs at the first update without one.</summary>
     [Fact]
     public void ARequestWaitsWhileAFieldOrADialogIsOpen()

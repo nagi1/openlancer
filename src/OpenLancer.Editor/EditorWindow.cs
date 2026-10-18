@@ -21,6 +21,7 @@ using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Database;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Editor.Logs;
@@ -77,6 +78,10 @@ internal sealed partial class EditorWindow : Game
         this.options = options;
         // The bench must not change the settings of the user, so it does not read or write them.
         Settings = options.Bench ? EditorSettings.Transient() : EditorSettings.Load();
+        // The bench checks no game folder and links nothing.
+        Links = new GameLinks(this, enabled: !options.Bench);
+        gameLinkWindow = new GameLinkWindow(this);
+        newProfileDialog = new NewProfileDialog(this);
         Cutscenes = new CutsceneWorkspace(this);
         Edits = new EditController(this);
         closePrompt = new ClosePrompt(this);
@@ -194,6 +199,11 @@ internal sealed partial class EditorWindow : Game
             return;
         }
 
+        // The first-run screen shows when the user has no game, no profile and no command line (decision D193). The
+        // linked games get their check in the background.
+        firstRunAtStart = GameLinks.FirstRunApplies(options, Settings, File.Exists);
+        Links.CheckAll();
+
         // A wrong command line opens no profile, so that the Welcome screen shows the problem.
         if (options.Problem is { } problem)
         {
@@ -287,7 +297,12 @@ internal sealed partial class EditorWindow : Game
     }
 
     /// <summary>Hides the error of the last open on the Welcome screen.</summary>
-    public void DismissOpenError() => OpenError = null;
+    public void DismissOpenError()
+    {
+        OpenError = null;
+        OpenErrorMissingBase = null;
+        missingBaseProfile = null;
+    }
 
     /// <summary>Sets the Hierarchy search, for example "t:zone" to show the zones of the open system.</summary>
     public void ShowInHierarchy(string search) => hierarchy.SetSearch(search);
@@ -346,7 +361,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         CloseNow();
-        OpenError = null;
+        DismissOpenError();
         // The edit session holds the lock of the active mod. A path that does not give it to a new EditorSession
         // disposes it, so that the lock does not stay until the garbage collector runs.
         EditSession? edits = null;
@@ -383,6 +398,7 @@ internal sealed partial class EditorWindow : Game
                     : $"Active mod: {activeMod.Id}. ") +
                 "Loading game data...");
             ModWarnings(session);
+            Links.ProfileOpened(profile);
             Edits.OfferRecovery();
             Task.Run(() =>
             {
@@ -401,6 +417,17 @@ internal sealed partial class EditorWindow : Game
                     });
                 }
             });
+        }
+        catch (ModLoadException e) when (e.MissingBaseFolder is { } missingBase)
+        {
+            // The game folder moved or its drive is not there. Relink in the Game link window fixes the profile and opens
+            // it again (decision D203).
+            OpenError = $"OpenLancer cannot find the game folder of profile {Path.GetFileNameWithoutExtension(e.Path)}: " +
+                        $"{missingBase}. If you moved the game, open Game link and click Relink.";
+            OpenErrorMissingBase = missingBase;
+            missingBaseProfile = e.Path;
+            Log.Add(ConsoleSeverity.Error, EditorSource, OpenError);
+            Links.Check(missingBase);
         }
         catch (Exception e) when (e is ModLoadException or IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -516,6 +543,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         statusBar.Draw(new Vector2(0, Height - statusHeight), Width);
+        gameLinkWindow.Draw();
         DrawDialogs();
         Shortcuts();
         Edits.Update(IsEditing);
@@ -635,7 +663,7 @@ internal sealed partial class EditorWindow : Game
         {
             if (ImGui.IsWindowAppearing())
             {
-                menuProfiles = ProfileFiles();
+                menuProfiles = ProfileFiles(Settings.WorkspaceOrDefault);
             }
 
             foreach (var path in menuProfiles)
@@ -650,7 +678,8 @@ internal sealed partial class EditorWindow : Game
 
             if (menuProfiles.Count == 0)
             {
-                ImGui.MenuItem("No profiles in GameData\\profiles", false);
+                ImGui.MenuItem($"No profiles in {Path.Combine(Settings.WorkspaceOrDefault, ModWorkspace.ProfilesFolder)}",
+                    false);
             }
 
             ImGui.EndMenu();
@@ -696,6 +725,12 @@ internal sealed partial class EditorWindow : Game
             ImGui.SetItemTooltip(loadingTip);
         }
 
+        if (Theme.IconMenuItem(EditorIcons.Link, "Game link...", true))
+        {
+            ShowGameLink();
+        }
+
+        ImGui.SetItemTooltip("Shows the linked game folders, their versions and their profiles.");
         if (Theme.IconMenuItem(EditorIcons.X, "Close profile", Session != null && !loading))
         {
             CloseProfile();
@@ -746,19 +781,27 @@ internal sealed partial class EditorWindow : Game
     }
 
     /// <summary>
-    /// The profile files in the workspace's GameData\profiles folder, found from the editor's folder.
+    /// The profile files of the profiles folder of the workspace folder (decision D191), and of a developer workspace:
+    /// the GameData\profiles folder, found from the editor's folder. A file that is in both lists shows once.
     /// </summary>
-    internal static List<string> ProfileFiles()
+    internal static List<string> ProfileFiles(string workspace)
     {
+        var folders = new List<string> { Path.Combine(workspace, ModWorkspace.ProfilesFolder) };
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
         {
             var profiles = Path.Combine(dir.FullName, "GameData", "profiles");
             if (Directory.Exists(profiles))
             {
-                return Directory.EnumerateFiles(profiles, "*.json").Order(StringComparer.OrdinalIgnoreCase).ToList();
+                folders.Add(profiles);
+                break;
             }
         }
 
-        return [];
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        return folders.Where(Directory.Exists)
+            .SelectMany(folder => Directory.EnumerateFiles(Path.GetFullPath(folder), "*.json"))
+            .Distinct(comparer)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 }
