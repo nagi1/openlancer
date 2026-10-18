@@ -46,13 +46,12 @@ public sealed class PlayViewTests
         WriteJournal(act);
         var profile = ModProfile.Load(ws.ProfilePath);
         var clock = Stopwatch.StartNew();
-        var save = Task.Run(async () =>
+        var save = EndSaveLater(() =>
         {
-            await Task.Delay(300, TestContext.Current.CancellationToken);
             File.WriteAllText(Path.Combine(act, GoodsPatch), "[Good]\nnickname = g1\nprice = 130");
             File.WriteAllText(Path.Combine(act, WeaponsPatch), NewWeapons);
             File.Delete(Journal(act));
-        }, TestContext.Current.CancellationToken);
+        });
 
         var overlay = PlayView.Build(profile, "act");
         await save;
@@ -159,15 +158,36 @@ public sealed class PlayViewTests
         File.WriteAllText(Journal(modFolder), "olsave journal 1\n");
     }
 
-    /// <summary>
-    /// Writes the text DLL as the fake writer of the workspace does. At its first write, a save of the mod commits: it
-    /// writes the journal and a new patch, and deletes the journal 300 ms later.
-    /// </summary>
+    /// <summary>Runs <paramref name="end"/>, the end of a save, 300 ms from now.</summary>
+    /// <returns>A task that completes when <paramref name="end"/> completes, or fails with its exception.</returns>
     /// <remarks>
     /// The end of the save runs on a thread of its own, as a save of the editor runs in another process. On a thread of
     /// the pool it can wait for a free thread for longer than <see cref="PlayView.SaveWait"/> while the other tests
     /// block the pool, and the build then reports a save that did not complete.
     /// </remarks>
+    private static Task EndSaveLater(Action end)
+    {
+        var done = new TaskCompletionSource();
+        new Thread(() =>
+        {
+            try
+            {
+                Thread.Sleep(300);
+                end();
+                done.SetResult();
+            }
+            catch (Exception e)
+            {
+                done.SetException(e);
+            }
+        }) { IsBackground = true, Name = "test save" }.Start();
+        return done.Task;
+    }
+
+    /// <summary>
+    /// Writes the text DLL as the fake writer of the workspace does. At its first write, a save of the mod commits: it
+    /// writes the journal and a new patch, and deletes the journal 300 ms later.
+    /// </summary>
     private sealed class SavingWriter(string modFolder) : IStringResourceWriter
     {
         public int Writes { get; private set; }
@@ -181,21 +201,7 @@ public sealed class PlayViewTests
             {
                 WriteJournal(modFolder);
                 File.WriteAllText(Path.Combine(modFolder, WeaponsPatch), NewWeapons);
-                var end = new TaskCompletionSource();
-                Save = end.Task;
-                new Thread(() =>
-                {
-                    try
-                    {
-                        Thread.Sleep(300);
-                        File.Delete(Journal(modFolder));
-                        end.SetResult();
-                    }
-                    catch (Exception e)
-                    {
-                        end.SetException(e);
-                    }
-                }) { IsBackground = true, Name = "test save" }.Start();
+                Save = EndSaveLater(() => File.Delete(Journal(modFolder)));
             }
             return TestWorkspace.FakeDllWriter.Instance.Write(strings, infocards);
         }
