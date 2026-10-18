@@ -78,7 +78,7 @@ dotnet test external\Librelancer\src\LibreLancer.Tests\LibreLancer.Tests.csproj
 - When Unity has an equivalent behavior, follow Unity.
 - Make sure that CI passes.
 - Do not write paths of your machine, user names or private URLs in code, docs or tests.
-- Do not add Markdown files. The repository keeps only `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`, `.github/pull_request_template.md`, `data-manifest/README.md` and the files in `docs/`. A new file in `docs/` needs the approval of the owner. Put your own notes in `notes/`. Git ignores that folder.
+- Do not add Markdown files. The repository keeps only `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`, `.github/pull_request_template.md`, `data-manifest/README.md`, the files in `docs/` and the release notes in `release/notes/`. A new file in `docs/` or `release/notes/` needs the approval of the owner. Put your own notes in `notes/`. Git ignores that folder.
 
 Comments and docs cite decisions such as `D81` and designs such as "the M21 design". These records are not public. If a rule is not clear, ask in the pull request. In new code, write the rule itself in plain words.
 

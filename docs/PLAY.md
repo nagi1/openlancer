@@ -181,7 +181,7 @@ Each profile has a play folder next to the profile file: `<profile folder>\<prof
 | `lancer.ini` | The game settings of the play. The game options write it, so the volumes and the graphics options stay between plays. The game always starts in a window with the debug view. |
 | `saves\` | The saves of the player, `AutoSave.fl` of the reloads, and the files of the scripts. |
 
-The main menu of the game is not part of a play. When you quit to the menu, the menu lists the saves of `Documents\SavedGames\Librelancer`, and New Game saves there. The key map is in that folder too.
+The main menu of the game is not part of a play. When you quit to the menu, the menu lists the saves of `Documents\SavedGames\OpenLancer`, and New Game saves there. The key map is in that folder too.
 
 ## When the game stops by itself
 
@@ -197,7 +197,7 @@ The Console tells why the game stopped:
 | 5 | The game did not start, for example because the game window did not open. |
 | other | A crash. |
 
-For an exit code other than 0 or 3, the Console gives the cause and the path of the game log, `%LOCALAPPDATA%\Librelancer\logs\OpenLancer.Play.log.txt`. A crash writes the whole exception to that log.
+For an exit code other than 0 or 3, the Console gives the cause and the path of the game log, `%LOCALAPPDATA%\OpenLancer\logs\OpenLancer.Play.log.txt`. A crash writes the whole exception to that log.
 
 When the validation finds errors and the game closes during its load, the Console names the validation errors as the cause.
 

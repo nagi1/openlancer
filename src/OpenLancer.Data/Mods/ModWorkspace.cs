@@ -30,7 +30,7 @@ public static class ModWorkspace
 
     /// <summary>The default workspace folder: <c>Documents\OpenLancer</c>. It follows a moved Documents folder.</summary>
     public static string DefaultFolder =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "OpenLancer");
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Product.Name);
 
     /// <summary>
     /// Makes the folder <c>&lt;modsFolder&gt;\&lt;id&gt;</c> with a <c>mod.json</c> of the current format version for a

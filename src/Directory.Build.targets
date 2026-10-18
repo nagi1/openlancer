@@ -1,0 +1,13 @@
+<Project>
+  <!-- Kept out of the repo root so that it does not apply to the Librelancer submodule. -->
+
+  <!-- PublishAssets.projitems of the engine copies each native of bin/natives next to the program. libmp3lame.dll is
+       LAME, under the GNU LGPL. Only the MP3 encoder of LancerEdit uses it, and OpenLancer never calls that encoder.
+       So OpenLancer does not copy or ship it. The target removes the item before AssignTargetPaths makes the copy
+       lists for the build, the references and the publish. tools/release_check.py refuses a release folder with it. -->
+  <Target Name="OpenLancerRemoveLame" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <None Remove="@(None)" Condition="'%(Filename)%(Extension)' == 'libmp3lame.dll'" />
+    </ItemGroup>
+  </Target>
+</Project>

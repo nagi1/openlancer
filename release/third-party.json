@@ -1,0 +1,374 @@
+{
+  "about": "The components of a binary release and their licenses (research r1-release-plan section 4.2). A native_sources entry that ends with /* covers only the files directly in its folder. tools/release_check.py reads this file: 'docs' writes NOTICE.txt and licenses/<id>.txt, and 'stage' checks that each DLL and exe of the release, each NuGet package and each copyright holder in the shipped sources has a component. A text source is 'repo:<path in the clone>', 'header:<source file>' (its first comment block), 'nuget:<package id>/<file>' (the version comes from the deps.json files) or 'runtimepack:<file>'. A component with 'status' 'pending' or 'check' stops a release, but not a dry run.",
+  "natives": ["SDL3.dll", "cimgui.dll", "crnlibglue.dll", "lancerdecode.dll", "lancerdialogs.dll", "libblurgtext.dll", "soft_oal.dll", "thorncompiler.dll"],
+  "prebuilt_natives": ["SDL3.dll", "soft_oal.dll"],
+  "openal_source": {
+    "file": "openal-soft-1.25.2.tar.gz",
+    "url": "https://github.com/kcat/openal-soft/archive/refs/tags/1.25.2.tar.gz",
+    "sha256": null,
+    "note": "R1-D8 and R1-D19: check the archive against x64/soft_oal.dll, then write its SHA-256 here. tools/release.ps1 refuses a release while the value is null."
+  },
+  "native_sources": [
+    "external/Librelancer/src/cimgui_ext",
+    "external/Librelancer/src/crnlibglue",
+    "external/Librelancer/src/lancerdialogs",
+    "external/Librelancer/extern/imgui/*",
+    "external/Librelancer/extern/blurgtext/src",
+    "external/Librelancer/extern/blurgtext/deps",
+    "external/Librelancer/extern/crunch/crnlib",
+    "external/Librelancer/extern/crunch/inc",
+    "external/Librelancer/extern/lancerdecode/src",
+    "external/Librelancer/extern/lancerdecode/include",
+    "external/Librelancer/extern/thorncompiler/lua",
+    "external/Librelancer/extern/thorncompiler/src",
+    "external/Librelancer/extern/nativefiledialog-extended/src"
+  ],
+  "components": [
+    {
+      "id": "openlancer", "name": "OpenLancer", "version": "this release", "license": "MIT",
+      "files": ["OpenLancer.*.dll", "OpenLancer.Editor.exe", "OpenLancer.Play.exe", "oltool.dll", "oltool.exe"],
+      "texts": ["repo:LICENSE"],
+      "holders": ["OpenLancer contributors"]
+    },
+    {
+      "id": "librelancer", "name": "Librelancer (the OpenLancer engine fork)", "version": "fork commit of this release", "license": "MIT",
+      "files": ["LibreLancer.dll", "LibreLancer.*.dll"],
+      "texts": ["repo:external/Librelancer/LICENSE"],
+      "holders": ["Callum McGing", "Librelancer Contributors", "Malte Rupprecht", "Mono.Xna Team", "Lazrius", "@Giperionn"],
+      "note": "Includes the Mono.Xna portions, and empty-bullet.ttf, bell.ogg and checkerboard.png in LibreLancer.ImUI.dll (R1-D7). The thorncompiler wrapper in x64/thorncompiler.dll has no license file. The Librelancer maintainer wrote it, so it is listed here."
+    },
+    {
+      "id": "librelancer-icons", "name": "file.png and folder.png in LibreLancer.ImUI.dll", "version": "fork commit of this release", "license": "MIT (Librelancer), origin not stated",
+      "files": ["LibreLancer.ImUI.dll"],
+      "texts": ["repo:external/Librelancer/LICENSE"],
+      "status": "check",
+      "note": "R1-D20: no file states the origin of the two icons. Compare them with the Tango icon set before the release. A match with an icon theme under GPL or CC BY-SA needs a fork commit that replaces both images."
+    },
+    {
+      "id": "sdl2-cs", "name": "SDL2# (C# bindings by Ethan Lee)", "version": "in LibreLancer.Base", "license": "Zlib",
+      "files": ["LibreLancer.Base.dll"],
+      "texts": ["header:external/Librelancer/src/LibreLancer.Base/SDL/SDL2.cs"],
+      "holders": ["Ethan Lee"]
+    },
+    {
+      "id": "mono-options", "name": "Mono.Options", "version": "in LibreLancer.Base", "license": "MIT",
+      "files": ["LibreLancer.Base.dll"],
+      "texts": ["header:external/Librelancer/src/LibreLancer.Base/Options/Mono.Options.cs"],
+      "holders": ["Novell", "Federico Di Gregorio", "Xamarin", "Microsoft Corporation"]
+    },
+    {
+      "id": "opentk", "name": "OpenTK math helpers", "version": "in LibreLancer.Base", "license": "MIT (The Open Toolkit Library License)",
+      "files": ["LibreLancer.Base.dll"],
+      "texts": ["header:external/Librelancer/src/LibreLancer.Base/Math/Color4.cs"],
+      "holders": ["Open Toolkit library", "OpenTK Team"]
+    },
+    {
+      "id": "s3tc", "name": "S3TC (DXT) decoder", "version": "in LibreLancer.Base", "license": "MIT",
+      "files": ["LibreLancer.Base.dll"],
+      "texts": ["header:external/Librelancer/src/LibreLancer.Base/Graphics/S3TC.cs"],
+      "holders": ["Benjamin Dobell", "Chajdas"]
+    },
+    {
+      "id": "sharpdx", "name": "SharpDX (math code)", "version": "in the engine assemblies", "license": "MIT",
+      "files": ["LibreLancer.Base.dll"],
+      "copyright": ["Copyright (c) 2010-2014 SharpDX - Alexandre Mutel"],
+      "texts": ["repo:release/licenses/MIT.txt"],
+      "holders": ["SharpDX", "Alexandre Mutel"]
+    },
+    {
+      "id": "smaa", "name": "SMAA (Enhanced Subpixel Morphological Antialiasing)", "version": "in LibreLancer.Base", "license": "MIT",
+      "files": ["LibreLancer.Base.dll"],
+      "texts": ["header:external/Librelancer/src/LibreLancer.Base/Shaders/SMAA.hlsl"],
+      "holders": ["Jorge Jimenez", "Jose I. Echevarria", "Belen Masia", "Fernando Navarro", "Diego Gutierrez"]
+    },
+    {
+      "id": "kopilua", "name": "KopiLua sprintf", "version": "in LibreLancer.Thorn and WattleScript.Interpreter", "license": "MIT",
+      "files": ["LibreLancer.Thorn.dll", "WattleScript.Interpreter.dll"],
+      "texts": ["header:external/Librelancer/src/LibreLancer.Thorn/Libraries/KopiLua_sprintf.cs"],
+      "holders": ["LoDC", "Lua.org, PUC-Rio"]
+    },
+    {
+      "id": "roboto", "name": "Roboto Regular", "version": "3.01", "license": "OFL-1.1",
+      "files": ["LibreLancer.ImUI.dll"],
+      "copyright": ["Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto-classic)", "", "This Font Software is licensed under the SIL Open Font License, Version 1.1."],
+      "texts": ["repo:release/licenses/OFL-1.1.txt"]
+    },
+    {
+      "id": "font-awesome", "name": "Font Awesome Free (solid icons)", "version": "5.15.4", "license": "OFL-1.1",
+      "files": ["LibreLancer.ImUI.dll"],
+      "copyright": ["Copyright (c) Font Awesome", "Font Awesome Free 5.15.4 by @fontawesome - https://fontawesome.com", "", "The font file fa-solid-900.ttf is licensed under the SIL Open Font License, Version 1.1."],
+      "texts": ["repo:release/licenses/OFL-1.1.txt"]
+    },
+    {
+      "id": "droid-sans-fallback", "name": "Droid Sans Fallback", "version": "1.00c", "license": "Apache-2.0",
+      "files": ["LibreLancer.ImUI.dll"],
+      "copyright": ["Digitized data copyright Google Corporation (c) 2006"],
+      "texts": ["repo:release/licenses/Apache-2.0.txt"]
+    },
+    {
+      "id": "bepuphysics2", "name": "BEPUphysics v2", "version": "submodule", "license": "Apache-2.0",
+      "files": ["BepuPhysics.dll", "BepuUtilities.dll"],
+      "texts": ["repo:external/Librelancer/extern/bepuphysics2/LICENSE.md"]
+    },
+    {
+      "id": "blurgtext", "name": "blurgtext", "version": "submodule", "license": "MIT",
+      "files": ["BlurgText.dll", "x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/extern/blurgtext/LICENSE.txt"],
+      "holders": ["blurgtext contributors"]
+    },
+    {
+      "id": "litenetlib", "name": "LiteNetLib", "version": "submodule", "license": "MIT",
+      "files": ["LiteNetLib.dll"],
+      "texts": ["repo:external/Librelancer/extern/LiteNetLib/LICENSE.txt"],
+      "holders": ["Ruslan Pyrch"]
+    },
+    {
+      "id": "stringsquash", "name": "StringSquash", "version": "submodule", "license": "MIT",
+      "files": ["StringSquash.dll"],
+      "texts": ["repo:external/Librelancer/extern/StringSquash/LICENSE.txt", "header:external/Librelancer/extern/StringSquash/StringSquash/BitPrimitives.cs"],
+      "holders": ["StringSquash contributors", "barncastle"]
+    },
+    {
+      "id": "wattlescript", "name": "WattleScript", "version": "submodule", "license": "BSD-3-Clause",
+      "files": ["WattleScript.Interpreter.dll"],
+      "texts": ["repo:external/Librelancer/extern/wattlescript/LICENSE", "repo:external/Librelancer/extern/wattlescript/AUTHORS"],
+      "holders": ["WattleScript Authors", "WattleScript Contributors", "Marco Mastropaolo"]
+    },
+    {
+      "id": "simplemesh", "name": "SimpleMesh", "version": "submodule", "license": "Apache-2.0",
+      "files": ["SimpleMesh.dll"],
+      "texts": ["repo:external/Librelancer/extern/SimpleMesh/LICENSE"],
+      "holders": ["Morten S. Mikkelsen"],
+      "note": "MikkTSpace inside SimpleMesh is under the zlib license, which asks for no notice in a binary."
+    },
+    {
+      "id": "stbimagesharp", "name": "StbImageSharp", "version": "NuGet package", "license": "Public domain or MIT",
+      "packages": ["StbImageSharp"],
+      "copyright": ["StbImageSharp, https://github.com/StbSharp/StbImageSharp", "The project states its license as \"Public Domain or MIT\". It is a C# port of stb_image by Sean Barrett. The license of stb_image follows."],
+      "texts": ["repo:release/licenses/stb.txt"]
+    },
+    {
+      "id": "zstdsharp", "name": "ZstdSharp.Port (a C# port of zstd)", "version": "NuGet package", "license": "MIT, and BSD-3-Clause for zstd",
+      "packages": ["ZstdSharp.Port"],
+      "copyright": ["Copyright Oleg Stepanischev 2025"],
+      "texts": ["repo:release/licenses/MIT.txt", "repo:release/licenses/zstd-BSD-3-Clause.txt"],
+      "note": "zstd is available under the BSD license or the GPL 2. OpenLancer uses the BSD terms."
+    },
+    {
+      "id": "microsoft-packages", "name": "Entity Framework Core, Microsoft.Data.Sqlite and Microsoft.Extensions", "version": "NuGet packages", "license": "MIT",
+      "packages": ["Microsoft.Data.Sqlite.Core", "Microsoft.EntityFrameworkCore", "Microsoft.EntityFrameworkCore.Abstractions", "Microsoft.EntityFrameworkCore.Proxies", "Microsoft.EntityFrameworkCore.Relational", "Microsoft.EntityFrameworkCore.Sqlite", "Microsoft.EntityFrameworkCore.Sqlite.Core", "Microsoft.Extensions.Caching.Abstractions", "Microsoft.Extensions.Caching.Memory", "Microsoft.Extensions.Configuration.Abstractions", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.Extensions.DependencyModel", "Microsoft.Extensions.Logging", "Microsoft.Extensions.Logging.Abstractions", "Microsoft.Extensions.Options", "Microsoft.Extensions.Primitives"],
+      "copyright": ["Copyright (c) Microsoft Corporation. All rights reserved."],
+      "texts": ["repo:release/licenses/MIT.txt", "nuget:Microsoft.Extensions.Logging/THIRD-PARTY-NOTICES.TXT"]
+    },
+    {
+      "id": "system-diagnostics-eventlog", "name": "System.Diagnostics.EventLog", "version": "NuGet package", "license": "MIT",
+      "packages": ["System.Diagnostics.EventLog"],
+      "texts": ["nuget:System.Diagnostics.EventLog/LICENSE.TXT", "nuget:System.Diagnostics.EventLog/THIRD-PARTY-NOTICES.TXT"]
+    },
+    {
+      "id": "castle-core", "name": "Castle Core", "version": "NuGet package", "license": "Apache-2.0",
+      "packages": ["Castle.Core"],
+      "texts": ["nuget:Castle.Core/LICENSE"]
+    },
+    {
+      "id": "sqlitepclraw", "name": "SQLitePCLRaw and SQLite (e_sqlite3.dll)", "version": "NuGet packages", "license": "Apache-2.0, SQLite is public domain",
+      "packages": ["SQLitePCLRaw.bundle_e_sqlite3", "SQLitePCLRaw.core", "SQLitePCLRaw.lib.e_sqlite3", "SQLitePCLRaw.provider.e_sqlite3"],
+      "files": ["e_sqlite3.dll"],
+      "copyright": ["Copyright 2014-2024 SourceGear, LLC", "", "SQLite itself (e_sqlite3.dll) is in the public domain."],
+      "texts": ["repo:release/licenses/Apache-2.0.txt"]
+    },
+    {
+      "id": "dotnet-runtime", "name": ".NET runtime (self-contained)", "version": "runtime pack of the publish", "license": "MIT, with third-party notices",
+      "packages": ["runtimepack.Microsoft.NETCore.App.Runtime.win-x64"],
+      "texts": ["runtimepack:LICENSE.TXT", "runtimepack:THIRD-PARTY-NOTICES.TXT"]
+    },
+    {
+      "id": "sdl3", "name": "SDL", "version": "3.2.0", "license": "Zlib",
+      "files": ["x64/SDL3.dll"],
+      "copyright": ["Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>"],
+      "texts": ["repo:release/licenses/zlib.txt"]
+    },
+    {
+      "id": "openal-soft", "name": "OpenAL Soft", "version": "1.25.2", "license": "LGPL-2.0-or-later",
+      "files": ["x64/soft_oal.dll"],
+      "copyright": ["x64/soft_oal.dll is OpenAL Soft. OpenLancer uses it as a library that it loads at run time. You can replace the file with your own build of OpenAL Soft.", "The source code is the file openal-soft-1.25.2.tar.gz on the release page of this release."],
+      "texts": ["repo:external/Librelancer/deps/openal-soft-sourceurl.txt", "repo:external/Librelancer/deps/openal-soft-license.txt"]
+    },
+    {
+      "id": "openal-soft-parts", "name": "Parts of OpenAL Soft under other licenses (for example pffft)", "version": "1.25.2", "license": "not checked",
+      "files": ["x64/soft_oal.dll"],
+      "texts": [],
+      "status": "pending",
+      "note": "R1-D19 and V5: read the OpenAL Soft 1.25.2 archive. Add the notice of each part under another license that the DLL contains."
+    },
+    {
+      "id": "mingw-w64-runtime", "name": "MinGW-w64 runtime (linked into soft_oal.dll)", "version": "of the GCC 15 MinGW build", "license": "ZPL-2.1 and others",
+      "files": ["x64/soft_oal.dll"],
+      "texts": ["repo:release/licenses/MinGW-w64-runtime.txt"],
+      "status": "check",
+      "note": "The text comes from COPYING.MinGW-w64-runtime.txt of the mingw-w64 repository. Compare it with that file of the mingw-w64 source before the release."
+    },
+    {
+      "id": "winpthreads", "name": "winpthreads (linked into soft_oal.dll)", "version": "of the GCC 15 MinGW build", "license": "MIT and BSD-style",
+      "files": ["x64/soft_oal.dll"],
+      "texts": ["repo:release/licenses/winpthreads.txt"]
+    },
+    {
+      "id": "libstdcxx", "name": "GNU libstdc++ (linked into soft_oal.dll)", "version": "GCC 15", "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "files": ["x64/soft_oal.dll"],
+      "texts": [],
+      "note": "The GCC Runtime Library Exception puts no condition on a program that GCC compiled. So no license text is necessary."
+    },
+    {
+      "id": "dear-imgui", "name": "Dear ImGui", "version": "1.92.1", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "texts": ["repo:external/Librelancer/extern/imgui/LICENSE.txt"],
+      "holders": ["Omar Cornut"]
+    },
+    {
+      "id": "proggyclean", "name": "ProggyClean font (in Dear ImGui)", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "copyright": ["Copyright (c) 2004, 2005 Tristan Grimmer"],
+      "texts": ["repo:release/licenses/MIT.txt"],
+      "holders": ["Tristan Grimmer"]
+    },
+    {
+      "id": "dear-bindings", "name": "Dear Bindings (the generated C bindings of cimgui.dll)", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "copyright": ["Copyright (c) 2021-2026 Ben Carter"],
+      "texts": ["repo:release/licenses/MIT.txt"],
+      "holders": ["Ben Carter"]
+    },
+    {
+      "id": "imguizmo", "name": "ImGuizmo", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "texts": ["header:external/Librelancer/src/cimgui_ext/controls/ImGuizmo.cpp"],
+      "holders": ["Cedric Guillemet"]
+    },
+    {
+      "id": "imguicolortextedit", "name": "ImGuiColorTextEdit", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "texts": ["repo:external/Librelancer/src/cimgui_ext/ImGuiColorTextEdit/LICENSE"],
+      "holders": ["Johan A. Goossens"]
+    },
+    {
+      "id": "imgui-node-editor", "name": "imgui-node-editor", "version": "0.9.1", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "texts": ["repo:external/Librelancer/src/cimgui_ext/imgui-node-editor/LICENSE"],
+      "holders": ["Michał Cichoń"]
+    },
+    {
+      "id": "implot", "name": "ImPlot", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "texts": ["header:external/Librelancer/src/cimgui_ext/implot/implot.cpp"],
+      "holders": ["Evan Pezent", "Breno Cunha Queiroz"]
+    },
+    {
+      "id": "imgui-memory-editor", "name": "Mini memory editor for Dear ImGui (imgui_club)", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "copyright": ["Mini memory editor for Dear ImGui, https://github.com/ocornut/imgui_club", "The file states: Licensed under The MIT License (MIT)."],
+      "texts": ["repo:release/licenses/MIT.txt"]
+    },
+    {
+      "id": "expr", "name": "expr (expression evaluator)", "version": "in cimgui.dll", "license": "MIT",
+      "files": ["x64/cimgui.dll"],
+      "texts": ["header:external/Librelancer/src/cimgui_ext/controls/expr.h"],
+      "holders": ["Serge Zaitsev"]
+    },
+    {
+      "id": "freetype", "name": "FreeType", "version": "2.13.2", "license": "FTL",
+      "files": ["x64/cimgui.dll", "x64/libblurgtext.dll"],
+      "copyright": ["Portions of this software are copyright (c) 2023 The FreeType Project (www.freetype.org). All rights reserved."],
+      "texts": ["repo:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/FT2/LICENSE.TXT", "repo:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/FT2/docs/FTL.TXT"],
+      "holders": ["David Turner, Robert Wilhelm, and Werner Lemberg", "FreeType Project", "Google, Inc."],
+      "note": "FreeType is available under the FTL or the GPL 2. OpenLancer uses the FTL."
+    },
+    {
+      "id": "freetype-parts", "name": "FreeType BDF and PCF drivers and gzip module", "version": "2.13.2", "license": "MIT-style (X11) and Zlib",
+      "files": ["x64/cimgui.dll", "x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/FT2/src/bdf/README", "repo:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/FT2/src/pcf/README", "header:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/FT2/src/gzip/zlib.h"],
+      "holders": ["Francesco Zappa Nardelli", "Jean-loup Gailly and Mark Adler"]
+    },
+    {
+      "id": "harfbuzz", "name": "HarfBuzz", "version": "9.0.0", "license": "MIT (Old MIT)",
+      "files": ["x64/cimgui.dll", "x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/HB/COPYING", "repo:external/Librelancer/obj/x64/blurgtext/FTHB-prefix/src/HB/src/ms-use/COPYING"]
+    },
+    {
+      "id": "hashmap-c", "name": "hashmap.c (Joshua J Baker)", "version": "in blurgtext and lancerdecode", "license": "MIT",
+      "files": ["x64/lancerdecode.dll", "x64/libblurgtext.dll"],
+      "copyright": ["Copyright 2020 Joshua J Baker. All rights reserved."],
+      "texts": ["repo:release/licenses/MIT.txt"],
+      "holders": ["Joshua J Baker", "Jean-Philippe Aumasson", "Daniel J. Bernstein"],
+      "note": "hashmap.c also holds the SipHash reference code (CC0, no notice necessary) and xxHash3 (the component xxhash)."
+    },
+    {
+      "id": "xxhash", "name": "xxHash3 (in hashmap.c)", "version": "in blurgtext and lancerdecode", "license": "BSD-2-Clause",
+      "files": ["x64/lancerdecode.dll", "x64/libblurgtext.dll"],
+      "copyright": ["xxHash Library", "Copyright (c) 2012-2021 Yann Collet", "All rights reserved."],
+      "texts": ["repo:release/licenses/BSD-2-Clause.txt"],
+      "holders": ["Yann Collet"]
+    },
+    {
+      "id": "libraqm", "name": "libraqm", "version": "0.10.1", "license": "MIT",
+      "files": ["x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/extern/blurgtext/deps/libraqm/COPYING"],
+      "holders": ["Information Technology Authority (ITA)", "Khaled Hosny"]
+    },
+    {
+      "id": "sheenbidi", "name": "SheenBidi", "version": "in blurgtext", "license": "Apache-2.0",
+      "files": ["x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/extern/blurgtext/deps/SheenBidi/LICENSE"],
+      "holders": ["Muhammad Tayyab Akram"]
+    },
+    {
+      "id": "libunibreak", "name": "libunibreak", "version": "in blurgtext", "license": "Zlib",
+      "files": ["x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/extern/blurgtext/deps/libunibreak/LICENCE"],
+      "holders": ["Wu Yongwei", "Andreas Röver", "Tom Hacohen", "Petr Filipsky"]
+    },
+    {
+      "id": "plutosvg", "name": "plutosvg and plutovg", "version": "in blurgtext", "license": "MIT",
+      "files": ["x64/libblurgtext.dll"],
+      "texts": ["repo:external/Librelancer/extern/blurgtext/deps/plutosvg/LICENSE", "repo:external/Librelancer/extern/blurgtext/deps/plutosvg/plutovg/LICENSE"],
+      "holders": ["Samuel Ugochukwu"],
+      "note": "The plutovg-ft files of plutovg come from FreeType. The FreeType component covers them."
+    },
+    {
+      "id": "stb-image", "name": "stb_image (in the FreeType PNG support of blurgtext)", "version": "in blurgtext", "license": "MIT or public domain",
+      "files": ["x64/libblurgtext.dll"],
+      "texts": ["repo:release/licenses/stb.txt"],
+      "holders": ["Sean Barrett"]
+    },
+    {
+      "id": "unicode-data", "name": "Unicode character data (in HarfBuzz, SheenBidi and libunibreak)", "version": "in the text libraries", "license": "Unicode-3.0",
+      "files": ["x64/cimgui.dll", "x64/libblurgtext.dll"],
+      "texts": ["repo:release/licenses/Unicode-data.txt"],
+      "holders": ["Unicode, Inc."]
+    },
+    {
+      "id": "crunch", "name": "crunch (crnlib)", "version": "submodule", "license": "Zlib",
+      "files": ["x64/crnlibglue.dll"],
+      "texts": ["repo:external/Librelancer/extern/crunch/license.txt"],
+      "holders": ["Richard Geldreich", "Rich Geldreich", "Binomial LLC", "Igor Pavlov"],
+      "note": "crnlib also contains the LZMA SDK, jpgd, jpge, miniz and stb_image parts, which are in the public domain."
+    },
+    {
+      "id": "lancerdecode", "name": "lancerdecode (with stb_vorbis, dr_flac and dr_mp3)", "version": "submodule", "license": "MIT, the decoders are public domain or MIT-0",
+      "files": ["x64/lancerdecode.dll"],
+      "texts": ["repo:external/Librelancer/extern/lancerdecode/LICENSE"],
+      "holders": ["lancerdecode contributors", "David Reid"]
+    },
+    {
+      "id": "nativefiledialog-extended", "name": "Native File Dialog Extended", "version": "1.1.1", "license": "Zlib",
+      "files": ["x64/lancerdialogs.dll"],
+      "texts": ["repo:external/Librelancer/extern/nativefiledialog-extended/LICENSE"]
+    },
+    {
+      "id": "lua32", "name": "Lua 3.2 (stripped and changed, in thorncompiler.dll)", "version": "3.2", "license": "Lua 3.2 license",
+      "files": ["x64/thorncompiler.dll"],
+      "texts": ["repo:external/Librelancer/extern/thorncompiler/lua/COPYRIGHT"],
+      "holders": ["TeCGraf, PUC-Rio"]
+    }
+  ]
+}

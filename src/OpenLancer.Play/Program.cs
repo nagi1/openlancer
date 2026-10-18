@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using LibreLancer;
+using OpenLancer.Data;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Runtime.Play;
@@ -39,7 +40,7 @@ internal static class Program
         PlayHost? host = null;
         // Null until the play gives a code. The engine can return before it runs the play (PlayExitCodes.NotStarted).
         int? exitCode = null;
-        AppHandler.Run(() =>
+        AppHandler.Run(Product.Name, () =>
         {
             try
             {

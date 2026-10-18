@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using LibreLancer;
+using OpenLancer.Data;
 
 namespace OpenLancer.Editor;
 
@@ -20,11 +21,9 @@ internal static class ProgramPaths
 
     /// <summary>
     /// The log file of the game process of Play. <see cref="AppHandler"/> writes it with the name of the program, in
-    /// the logs folder of Librelancer in the local application data.
+    /// the logs folder of the product.
     /// </summary>
-    public static string PlayLog => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppHandler.ProjectName, "logs",
-        PlayName + ".log.txt");
+    public static string PlayLog => Path.Combine(AppHandler.LogFolder(Product.Name), PlayName + ".log.txt");
 
     private static string NextToEditor(string name) =>
         Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? name + ".exe" : name);

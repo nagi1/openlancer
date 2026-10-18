@@ -61,7 +61,7 @@ CODE_EXTENSIONS = NATIVE_EXTENSIONS | {".cs"}
 MARKDOWN_FILES = {
     "README.md", "CONTRIBUTING.md", "AGENTS.md", "CLAUDE.md", "ROADMAP.md", ".github/pull_request_template.md",
     "data-manifest/README.md", "docs/CUTSCENES.md", "docs/GAME_LINK.md", "docs/MOD_FORMAT.md", "docs/PLAY.md",
-    "docs/UPSTREAM.md", "docs/VENDORED.md",
+    "docs/UPSTREAM.md", "docs/VENDORED.md", "release/notes/v0.1.0-preview.md",
 }
 # Before and after an automatic name: no letter and no digit. "_" is allowed, as in PTR_FUN_005e1c40.
 NO_ALNUM_BEFORE = r"(?<![0-9A-Za-z])"
@@ -153,11 +153,18 @@ def repo_files():
     return [n for n in names if not n.startswith(SUBMODULE) and os.path.isfile(os.path.join(REPO, n))]
 
 
+def manifest_hashes(paths):
+    """The SHA-256 hashes of the files in retail manifests: the third column of each line. tools/release_check.py uses
+    it too, so both checks read the manifests the same way."""
+    hashes = set()
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            hashes.update(line.rstrip("\n").split("\t")[2] for line in f if line.strip())
+    return hashes
+
+
 def retail_hashes():
-    if not os.path.isfile(MANIFEST):
-        return set()
-    with open(MANIFEST, encoding="utf-8") as f:
-        return {line.rstrip("\n").split("\t")[2] for line in f if line.strip()}
+    return manifest_hashes([MANIFEST]) if os.path.isfile(MANIFEST) else set()
 
 
 def mod_folders(names):

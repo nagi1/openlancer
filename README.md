@@ -24,6 +24,7 @@ The repo is one folder in a larger workspace. The game data stays outside the re
     mods\  profiles\  out\  fonts\
   OpenLancer\         this repo
     external\Librelancer\   submodule (see docs/UPSTREAM.md)
+    release\                the texts and the license data of a binary release (tools/release.ps1)
     tests\
     tools\
 ```

@@ -1,0 +1,5 @@
+# Reviewed false hits of tools/release_check.py. One entry on each line:
+# <check><TAB><path glob><TAB><match><TAB><reason>
+# check c: the path glob is a file of the release folder, and <match> is the label of the text (path, user profile,
+# user name, home, git e-mail or word). Check i: the path glob is a source file of the clone, and <match> is a part of
+# the copyright line. The owner approves each new entry. The stage check fails on an entry that allows nothing.

@@ -1,5 +1,6 @@
 using System;
 using LibreLancer;
+using OpenLancer.Data;
 
 namespace OpenLancer.Editor;
 
@@ -25,7 +26,7 @@ internal static class Program
         }
 
         EditorWindow? window = null;
-        AppHandler.Run(() =>
+        AppHandler.Run(Product.Name, () =>
         {
             window = new EditorWindow(options);
             window.Run();

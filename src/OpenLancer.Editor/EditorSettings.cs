@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OpenLancer.Data;
 using OpenLancer.Data.Mods;
 using OpenLancer.Runtime.Scene;
 
@@ -43,7 +44,7 @@ internal sealed class EditorSettings
     };
 
     private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenLancer", "editor.json");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Product.Name, "editor.json");
 
     // The default panel sizes, in unscaled points.
     public const float DefaultHierarchyWidth = 280;

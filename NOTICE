@@ -34,7 +34,7 @@ Librelancer includes these projects under external/Librelancer/extern. Each keep
 
 LibreLancer.ImUI embeds these fonts. The OpenLancer editor uses them for its text and icons:
   fa-solid-900.ttf           Font Awesome Free 5.15.4 (solid icons), SIL Open Font License 1.1
-  Roboto-Regular.ttf         Apache License 2.0
+  Roboto-Regular.ttf         Roboto 3.01, SIL Open Font License 1.1
   DroidSansFallbackFull.ttf  Apache License 2.0
 
 The Librelancer build copies native libraries next to the programs. external/Librelancer/Credits.txt has their notices:
@@ -42,3 +42,10 @@ The Librelancer build copies native libraries next to the programs. external/Lib
   OpenAL Soft (Windows)      GNU LGPL 2
 
 Files that OpenLancer copies from Librelancer keep their MIT headers. docs/VENDORED.md lists them.
+
+Binary releases
+---------------
+A binary release (the zip on the Releases page) also contains the .NET runtime, the NuGet packages of the programs
+and the engine natives. Its NOTICE.txt lists each component, its version and its license, and its folder "licenses"
+holds each license text. tools/release.ps1 makes them from release/third-party.json and release/licenses/.
+A binary release contains no game files.
