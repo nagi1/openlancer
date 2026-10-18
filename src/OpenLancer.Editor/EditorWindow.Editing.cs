@@ -11,6 +11,7 @@ using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Export;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 
@@ -22,6 +23,7 @@ internal sealed partial class EditorWindow : IClosePromptHost
 {
     private readonly NewModDialog newModDialog = new();
     private readonly NewFromTemplateDialog templateDialog = new();
+    private ExportDialog? exportDialog;
 
     // The close prompt has its own dialog. When another dialog replaces it, its cancel action still runs, so the next
     // close request asks again.
@@ -251,6 +253,16 @@ internal sealed partial class EditorWindow : IClosePromptHost
             Edits.OfferRecovery();
         }
 
+        ImGui.Separator();
+        if (Theme.IconMenuItem(EditorIcons.BoxOpen, "Export mod...", edits.ActiveMod != null && !IsEditing))
+        {
+            ExportMod(session);
+        }
+
+        ImGui.SetItemTooltip(edits.ActiveMod == null
+            ? "Pick an active mod. The export makes the packages of the active mod."
+            : "Make the packages of the active mod for HD Edition, Freelancer 1.1 and OpenLancer.");
+
         if (session.RepoRoot != null)
         {
             var allowed = session.RepoEditsAllowed;
@@ -317,9 +329,42 @@ internal sealed partial class EditorWindow : IClosePromptHost
         });
     }
 
+    /// <summary>
+    /// Opens the Export dialog for the active mod (milestone M11). The export reads the saved files, so a dialog asks to
+    /// save unsaved edits first.
+    /// </summary>
+    private void ExportMod(EditorSession session)
+    {
+        if (session.Edits.ActiveMod is not { } mod)
+        {
+            return;
+        }
+
+        var profilePath = session.Profile.FilePath;
+        void Show() => (exportDialog ??= new ExportDialog(this)).Show(mod, profilePath, LinkedGameReports());
+        if (!session.Edits.IsDirty)
+        {
+            Show();
+            return;
+        }
+
+        Choice.Show("Export mod", "The export uses the saved files. Save the changes first?",
+        [
+            new Choice("Save", () =>
+            {
+                if (Edits.Save().Saved && Session == session && !session.Edits.IsDirty)
+                {
+                    Show();
+                }
+            }),
+            new Choice("Cancel", () => { }),
+        ]);
+    }
+
     private void DrawDialogs()
     {
         Choice.Draw();
+        exportDialog?.Draw();
         newModDialog.Draw();
         newProfileDialog.Draw();
         templateDialog.Draw();
@@ -329,7 +374,7 @@ internal sealed partial class EditorWindow : IClosePromptHost
 
     /// <summary>True while a dialog of the editor is open.</summary>
     private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || templateDialog.IsOpen ||
-                               SceneEdits.IsOpen || closeDialog.IsOpen;
+                               SceneEdits.IsOpen || closeDialog.IsOpen || exportDialog?.IsOpen == true;
 
     /// <summary>
     /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5 and Shift+F5. They

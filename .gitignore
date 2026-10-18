@@ -11,6 +11,9 @@ TestResults/
 # Local output. Dumps, baselines and saves come from retail data.
 out/
 
+# The packages of the export hold merged game files (milestone M11). Never commit them.
+exports/
+
 # The save folder that the editor makes in a mod: staged files, the save journal and the recovery file.
 .olsave/
 

@@ -47,6 +47,8 @@ internal static class BinaryValueTypes
     /// stays, for example <c>TRUE</c>. Other old text, for example <c>yes</c>, becomes <c>true</c> or
     /// <c>false</c>.</item>
     /// <item>A boolean that replaces no value becomes the string <c>true</c> or <c>false</c>.</item>
+    /// <item>A boolean cannot replace an Int32 or a float (milestone M11). The retail game reads the text <c>true</c>
+    /// as 0 in a number key, and a binary file has no boolean type.</item>
     /// <item>An Int32 that replaces a float becomes a float when the float holds it exactly
     /// (<see cref="MaxExactFloatInteger"/>). A larger Int32, for example a hash in a float column, stays an Int32.</item>
     /// </list>
@@ -57,7 +59,8 @@ internal static class BinaryValueTypes
     /// <paramref name="index"/> replaces the value at the same position.</param>
     /// <param name="copy">The entry that gets the value, or null.</param>
     /// <returns>The value to store, or null when the file cannot store the value exactly. That is a large integer
-    /// outside the hash range that replaces an Int32, or a large integer that replaces no Int32 and no float.</returns>
+    /// outside the hash range that replaces an Int32, a large integer that replaces no Int32 and no float, or a boolean
+    /// that replaces a number.</returns>
     public static ValueBase? Store(Entry line, int index, Entry? replaced, Entry? copy)
     {
         var value = line[index];
@@ -79,12 +82,17 @@ internal static class BinaryValueTypes
                 return keep ? new StringValue(text.ToString()) { Entry = copy, Line = value.Line } : Text(truth, copy);
             case (BooleanValue truth, null):
                 return Text(truth, copy);
+            case (BooleanValue, Int32Value or SingleValue):
+                return null;
             case (Int32Value integer, SingleValue) when (int)integer is >= -MaxExactFloatInteger and <= MaxExactFloatInteger:
                 return new SingleValue((int)integer, null) { Entry = copy, Line = value.Line };
             default:
                 return value;
         }
     }
+
+    /// <summary>The error of a boolean in place of a number (decision D333). The text writes the key of the line.</summary>
+    public static string BooleanInNumber(string key) => $"{key}: write 1 or 0. The game reads true as 0 in a number key.";
 
     private static StringValue Text(BooleanValue truth, Entry? copy) =>
         new((bool)truth ? "true" : "false") { Entry = copy, Line = truth.Line };

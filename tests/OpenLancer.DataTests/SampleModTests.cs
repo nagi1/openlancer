@@ -302,6 +302,25 @@ public sealed class SampleModTests(ITestOutputHelper output)
         Assert.Contains("light fighter from the OpenLancer sample mod", text.GetXmlResource(ship.IdsInfo));
     }
 
+    /// <summary>The sample changes the cityscape of Manhattan, where a new game starts, and two late story scenes. So
+    /// each check of the first real-game test of milestone M11 is at Manhattan.</summary>
+    [Fact]
+    public void TheSampleChangesTheManhattanCityscape()
+    {
+        var overlay = BuildSample(GameDataPaths.RequireBase());
+
+        Assert.Equal(
+            [
+                @"DATA\Scripts\Bases\li_01_cityscape_hardpoint_01.thn",
+                @"DATA\Scripts\Story\s052x_nrml_Akira_bw_02_Cityscape_01.thn",
+                @"DATA\Scripts\Story\s062x_nrml_vonclaussn_pl_06_Pad2_01.thn",
+            ],
+            overlay.CutscenePaths.Order(System.StringComparer.OrdinalIgnoreCase), VfsPath.Comparer);
+        var text = System.Text.Encoding.ASCII.GetString(overlay.CreateFileSystem()
+            .ReadAllBytes(@"DATA\SCRIPTS\BASES\li_01_cityscape_hardpoint_01.thn"));
+        Assert.Contains("pos = { 59.658787, 86.31464, 97.57275 }", text);
+    }
+
     private ModOverlay BuildSample(string baseFolder)
     {
         var overlay = ModOverlay.Build(baseFolder, [Mod.Load(GameDataPaths.SampleMod(SampleId))],

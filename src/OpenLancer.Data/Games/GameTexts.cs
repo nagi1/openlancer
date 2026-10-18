@@ -79,8 +79,11 @@ public static class GameTexts
 
     public const string NoCodeFiles = "This copy has no code files. So OpenLancer cannot tell 1.0 from 1.1.";
 
-    public const string HdeNotCompared = "OpenLancer has no file list of HD Edition 0.7.1 yet. OpenLancer did not " +
+    public const string HdeNotCompared = "OpenLancer has no file list of this HD Edition version. OpenLancer did not " +
                                          "compare the data files.";
+
+    /// <summary>The text after <see cref="ChangedData"/> for HD Edition (milestone M11).</summary>
+    public const string HdeInstallerOptions = "The installer options of HD Edition change some of these files.";
 
     public static string Plugins(string names) => $"Plugins in dacom.ini: {names}.";
 

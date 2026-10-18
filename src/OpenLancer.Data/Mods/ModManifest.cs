@@ -47,6 +47,10 @@ public sealed partial record ModManifest(
     /// <summary>The games that the mod is for, in the order of the file (see <see cref="ModTargets"/>).</summary>
     public IReadOnlyList<string> Targets { get; init; } = ModTargets.All;
 
+    /// <summary>The format version of the file: 1 or <see cref="CurrentFormatVersion"/>. The directive
+    /// <c>ol.append</c> of a patch of <c>EXE\freelancer.ini</c> needs version 2.</summary>
+    public int FormatVersion { get; init; } = CurrentFormatVersion;
+
     /// <exception cref="ModLoadException">The file is missing or not valid.</exception>
     public static ModManifest Load(string modFolder)
     {
@@ -84,6 +88,7 @@ public sealed partial record ModManifest(
         {
             Tier = tier,
             Targets = targets,
+            FormatVersion = json.FormatVersion,
         };
     }
 

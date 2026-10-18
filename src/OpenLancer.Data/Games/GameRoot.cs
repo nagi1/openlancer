@@ -70,6 +70,29 @@ internal static class GameRoot
     /// <summary>True when the folder has <c>EXE\freelancer.ini</c>, in any letter case.</summary>
     public static bool IsRoot(string folder) => Directory.Exists(folder) && HasFile(folder, MarkerFile);
 
+    /// <summary>
+    /// The game root that holds a path: the path itself, or the nearest folder above it that is a game root. Null when
+    /// no such folder exists. OpenLancer uses it to refuse each write into a game folder (milestone M11). The path does
+    /// not have to exist.
+    /// </summary>
+    public static string? Containing(string path)
+    {
+        for (var folder = Path.GetFullPath(path); folder != null; folder = Path.GetDirectoryName(folder))
+        {
+            try
+            {
+                if (IsRoot(folder))
+                    return folder;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // OpenLancer cannot read this folder, so it cannot find a game root here. The check goes on with the
+                // folder above it.
+            }
+        }
+        return null;
+    }
+
     /// <summary>True when the folder has the file, in any letter case.</summary>
     public static bool HasFile(string folder, string relative) => Resolve(folder, relative) is { } path && File.Exists(path);
 

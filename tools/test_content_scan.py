@@ -252,6 +252,21 @@ class ContentRuleTests(unittest.TestCase):
         self.assertIsNone(self.problem("x.bin", binary, {sha256(b"a\n\x00b\n")}, allow))
         self.assertEqual("identical to a retail file: x.bin", self.problem("x.bin", binary, {sha256(binary)}, allow))
 
+    def test_the_hash_rule_reads_each_manifest(self):
+        folder = os.path.join(self.folder.name, "manifests")
+        os.makedirs(folder)
+        for build, data in (("vanilla-1.0", b"retail\n"), ("hde-0.7.1", b"hd edition\n")):
+            with open(os.path.join(folder, build + ".tsv"), "w", encoding="utf-8") as f:
+                f.write(f"data/{build}.ini\t{len(data)}\t{sha256(data)}\n")
+        with open(os.path.join(folder, "README.md"), "w", encoding="utf-8") as f:
+            f.write("not a manifest\n")
+        hashes = content_scan.retail_hashes(folder)
+        self.assertEqual({sha256(b"retail\n"), sha256(b"hd edition\n")}, hashes)
+        self.assertEqual("identical to a retail file: mods/m/files/x.ini",
+                         self.problem("mods/m/files/x.ini", b"hd edition\r\n", hashes))
+        self.assertEqual(2, len(content_scan.manifests(folder)))
+        self.assertIn(os.path.join(content_scan.MANIFEST_FOLDER, "hde-0.7.1.tsv"), content_scan.manifests())
+
 
 if __name__ == "__main__":
     unittest.main()

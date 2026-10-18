@@ -6,6 +6,7 @@ using System.Text;
 using LibreLancer.Data.Ini;
 using LibreLancer.Data.IO;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Export;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
@@ -21,7 +22,10 @@ namespace OpenLancer.Data.Overlay;
 /// For each changed path, the mods apply in load order: a mod's whole file replaces the content so far, and
 /// a mod's patch changes it. An INI patch changes the sections of an INI file, and a THN patch changes the tree of a
 /// cutscene script (see <see cref="ThnPatch"/>). Text from all mods goes into one generated resource DLL, which the
-/// overlay adds to the <c>[Resources]</c> section of <c>EXE\freelancer.ini</c>.
+/// overlay adds to the <c>[Resources]</c> section of <c>EXE\freelancer.ini</c>. A patch of <c>EXE\freelancer.ini</c>
+/// can only add <c>[Data]</c> lines (<c>ol.append</c>, milestone M11).
+/// <para>The <see cref="OverlayOptions"/> give the rules of the text DLL. The export and Play in the game use the retail
+/// rules.</para>
 /// </remarks>
 public sealed class ModOverlay
 {
@@ -34,9 +38,12 @@ public sealed class ModOverlay
     /// <summary>The merged document of each path that a mod patches, or null when they are not kept.</summary>
     private readonly IReadOnlyDictionary<string, IniDocument>? documents;
 
-    private ModOverlay(IReadOnlyList<Mod> mods, OverlayLayer layer, IReadOnlyList<Diagnostic> diagnostics,
-        StringIds stringIds, PatchLedger ledger, IReadOnlyDictionary<string, IniDocument>? documents)
+    private ModOverlay(GameBase gameBase, OverlayOptions options, IReadOnlyList<Mod> mods, OverlayLayer layer,
+        IReadOnlyList<Diagnostic> diagnostics, StringIds stringIds, PatchLedger ledger,
+        IReadOnlyDictionary<string, IniDocument>? documents)
     {
+        Base = gameBase;
+        Options = options;
         Mods = mods;
         this.layer = layer;
         Diagnostics = diagnostics;
@@ -47,6 +54,11 @@ public sealed class ModOverlay
 
     /// <summary>The full path of the base folder.</summary>
     public string BaseFolder => layer.BaseFolder;
+
+    /// <summary>The base files of the merge: the base folder and its layout.</summary>
+    public GameBase Base { get; }
+
+    public OverlayOptions Options { get; }
 
     /// <summary>The mods in load order.</summary>
     public IReadOnlyList<Mod> Mods { get; }
@@ -75,7 +87,7 @@ public sealed class ModOverlay
     /// Merged files report no backing file. A whole-file override reports its file in the mod, and an unchanged
     /// file reports its file in the base folder, which only the read-only attribute protects.
     /// </remarks>
-    public FileSystem CreateFileSystem() => new(new SysFolderQuickInit(BaseFolder), layer);
+    public FileSystem CreateFileSystem() => new(Base.OpenProvider(), layer);
 
     /// <summary>
     /// Makes a file system of <see cref="CreateFileSystem"/> show the files of this overlay. The base folder provider
@@ -106,15 +118,23 @@ public sealed class ModOverlay
     /// VM. Without it, each THN patch is an error.</param>
     public static ModOverlay Build(string baseFolder, IReadOnlyList<Mod> modsInOrder, IStringResourceWriter stringWriter,
         IThnEvaluator? thn) =>
-        Build(baseFolder, modsInOrder, stringWriter, thn, keepDocuments: false);
+        Build(GameBase.Standard(baseFolder), modsInOrder, stringWriter, thn, OverlayOptions.Default);
 
     /// <param name="keepDocuments">True to keep the merged document of each patched path for
     /// <see cref="Document"/>.</param>
     internal static ModOverlay Build(string baseFolder, IReadOnlyList<Mod> modsInOrder,
-        IStringResourceWriter stringWriter, IThnEvaluator? thn, bool keepDocuments)
+        IStringResourceWriter stringWriter, IThnEvaluator? thn, bool keepDocuments) =>
+        Build(GameBase.Standard(baseFolder), modsInOrder, stringWriter, thn,
+            OverlayOptions.Default with { KeepDocuments = keepDocuments });
+
+    /// <summary>Merges the mods on the files of a game, with the rules of the options.</summary>
+    /// <param name="stringWriter">Writes the text DLL of the mods.</param>
+    /// <param name="thn">Reads the cutscene scripts and their patches, or null when the caller cannot run the engine
+    /// VM. Without it, each THN patch is an error.</param>
+    public static ModOverlay Build(GameBase gameBase, IReadOnlyList<Mod> modsInOrder, IStringResourceWriter stringWriter,
+        IThnEvaluator? thn, OverlayOptions options)
     {
-        baseFolder = Path.GetFullPath(baseFolder);
-        var builder = new Builder(baseFolder, modsInOrder, thn, keepDocuments);
+        var builder = new Builder(gameBase with { Root = Path.GetFullPath(gameBase.Root) }, modsInOrder, thn, options);
         return builder.Run(stringWriter);
     }
 
@@ -124,7 +144,7 @@ public sealed class ModOverlay
     /// </summary>
     internal static int StringsDllIndex(string baseFolder, IReadOnlyList<Mod> modsInOrder)
     {
-        var builder = new Builder(Path.GetFullPath(baseFolder), modsInOrder, thn: null, keepDocuments: false);
+        var builder = new Builder(GameBase.Standard(baseFolder), modsInOrder, thn: null, OverlayOptions.Default);
         builder.MergeFreelancerIni();
         return builder.DllIndex();
     }
@@ -150,14 +170,22 @@ public sealed class ModOverlay
         return fs.FileExists(path) ? IniDocument.Parse(path, fs.ReadAllBytes(path)) : null;
     }
 
-    private sealed class Builder(string baseFolder, IReadOnlyList<Mod> mods, IThnEvaluator? thn, bool keepDocuments)
+    /// <summary>The merged document of a path that the merge kept (see <see cref="OverlayOptions.KeepDocuments"/>), or
+    /// null. The caller must not change it.</summary>
+    internal IniDocument? MergedDocument(string path) =>
+        documents != null && documents.TryGetValue(path, out var document) ? document : null;
+
+    private sealed class Builder(GameBase gameBase, IReadOnlyList<Mod> mods, IThnEvaluator? thn, OverlayOptions options)
     {
-        private readonly FileSystem baseFs = FileSystem.FromPath(baseFolder);
+        private readonly FileSystem baseFs = gameBase.OpenFileSystem();
         private readonly List<Diagnostic> diagnostics = [];
         private readonly PatchLedger ledger = new();
         private readonly ThnLedger thnLedger = new();
         private readonly Dictionary<string, OverlayFile> results = new(VfsPath.Comparer);
-        private readonly Dictionary<string, IniDocument>? documents = keepDocuments ? new(VfsPath.Comparer) : null;
+        private readonly Dictionary<string, IniDocument>? documents =
+            options.KeepDocuments ? new(VfsPath.Comparer) : null;
+
+        private string StringsDllPath => options.StringsDllPath;
 
         public ModOverlay Run(IStringResourceWriter stringWriter)
         {
@@ -188,8 +216,8 @@ public sealed class ModOverlay
                     stringWriter.Write(stringIds.Strings, stringIds.Infocards));
             }
 
-            return new ModOverlay(mods, new OverlayLayer(baseFolder, results.Values), diagnostics, stringIds, ledger,
-                documents);
+            return new ModOverlay(gameBase, options, mods, new OverlayLayer(gameBase.Root, results.Values), diagnostics,
+                stringIds, ledger, documents);
         }
 
         /// <summary>
@@ -218,18 +246,13 @@ public sealed class ModOverlay
                 }
                 if (!mod.Patches.TryGetValue(path, out var patchFile))
                     continue;
-                if (VfsPath.Comparer.Equals(path, FreelancerIniPath))
+                var isFreelancerIni = VfsPath.Comparer.Equals(path, FreelancerIniPath);
+                if (isFreelancerIni && mod.Manifest.FormatVersion < 2)
                 {
                     diagnostics.Add(Diagnostic.Error(patchFile,
                         $"{FreelancerIniPath} cannot be patched in format v1. Use files/{FreelancerIniPath.Replace('\\', '/')}."));
                     continue;
                 }
-                if (!producers.Contains(mod.Id))
-                    producers.Add(mod.Id);
-
-                document ??= Load(path, current, patchFile);
-                if (document == null)
-                    continue;
 
                 IReadOnlyList<Section> patch;
                 try
@@ -241,8 +264,27 @@ public sealed class ModOverlay
                     diagnostics.Add(Diagnostic.Error(patchFile, e.Message));
                     continue;
                 }
-                IniPatcher.Apply(document, patch,
-                    new PatchContext(mod.Id, patchFile, path, stringIds, ledger, diagnostics));
+                if (isFreelancerIni && !IniPatcher.IsDataAppend(patch))
+                {
+                    diagnostics.Add(Diagnostic.Error(patchFile,
+                        $"A patch of {FreelancerIniPath} can only add [Data] lines, in [Data] sections with " +
+                        $"{IniPatcher.DirectiveAppend} = true. For other changes, use " +
+                        $"files/{FreelancerIniPath.Replace('\\', '/')}."));
+                    continue;
+                }
+                if (!producers.Contains(mod.Id))
+                    producers.Add(mod.Id);
+
+                document ??= Load(path, current, patchFile);
+                if (document == null)
+                    continue;
+
+                var context = new PatchContext(mod.Id, patchFile, path, stringIds, ledger, diagnostics,
+                    options.KeepPlaceholders);
+                if (isFreelancerIni)
+                    IniPatcher.ApplyDataAppend(document, patch, context, DataFileExists);
+                else
+                    IniPatcher.Apply(document, patch, context);
             }
 
             if (document != null)
@@ -386,7 +428,8 @@ public sealed class ModOverlay
             }
             if (!IniPatcher.HasPlaceholders(document))
                 return null;
-            IniPatcher.ResolvePlaceholders(document, new PatchContext(mod.Id, file, path, stringIds, ledger, diagnostics));
+            IniPatcher.ResolvePlaceholders(document,
+                new PatchContext(mod.Id, file, path, stringIds, ledger, diagnostics, options.KeepPlaceholders));
             return document;
         }
 
@@ -417,10 +460,27 @@ public sealed class ModOverlay
         /// <summary>The index of the generated text DLL. Call it after <see cref="MergeFreelancerIni"/>.</summary>
         public int DllIndex()
         {
-            var resources = LastResources(LoadFreelancerIni());
+            var document = LoadFreelancerIni();
+            // The retail game loads resources.dll as index 0. Then each DLL line of each [Resources] section takes the
+            // next index, also when its file does not load.
+            if (options.DllIndexRule == DllIndexRule.Retail)
+                return 1 + (document?.Sections.Where(IsResources).Sum(s => s.Count(IsDll)) ?? 0);
+            var resources = LastResources(document);
             // Librelancer loads EXE\resources.dll first when it exists, then each listed DLL that exists.
             return (FileExists(@"EXE\resources.dll") ? 1 : 0) +
                    (resources?.Count(e => IsDll(e) && e.Count > 0 && FileExists(@"EXE\" + e[0])) ?? 0);
+        }
+
+        /// <summary>True when the merged view has the file of a <c>[Data]</c> line: a path relative to the data folder of
+        /// the merged <c>freelancer.ini</c>.</summary>
+        private bool DataFileExists(string relative)
+        {
+            var dataPath = LoadFreelancerIni()?.Sections
+                .Where(s => s.Name.Equals("Freelancer", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(s => s)
+                .FirstOrDefault(e => e.Name.Equals("data path", StringComparison.OrdinalIgnoreCase) && e.Count > 0)?[0]
+                .ToString() ?? @"..\DATA";
+            return FileExists(@"EXE\" + dataPath + @"\" + relative);
         }
 
         private StringIds AllocateStrings()
@@ -446,15 +506,50 @@ public sealed class ModOverlay
                 diagnostics.Add(Diagnostic.Error(FreelancerIniPath, "No [Resources] section for the generated text DLL."));
                 return;
             }
-            var entry = new Entry(resources, "DLL", 1);
-            entry.Add(new StringValue(StringsDllName) { Entry = entry });
-            resources.Add(entry);
+            if (options.DllIndexRule == DllIndexRule.Retail)
+                WarnMissingDlls(document);
+            // Librelancer adds the line at the end of the section. The retail rule puts it after the last DLL line. The
+            // merge puts a copy of the section into the list (see IniPatcher).
+            var after = options.DllIndexRule == DllIndexRule.Retail ? resources.ToList().FindLastIndex(IsDll) : -1;
+            if (after < 0)
+                after = resources.Count - 1;
+            var copy = new Section(resources.Name, resources.Count + 1) { File = resources.File, Line = resources.Line };
+            var entry = new Entry(copy, "DLL", 1);
+            entry.Add(new StringValue(options.StringsDllName) { Entry = entry });
+            if (after < 0)
+                copy.Add(entry);
+            for (var i = 0; i < resources.Count; i++)
+            {
+                copy.Add(IniPatcher.Copy(copy, resources[i], null, false, null));
+                if (i == after)
+                    copy.Add(entry);
+            }
+            document.Sections[document.Sections.LastIndexOf(resources)] = copy;
             results[FreelancerIniPath] = OverlayFile.Generated(FreelancerIniPath, document.ToBytes());
+            if (documents != null)
+                documents[FreelancerIniPath] = document;
         }
 
-        /// <summary>Parses freelancer.ini as the mods leave it, or the base copy when no mod changes it.</summary>
+        /// <summary>Warns about each <c>DLL</c> line of <c>[Resources]</c> whose file the game does not have. The retail
+        /// game keeps the index of such a line.</summary>
+        private void WarnMissingDlls(IniDocument document)
+        {
+            foreach (var line in document.Sections.Where(IsResources).SelectMany(s => s).Where(IsDll))
+            {
+                var name = line.Count > 0 ? line[0].ToString().Trim() : "";
+                if (name.Length > 0 && !FileExists(@"EXE\" + name))
+                    diagnostics.Add(Diagnostic.Warning(FreelancerIniPath,
+                        $"freelancer.ini names {name}, and the EXE folder does not contain it. The game keeps its index, " +
+                        "so the text ids of the mod stay correct."));
+            }
+        }
+
+        /// <summary>The merged freelancer.ini: a copy of the kept document, else a parse of the merged file or of the base
+        /// file. Null when the game has no such file.</summary>
         private IniDocument? LoadFreelancerIni()
         {
+            if (documents != null && documents.TryGetValue(FreelancerIniPath, out var kept))
+                return kept.Clone();
             if (results.TryGetValue(FreelancerIniPath, out var merged))
                 return IniDocument.Parse(FreelancerIniPath, merged.ReadAllBytes());
             return baseFs.FileExists(FreelancerIniPath)
@@ -470,8 +565,9 @@ public sealed class ModOverlay
                                       mods.Any(m => m.Files.ContainsKey(normal)));
         }
 
-        private static Section? LastResources(IniDocument? document) =>
-            document?.Sections.LastOrDefault(s => s.Name.Equals("Resources", StringComparison.OrdinalIgnoreCase));
+        private static Section? LastResources(IniDocument? document) => document?.Sections.LastOrDefault(IsResources);
+
+        private static bool IsResources(Section s) => s.Name.Equals("Resources", StringComparison.OrdinalIgnoreCase);
 
         private static bool IsDll(Entry e) => e.Name.Equals("DLL", StringComparison.OrdinalIgnoreCase);
     }

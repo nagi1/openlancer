@@ -29,6 +29,8 @@ When you select a folder inside the game, for example `EXE` or `DATA`, the edito
 
 The editor also compares the INI files of the game with the file list of its version. The Game link window shows "INI files: not changed" or the number of changed files. OpenLancer uses the files in the game folder, also when they are changed.
 
+OpenLancer has the file lists of the English retail 1.0 disc and of HD Edition 0.7.1. The options of the HD Edition installer change some files, for example `EXE\freelancer.ini` and `EXE\dacom.ini`. So an HD Edition install with other options shows changed files. The export of mods warns when the base of a target has changed files (see "Export" in [MOD_FORMAT.md](MOD_FORMAT.md)).
+
 A folder without `Freelancer.exe` contains game data only. You can make mods with it.
 
 ## Where your files go
@@ -77,10 +79,12 @@ When the new folder contains the same version of the game, the editor changes th
 ## oltool game
 
 ```
-oltool game <folder> [--json] [--hashes]
+oltool game <folder> [--json] [--hashes] [--write-manifest <file>]
 ```
 
 The command prints the same check as the editor. `--json` writes the full report with the evidence as JSON. `--hashes` adds the file list lines of the code files and of `Controls.dll`, `HDEResources.dll` and `jflp.dll`. The lines contain paths, sizes and hashes only, no game content.
+
+`--write-manifest` writes the file list of the whole game folder to a file outside each game folder. The file has one line for each file, in the format of `data-manifest`. The list leaves out the uninstaller of the installer (`unins*` in the root, in any letter case), the `SAVE` folder and the `*.log` files. The command refuses an OpenLancer play copy.
 
 The exit code is 0 for a game, 1 for a folder without a game, and 2 for a folder that does not exist or a wrong command line.
 

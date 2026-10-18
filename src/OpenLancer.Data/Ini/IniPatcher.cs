@@ -24,6 +24,8 @@ namespace OpenLancer.Data.Ini;
 /// Child sections that directly follow a new parent section in the patch belong to that parent.</item>
 /// <item><c>ol.rename = &lt;new key&gt;</c> gives the target a new key. The section keeps its place, and the other
 /// lines of the patch section change it.</item>
+/// <item><c>ol.append = true</c> is only for a <c>[Data]</c> section of a patch of <c>EXE\freelancer.ini</c> (see
+/// <see cref="ApplyDataAppend"/>).</item>
 /// </list>
 /// Directives use the <c>ol.</c> prefix because the upstream text parser drops lines that start with <c>@</c>.
 /// String values <c>$str:key</c> and <c>$ifc:key</c> become the resource ids of the mod's text.
@@ -39,6 +41,10 @@ internal static class IniPatcher
     internal const string DirectiveRemove = "ol.remove";
     internal const string DirectiveParent = "ol.parent";
     internal const string DirectiveRename = "ol.rename";
+    internal const string DirectiveAppend = "ol.append";
+
+    /// <summary>The section of <c>freelancer.ini</c> that lists the data files.</summary>
+    private const string DataSection = "Data";
 
     public static void Apply(IniDocument target, IReadOnlyList<Section> patch, PatchContext context)
     {
@@ -113,11 +119,88 @@ internal static class IniPatcher
     internal static string? RenameOf(Section patch) =>
         patch.Where(e => Is(e, DirectiveRename)).ToList() is [{ Count: 1 } line] ? line[0].ToString() : null;
 
+    /// <summary>
+    /// True when each section of a patch is a <c>[Data]</c> section with <c>ol.append = true</c> and no other directive.
+    /// Only such a patch can change <c>EXE\freelancer.ini</c>.
+    /// </summary>
+    public static bool IsDataAppend(IReadOnlyList<Section> patch) =>
+        patch.Count > 0 && patch.All(s =>
+            s.Name.Equals(DataSection, StringComparison.OrdinalIgnoreCase) &&
+            s.Any(e => Is(e, DirectiveAppend) && IsTrue(e)) &&
+            s.All(e => Is(e, DirectiveAppend) || !e.Name.StartsWith(DirectivePrefix, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// Adds the lines of the <c>[Data]</c> sections of a patch of <c>EXE\freelancer.ini</c> (see
+    /// <see cref="IsDataAppend"/>). The game reads the <c>[Data]</c> lines in order, and the order is the load order.
+    /// So each line goes after the last line of the same key. When the file has no line of the key, the line goes at the
+    /// end of the last <c>[Data]</c> section.
+    /// </summary>
+    /// <param name="dataFileExists">True when the merged view has a file, by its path relative to the data
+    /// folder.</param>
+    public static void ApplyDataAppend(IniDocument target, IReadOnlyList<Section> patch, PatchContext context,
+        Func<string, bool> dataFileExists)
+    {
+        foreach (var line in patch.SelectMany(s => s).Where(e => !Is(e, DirectiveAppend)))
+        {
+            var label = $"[{DataSection}] {line.Name}";
+            if (line.Count != 1 || line[0].ToString().Trim() is not { Length: > 0 } value)
+            {
+                context.Error($"{label}: a line of [{DataSection}] needs one value, the path of a data file.");
+                continue;
+            }
+            var sections = target.Sections.Where(s => s.Name.Equals(DataSection, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (sections.Count == 0)
+            {
+                context.Error($"{label} = {value}: {target.Path} has no [{DataSection}] section.");
+                continue;
+            }
+            if (sections.SelectMany(s => s).Any(e => Is(e, line.Name) && e.Count > 0 && SamePath(e[0].ToString(), value)))
+            {
+                context.Error($"{label} = {value}: [{DataSection}] already has this line. Remove it from the patch.");
+                continue;
+            }
+            if (!dataFileExists(value))
+            {
+                context.Error($"{label} = {value}: the data folder of the game and the mods has no such file. Add the " +
+                              "file to the files folder of a mod.");
+                continue;
+            }
+
+            // After the last line of the key, else at the end of the last [Data] section.
+            var section = sections.LastOrDefault(s => s.Any(e => Is(e, line.Name))) ?? sections[^1];
+            var after = section.ToList().FindLastIndex(e => Is(e, line.Name));
+            if (after < 0)
+                after = section.Count - 1;
+            var copy = new Section(section.Name, section.Count + 1) { File = section.File, Line = section.Line };
+            if (after < 0)
+                copy.Add(Copy(copy, line, null, false, null));
+            for (var i = 0; i < section.Count; i++)
+            {
+                copy.Add(Copy(copy, section[i], null, false, null));
+                if (i == after)
+                    copy.Add(Copy(copy, line, null, false, null));
+            }
+            target.Sections[target.Sections.IndexOf(section)] = copy;
+        }
+    }
+
+    /// <summary>True when two data paths name the same file: the same text without letter case, with either
+    /// separator.</summary>
+    private static bool SamePath(string a, string b) =>
+        string.Equals(a.Trim().Replace('/', '\\'), b.Trim().Replace('/', '\\'), StringComparison.OrdinalIgnoreCase);
+
     /// <summary>Applies one section. Returns the section that it added when it is a new parent section.</summary>
     private static Section? ApplySection(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
     {
         var match = SectionKeys.For(patch.Name);
         var isChild = SectionKeys.IsChild(patch.Name);
+        if (p.IsAppend)
+        {
+            context.Error($"[{patch.Name}]: {DirectiveAppend} is only for a [{DataSection}] section of a patch of " +
+                          @"EXE\freelancer.ini.");
+            return null;
+        }
         if (p.RenameLines > 0)
         {
             Rename(target, patch, p, context);
@@ -447,6 +530,8 @@ internal static class IniPatcher
                 p.RenameLines++;
                 p.RenameKey = entry.Count == 1 && entry[0].ToString().Trim() is { Length: > 0 } key ? key : null;
             }
+            else if (Is(entry, DirectiveAppend))
+                p.IsAppend = true;
             else if (entry.Name.StartsWith(DirectivePrefix, StringComparison.OrdinalIgnoreCase))
             {
                 context?.Error($"[{patch.Name}]: unknown directive '{entry.Name}'.");
@@ -516,6 +601,11 @@ internal static class IniPatcher
     {
         var value = source[index];
         var stored = BinaryValueTypes.Store(source, index, replaced, copy);
+        if (stored == null && value is BooleanValue)
+        {
+            context.Error(BinaryValueTypes.BooleanInNumber(source.Name));
+            return value;
+        }
         if (stored == null)
         {
             var number = value.ToInt64();
@@ -552,6 +642,10 @@ internal static class IniPatcher
     {
         public bool IsNew;
         public bool IsDelete;
+
+        /// <summary>True when the section has an <c>ol.append</c> line, which only a patch of <c>freelancer.ini</c> can
+        /// use.</summary>
+        public bool IsAppend;
         public string? ParentKey;
 
         /// <summary>The number of <c>ol.rename</c> lines, and the new key of the last one when it has one value.</summary>

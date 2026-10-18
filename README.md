@@ -62,6 +62,8 @@ See [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md). `samples/mods/ol-sample` is a comp
 3. Run `oltool deploy GameData\profiles\my.json`.
 4. Start the game with `lancer.exe GameData\profiles\my.lancer.ini`.
 
+To make the packages that players install, pick **Mod > Export mod...** in the editor, or run `oltool export`. The export makes a drop-in zip and an FLMM package for HD Edition 0.7.1 and for Freelancer 1.1 from the files of your linked games. It also makes a zip of the mod folder for OpenLancer. See "Export" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md).
+
 ## Play from the editor
 
 Run `start.bat` to build and start the editor. Open a profile and a system, then press F5. The game starts at the Scene camera with the edits of the active mod, and a save reloads the running game. See [docs/PLAY.md](docs/PLAY.md).

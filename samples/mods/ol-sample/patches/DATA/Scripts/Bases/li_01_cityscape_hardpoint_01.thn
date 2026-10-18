@@ -1,0 +1,4 @@
+ol_thn_patch = 1
+entities = {
+	{ ol_match = "Camera_0", ol_set = { ["spatialprops.pos"] = { 59.658787, 86.31464, 97.57275 } } }
+}

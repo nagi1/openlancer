@@ -152,6 +152,8 @@ To write a hash, use its signed form: `-1980013182` for `2314954114`. The signed
 
 A line of a binary file holds at most 255 values. When a patch line has more, the merge reports an error and keeps the first 255 values.
 
+`true` or `false` cannot replace a number. The retail game reads the text `true` as 0 in a number key, and a binary file has no boolean type. So the merge reports an error, for example "price: write 1 or 0. The game reads true as 0 in a number key." Write `1` or `0`.
+
 ### Directives
 
 Directives start with `ol.`. Do not use `@`: the INI parser ignores lines that start with `@`.
@@ -163,6 +165,7 @@ Directives start with `ol.`. Do not use `@`: the INI parser ignores lines that s
 | `ol.remove = name1, name2` | Remove all target entries with these names. |
 | `ol.parent = <key>` | With `ol.new`, add a child section to the parent section with this key (see below). |
 | `ol.rename = <new key>` | Give the target section a new key. The section keeps its place (see "Renames"). |
+| `ol.append = true` | Only in a `[Data]` section of a patch of `EXE/freelancer.ini`: add the lines of the section to `[Data]` (see "freelancer.ini"). |
 
 An unknown `ol.` directive is an error.
 
@@ -216,7 +219,21 @@ The mod that loads later wins. The merge reports a warning that names both mods.
 
 ### freelancer.ini
 
-A patch cannot change `EXE/freelancer.ini`. A mod can replace it only as a whole file in `files/`, and it cannot use text placeholders. OpenLancer adds its text DLL to `[Resources]` of the file that results.
+A patch of `EXE/freelancer.ini` can only add `[Data]` lines, for the new data files of the mod. It needs format version 2. Each section of the patch is a `[Data]` section with `ol.append = true`:
+
+```ini
+[Data]
+ol.append = true
+equipment = MODS\my-mod\equipment.ini
+goods = MODS\my-mod\goods.ini
+```
+
+- The game reads the `[Data]` lines in order, and the order is the load order. So each line goes after the last line of the same key, for example a new `solar` line stays before `universe`. A line with a key that `[Data]` does not have goes at the end of the section.
+- Each path is relative to the data folder. The game or a mod must have the file, for example in `files/DATA/MODS/my-mod/`. Else the merge reports an error.
+- A line that `[Data]` already has, with the same key and the same path in any letter case, is an error.
+- Each other section or directive in a patch of `freelancer.ini` is an error. A mod of format version 1 cannot patch `freelancer.ini`.
+
+For other changes, a mod can replace `freelancer.ini` as a whole file in `files/`. A whole file cannot use text placeholders. The export refuses it for a retail game (see "Export"). OpenLancer adds its text DLL to `[Resources]` of the file that results.
 
 ## Text: strings.json
 
@@ -904,6 +921,7 @@ A boolean line without a value, for example `separable =` of a `[CollisionGroup]
 | `oltool dump <profile.json\|folder> <out.json>` | Write a sorted JSON dump of the data that the engine resolves. |
 | `oltool thn <profile.json\|folder> <install path>` | Print a cutscene script (`.thn`) as canonical Lua text. The script comes from the merged view, so the text shows the changes of the mods. |
 | `oltool thn roundtrip <profile.json\|folder> [<install path>]` | Check the canonical text of each `.thn` file of the source, or of one file. The text must give the same tables, with exact numbers and the same key order, and the text of the result must be the same text. Each problem names the first value that differs. |
+| `oltool export <profile.json> --mod <id> --target <target> [--game <folder>] [--format dropin\|flmm\|all] [--out <folder>] [--checklist] [--flmm-probe]` | Make the packages of one mod for one target (see "Export"). `--game` names the game folder of a retail target. Without it, the base of the profile must give the target. `--format` picks the package forms of a retail target, all by default. `--out` names the output folder, `exports\<mod id>` next to the profiles folder by default. `--checklist` prints the checklist and writes no file. `--flmm-probe` writes the probe of the FLMM check, which is not for players. |
 | `oltool verify-base <folder>` | Check that a folder is the unchanged, read-only retail data. |
 
 Exit codes: 0 = OK, 1 = the data has problems, 2 = the command could not run.
@@ -923,6 +941,85 @@ The deploy folder is managed by `oltool`. A deploy deletes files in it that are 
 When a deploy stops part of the way, the marker records it. Run the deploy again to complete the folder.
 
 When the deploy folder path has characters outside ASCII, lancer.exe reads the path correctly only until the game saves its settings, because the game then writes the config file in a form that loses those characters. After that, run `oltool deploy` again, or move the workspace to a path with only ASCII characters.
+
+## Export
+
+The export makes the packages that players install (milestone M11). It merges one mod on the files of a target game, checks the result and writes the packages. The internal patch format stays the working format of the editor. Open the export in the editor with **Mod > Export mod...**, or run `oltool export`.
+
+### Targets and bases
+
+| Target | Base | Packages |
+|---|---|---|
+| `hde-0.7.1` (HD Edition 0.7.1) | A linked game that the game link identifies as HD Edition 0.7.1 | Drop-in zip, FLMM package |
+| `vanilla-1.1` (Freelancer 1.1) | A linked game that the game link identifies as Freelancer 1.0 or 1.1 | Drop-in zip, FLMM package |
+| `openlancer` | None | A zip of the mod folder |
+
+- The export of a retail target merges the mod on the files of its base. HD Edition changes most INI files, so each target gets its own packages.
+- A target that the mod does not name in `targets` is not available. A tier-2 mod cannot export to a retail target.
+- The export of a mod with `dependsOn` is not available yet.
+- When the INI files of the base differ from the file list of its version, the export warns. A base with JFLP also gives a warning, because the drop-in zip carries the JFLP version of each changed file.
+
+### What a package holds
+
+A package holds only the files of the mod and the merged files that the mod changes. It never holds a game file.
+
+- A changed INI file is text. A text file of the game keeps its comments and its other lines. Only the changed lines change. A binary file of the game becomes canonical text.
+- A file whose sections do not change is not in the package, also when its bytes change.
+- A changed cutscene is Lua text. The export writes the number of each THN name that only Librelancer defines, for example `SUBTITLE`. A whole cutscene file of the mod goes into the package as it is.
+- The text of the mod goes into `EXE\ol_<mod id>.dll`. Its index follows the rule of the retail game: 1 plus the number of `DLL` lines in all `[Resources]` sections. A line counts also when its DLL does not exist. On HD Edition 0.7.1 the index is 8, and on the retail game it is 7. The new `DLL` line goes after the last `DLL` line of the last `[Resources]` section.
+- The package leaves out hidden and system files, names that start with `.`, `Thumbs.db`, `desktop.ini`, `*.oltmp`, `*.tmp` and names that end with `~`. The export gives a warning for each.
+
+The export refuses these files:
+
+- A whole `EXE\freelancer.ini`, `EXE\dacom.ini`, `EXE\dacomsrv.ini` or `EXE\flplusplus.ini` of the mod, for a retail target. Use a patch with `ol.append`.
+- A whole INI file or cutscene of the mod with the same content as the file of the game in another form.
+- A file with the bytes of a file of a build manifest (`data-manifest`).
+
+A whole INI file or cutscene of the mod that replaces a file of the game with changes gives a warning. It undoes the changes of HD Edition and of other mods in that file.
+
+### Format checks
+
+The format checks look at each line that the export writes. These are the lines that the mod changes or adds, and each line of a binary file that becomes text. An error stops the export.
+
+| Check | Level | What the game does |
+|---|---|---|
+| A line longer than 1,023 bytes | Error | It reads the rest of the line as the next line. |
+| A section name, a key or a value longer than 1,023 bytes | Error | It writes past the end of its buffer. |
+| A text value with `;` | Error | It ignores the text after `;`. |
+| A text value of a binary file with `,` | Error | It reads two values in place of one. |
+| `true` or `false` in place of a number | Error | It reads `true` as 0 in a number key. |
+| A number that is not finite | Error | It reads 0. |
+| A text value with digits and a final `d`, `b` or `h` in a number key | Warning | It reads the number in another base. |
+| A character outside code page 1252 | Warning | It shows another character. |
+| An infocard that is not valid XML | Error | It shows no text. |
+| An infocard with a single `%` | Warning | It can show wrong text. Write `%%` for one `%`. |
+| A THN name that only Librelancer defines | Warning | The export writes its number. Check the cutscene in the game. |
+
+### Drop-in zip
+
+`<mod id>-<version>-<target>.zip` has the folders `DATA` and `EXE` at its top, with the letter case of the folders of the game, and the README. The player copies the files of the list to a backup folder, then extracts the zip into the game folder. A drop-in zip replaces whole files, so it does not combine with other mods that change the same files.
+
+When the zip holds `EXE\freelancer.ini`, the README gives each line that the mod adds, with its place. A player can add these lines to their own file, and keep the options of their installer. Two OpenLancer mods with text do not work together as drop-in zips, because both use the same text index.
+
+### FLMM package (preview)
+
+`<mod id>-<version>-<target>-flmm.zip` holds `<mod id>.flmod` and the README. The `.flmod` file is a zip with `script.xml` and the files of the mod, for the Freelancer Mod Manager (FLMM). OpenLancer did not check this package with FLMM yet. Check it with FLMM before you publish it.
+
+- A new section is an `append` operation. A new line is a `sectionappend` after the header line and the key line of its section. A changed value is a `sectionreplace` of the raw line of the game file.
+- A new `[BaseGood]` adds its lines to the `[BaseGood]` of the same base. A new `[Data]` line goes after the last line of its key.
+- The text of the mod becomes `GENERATESTRRES("<text>")` and `GENERATEXMLRES("<text>")`. FLMM makes its own text DLL. A text with `"` or with a character outside ASCII refuses the change, because no known FLMM rule can hold it.
+- A change that the operations cannot express puts the whole merged file into the package, with a warning. Examples are a removed line or section, and an anchor that is not unique in the file. A whole file cannot hold the text of the mod, so such a change with text refuses the package.
+- `oltool export --flmm-probe` writes the text of the mod as it is. The probe is for the FLMM check only.
+
+### Package of the target OpenLancer
+
+`<mod id>-<version>-openlancer.zip` holds the mod folder: `mod.json`, `strings.json`, `patches/` and `files/`. It leaves out `.olsave/`, `props/` and the hidden, system and temporary files.
+
+### README, Nexus page and checklist
+
+Each package has `<mod id> README.txt`: the requirements, the install and remove steps and the notice of the Game Content Usage Rules of Microsoft. The output folder also gets `nexus-page.txt`, the items of a Nexus page, and `CHECKLIST.txt`. The checklist has one line for each entry that the mod adds, changes or removes, for testers. For example: "Good 'lf_hull': price 6600 -> 5600."
+
+The output folder is `exports\<mod id>` next to the profiles folder. The packages hold merged game files, so do not commit them. The export warns when the output folder is in a git repository. The export never writes into a game folder or into the mod folder.
 
 ## What the validator checks
 

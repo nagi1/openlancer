@@ -17,8 +17,9 @@ The scan checks every file that git tracks or would add:
   6. No decompiler output in code files: automatic names, decompiler helpers, retail code addresses, and in
      comments the register notes of IDA, the names of decompilers and the word "decompiled". Markdown files get
      the rules that check the whole line.
-  7. No file may have the same SHA-256 as a retail file in data-manifest/vanilla-1.0.tsv. A text file is also
-     checked in its LF form and its CRLF form, because git can change line ends.
+  7. No file may have the same SHA-256 as a game file in a manifest of data-manifest/ (each <build id>.tsv, for
+     example vanilla-1.0.tsv and hde-0.7.1.tsv). A text file is also checked in its LF form and its CRLF form,
+     because git can change line ends.
 --fork applies rules 1, 2, 3 and 7 to the files that the fork adds or changes after the base commit in
 docs/UPSTREAM.md, and rule 6 to the lines that the fork adds.
 Exit code 0 means clean. Exit code 1 means the scan found a problem.
@@ -26,6 +27,7 @@ Exit code 0 means clean. Exit code 1 means the scan found a problem.
 The tests are in tools/test_content_scan.py: python -B -m unittest discover -s tools
 """
 import fnmatch
+import glob
 import hashlib
 import os
 import posixpath
@@ -34,7 +36,7 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MANIFEST = os.path.join(REPO, "data-manifest", "vanilla-1.0.tsv")
+MANIFEST_FOLDER = os.path.join(REPO, "data-manifest")
 SUBMODULE = "external/"
 FORBIDDEN_EXTENSIONS = {
     ".iso", ".cab", ".ttf", ".fl", ".lrpk",
@@ -171,8 +173,14 @@ def manifest_hashes(paths):
     return hashes
 
 
-def retail_hashes():
-    return manifest_hashes([MANIFEST]) if os.path.isfile(MANIFEST) else set()
+def manifests(folder=MANIFEST_FOLDER):
+    """The manifest files of a folder: each <build id>.tsv, in sorted order."""
+    return sorted(glob.glob(os.path.join(folder, "*.tsv")))
+
+
+def retail_hashes(folder=MANIFEST_FOLDER):
+    """The SHA-256 hashes of the game files of each manifest in the folder."""
+    return manifest_hashes(manifests(folder))
 
 
 def mod_folders(names):
@@ -358,7 +366,7 @@ def fork_problems(hashes, allow):
 def main(argv):
     hashes = retail_hashes()
     if not hashes:
-        print(f"warning: no manifest at {MANIFEST}. The hash check is off.")
+        print(f"warning: no manifest in {MANIFEST_FOLDER}. The hash check is off.")
     allow = Allow.read()
     if "--fork" in argv:
         problems = fork_problems(hashes, allow) + allow.unused(fork=True)

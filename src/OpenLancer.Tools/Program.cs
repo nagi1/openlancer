@@ -10,6 +10,7 @@ using LibreLancer.Data.Ini;
 using LibreLancer.Data.IO;
 using OpenLancer.Data;
 using OpenLancer.Data.Dump;
+using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
@@ -36,11 +37,14 @@ internal static class Program
 
         Commands:
           verify-base <folder>              Print the data digest. Exit 1 if it is not retail v1.0 or a file is writable.
-          game <folder> [--json] [--hashes]
+          game <folder> [--json] [--hashes] [--write-manifest <file>]
                                             Tell which game and version a folder holds. Exit 1 if it holds no game.
                                             --json: write the report as JSON, and nothing else.
                                             --hashes: add the manifest lines of the code files and the marker DLLs.
                                             The lines hold paths, sizes and hashes only, no game content.
+                                            --write-manifest: write the manifest line of each file of the game folder
+                                            to the file. The file must be outside each game folder. The list leaves out
+                                            unins* in the root, the SAVE folder and *.log files.
           build <profile.json>              Merge the profile's mods and print the problems and the changed files.
           validate <profile.json> [--active <mod id>] [--json]
                                             Build, then report the data problems that the mods add to vanilla.
@@ -51,6 +55,15 @@ internal static class Program
                                             of a cutscene also has "cutscene": the path, the element and
                                             the value.
           deploy <profile.json>             Build and validate, then write the merged data next to the profile.
+          export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer>
+                 [--game <folder>] [--format dropin|flmm|all] [--out <folder>] [--checklist] [--flmm-probe]
+                                            Merge one mod on the files of the target game, check the result and write
+                                            the packages of the target. --game: the game folder of a retail target.
+                                            Without it, the base of the profile must give the target. --format: the
+                                            package forms of a retail target, all by default. --out: the output
+                                            folder, <profile folder>\..\exports\<mod id> by default. --checklist:
+                                            print the checklist for testers, and write nothing. --flmm-probe: write
+                                            the probe of the FLMM check, which is not for players.
           ini <profile.json|folder> <path>  Print a merged INI file (binary or text) as text.
           dump <profile.json|folder> <out>  Write a canonical JSON dump of the resolved game data.
           thn <profile.json|folder> <path>  Print a cutscene script (.thn) as canonical Lua text. The script comes from
@@ -82,6 +95,7 @@ internal static class Program
                 ["build", var profile] => Build(profile),
                 ["validate", var profile, .. var options] => Validate(profile, options),
                 ["deploy", var profile] => Deploy(profile),
+                ["export", var profile, .. var options] => Export(profile, options),
                 ["ini", var source, var path] => PrintIni(source, path),
                 ["dump", var source, var output] => Dump(source, output),
                 ["thn", "roundtrip", var source] => ThnRoundTrip(source, null),
@@ -116,15 +130,19 @@ internal static class Program
     {
         var json = false;
         var hashes = false;
-        foreach (var option in options)
+        string? manifest = null;
+        for (var i = 0; i < options.Length; i++)
         {
-            switch (option)
+            switch (options[i])
             {
                 case "--json" when !json:
                     json = true;
                     break;
                 case "--hashes" when !hashes:
                     hashes = true;
+                    break;
+                case "--write-manifest" when manifest == null && i + 1 < options.Length:
+                    manifest = options[++i];
                     break;
                 default:
                     return Fail(Usage);
@@ -134,6 +152,22 @@ internal static class Program
         if (!Directory.Exists(folder) && !File.Exists(folder))
             return Fail($"The folder {folder} does not exist.");
         var report = GameDetector.Detect(folder);
+        if (manifest != null)
+        {
+            if (report.Root == null)
+                return Fail(report.Error ?? $"The folder {folder} holds no game.");
+            int count;
+            try
+            {
+                count = ManifestWriter.Write(report.Root, manifest);
+            }
+            catch (InvalidOperationException e)
+            {
+                return Fail(e.Message);
+            }
+            Out.WriteLine($"Wrote {count} manifest lines of {report.Root} to {Path.GetFullPath(manifest)}.");
+            return ExitOk;
+        }
         var lines = hashes && report.Root != null ? GameDetector.HashLines(report.Root) : [];
         if (json)
         {
@@ -305,6 +339,96 @@ internal static class Program
                       $"{result.Deleted} deleted, {result.Unchanged} unchanged.");
         Out.WriteLine($"Start the game: lancer.exe \"{ProfileDeployer.GameConfigPath(profile)}\"");
         return ExitOk;
+    }
+
+    /// <summary>Exports one mod of a profile for one target (section 7.14 of the M11 design).</summary>
+    private static int Export(string profilePath, string[] options)
+    {
+        string? modId = null, targetId = null, game = null, format = null, output = null;
+        bool checklist = false, probe = false;
+        for (var i = 0; i < options.Length; i++)
+        {
+            var hasValue = i + 1 < options.Length;
+            switch (options[i])
+            {
+                case "--mod" when modId == null && hasValue:
+                    modId = options[++i];
+                    break;
+                case "--target" when targetId == null && hasValue:
+                    targetId = options[++i];
+                    break;
+                case "--game" when game == null && hasValue:
+                    game = options[++i];
+                    break;
+                case "--format" when format == null && hasValue:
+                    format = options[++i];
+                    break;
+                case "--out" when output == null && hasValue:
+                    output = options[++i];
+                    break;
+                case "--checklist" when !checklist:
+                    checklist = true;
+                    break;
+                case "--flmm-probe" when !probe:
+                    probe = true;
+                    break;
+                default:
+                    return Fail(Usage);
+            }
+        }
+        if (modId == null || targetId == null || ExportTarget.Find(targetId) is not { } target)
+            return Fail(Usage);
+        ExportForms forms;
+        switch (format)
+        {
+            case null or "all":
+                forms = ExportForms.All;
+                break;
+            case "dropin":
+                forms = ExportForms.DropIn;
+                break;
+            case "flmm":
+                forms = ExportForms.Flmm;
+                break;
+            default:
+                return Fail(Usage);
+        }
+
+        var profile = ModProfile.Load(profilePath);
+        var index = profile.IndexOf(modId);
+        if (index < 0)
+            return Fail($"The profile has no mod '{modId}'.");
+        GameReport? report = null;
+        if (target.IsRetail)
+        {
+            if (game != null && !Directory.Exists(game))
+                return Fail($"The folder {game} does not exist.");
+            report = game != null ? GameDetector.Detect(game) : GameDetector.CheckRoot(profile.BaseFolder);
+        }
+        var result = ModExport.Run(new ExportRequest
+        {
+            Mod = profile.Mods[index],
+            Targets = [target],
+            BaseOf = _ => report,
+            OutputFolder = output ?? ModExport.DefaultFolder(profile.FilePath, modId),
+            Forms = forms,
+            FlmmProbe = probe,
+            ChecklistOnly = checklist,
+            OpenLancerBase = GameBase.Standard(profile.BaseFolder),
+            StringWriter = DllStringResourceWriter.Instance,
+            Thn = ThornEvaluator.Instance,
+        });
+        foreach (var problem in result.Problems)
+            Err.WriteLine(problem);
+        if (checklist)
+        {
+            foreach (var line in result.Checklist)
+                Out.WriteLine(line);
+            return result.Problems.Any(p => p.Severity == DiagnosticSeverity.Error) ? ExitProblems : ExitOk;
+        }
+        foreach (var package in result.Packages)
+            Out.WriteLine(package.Path != null ? $"Wrote {package.Path}" : $"Refused {package.FileName}");
+        return result.Succeeded ? ExitOk : ExitProblems;
     }
 
     private static int PrintIni(string source, string path)

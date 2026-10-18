@@ -24,6 +24,13 @@ internal sealed record RecentProfile(string Path, DateTime LastOpenedUtc);
 /// <param name="LastBuild">The build id of the game at the last check, or null.</param>
 internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastName, string? LastBuild);
 
+/// <summary>The choices of the Export dialog for one mod (milestone M11).</summary>
+/// <param name="Targets">The ids of the checked targets.</param>
+/// <param name="DropIn">True when the drop-in zip is checked.</param>
+/// <param name="Flmm">True when the FLMM package is checked.</param>
+/// <param name="Folder">The output folder.</param>
+internal sealed record ExportChoices(IReadOnlyList<string> Targets, bool DropIn, bool Flmm, string Folder);
+
 /// <summary>How the Assets panel shows its tiles (decision D270 of the M23 design).</summary>
 internal enum ThumbnailMode
 {
@@ -146,6 +153,9 @@ internal sealed class EditorSettings
     /// not in the list, or that has an empty value, plays with the package of a new multiplayer character.
     /// </summary>
     public Dictionary<string, string> PlayPackages { get; set; } = new(PathComparer);
+
+    /// <summary>The choices of the Export dialog of each mod, by the full path of the mod folder.</summary>
+    public Dictionary<string, ExportChoices> Exports { get; set; } = new(PathComparer);
 
     public bool ShowMarkers { get; set; } = true;
     public bool ShowLabels { get; set; } = true;
@@ -294,6 +304,7 @@ internal sealed class EditorSettings
         // The serializer makes the dictionaries without the comparer of the paths.
         settings.ActiveMods = new Dictionary<string, string>(settings.ActiveMods, PathComparer);
         settings.PlayPackages = new Dictionary<string, string>(settings.PlayPackages, PathComparer);
+        settings.Exports = new Dictionary<string, ExportChoices>(settings.Exports, PathComparer);
         return settings;
     }
 
@@ -325,6 +336,12 @@ internal sealed class EditorSettings
     /// <summary>The nickname of the ship package of Play for a profile, or null for the default package.</summary>
     public string? PlayPackageOf(string profilePath) =>
         PlayPackages.TryGetValue(profilePath, out var package) && !string.IsNullOrWhiteSpace(package) ? package : null;
+
+    /// <summary>The choices of the Export dialog for a mod folder, or null before the first export of the mod.</summary>
+    public ExportChoices? ExportOf(string modFolder) => Exports.GetValueOrDefault(modFolder);
+
+    /// <summary>Stores the choices of the Export dialog for a mod folder.</summary>
+    public void SetExport(string modFolder, ExportChoices choices) => Exports[modFolder] = choices;
 
     /// <summary>Stores the ship package of Play for a profile. Null sets the default package again.</summary>
     public void SetPlayPackage(string profilePath, string? package)

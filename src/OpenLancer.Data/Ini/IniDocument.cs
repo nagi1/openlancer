@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Export;
 using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Ini;
@@ -91,6 +92,18 @@ internal sealed class IniDocument
             IniWriter.WriteBini(stream, Sections);
         else
             IniWriter.WriteIni(stream, Sections.Select(TextCopy));
+        return stream.ToArray();
+    }
+
+    /// <summary>
+    /// Writes the file as canonical text for the retail game (milestone M11), also for a binary file. Each value has the
+    /// text of <see cref="RetailText.Of"/>. The lines end with CR LF, and the text has the code page of text files.
+    /// </summary>
+    public byte[] ToText()
+    {
+        using var stream = new MemoryStream();
+        IniWriter.WriteIni(stream, Sections.Select(s =>
+            CopySection(s, (value, line) => new StringValue(RetailText.Of(value)) { Entry = line })));
         return stream.ToArray();
     }
 

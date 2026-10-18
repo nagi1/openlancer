@@ -546,7 +546,8 @@ public static partial class GameDetector
                 Info(GameTexts.OnePointOneData);
             if (data == DataState.Changed)
                 Warning(GameTexts.ChangedData(changedFiles, BuildName(known.Reference)) +
-                        (jflp ? " " + GameTexts.JflpChangesFiles : ""));
+                        (jflp ? " " + GameTexts.JflpChangesFiles : "") +
+                        (kind == GameKind.HdEdition ? " " + GameTexts.HdeInstallerOptions : ""));
         }
 
         private static bool IsDataIni(string path) =>
