@@ -265,15 +265,34 @@ public sealed class DataLists
 
     /// <summary>The entry of the list that the active mod removes, or null (see <see cref="Removed"/>).</summary>
     /// <param name="scope">The file of a scoped list, or null.</param>
-    internal RemovedEntry? RemovedOf(string list, string? scope, string value) =>
-        RemovedState().Keys.GetValueOrDefault((list.ToLowerInvariant(), IsScoped(list) ? scope?.ToLowerInvariant() ?? "" : "",
-            value.Trim().ToLowerInvariant()));
+    internal RemovedEntry? RemovedOf(string list, string? scope, string value)
+    {
+        var keys = RemovedState().Keys;
+        var name = value.Trim().ToLowerInvariant();
+        if (!IsScoped(list))
+            return keys.GetValueOrDefault((list.ToLowerInvariant(), "", name));
+        // A scope of more than one file removes the entry when one of its files removes it.
+        return (scope == null ? [""] : ScopeFiles(scope))
+            .Select(file => keys.GetValueOrDefault((list.ToLowerInvariant(), file.ToLowerInvariant(), name)))
+            .FirstOrDefault(r => r != null);
+    }
 
-    /// <summary>The scope file of a rule for a line, or false when the scope names no known system. Null for a list
-    /// without a scope.</summary>
+    /// <summary>
+    /// The scope file of a rule for a line, or false when the scope names no known system. Null for a list without a
+    /// scope. The scope <c>owner</c> gives the system files that name the file of the line, joined with
+    /// <see cref="ScopeSeparator"/>, or false when no system file names it (milestone M3).
+    /// </summary>
     internal bool ScopeOf(ListRule rule, string path, IReadOnlyList<ValueBase>? line, out string? scope)
     {
         scope = null;
+        if (rule.OwnerScope)
+        {
+            var owners = Files.OwnersOf(path);
+            if (owners.Count == 0)
+                return false;
+            scope = string.Join(ScopeSeparator, owners);
+            return true;
+        }
         if (rule.SystemValue is >= 0 and var index)
         {
             if (line == null || index >= line.Count || session.SystemPath(line[index].ToString()) is not { } system)
@@ -288,6 +307,12 @@ public sealed class DataLists
 
     /// <summary>True for a list whose rule gives the file.</summary>
     internal bool IsScoped(string list) => rules.Lists.TryGetValue(list, out var d) && d.Source is { Scoped: true };
+
+    /// <summary>The separator of the files of a scope with more than one file. A path cannot hold it.</summary>
+    internal const char ScopeSeparator = '|';
+
+    /// <summary>The files of a scope: none for null, else each file of a scope with more than one file.</summary>
+    private static string[] ScopeFiles(string? scope) => scope == null ? [] : scope.Split(ScopeSeparator);
 
     /// <summary>The definitions of the lists whose entries a section of a file can give.</summary>
     internal IEnumerable<ListDefinition> SourcesOf(string path, string sectionType)
@@ -322,7 +347,7 @@ public sealed class DataLists
                 other.AddRange(session.NewCutsceneDocuments.Select(d => d.State));
                 continue;
             }
-            paths.AddRange(source.Scoped ? scope == null ? [] : [scope] : Files.Paths(source.Role!));
+            paths.AddRange(source.Scoped ? ScopeFiles(scope) : Files.Paths(source.Role!));
         }
         var states = paths.Select(StateOf).Concat(other).ToArray();
         if (cached.Built && cached.Paths.SequenceEqual(paths, VfsPath.Comparer) && cached.States.Length == states.Length &&
@@ -383,7 +408,7 @@ public sealed class DataLists
             return null;
         if (source.Files != null)
             return (FileEntries(source), true, []);
-        IReadOnlyList<string> paths = source.Scoped ? scope == null ? [] : [scope] : Files.Paths(source.Role!);
+        IReadOnlyList<string> paths = source.Scoped ? ScopeFiles(scope) : Files.Paths(source.Role!);
         var order = new List<string>();
         var byName = new Dictionary<string, (ListEntry Entry, int Count, bool AnyChanged)>(StringComparer.OrdinalIgnoreCase);
         var available = false;
@@ -758,18 +783,23 @@ public sealed class DataLists
             return null;
         }
         var universe = session.UniversePath is { } u ? session.Table.File(u) : null;
+        var owners = Files.FieldFilesState;
         if (parts.TryGetValue(path, out var part) && ReferenceEquals(part.Table, table) &&
-            (!part.UsesSystems || ReferenceEquals(part.Universe, universe)))
+            (!part.UsesSystems || ReferenceEquals(part.Universe, universe)) &&
+            (!part.UsesOwners || ReferenceEquals(part.Owners, owners)))
             return part;
-        part = BuildPart(table, universe);
+        part = BuildPart(table, universe, owners);
         parts[path] = part;
         return part;
     }
 
-    private ReferencePart BuildPart(FileTable table, FileTable? universe)
+    /// <param name="owners">The state of the nebula and field files when the part is built (milestone M3). A part with
+    /// <c>owner</c> references is built again when it changes.</param>
+    private ReferencePart BuildPart(FileTable table, FileTable? universe, object owners)
     {
         var map = new Dictionary<(string, string?, string), List<ListReference>>();
         var usesSystems = false;
+        var usesOwners = false;
         var roles = Files.RolesOf(table.Path);
         for (var i = 0; i < table.Working.Count; i++)
         {
@@ -794,20 +824,26 @@ public sealed class DataLists
                         entry[at].ToString().Trim() is not { Length: > 0 } value)
                         continue;
                     usesSystems |= rule.SystemValue >= 0;
+                    usesOwners |= rule.OwnerScope;
                     if (!ScopeOf(rule, table.Path, entry.ToList(), out var scope))
                         continue;
                     var reference = new ListReference(target, entry.Name, line, at, rule);
+                    // A line of a file with more than one owner names a zone of each owner.
+                    var files = scope == null ? new string?[] { null } : ScopeFiles(scope);
                     foreach (var list in rule.Lists)
                     {
-                        var key = (list.ToLowerInvariant(), scope?.ToLowerInvariant(), ValueKey(list, value));
-                        if (!map.TryGetValue(key, out var all))
-                            map[key] = all = [];
-                        all.Add(reference);
+                        foreach (var file in files)
+                        {
+                            var key = (list.ToLowerInvariant(), file?.ToLowerInvariant(), ValueKey(list, value));
+                            if (!map.TryGetValue(key, out var all))
+                                map[key] = all = [];
+                            all.Add(reference);
+                        }
                     }
                 }
             }
         }
-        return new ReferencePart(table, universe, usesSystems, map);
+        return new ReferencePart(table, universe, usesSystems, map) { Owners = owners, UsesOwners = usesOwners };
     }
 
     private static bool Is(string? a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -841,5 +877,13 @@ public sealed class DataLists
     /// <param name="UsesSystems">True when a line of the file has a <c>systemOf</c> scope, so the part depends on
     /// universe.ini.</param>
     private sealed record ReferencePart(FileTable Table, FileTable? Universe, bool UsesSystems,
-        Dictionary<(string List, string? Scope, string Value), List<ListReference>> Map);
+        Dictionary<(string List, string? Scope, string Value), List<ListReference>> Map)
+    {
+        /// <summary>The state of the nebula and field files when the part was built.</summary>
+        public object? Owners { get; init; }
+
+        /// <summary>True when a line of the file has an <c>owner</c> scope, so the part depends on the owners of the
+        /// file.</summary>
+        public bool UsesOwners { get; init; }
+    }
 }

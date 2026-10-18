@@ -85,6 +85,7 @@ internal sealed partial class EditorWindow : Game
         newProfileDialog = new NewProfileDialog(this);
         Cutscenes = new CutsceneWorkspace(this);
         Edits = new EditController(this);
+        SceneEdits = new SceneEdits(this);
         closePrompt = new ClosePrompt(this);
         Play = new PlayController(this, PlayProcess.Command, () => playClock.Elapsed);
         playMenu = new PlayMenu(this);
@@ -123,6 +124,9 @@ internal sealed partial class EditorWindow : Game
 
     /// <summary>The edits of the open profile, the saves and what follows a save.</summary>
     public EditController Edits { get; }
+
+    /// <summary>Create, Duplicate, Rename and Delete of the items of the open system (milestone M3).</summary>
+    public SceneEdits SceneEdits { get; }
 
     /// <summary>True while a field edit of the Inspector, a drag of a gizmo, a drag on the Timeline or a drag of a curve
     /// point is open. Undo, redo, save, the recovery file and the model loads of the scene wait for its end.</summary>

@@ -671,13 +671,14 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// A structural change of another file, for example a new item from a template, runs no catch-up of the scene. A
-    /// structural change of the system file runs one: the scene names a new section that it does not show, and it finds
-    /// the section of each item again, so an item whose section goes has no section. The catch-up builds each section
-    /// again and forgets the problems before it, so a line with an error keeps one problem.
+    /// A structural change of another file, for example a new item from a template, changes nothing in the scene. A
+    /// structural change of the system file changes the items at once (decision D248 of the M3 design): a new section
+    /// gets its item, and the item of a deleted section goes. The other items keep their sections and their problems, so a
+    /// line with an error keeps one problem. An undo of the delete gives the same item again, with its section and the
+    /// problem of its line.
     /// </summary>
     [Fact]
-    public void OnlyAStructuralChangeOfTheSystemRunsACatchUp()
+    public void OnlyAStructuralChangeOfTheSystemChangesTheItems()
     {
         using var workspace = Workspace();
         var session = workspace.Open();
@@ -697,16 +698,19 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
             [new("nickname", [new StringValue("ol_scene_depot")]), new("archetype", [new StringValue("depot_water")])]));
         Assert.True(scene.Applier.HasPending);
         scene.Applier.Run();
-        Assert.Contains("does not show this section", Assert.Single(scene.Applier.Problems(added)).Message);
+        Assert.Equal(added, scene.SectionOf(scene.Object("ol_scene_depot")));
+        Assert.Empty(scene.Applier.Problems(added));
         Assert.Equal("pos", Assert.Single(scene.Applier.Problems(depot)).Key);
         Assert.Equal(new Vector3(-38675, 0, -27705), scene.Object(Depot).Position);
 
         session.Execute(EditCommand.DeleteSection(depot));
         scene.Applier.Run();
-        Assert.Null(scene.Applier.SectionOf(scene.Object(Depot)));
+        Assert.DoesNotContain(scene.System.Objects, o => o.Nickname == Depot);
         session.Undo();
         scene.Applier.Run();
         Assert.Equal(depot, scene.Applier.SectionOf(scene.Object(Depot)));
+        Assert.Equal(new Vector3(-38675, 0, -27705), scene.Object(Depot).Position);
+        Assert.Equal("pos", Assert.Single(scene.Applier.Problems(depot)).Key);
     }
 
     /// <summary>

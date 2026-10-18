@@ -12,6 +12,7 @@ public sealed partial class EditSession
 {
     private SectionTable? table;
     private DataFiles? dataFiles;
+    private FieldFiles? fieldFiles;
     private DataLists? lists;
 
     /// <summary>
@@ -25,10 +26,25 @@ public sealed partial class EditSession
     internal SectionTable Table => table ??= new SectionTable(OpenDocument);
 
     /// <summary>The files of each role of the rule data.</summary>
-    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ListRules.Retail, Systems, Rooms);
+    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ruleData, Systems, Rooms, FieldFiles);
+
+    /// <summary>The rule data of the lists: the retail rules, or the rules of a test.</summary>
+    private ListRules ruleData = ListRules.Retail;
+
+    /// <summary>Gives the lists other rule data. A test uses it for a rule that the retail rules do not have, for
+    /// example a rule whose delete leaves "Missing".</summary>
+    internal void UseRules(ListRules rules)
+    {
+        ruleData = rules;
+        dataFiles = null;
+        lists = null;
+    }
+
+    /// <summary>The nebula and field files of the edit view, and the system files that name them (milestone M3).</summary>
+    internal FieldFiles FieldFiles => fieldFiles ??= new FieldFiles(this, () => FreelancerIni);
 
     /// <summary>The data lists of the edit view, and the reverse index of their references (milestone M21).</summary>
-    public DataLists Lists => lists ??= new DataLists(this, ListRules.Retail);
+    public DataLists Lists => lists ??= new DataLists(this, ruleData);
 
     /// <summary>
     /// The list checks of a section (layer 2 of the checks): values outside their lists, values that name an entry
@@ -64,7 +80,8 @@ public sealed partial class EditSession
             var inW = OpenDocument(source.Path) is { } w && w.IndexOf(id) >= 0;
             return (ValueOrigin.ActiveMod, ActiveMod?.Id, inW, false);
         }
-        if (ActiveMod != null && !document.InBase(id))
+        // A section of B that the active mod renames gives a name of the active mod.
+        if (ActiveMod != null && (!document.InBase(id) || document.IsRenamed(id)))
             return (ValueOrigin.ActiveMod, ActiveMod.Id, true, !document.InInitial(id));
         var owner = lowerView.Ledger.Owner(document.Path, id, keyName);
         return owner == null ? (ValueOrigin.Base, null, true, false) : (ValueOrigin.LowerMod, owner, true, false);

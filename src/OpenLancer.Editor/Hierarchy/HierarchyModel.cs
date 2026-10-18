@@ -78,6 +78,18 @@ internal sealed class HierarchyNode
 /// <summary>One visible row of the Hierarchy, with its tree depth.</summary>
 internal readonly record struct HierarchyRow(HierarchyNode Node, int Depth);
 
+/// <summary>The mark of a row whose section the active mod changes or adds (decision D245 of the M3 design).</summary>
+internal enum RowMark
+{
+    None,
+
+    /// <summary>The active mod changes the section: a blue bar, as Unity marks a prefab override.</summary>
+    Changed,
+
+    /// <summary>The active mod adds the section: a blue bar and a "+", as Unity marks an added object.</summary>
+    Added,
+}
+
 /// <summary>
 /// The Hierarchy tree of one system or of one cutscene, the open state of its nodes and the search. The tree is built
 /// again when the system, a name or the cutscene changes, and it keeps the open state of the tree before it. The search
@@ -240,6 +252,11 @@ internal sealed class HierarchyModel
         return Types.ToDictionary(t => t.Key, t => items.Count(i => t.Value(i.Kind, i.Item)),
             StringComparer.OrdinalIgnoreCase);
     }
+
+    /// <summary>The mark of the row of an item whose section of W is <paramref name="view"/>, or none for no
+    /// section.</summary>
+    internal static RowMark MarkOf(Data.Editing.SectionView? view) =>
+        view == null ? RowMark.None : view.IsNew ? RowMark.Added : view.IsChanged ? RowMark.Changed : RowMark.None;
 
     /// <summary>The index of the system that the tree shows, or null for the tree of a cutscene.</summary>
     public SystemIndex? Index { get; }

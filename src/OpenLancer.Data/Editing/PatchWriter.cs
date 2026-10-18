@@ -75,6 +75,10 @@ internal sealed record PatchText(
 /// <item>Moved: a section of B at a position in W that the merge cannot keep is deleted and added again. So is a
 /// section that an edit or the loaded patch deleted and added again with the same key, when no kept section comes
 /// after it. See <c>Plan.Moved</c>.</item>
+/// <item>Renamed: a section of B that W has under a new key (milestone M3). The key line of B, then
+/// <c>ol.rename</c> with the new key, then the changed lines as for a changed section. The merge keeps the section at
+/// its place. A section of W with the old key is then a new section. The child sections of a renamed section count as
+/// kept sections.</item>
 /// </list>
 /// <para>A patch section finds its target by its key in the whole file. So the writer refuses to change or delete a
 /// section without a key, a section whose key another section of its type also has, and a <c>[BaseGood]</c> of
@@ -100,11 +104,15 @@ internal static class PatchWriter
     /// <param name="source">The loaded patch of the file, or null.</param>
     /// <param name="deleted">The sections that the loaded patch or an edit deleted, or null for none. When W has such
     /// a section of B again, the patch can delete it and add it again.</param>
+    /// <param name="renamed">The sections of B that W has under a new key: the identity in W to the identity in B, or
+    /// null for none.</param>
     public static PatchText Write(string path, IniDocument b, IReadOnlyList<Section> w,
         Func<SectionIdentity, IReadOnlyCollection<string>> pins, PatchSource? source = null,
-        IReadOnlySet<SectionIdentity>? deleted = null)
+        IReadOnlySet<SectionIdentity>? deleted = null,
+        IReadOnlyDictionary<SectionIdentity, SectionIdentity>? renamed = null)
     {
-        var plan = new Plan(path, b, w, pins, source, deleted ?? new HashSet<SectionIdentity>());
+        var plan = new Plan(path, b, w, pins, source, deleted ?? new HashSet<SectionIdentity>(),
+            renamed ?? new Dictionary<SectionIdentity, SectionIdentity>());
         var rewritten = new HashSet<SectionIdentity>();
         for (var pass = 1; ; pass++)
         {
@@ -198,14 +206,26 @@ internal static class PatchWriter
         private readonly Lazy<KeyCounts> bCounts;
         private readonly Lazy<KeyCounts> wCounts;
 
-        /// <summary>The sections of B that the patch deletes and adds again (see <see cref="Moved"/>).</summary>
+        /// <summary>The sections of B that the patch deletes and adds again (see <see cref="Moved"/>), by their identity
+        /// in B.</summary>
         private readonly HashSet<SectionIdentity> moved;
 
         /// <summary>The sections of the last <see cref="Sections"/> call with a line of the loaded patch.</summary>
         private readonly HashSet<SectionIdentity> loaded = [];
 
+        /// <summary>The identity in B of each section of W that has another identity in B: a renamed section and its
+        /// child sections.</summary>
+        private readonly Dictionary<SectionIdentity, SectionIdentity> wToB = [];
+
+        /// <summary>The other direction of <see cref="wToB"/>.</summary>
+        private readonly Dictionary<SectionIdentity, SectionIdentity> bToW = [];
+
+        /// <summary>The sections of B that get <c>ol.rename</c>, by their identity in B.</summary>
+        private readonly HashSet<SectionIdentity> renamedRoots = [];
+
         public Plan(string path, IniDocument b, IReadOnlyList<Section> w,
-            Func<SectionIdentity, IReadOnlyCollection<string>> pins, PatchSource? source, IReadOnlySet<SectionIdentity> deleted)
+            Func<SectionIdentity, IReadOnlyCollection<string>> pins, PatchSource? source, IReadOnlySet<SectionIdentity> deleted,
+            IReadOnlyDictionary<SectionIdentity, SectionIdentity> renamed)
         {
             this.path = path;
             this.b = b;
@@ -218,8 +238,39 @@ internal static class PatchWriter
             wIndex = Index(wIds);
             bCounts = new(() => new KeyCounts(b.Sections));
             wCounts = new(() => new KeyCounts(w));
+            foreach (var (wId, bId) in renamed)
+            {
+                if (!wIndex.ContainsKey(wId) || !bIndex.TryGetValue(bId, out var i))
+                    continue;
+                renamedRoots.Add(bId);
+                Pair(wId, bId);
+                // A child section names its parent in its identity. The merge keeps the children of a renamed section.
+                for (var k = i + 1; k < b.Sections.Count && SectionKeys.IsChild(b.Sections[k].Name); k++)
+                {
+                    var child = bIds[k] with { Parent = wId };
+                    if (wIndex.ContainsKey(child))
+                        Pair(child, bIds[k]);
+                }
+            }
             moved = Moved(deleted);
         }
+
+        private void Pair(SectionIdentity wId, SectionIdentity bId)
+        {
+            wToB[wId] = bId;
+            bToW[bId] = wId;
+        }
+
+        /// <summary>The index in B of the section of W at <paramref name="j"/>, or -1 for a section that B does not have.
+        /// A section of W with the old key of a renamed section is a new section.</summary>
+        private int BIndexOfW(int j) =>
+            wToB.TryGetValue(wIds[j], out var bId) ? bIndex[bId]
+            : bToW.ContainsKey(wIds[j]) ? -1
+            : bIndex.GetValueOrDefault(wIds[j], -1);
+
+        /// <summary>The index in W of the section of B at <paramref name="i"/>, or -1 when W does not have it.</summary>
+        private int WIndexOfB(int i) =>
+            bToW.TryGetValue(bIds[i], out var wId) ? wIndex[wId] : wIndex.GetValueOrDefault(bIds[i], -1);
 
         public List<Diagnostic> Problems { get; } = [];
 
@@ -236,9 +287,12 @@ internal static class PatchWriter
             for (var i = 0; i < b.Sections.Count; i++)
             {
                 var isChild = SectionKeys.IsChild(b.Sections[i].Name);
-                var kept = IsKept(bIds[i]);
+                var kept = IsKeptB(i);
                 if (kept)
-                    Add(result, Changed(i, wIndex[bIds[i]], rewritten.Contains(bIds[i])));
+                {
+                    var j = WIndexOfB(i);
+                    Add(result, Changed(i, j, rewritten.Contains(wIds[j])));
+                }
                 // The merge deletes the children of a deleted section with it.
                 else if (!(isChild && parentDeleted))
                     Add(result, Deleted(i));
@@ -249,7 +303,7 @@ internal static class PatchWriter
             var ordinals = new Dictionary<SectionIdentity, int>();
             for (var j = 0; j < w.Count; j++)
             {
-                if (IsKept(wIds[j]))
+                if (IsKeptW(j))
                     continue;
                 var typeAndKey = new SectionIdentity(w[j].Name, wIds[j].Key);
                 var ordinal = ordinals.GetValueOrDefault(typeAndKey);
@@ -284,7 +338,7 @@ internal static class PatchWriter
             for (var k = 0; k < ids.Length; k++)
             {
                 if (!SectionComparer.Equivalent(result.Sections[k], w[k], Binary))
-                    failures.Add(new Failure(wIds[k], "the merge gives other lines.", IsKept(wIds[k]) || loaded.Contains(wIds[k])));
+                    failures.Add(new Failure(wIds[k], "the merge gives other lines.", IsKeptW(k) || loaded.Contains(wIds[k])));
             }
             return failures;
         }
@@ -298,14 +352,15 @@ internal static class PatchWriter
             return null;
         }
 
-        /// <summary>A section in B and W. Null when the patch needs no lines for it.</summary>
+        /// <summary>A section in B and W, also under a new key in W. Null when the patch needs no lines for it.</summary>
         /// <param name="rewritten">True to write all lines, and none with the text of the loaded patch.</param>
         private PatchSection? Changed(int i, int j, bool rewritten)
         {
             var original = b.Sections[i];
             var edited = w[j];
             var id = bIds[i];
-            var pinned = pins(id);
+            var rename = renamedRoots.Contains(id);
+            var pinned = pins(wIds[j]);
             var keyName = SectionKeys.For(original.Name).Kind == SectionMatchKind.Keyed
                 ? SectionKeys.For(original.Name).KeyEntry
                 : null;
@@ -313,12 +368,17 @@ internal static class PatchWriter
             var loadedSection = source?.Existing(original.Name, id.Key);
             // A loaded section that changes nothing stays, because no edit touched its lines.
             var keepEmpty = loadedSection != null && loadedSection.Lines.All(l => IsKey(l.Parsed.Name));
-            if (ReferenceEquals(original, edited) && pinned.Count == 0 && !rewritten && !keepEmpty)
+            if (!rename && ReferenceEquals(original, edited) && pinned.Count == 0 && !rewritten && !keepEmpty)
                 return null;
 
             // The identity compares the key without letter case, but the merge does not change the key.
             var key = SectionIdentity.KeyOf(edited);
-            if (key != SectionIdentity.KeyOf(original))
+            if (rename)
+            {
+                if (key == null || wCounts.Value.Keys(edited.Name, key) != 1)
+                    return Problem(wIds[j], $"another [{edited.Name}] section has {keyName} = {key}.");
+            }
+            else if (key != SectionIdentity.KeyOf(original))
                 return Problem(id, $"the {keyName} '{key}' differs only in letter case. A patch cannot change that.");
             var before = SectionComparer.ByName(original);
             var after = SectionComparer.ByName(edited);
@@ -336,14 +396,15 @@ internal static class PatchWriter
             names.RemoveWhere(IsKey);
             foreach (var group in SectionKeys.LinkedGroups(edited.Name).Where(g => g.Any(names.Contains)))
                 names.UnionWith(group.Where(n => before.ContainsKey(n) || after.ContainsKey(n)));
-            if (names.Count == 0 && !keepEmpty)
+            if (names.Count == 0 && !keepEmpty && !rename)
                 return null;
             if (names.Count > 0 && SectionKeys.IsOrderSensitive(edited.Name))
                 names.UnionWith(after.Keys.Where(n => !IsKey(n)));
 
-            var reason = NotPatchable(original, kept: true);
+            // W has a renamed section under its new key, so only B must give the old key once.
+            var reason = NotPatchable(original, kept: !rename);
             if (reason != null)
-                return Problem(id, "a patch cannot change this section, because " + reason);
+                return Problem(id, $"a patch cannot {(rename ? "rename" : "change")} this section, because {reason}");
             var lines = Lines(loadedSection, inB: true, keepText: !rewritten);
             if (lines.Header(edited.Name) is { } headerError)
                 return Problem(id, headerError);
@@ -351,6 +412,10 @@ internal static class PatchWriter
             // optional key has no key line.
             if (original.FirstOrDefault(e => IsKey(e.Name)) is { } keyLine && lines.Key(keyLine) is { } keyError)
                 return Problem(id, keyError);
+            // The merge gives the section of B the new key, and keeps its place (milestone M3).
+            if (rename && (PatchFormatter.KeyError(key!, Binary) ?? lines.Directive(IniPatcher.DirectiveRename, [key!])) is
+                    { } renameError)
+                return Problem(wIds[j], renameError);
 
             // Each line replaces the line of the same name at the same position in B, which keeps its value type.
             var occurrence = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -370,7 +435,7 @@ internal static class PatchWriter
                 .ToList();
             if (removed.Count > 0 && lines.Remove(removed) is { } removeError)
                 return Problem(id, removeError);
-            return Built(id, lines);
+            return Built(wIds[j], lines);
         }
 
         /// <summary>A section of B that W does not have.</summary>
@@ -381,7 +446,7 @@ internal static class PatchWriter
             var reason = NotPatchable(original, kept: false);
             if (reason != null)
             {
-                return Problem(id, wIndex.ContainsKey(id)
+                return Problem(id, WIndexOfB(i) >= 0
                     ? "the merge cannot keep this section at its position in the edit. A patch must delete it and add " +
                       "it again, but it cannot delete it, because " + reason
                     : "a patch cannot delete this section, because " + reason);
@@ -417,7 +482,7 @@ internal static class PatchWriter
                 if (parent < 0)
                     return Problem(id, "a child section needs a parent section before it.");
                 // A new child of a new parent follows its parent in the patch, with no directive.
-                if (IsKept(wIds[parent]))
+                if (IsKeptW(parent))
                 {
                     var key = IniPatcher.KeyOf(w[parent]);
                     if (key == null || wCounts.Value.Parents(key) != 1)
@@ -484,14 +549,15 @@ internal static class PatchWriter
                 var isChild = SectionKeys.IsChild(w[j].Name);
                 if (!isChild)
                     childAfterNew = false;
-                var inB = bIndex.TryGetValue(wIds[j], out var i);
+                var i = BIndexOfW(j);
+                var inB = i >= 0;
                 if (inB && !afterNew && !(isChild && childAfterNew) && i > lastKept)
                 {
                     lastKept = i;
                     continue;
                 }
                 if (inB)
-                    result.Add(wIds[j]);
+                    result.Add(bIds[i]);
                 if (isChild)
                     childAfterNew = true;
                 else
@@ -505,11 +571,13 @@ internal static class PatchWriter
             for (var j = w.Count - 1; j >= 0; j--)
             {
                 var isChild = SectionKeys.IsChild(w[j].Name);
-                var inB = bIndex.ContainsKey(wIds[j]);
-                var kept = inB && !result.Contains(wIds[j]);
-                if (kept && deleted.Contains(wIds[j]) && !(isChild ? keptChildAfter : keptAfter))
+                var i = BIndexOfW(j);
+                var inB = i >= 0;
+                var bId = inB ? bIds[i] : null;
+                var kept = inB && !result.Contains(bId!);
+                if (kept && deleted.Contains(bId!) && !(isChild ? keptChildAfter : keptAfter))
                 {
-                    result.Add(wIds[j]);
+                    result.Add(bId!);
                     kept = false;
                     if (!isChild)
                         result.UnionWith(children);
@@ -518,7 +586,7 @@ internal static class PatchWriter
                 {
                     keptChildAfter |= kept;
                     if (inB)
-                        children.Add(wIds[j]);
+                        children.Add(bId!);
                 }
                 else
                 {
@@ -530,8 +598,13 @@ internal static class PatchWriter
             return result;
         }
 
-        /// <summary>True for a section of B that W has at a position that the merge keeps.</summary>
-        private bool IsKept(SectionIdentity id) => bIndex.ContainsKey(id) && wIndex.ContainsKey(id) && !moved.Contains(id);
+        /// <summary>True for the section of B at <paramref name="i"/> when W has it, also under a new key, at a
+        /// position that the merge keeps.</summary>
+        private bool IsKeptB(int i) => WIndexOfB(i) >= 0 && !moved.Contains(bIds[i]);
+
+        /// <summary>True for the section of W at <paramref name="j"/> when it is a section of B, also under a new key,
+        /// at a position that the merge keeps.</summary>
+        private bool IsKeptW(int j) => BIndexOfW(j) is >= 0 and var i && !moved.Contains(bIds[i]);
 
         private PatchSectionBuilder Lines(SourceSection? loadedSection, bool inB, bool keepText) =>
             new(loadedSection, Binary, inB, keepText);

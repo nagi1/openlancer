@@ -30,6 +30,26 @@ public enum RuleEffect
     LoadBreak,
 }
 
+/// <summary>What a delete does with a line that names the deleted entry (decision D81, milestone M3).</summary>
+public enum DeleteAction
+{
+    /// <summary>The line keeps its value and shows "Missing". A closed rule makes it an error of the save gate.</summary>
+    Missing,
+
+    /// <summary>The section of the line goes with the entry, for example a child object with its parent.</summary>
+    Cascade,
+
+    /// <summary>The line goes, for example the <c>ring</c> line of a planet.</summary>
+    Clear,
+
+    /// <summary>The lines of each excluded zone of the entry go: the <c>exclusion</c> line and the lines after it, up to
+    /// the next <c>exclusion</c> or <c>exclude</c> line.</summary>
+    ClearHole,
+
+    /// <summary>The delete is refused, as Unity refuses to remove a component that another component requires.</summary>
+    Refuse,
+}
+
 /// <summary>
 /// A rule: one value of one key of one section type, in the files of a role, names an entry of a list.
 /// </summary>
@@ -92,6 +112,19 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
     /// <summary>The first value of a <c>scene</c> line for the ambient scripts of all times of day.</summary>
     private const string SceneAll = "all";
 
+    /// <summary>
+    /// What a delete of the entry does with the line (decision D81, milestone M3). Without an <c>onDelete</c> value in the
+    /// rule data, a rule with the effect load-break refuses the delete (decision D124), and each other rule leaves
+    /// "Missing".
+    /// </summary>
+    public DeleteAction OnDelete { get; init; }
+
+    /// <summary>True when the scope is <c>owner</c>: the zones of the system files that name the nebula or field file
+    /// of the line (milestone M3).</summary>
+    public bool OwnerScope => Scope == OwnerScopeName;
+
+    internal const string OwnerScopeName = "owner";
+
     /// <summary>The value index of a <c>systemOf:N</c> scope, or -1.</summary>
     public int SystemValue =>
         Scope != null && Scope.StartsWith(SystemOfPrefix, StringComparison.Ordinal) &&
@@ -146,8 +179,20 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
 /// <param name="SystemFiles">True for the files that the <c>[system]</c> sections of <c>universe.ini</c> name.</param>
 /// <param name="RoomFiles">True for the room files that the <c>[Room]</c> sections of the base files name (decision D135
 /// of the M8b design).</param>
+/// <param name="FieldFiles">For the nebula or asteroid field files: the section type of the system files whose
+/// <c>file</c> lines name the files, <c>Nebula</c> or <c>Asteroids</c> (milestone M3). Null for another role.</param>
 internal sealed record RoleDefinition(string Name, string? Data, bool Last, string? Fallback,
-    IReadOnlyList<string> Paths, bool Engine, bool Universe, bool SystemFiles, bool RoomFiles);
+    IReadOnlyList<string> Paths, bool Engine, bool Universe, bool SystemFiles, bool RoomFiles, string? FieldFiles = null);
+
+/// <summary>A template of Create in the Scene (decision D233 of the M3 design).</summary>
+/// <param name="Id">The id, for example <c>station</c>.</param>
+/// <param name="Label">The label of the Create menu, for example "Station".</param>
+/// <param name="Types">The <c>[Solar] type</c> values of the archetypes of the template, in lowercase.</param>
+/// <param name="Needs">A key that an archetype of the template must have, for example <c>docking_sphere</c>, or
+/// null.</param>
+/// <param name="Then">The next pick after the archetype: <c>base</c> for the base picker of a station, or null.</param>
+internal sealed record SceneTemplateDefinition(string Id, string Label, IReadOnlyList<string> Types, string? Needs,
+    string? Then);
 
 /// <summary>Where the entries of a list come from (section 6.4 of the M21 design).</summary>
 /// <param name="Role">The role of the files, or null for a scoped list.</param>
@@ -203,9 +248,11 @@ internal sealed class ListRules
     private readonly Dictionary<(string Role, string Section, string Key), List<ListRule>> byAddress;
 
     private ListRules(IReadOnlyDictionary<string, RoleDefinition> roles, IReadOnlyList<ListDefinition> lists,
-        IReadOnlyList<ListRule> rules)
+        IReadOnlyList<ListRule> rules, IReadOnlyList<string> connectionTypes, IReadOnlyList<SceneTemplateDefinition> templates)
     {
         Roles = roles;
+        ConnectionTypes = connectionTypes;
+        SceneTemplates = templates;
         Lists = lists.ToDictionary(l => l.Id, StringComparer.OrdinalIgnoreCase);
         All = rules;
         byAddress = rules.GroupBy(r => (r.Role.ToLowerInvariant(), r.Section.ToLowerInvariant(), r.Key.ToLowerInvariant()))
@@ -223,6 +270,13 @@ internal sealed class ListRules
 
     /// <summary>All rules, in the order of the file.</summary>
     public IReadOnlyList<ListRule> All { get; }
+
+    /// <summary>The <c>[Solar] type</c> values of the connection objects, in lowercase: jump gates, jump holes, airlock
+    /// gates and trade lane rings (decision D253 of the M3 design).</summary>
+    public IReadOnlyList<string> ConnectionTypes { get; }
+
+    /// <summary>The templates of Create in the Scene, in the order of the menu.</summary>
+    public IReadOnlyList<SceneTemplateDefinition> SceneTemplates { get; }
 
     /// <summary>The rules of each (role, section type) in lower case.</summary>
     public IReadOnlyDictionary<(string Role, string Section), IReadOnlyList<ListRule>> ByRoleAndSection { get; }
@@ -253,7 +307,22 @@ internal sealed class ListRules
             var files = lists.Where(l => l.Source?.Files != null).Select(l => l.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var rule in rules.Where(r => r.Exists && !r.Lists.All(files.Contains)))
                 throw new FormatException($"The rule {rule.Section} {rule.Key} has 'exists', which needs a files list.");
-            return new ListRules(roles, lists, rules);
+            foreach (var rule in rules.Where(r => r.OwnerScope))
+            {
+                if (!roles.TryGetValue(rule.Role, out var role) || role.FieldFiles == null)
+                    throw new FormatException($"The rule {rule.Section} {rule.Key} has the scope 'owner', which needs a " +
+                                              "role of nebula or field files.");
+            }
+            var connections = Strings(root, "connectionTypes").Select(t => t.ToLowerInvariant()).ToList();
+            var templates = root.TryGetProperty("sceneTemplates", out var array)
+                ? array.EnumerateArray().Select(ReadTemplate).ToList()
+                : [];
+            foreach (var template in templates)
+            {
+                if (template.Types.FirstOrDefault(connections.Contains) is { } connection)
+                    throw new FormatException($"The scene template {template.Id} has the connection type '{connection}'.");
+            }
+            return new ListRules(roles, lists, rules, connections, templates);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or
                                        FormatException or ArgumentException)
@@ -265,7 +334,11 @@ internal sealed class ListRules
     private static RoleDefinition ReadRole(string name, JsonElement e) => new(name,
         String(e, "data"), Bool(e, "last"), String(e, "fallback"), Strings(e, "paths"),
         !e.TryGetProperty("engine", out var engine) || engine.GetBoolean(), Bool(e, "universe"), Bool(e, "systemFiles"),
-        Bool(e, "roomFiles"));
+        Bool(e, "roomFiles"), String(e, "fieldFiles"));
+
+    private static SceneTemplateDefinition ReadTemplate(JsonElement e) => new(e.GetProperty("id").GetString()!,
+        e.GetProperty("label").GetString()!, Strings(e, "types").Select(t => t.ToLowerInvariant()).ToList(),
+        String(e, "needs"), String(e, "then"));
 
     private static ListDefinition ReadList(JsonElement e)
     {
@@ -319,6 +392,16 @@ internal sealed class ListRules
             "loadBreak" => RuleEffect.LoadBreak,
             var other => throw new FormatException($"The effect '{other}' of {section} {key} is not known."),
         };
+        var onDelete = String(e, "onDelete") switch
+        {
+            null => effect == RuleEffect.LoadBreak ? DeleteAction.Refuse : DeleteAction.Missing,
+            "missing" => DeleteAction.Missing,
+            "cascade" => DeleteAction.Cascade,
+            "clear" => DeleteAction.Clear,
+            "clearHole" => DeleteAction.ClearHole,
+            "refuse" => DeleteAction.Refuse,
+            var other => throw new FormatException($"The onDelete value '{other}' of {section} {key} is not known."),
+        };
         return new ListRule(role, section, key, index, lists, Bool(e, "closed"), Bool(e, "required"),
             String(e, "requiredWith"), Bool(e, "empty"), String(e, "scope"), String(e, "label"), effect,
             String(e, "consequence"), String(e, "evidence"))
@@ -327,6 +410,7 @@ internal sealed class ListRules
             Scene = Bool(e, "scene"),
             Exists = Bool(e, "exists"),
             MissingConsequence = String(e, "missing"),
+            OnDelete = onDelete,
         };
     }
 

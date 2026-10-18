@@ -9,9 +9,9 @@ using OpenLancer.Editor.Ui;
 namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
-/// The Inspector page of a zone: identity and the items that use the zone, transform, shape and size, flags and
-/// environment, and the encounters of a population or patrol zone. With the section of the zone in W, the rows edit its
-/// keys, and the page ends with the keys that no row shows. The panel adds the raw INI block (see
+/// The Inspector page of a zone: identity, transform, shape and size, flags and environment, the encounters of a
+/// population or patrol zone, and the lines that name the zone (Used by). With the section of the zone in W, the rows
+/// edit its keys, and the page ends with the keys that no row shows. The panel adds the raw INI block (see
 /// <see cref="SectionExtras"/>).
 /// </summary>
 /// <remarks>In a bound scope, a row of a key that not every zone has shows when the section has a line of the key (see
@@ -37,6 +37,7 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
     ];
 
     private readonly SectionExtras extras = new(window, grid);
+    private readonly UsedBySection usedBy = new(window, grid);
 
     /// <param name="section">The section of the zone in W, or null when the edit view has none.</param>
     public void Draw(Zone zone, SectionRef? section)
@@ -55,6 +56,8 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
 
         if (section != null)
         {
+            // The lines that name the zone, from the reverse index of W (decision D246 of the M3 design).
+            usedBy.Draw(section, "Zone");
             extras.Draw([section], "Zone", moreKeys: true);
         }
     }
@@ -77,41 +80,7 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
             grid.Text("Comment", zone.Comment, "comment");
         }
 
-        var uses = window.Scene.Index?.UsesOf(zone) ?? [];
-        if (uses.Count > 0)
-        {
-            grid.SubHeading("Used by");
-            // The keys of these rows belong to the sections that use the zone.
-            using (grid.Bind(null))
-            {
-                foreach (var use in uses)
-                {
-                    UsedBy(use);
-                }
-            }
-        }
-
         grid.EndSection();
-    }
-
-    private void UsedBy(ZoneUse use)
-    {
-        switch (use)
-        {
-            // A nebula and a field are scene items, so their rows select them (section 10.2 of the M22 design).
-            case { Kind: ZoneUseKind.AsteroidField or ZoneUseKind.Nebula, Item: var item }:
-                grid.Reference(use.Kind == ZoneUseKind.Nebula ? "Nebula" : "Asteroid field",
-                    window.Scene.KindOf(item) ?? ObjectKinds.Unknown, SceneItems.FallbackName(item), Name(item), item,
-                    "file");
-                break;
-            case { Kind: ZoneUseKind.Exclusion, Item: Zone parent }:
-                grid.Reference("Exclusion zone of", window.Scene.KindOf(parent) ?? ObjectKinds.Of(ZoneRole.Other),
-                    parent.Nickname, Name(parent), parent, "exclusion");
-                break;
-            case { Kind: ZoneUseKind.Ring, Item: SystemObject obj }:
-                grid.Reference("Ring of", ObjectKinds.Of(obj), obj.Nickname, Name(obj), obj, "ring");
-                break;
-        }
     }
 
     private void Transform(Zone zone)
@@ -262,9 +231,6 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
 
         grid.EndSection();
     }
-
-    /// <summary>The name of an item of the open system, from W (see <see cref="EditorSession.ItemName"/>).</summary>
-    private string? Name(object item) => window.Session?.ItemName(item);
 
     private static string? Join(IReadOnlyList<string>? values) =>
         values is { Count: > 0 } ? string.Join(", ", values) : null;

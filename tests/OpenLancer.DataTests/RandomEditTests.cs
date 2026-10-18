@@ -42,6 +42,8 @@ namespace OpenLancer.DataTests;
 /// that section equal B. It must still write the same bytes, because no edit touched these lines (rule F3).</para>
 /// <para>One edit kind deletes a section and adds it again at the end with the same key. The patch must then delete
 /// the section and add it again (review finding 3).</para>
+/// <para>Two edit kinds of milestone M3 give a section of B a new key, which the patch writes as <c>ol.rename</c>, and
+/// delete an object of a system file with its <c>parent</c> children.</para>
 /// </remarks>
 public sealed class RandomEditTests(ITestOutputHelper output)
 {
@@ -453,6 +455,8 @@ public sealed class RandomEditTests(ITestOutputHelper output)
         RenameNew,
         SetBack,
         DeleteThenAddSameKey,
+        RenameBase,
+        DeleteCascade,
     }
 
     /// <summary>The results of the whole test.</summary>
@@ -483,7 +487,9 @@ public sealed class RandomEditTests(ITestOutputHelper output)
     /// <summary>Makes random edits to one file, and checks the patch after each edit.</summary>
     private sealed class FileEditor
     {
-        private static readonly EditKind[] Kinds = Enum.GetValues<EditKind>();
+        /// <summary>The kinds to pick from. Few retail sections fit a new keyed child, so that kind gets two chances, and
+        /// each kind still occurs at least <see cref="MinEditsPerKind"/> times.</summary>
+        private static readonly EditKind[] Kinds = [.. Enum.GetValues<EditKind>(), EditKind.AddKeyedChild];
 
         private readonly IniDocument b;
         private readonly IReadOnlySet<string> requiredTargets;
@@ -567,6 +573,8 @@ public sealed class RandomEditTests(ITestOutputHelper output)
                     EditKind.AddKeyedChild => AddKeyedChild(),
                     EditKind.RenameNew => RenameNew(),
                     EditKind.SetBack => SetBack(),
+                    EditKind.RenameBase => RenameBase(),
+                    EditKind.DeleteCascade => DeleteCascade(),
                     _ => DeleteThenAddSameKey(),
                 };
                 if (edit == null)
@@ -742,8 +750,9 @@ public sealed class RandomEditTests(ITestOutputHelper output)
         /// <summary>Gives a new section another key.</summary>
         private Edit? RenameNew()
         {
+            // A section of B under a new key (RenameBase) is not a new section.
             var candidates = Enumerable.Range(0, W.Count)
-                .Where(j => !baseIndex.ContainsKey(Document.IdentityAt(j)) && !SectionKeys.IsChild(W[j].Name) && IsNickname(W[j]))
+                .Where(j => Document.BaseIdOf(Document.IdentityAt(j)) == null && !SectionKeys.IsChild(W[j].Name) && IsNickname(W[j]))
                 .ToList();
             if (candidates.Count == 0)
                 return null;
@@ -751,6 +760,68 @@ public sealed class RandomEditTests(ITestOutputHelper output)
             var renamed = Copy(W[index], run.FreshKey());
             Document.Replace(index, renamed, [SectionKeys.DefaultKey]);
             return new Edit(Document.IdentityAt(index), null);
+        }
+
+        /// <summary>
+        /// Gives a section of B a new key, as a rename in the Scene does (milestone M3): the patch writes
+        /// <c>ol.rename</c>, and the section keeps its place. The edit skips a section with child sections, a child
+        /// section, a required target and a key that another line names, as <see cref="DeleteThenAddSameKey"/> does.
+        /// </summary>
+        private Edit? RenameBase()
+        {
+            var j = PickEditable(s => !SectionKeys.IsChild(s.Name) && IsNickname(s) && ProofSections.KeyOf(s) is { } key &&
+                                      !requiredTargets.Contains(key) && !namedKeys.Contains(key));
+            if (j == null || !baseIndex.ContainsKey(Document.IdentityAt(j.Value)) || ProofSections.ChildCount(W, j.Value) > 0)
+                return null;
+            // The rename command changes only the key line. The other lines keep their values, as the section of B has
+            // them, so a capital bool string stays as it is.
+            var old = W[j.Value];
+            var renamed = new Section(old.Name);
+            var key = run.FreshKey();
+            foreach (var entry in old)
+                renamed.Add(IsKey(old, entry) ? new Entry(renamed, entry.Name) { new StringValue(key) } : entry);
+            Document.Replace(j.Value, renamed, [SectionKeys.DefaultKey]);
+            return new Edit(Document.IdentityAt(j.Value), null);
+        }
+
+        /// <summary>
+        /// Deletes an object of a system file with its <c>parent</c> children, again and again, from the last section to
+        /// the first, as a delete in the Scene does (decision D81 of the M3 design).
+        /// </summary>
+        private Edit? DeleteCascade()
+        {
+            var parents = Enumerable.Range(0, W.Count)
+                .Where(j => W[j].Name.Equals("Object", StringComparison.OrdinalIgnoreCase) &&
+                            ProofSections.KeyOf(W[j]) is { } key && !requiredTargets.Contains(key) &&
+                            W.Any(s => s.Name.Equals("Object", StringComparison.OrdinalIgnoreCase) && Parent(s) is { } p &&
+                                       p.Equals(key, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+            if (parents.Count == 0)
+                return null;
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ProofSections.KeyOf(W[parents[random.Next(parents.Count)]])! };
+            for (var grown = true; grown;)
+            {
+                grown = false;
+                foreach (var section in W.Where(s => s.Name.Equals("Object", StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (Parent(section) is { } p && set.Contains(p) && ProofSections.KeyOf(section) is { } child &&
+                        !requiredTargets.Contains(child) && set.Add(child))
+                        grown = true;
+                }
+            }
+            var indices = Enumerable.Range(0, W.Count)
+                .Where(j => W[j].Name.Equals("Object", StringComparison.OrdinalIgnoreCase) &&
+                            ProofSections.KeyOf(W[j]) is { } key && set.Contains(key))
+                .ToList();
+            if (indices.Any(j => !patchable.Contains(Document.IdentityAt(j)) && baseIndex.ContainsKey(Document.IdentityAt(j))))
+                return null;
+            var first = Document.IdentityAt(indices[0]);
+            foreach (var j in indices.OrderByDescending(j => j))
+                Document.Remove(j, 1 + ProofSections.ChildCount(W, j));
+            return new Edit(first, null);
+
+            static string? Parent(Section section) =>
+                section.LastOrDefault(e => e.Name.Equals("parent", StringComparison.OrdinalIgnoreCase) && e.Count > 0)?[0].ToString();
         }
 
         /// <summary>

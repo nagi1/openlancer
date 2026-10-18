@@ -65,6 +65,17 @@ internal sealed class SystemFiles
     /// nickname.</summary>
     public SectionRef? SectionOf(string nickname) => One(nickname)?.Section;
 
+    /// <summary>The nickname of the first <c>[system]</c> section that names a file, or null.</summary>
+    public string? NicknameOf(string path)
+    {
+        Refresh();
+        var normal = VfsPath.Normalize(path);
+        return byNickname.Values.SelectMany(s => s)
+            .Where(s => s.Path != null && VfsPath.Comparer.Equals(s.Path, normal))
+            .Select(s => s.Section.Id.Key)
+            .FirstOrDefault();
+    }
+
     /// <summary>The files that the <c>[system]</c> sections name, in the order of the sections, without
     /// repeats.</summary>
     public IReadOnlyList<string> Files

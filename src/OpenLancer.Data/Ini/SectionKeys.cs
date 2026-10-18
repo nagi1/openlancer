@@ -38,6 +38,9 @@ internal static class SectionKeys
         // DATA\initialworld.ini and faction_prop.ini
         ["FactionProps"] = new(SectionMatchKind.Keyed, "affiliation"),
         ["RepChangeEffects"] = new(SectionMatchKind.Keyed, "group"),
+        // DATA\initialworld.ini (milestone M3). The retail file has one such section. Its locked_gate and
+        // npc_locked_gate lines hold the FLHash of a gate nickname, so a rename of a gate changes them.
+        ["locked_gates"] = new(SectionMatchKind.Singleton, null),
         // DATA\FX\fuse*.ini
         ["fuse"] = new(SectionMatchKind.Keyed, "name"),
         // Market files: the engine adds the goods of repeated [BaseGood] sections for one base.

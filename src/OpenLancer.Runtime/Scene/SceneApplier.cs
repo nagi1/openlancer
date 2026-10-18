@@ -7,6 +7,7 @@ using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.Resources;
 using LibreLancer.World;
+using LibreLancer.World.Components;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.IO;
@@ -28,8 +29,12 @@ namespace OpenLancer.Runtime.Scene;
 /// Environment, which copy the values into the scene item. Then, one time for all sections: the moved zones, one
 /// <see cref="ISceneHost.IndexChanged"/> and the lights. So the index reads the new values. The effects that load
 /// models (see <see cref="SceneFields.Deferred"/>) run last, and only when no edit is open and no reload runs.</para>
-/// <para>A restore of unsaved edits lists no section, and a structural change of a section of the system adds, deletes
-/// or renames an item. Then the run catches up the whole system (see <see cref="CatchUp"/>).</para>
+/// <para>A restore of unsaved edits lists no section, so the run catches up the whole system (see
+/// <see cref="CatchUp"/>). A structural change of a section of the system adds, deletes or renames an item (milestone
+/// M3). Then the run gives the renamed items their new nicknames first, then runs the structure step: it removes the
+/// item of each section that W does not have, and builds the item of each new section, at the place that the file
+/// order gives. So a create, a delete, an undo and a redo change only their items, and a rename loads no model again.
+/// The applier keeps each removed nebula and field, so the undo of its delete puts back the same item.</para>
 /// <para>W keeps the text placeholder of a text of the active mod, for example <c>ids_name = $str:li01_depot</c>. An
 /// unsaved text has no id, and the id of a saved text depends on all texts of the mod. So a built item never gives the
 /// scene an id for a placeholder: each text id field whose W line holds a placeholder keeps the value of the scene item.
@@ -49,7 +54,7 @@ public sealed class SceneApplier
     private readonly ResourceManager resources;
     private readonly StarSystem system;
     private readonly GameWorld world;
-    private readonly IReadOnlyDictionary<SystemObject, GameObject> objects;
+    private readonly IDictionary<SystemObject, GameObject> objects;
     private readonly ISceneHost host;
 
     /// <summary>The <c>[system]</c> section of the system in <c>universe.ini</c>, or null.</summary>
@@ -73,7 +78,16 @@ public sealed class SceneApplier
 
     private readonly HashSet<SectionRef> noted = [];
     private readonly Dictionary<object, SceneEffect> deferred = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The renames of the changes since the last run, in order.</summary>
+    private readonly List<(SectionRef From, SectionRef To)> renames = [];
+
+    /// <summary>The objects, nebulae and fields that the structure step removed, with the W lines that the scene showed
+    /// for their sections, so an undo of a delete gets the same item back (milestone M3).</summary>
+    private readonly List<(SceneSection Kind, object Item, IReadOnlyList<EntryView> Lines)> kept = [];
+
     private bool catchUpNoted;
+    private bool structureNoted;
     private bool textNoted;
 
     // The effects of the current run that apply once, after the sections.
@@ -85,9 +99,10 @@ public sealed class SceneApplier
     /// <param name="resources">The resources of the world, for a model that loads again.</param>
     /// <param name="system">The clone of the system that the scene shows. The applier changes it.</param>
     /// <param name="world">The world of the scene, with <paramref name="system"/> loaded.</param>
-    /// <param name="objects">The world object of each object of <paramref name="system"/>.</param>
+    /// <param name="objects">The world object of each object of <paramref name="system"/>. The applier adds and removes
+    /// the world objects of new and deleted objects, so the views that share the map see them.</param>
     public SceneApplier(EditSession session, GameItemDb items, ResourceManager resources, StarSystem system,
-        GameWorld world, IReadOnlyDictionary<SystemObject, GameObject> objects, ISceneHost host)
+        GameWorld world, IDictionary<SystemObject, GameObject> objects, ISceneHost host)
     {
         this.session = session;
         this.items = items;
@@ -111,7 +126,8 @@ public sealed class SceneApplier
     public string? SystemPath { get; }
 
     /// <summary>True when the applier has changes or effects that it did not apply yet.</summary>
-    public bool HasPending => catchUpNoted || textNoted || noted.Count > 0 || deferred.Count > 0;
+    public bool HasPending =>
+        catchUpNoted || structureNoted || textNoted || renames.Count > 0 || noted.Count > 0 || deferred.Count > 0;
 
     /// <summary>
     /// The section of W that a scene item shows. An object, a zone, a light, a nebula or an asteroid field of the system
@@ -151,14 +167,17 @@ public sealed class SceneApplier
     public void Note(EditChange change)
     {
         var sections = change.Sections.Where(s => KindOf(s) != null).ToList();
-        // A restore of unsaved edits, and its undo and redo, list no section. A structural change of a section of the
-        // system adds, deletes or renames an item, so the catch-up finds the section of each item again. A structural
-        // change of another file, for example a new item from a template, changes nothing that the scene shows, because
-        // the applier keeps the game data that the system came from. A change that lists only the text or cutscenes
-        // changes no section.
+        // A restore of unsaved edits, and its undo and redo, list no section, so the run catches up the whole system. A
+        // structural change of a section of the system adds, deletes or renames an item, so the structure step changes
+        // the items (milestone M3). A structural change of another file, for example a new item from a template, changes
+        // nothing that the scene shows, because the applier keeps the game data that the system came from. A change that
+        // lists only the text or cutscenes changes no section.
         var listsOtherChanges = change.Text || change.Cutscenes.Count > 0;
-        if (change.Sections.Count == 0 ? change.Structural || !listsOtherChanges : change.Structural && sections.Count > 0)
+        if (change.Sections.Count == 0 && (change.Structural || !listsOtherChanges))
             catchUpNoted = true;
+        else if (change.Structural && sections.Count > 0)
+            structureNoted = true;
+        renames.AddRange(change.Renames.Where(r => KindOf(r.From) != null || KindOf(r.To) != null));
         textNoted |= change.Text;
         noted.UnionWith(sections);
     }
@@ -167,8 +186,12 @@ public sealed class SceneApplier
     /// run.</summary>
     public void Run()
     {
+        if (renames.Count > 0)
+            ApplyRenames();
         if (catchUpNoted)
             CatchUpSections();
+        else if (structureNoted)
+            Structure();
         foreach (var section in noted)
             ApplyChanges(section);
         noted.Clear();
@@ -259,6 +282,364 @@ public sealed class SceneApplier
         return result;
     }
 
+    /// <summary>
+    /// Gives the item of each renamed section the nickname of the side of the pair that W has now: the item, its world
+    /// object (whose setter also sets the hash) and the zone map of the system. The scene state of the section moves to
+    /// the new reference, so the rename loads no model again. The pairs of an undo come in the other direction, so the
+    /// same step serves a rename, its undo and its redo. A nebula and a field follow the nickname of their zone.
+    /// </summary>
+    private void ApplyRenames()
+    {
+        foreach (var (from, to) in renames)
+        {
+            // The side of the pair that W has now gives the nickname.
+            var (now, before) = session.Get(to) != null ? (to, from) : (from, to);
+            if (session.Get(now) == null || now.Id.Key is not { } name)
+                continue;
+            if ((itemOf.GetValueOrDefault(before) ?? itemOf.GetValueOrDefault(now)) is { } item)
+            {
+                switch (item)
+                {
+                    case SystemObject obj:
+                        obj.Nickname = name;
+                        if (objects.TryGetValue(obj, out var gameObject))
+                            gameObject.Nickname = name;
+                        break;
+                    case Zone zone:
+                        if (system.ZoneDict.TryGetValue(zone.Nickname, out var mapped) && ReferenceEquals(mapped, zone))
+                            system.ZoneDict.Remove(zone.Nickname);
+                        zone.Nickname = name;
+                        system.ZoneDict[name] = zone;
+                        break;
+                    case LightSource light:
+                        light.Nickname = name;
+                        lightsChanged = true;
+                        break;
+                }
+                itemOf.Remove(before);
+                itemOf[now] = item;
+                sectionOf[item] = now;
+            }
+            if (applied.Remove(before, out var lines))
+                applied[now] = lines;
+            if (problems.Remove(before, out var steps))
+                problems[now] = steps;
+            indexChanges |= IndexEffects;
+        }
+        renames.Clear();
+        Map();
+    }
+
+    /// <summary>
+    /// The structure step (section 14 of the M3 design): removes the item of each object, zone, light, nebula and field
+    /// whose section W does not have now, and builds the item of each section of W without an item. A new item goes into
+    /// the list of the system at the index that the file order gives, so the ordinals of the map stay right. A new object
+    /// gets its world object, and a new zone a new zone lookup. A new nebula or field gets the removed item back when its
+    /// lines equal the lines of that item. Then the step finds the section of each item again.
+    /// </summary>
+    /// <remarks>A new object loads its model, so it waits while an edit is open or the game data loads again. An object
+    /// that the engine does not build, for example with an archetype that the loaded game data does not have, gets the
+    /// problem of the catch-up and no item.</remarks>
+    private void Structure()
+    {
+        structureNoted = false;
+        if (SystemPath == null)
+        {
+            Map();
+            return;
+        }
+        var sections = Sections().Select(s => (Section: s, Kind: KindOf(s))).ToList();
+        List<SectionRef> Of(SceneSection kind) => sections.Where(s => s.Kind == kind).Select(s => s.Section).ToList();
+        var changed = false;
+        var zonesChanged = false;
+        changed |= Sync(Of(SceneSection.Object), system.Objects, o => o.Nickname, RemoveObject,
+            (section, at) => AddObject(section, at));
+        if (Sync(Of(SceneSection.Zone), system.Zones, z => z.Nickname, RemoveZone, AddZone))
+        {
+            changed = zonesChanged = true;
+        }
+        if (Sync(Of(SceneSection.LightSource), system.LightSources, l => l.Nickname, RemoveLight, AddLight))
+        {
+            changed = lightsChanged = true;
+        }
+        changed |= Sync(Of(SceneSection.Nebula), system.Nebulae, n => n.Zone?.Nickname,
+            n => RemoveVolume(SceneSection.Nebula, n, n.Zone), (section, at) => AddVolume(SceneSection.Nebula, section, at));
+        changed |= Sync(Of(SceneSection.Asteroids), system.AsteroidFields, f => f.Zone?.Nickname,
+            f => RemoveVolume(SceneSection.Asteroids, f, f.Zone), (section, at) => AddVolume(SceneSection.Asteroids, section, at));
+        if (zonesChanged)
+        {
+            // The zone lookup of the world keeps a tree of the zones of the list.
+            world.Zones?.Dispose();
+            world.Zones = new ZoneLookup(system.Zones);
+            zonesMoved = true;
+        }
+        if (changed)
+            indexChanges |= IndexEffects;
+        Map();
+    }
+
+    /// <summary>
+    /// Removes the items of a list whose section W does not have, and adds an item for each section without one. An item
+    /// matches the section with its key and the same ordinal among the items with the key.
+    /// </summary>
+    /// <param name="key">The key of an item: its nickname, or the nickname of the zone of a nebula or a field.</param>
+    /// <param name="add">Builds and inserts the item of a section at an index of the list. False when it builds
+    /// none.</param>
+    /// <returns>True when the list changed.</returns>
+    private static bool Sync<T>(List<SectionRef> wanted, List<T> list, Func<T, string?> key, Action<T> remove,
+        Func<SectionRef, int, bool> add) where T : class
+    {
+        var keys = wanted.Select(s => (s.Id.Key?.ToLowerInvariant() ?? "", s.Id.Ordinal)).ToHashSet();
+        var counts = new Dictionary<string, int>();
+        var gone = new List<T>();
+        foreach (var item in list)
+        {
+            var name = key(item)?.ToLowerInvariant() ?? "";
+            var ordinal = counts.GetValueOrDefault(name);
+            counts[name] = ordinal + 1;
+            if (!keys.Contains((name, ordinal)))
+                gone.Add(item);
+        }
+        foreach (var item in gone)
+            remove(item);
+
+        var present = new HashSet<(string, int)>();
+        counts.Clear();
+        foreach (var item in list)
+        {
+            var name = key(item)?.ToLowerInvariant() ?? "";
+            var ordinal = counts.GetValueOrDefault(name);
+            counts[name] = ordinal + 1;
+            present.Add((name, ordinal));
+        }
+        var added = false;
+        var index = 0;
+        foreach (var section in wanted)
+        {
+            var id = (section.Id.Key?.ToLowerInvariant() ?? "", section.Id.Ordinal);
+            if (present.Contains(id))
+            {
+                index++;
+                continue;
+            }
+            if (add(section, Math.Min(index, list.Count)))
+            {
+                present.Add(id);
+                added = true;
+                index++;
+            }
+        }
+        return gone.Count > 0 || added;
+    }
+
+    /// <summary>
+    /// Adds the object of a new section and its world object, or false when the engine builds none or the model cannot
+    /// load now. A removed object with the nickname of the section comes back (see <see cref="FindKept"/>). Another
+    /// section gets an object that the engine builds from W.
+    /// </summary>
+    private bool AddObject(SectionRef section, int at)
+    {
+        if (session.Get(section) is not { } view)
+            return false;
+        var keptAt = FindKept(SceneSection.Object, section);
+        SystemObject? obj;
+        IReadOnlyList<EntryView> lines;
+        if (keptAt >= 0)
+        {
+            obj = (SystemObject)kept[keptAt].Item;
+            lines = kept[keptAt].Lines;
+        }
+        else if (session.Parse<Universe.SystemObject>(section, Universe.SystemObject.TryParse) is not { } ini ||
+                 (obj = SceneBuild.Object(items, system.Nickname, ini, out _)) == null)
+            return false;
+        else
+            lines = view.Entries;
+        // The world object loads the model, which waits as Reinit waits (review finding F5 of M1).
+        if (host.EditOpen || !host.CanLoadModels)
+        {
+            structureNoted = true;
+            return false;
+        }
+        if (keptAt >= 0)
+            kept.RemoveAt(keptAt);
+        system.Objects.Insert(at, obj);
+        var gameObject = new GameObject();
+        world.InitObject(gameObject, false, obj, resources, null);
+        objects[obj] = gameObject;
+        Shown(section, view, lines);
+        return true;
+    }
+
+    /// <summary>Removes an object and its world object, and keeps the object with the W lines that the scene showed for
+    /// its section.</summary>
+    private void RemoveObject(SystemObject obj)
+    {
+        Keep(SceneSection.Object, obj);
+        system.Objects.Remove(obj);
+        deferred.Remove(obj);
+        if (!objects.Remove(obj, out var gameObject))
+            return;
+        world.RemoveObject(gameObject);
+        gameObject.Unregister(world);
+    }
+
+    /// <summary>Adds the zone of a new section: a removed zone with its nickname (see <see cref="FindKept"/>), or a zone
+    /// that the engine builds from W.</summary>
+    private bool AddZone(SectionRef section, int at)
+    {
+        if (session.Get(section) is not { } view)
+            return false;
+        var keptAt = FindKept(SceneSection.Zone, section);
+        Zone zone;
+        IReadOnlyList<EntryView> lines;
+        if (keptAt >= 0)
+        {
+            zone = (Zone)kept[keptAt].Item;
+            lines = kept[keptAt].Lines;
+            kept.RemoveAt(keptAt);
+        }
+        else if (session.Parse<Universe.Zone>(section, Universe.Zone.TryParse) is not { } ini)
+            return false;
+        else
+        {
+            zone = SceneBuild.Zone(ini);
+            lines = view.Entries;
+        }
+        system.Zones.Insert(at, zone);
+        // The engine keeps the last zone of a nickname (GameItemDb.cs:1680).
+        system.ZoneDict[zone.Nickname] = zone;
+        Shown(section, view, lines);
+        return true;
+    }
+
+    private void RemoveZone(Zone zone)
+    {
+        Keep(SceneSection.Zone, zone);
+        system.Zones.Remove(zone);
+        if (system.ZoneDict.TryGetValue(zone.Nickname, out var mapped) && ReferenceEquals(mapped, zone))
+        {
+            system.ZoneDict.Remove(zone.Nickname);
+            if (system.Zones.LastOrDefault(z => z.Nickname.Equals(zone.Nickname, StringComparison.OrdinalIgnoreCase)) is { } other)
+                system.ZoneDict[zone.Nickname] = other;
+        }
+    }
+
+    /// <summary>Adds the light of a new section: a removed light with its nickname (see <see cref="FindKept"/>), or a
+    /// light that the engine builds from W.</summary>
+    private bool AddLight(SectionRef section, int at)
+    {
+        if (session.Get(section) is not { } view)
+            return false;
+        var keptAt = FindKept(SceneSection.LightSource, section);
+        LightSource? light;
+        IReadOnlyList<EntryView> lines;
+        if (keptAt >= 0)
+        {
+            light = (LightSource)kept[keptAt].Item;
+            lines = kept[keptAt].Lines;
+            kept.RemoveAt(keptAt);
+        }
+        else if (session.Parse<Universe.LightSource>(section, Universe.LightSource.TryParse) is not { } ini ||
+                 (light = SceneBuild.Light(items, ini, out _)) == null)
+            return false;
+        else
+            lines = view.Entries;
+        system.LightSources.Insert(at, light);
+        Shown(section, view, lines);
+        return true;
+    }
+
+    private void RemoveLight(LightSource light)
+    {
+        Keep(SceneSection.LightSource, light);
+        system.LightSources.Remove(light);
+    }
+
+    /// <summary>Records the lines that the scene shows for the item of a new section. The run then applies the keys of a
+    /// kept item that differ from W, also after a wait for the model.</summary>
+    private void Shown(SectionRef section, SectionView view, IReadOnlyList<EntryView> lines)
+    {
+        applied[section] = lines;
+        if (!ReferenceEquals(lines, view.Entries))
+            noted.Add(section);
+    }
+
+    /// <summary>Keeps a removed item with the W lines that the scene showed for its section, when it has a section.</summary>
+    private void Keep(SceneSection kind, object item)
+    {
+        if (sectionOf.TryGetValue(item, out var section) && applied.GetValueOrDefault(section) is { } lines)
+            kept.Add((kind, item, lines));
+    }
+
+    /// <summary>
+    /// The index of the last removed object, zone or light of a kind with the nickname of a section, or -1. The item
+    /// comes back with the lines that the scene showed for it. The run then applies the keys that differ from W, as for
+    /// an edit. Thus the undo of a delete gives the same item back, also when a line of the section has an error.
+    /// </summary>
+    private int FindKept(SceneSection kind, SectionRef section) =>
+        kept.FindLastIndex(k => k.Kind == kind &&
+                                ((NicknameItem)k.Item).Nickname.Equals(section.Id.Key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Removes a nebula or a field, and keeps it with the W lines that the scene showed for its section, so the
+    /// undo of its delete puts back the same item. A field also loses its world object.</summary>
+    private void RemoveVolume(SceneSection kind, object item, Zone? zone)
+    {
+        Keep(kind, item);
+        if (item is Nebula nebula)
+            system.Nebulae.Remove(nebula);
+        else if (item is AsteroidField field)
+        {
+            system.AsteroidFields.Remove(field);
+            if (world.Objects.FirstOrDefault(o => o.TryGetComponent<AsteroidFieldComponent>(out var c) &&
+                                                  ReferenceEquals(c.Field, field)) is { } fieldObject)
+            {
+                world.RemoveObject(fieldObject);
+                fieldObject.Unregister(world);
+            }
+        }
+        // A nebula and a field can share their zone.
+        if (zone != null && !system.Nebulae.Any(n => ReferenceEquals(n.Zone, zone)) &&
+            !system.AsteroidFields.Any(f => ReferenceEquals(f.Zone, zone)))
+            volumeZones.Remove(zone);
+        Defer(system, SceneEffect.Volume);
+    }
+
+    /// <summary>Puts back a removed nebula or field whose lines equal the lines of a new section. Another new section
+    /// gets a problem: the editor cannot build a new field without a fork change (review finding R3).</summary>
+    private bool AddVolume(SceneSection kind, SectionRef section, int at)
+    {
+        if (session.Get(section) is not { } view)
+            return false;
+        var keptAt = kept.FindIndex(k => k.Kind == kind && !SceneLines.ChangedKeys(k.Lines, view.Entries).Any());
+        var zone = section.Id.Key is { } name ? system.ZoneDict.GetValueOrDefault(name) : null;
+        if (keptAt < 0 || zone == null)
+        {
+            SetProblem(section, Step.Build, Problem(section,
+                "The Scene shows this item after the save and the game data reload.", null));
+            return false;
+        }
+        var item = kept[keptAt].Item;
+        kept.RemoveAt(keptAt);
+        if (item is Nebula nebula)
+        {
+            nebula.Zone = zone;
+            system.Nebulae.Insert(at, nebula);
+        }
+        else if (item is AsteroidField field)
+        {
+            field.Zone = zone;
+            system.AsteroidFields.Insert(at, field);
+            var fieldObject = new GameObject();
+            fieldObject.AddComponent(new AsteroidFieldComponent(field, resources, fieldObject));
+            world.AddObject(fieldObject);
+            fieldObject.Register(world);
+        }
+        volumeZones.Add(zone);
+        applied[section] = view.Entries;
+        Defer(system, SceneEffect.Volume);
+        return true;
+    }
+
     /// <summary>The catch-up of <see cref="CatchUp"/>, without the effects that apply once.</summary>
     private int CatchUpSections()
     {
@@ -266,7 +647,8 @@ public sealed class SceneApplier
         noted.Clear();
         applied.Clear();
         problems.Clear();
-        Map();
+        // W can add or delete items since the load, also an unsaved edit before the system opened.
+        Structure();
         var differences = 0;
         var systemSections = new List<SectionRef>();
         foreach (var section in Sections())
@@ -367,11 +749,14 @@ public sealed class SceneApplier
             return;
         if (session.Get(section) is not { } view)
         {
-            // A later milestone adds and deletes sections.
+            // The structure step removed the item of the section.
             applied.Remove(section);
             problems.Remove(section);
             return;
         }
+        // A new nebula or field that the structure step could not put back keeps its problem.
+        if (IsVolumeKind(kind) && !itemOf.ContainsKey(section))
+            return;
         var effects = applied.TryGetValue(section, out var before)
             ? SceneLines.ChangedKeys(before, view.Entries).Aggregate(SceneEffect.None, (all, key) => all | SceneFields.Effect(kind, key))
             : SceneFields.All(kind);
@@ -620,9 +1005,13 @@ public sealed class SceneApplier
             // Parse records the check error.
             if (Parse<Universe.SystemObject>(section, Universe.SystemObject.TryParse) is not { } ini)
                 return;
-            // The engine drops an object without a valid archetype (GameItemDb.cs:2660-2664).
+            // The engine drops an object without a valid archetype (GameItemDb.cs:2660-2664). An archetype of W that the
+            // loaded game data does not have yet, for example an unsaved archetype of the active mod, shows after the
+            // save (decision D248 of the M3 design).
             if (SceneBuild.Object(items, system.Nickname, ini, out var dropped) == null)
-                (message, key) = (dropped!, "archetype");
+                (message, key) = ini.Archetype != null && session.Lists.List("solar_archetype")?.Find(ini.Archetype) != null
+                    ? ("The Scene shows this object after the save and the game data reload.", "archetype")
+                    : (dropped!, "archetype");
         }
         SetProblem(section, Step.Build, Problem(section, message, key));
     }

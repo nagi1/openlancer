@@ -15,8 +15,9 @@ namespace OpenLancer.Data.Editing;
 /// <remarks>
 /// <para>The roles come from <c>freelancer.ini</c> of the edit view, which a patch cannot change. So they do not
 /// change in a session, except the <c>system</c> and <c>room</c> roles: the system files are the files that the
-/// <c>[system]</c> sections of W of <c>universe.ini</c> name, and the room files are the files that the <c>[Room]</c>
-/// sections of the base files name (see <see cref="RoomFiles"/>).</para>
+/// <c>[system]</c> sections of W of <c>universe.ini</c> name, the room files are the files that the <c>[Room]</c>
+/// sections of the base files name (see <see cref="RoomFiles"/>), and the nebula and field files are the files that the
+/// <c>[Nebula]</c> and <c>[Asteroids]</c> sections of the system files name (see <see cref="FieldFiles"/>).</para>
 /// <para>The <c>[Data]</c> names compare without letter case, as the engine compares them. Retail spells
 /// <c>PetalDB</c> and <c>WeaponModDB</c>.</para>
 /// </remarks>
@@ -25,19 +26,22 @@ internal sealed class DataFiles
     private readonly ListRules rules;
     private readonly SystemFiles systems;
     private readonly RoomFiles rooms;
+    private readonly FieldFiles fields;
     private readonly Dictionary<string, IReadOnlyList<string>> fixedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> fixedRoles = new(VfsPath.Comparer);
 
     /// <param name="freelancerIni">The sections of <c>freelancer.ini</c> of the edit view.</param>
-    public DataFiles(IReadOnlyList<Section> freelancerIni, ListRules rules, SystemFiles systems, RoomFiles rooms)
+    public DataFiles(IReadOnlyList<Section> freelancerIni, ListRules rules, SystemFiles systems, RoomFiles rooms,
+        FieldFiles fields)
     {
         this.rules = rules;
         this.systems = systems;
         this.rooms = rooms;
+        this.fields = fields;
         var entries = DataPaths.Entries(freelancerIni).ToList();
         foreach (var role in rules.Roles.Values)
         {
-            if (role.Universe || role.SystemFiles || role.RoomFiles)
+            if (role.Universe || role.SystemFiles || role.RoomFiles || role.FieldFiles != null)
                 continue;
             var paths = Resolve(freelancerIni, entries, role);
             fixedPaths[role.Name] = paths;
@@ -60,8 +64,17 @@ internal sealed class DataFiles
             return [];
         if (definition.Universe)
             return systems.UniversePath is { } universe ? [universe] : [];
+        if (definition.FieldFiles != null)
+            return fields.Files(definition.FieldFiles);
         return definition.SystemFiles ? systems.Files : definition.RoomFiles ? rooms.Files : [];
     }
+
+    /// <summary>The system files whose sections name a nebula or field file, for the scope <c>owner</c> (milestone
+    /// M3). Empty for another file.</summary>
+    public IReadOnlyList<string> OwnersOf(string path) => fields.OwnersOf(path);
+
+    /// <summary>An object that changes when the nebula and field files or their owners change.</summary>
+    public object FieldFilesState => fields.State;
 
     /// <summary>The roles of an install path. A path can have more than one role.</summary>
     public IReadOnlyList<string> RolesOf(string path)
@@ -73,7 +86,8 @@ internal sealed class DataFiles
         foreach (var role in rules.Roles.Values)
         {
             if (role.Universe && systems.UniversePath is { } universe && VfsPath.Comparer.Equals(universe, normal) ||
-                role.SystemFiles && systems.IsSystemFile(normal) || role.RoomFiles && rooms.Contains(normal))
+                role.SystemFiles && systems.IsSystemFile(normal) || role.RoomFiles && rooms.Contains(normal) ||
+                role.FieldFiles != null && fields.Contains(role.FieldFiles, normal))
                 result.Add(role.Name);
         }
         return result;

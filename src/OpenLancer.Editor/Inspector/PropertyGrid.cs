@@ -86,6 +86,14 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     public bool BeginSection(string key, char icon, string title, bool defaultOpen = true)
     {
         var scale = ImGuiHelper.Scale;
+        // A chip of the components strip asks for its section: it opens, and the page scrolls to it (milestone M3).
+        var requested = key == requestedSection;
+        if (requested)
+        {
+            requestedSection = null;
+            window.Settings.InspectorFoldouts[key] = true;
+            ImGui.SetScrollHereY(0);
+        }
         var width = ImGui.GetContentRegionAvail().X;
         labelWidth = LabelWidth(width, scale);
 
@@ -103,7 +111,8 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 0);
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0);
         var settings = window.Settings;
-        ImGui.SetNextItemOpen(settings.InspectorFoldouts.GetValueOrDefault(key, defaultOpen), ImGuiCond.Once);
+        ImGui.SetNextItemOpen(settings.InspectorFoldouts.GetValueOrDefault(key, defaultOpen),
+            requested ? ImGuiCond.Always : ImGuiCond.Once);
         var open = ImGui.CollapsingHeader($"{icon}  {title}###{key}",
             ImGuiTreeNodeFlags.AllowOverlap | (defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None));
         if (ImGui.IsItemToggledOpen())
@@ -139,6 +148,13 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         row = 0;
         return true;
     }
+
+    /// <summary>The key of the section that opens and scrolls into view when it draws next, or null.</summary>
+    private string? requestedSection;
+
+    /// <summary>Opens a section of the page and scrolls the page to it when the section draws next (see
+    /// <see cref="BeginSection"/>). A chip of the components strip uses it.</summary>
+    public void RequestSection(string key) => requestedSection = key;
 
     /// <summary>Ends a section that <see cref="BeginSection"/> opened.</summary>
     public void EndSection()

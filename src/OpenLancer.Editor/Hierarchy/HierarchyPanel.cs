@@ -41,17 +41,34 @@ internal sealed class HierarchyPanel(EditorWindow window)
     // The row to scroll to in the next frame, and true to put it in the middle of the panel.
     private (object Item, bool Center)? scrollRequest;
 
-    /// <summary>Draws the items of the toolbar strip: the search field with a clear button in it.</summary>
+    /// <summary>Draws the items of the toolbar strip: the Create button of a system (decision D255 of the M3 design), and
+    /// the search field with a clear button in it.</summary>
     public void Toolbar()
     {
         if (window.CutsceneMode)
         {
             ToolbarItems.SearchField("search-cutscene", "Search (t:camera)", ref cutsceneSearch, -1, CutsceneSearchTip);
+            return;
         }
-        else
+
+        if (ToolbarItems.Button("create", EditorIcons.Plus, "Create an object, a zone or a light",
+                window.SceneEdits.Unavailable(Data.Editing.Scene.SceneAction.Create, null) == null))
         {
-            ToolbarItems.SearchField("search", "Search (t:station)", ref search, -1, SearchTip);
+            ImGui.OpenPopup("##create");
         }
+
+        // The menu opens below the button.
+        ImGui.SetNextWindowPos(new Vector2(ImGui.GetItemRectMin().X, ImGui.GetItemRectMax().Y), ImGuiCond.Appearing);
+        if (ImGui.BeginPopup("##create"))
+        {
+            EditorTheme.PushMenuColors();
+            window.SceneEdits.CreateMenu(null);
+            EditorTheme.PopMenuColors();
+            ImGui.EndPopup();
+        }
+
+        ImGui.SameLine();
+        ToolbarItems.SearchField("search", "Search (t:station)", ref search, -1, SearchTip);
     }
 
     /// <summary>Sets the text of the search field of the system tree, for example "t:zone" to show only the
@@ -116,6 +133,11 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
+        if (!window.CutsceneMode)
+        {
+            FollowRename(tree);
+        }
+
         Rows(tree, focused);
         if (tree.IsSearching && tree.Root.Matches == 0)
         {
@@ -123,9 +145,55 @@ internal sealed class HierarchyPanel(EditorWindow window)
                 "Esc in the search field clears it.");
         }
 
+        // A right click on empty space opens the Create menu (decision D255 of the M3 design).
+        if (!window.CutsceneMode &&
+            ImGui.BeginPopupContextWindow("##hierarchy-create", ImGuiPopupFlags.MouseButtonRight | ImGuiPopupFlags.NoOpenOverItems))
+        {
+            EditorTheme.PushMenuColors();
+            window.SceneEdits.CreateMenu(null);
+            EditorTheme.PopMenuColors();
+            ImGui.EndPopup();
+        }
+
         if (focused && !ImGui.GetIO().WantTextInput)
         {
             Keys(tree);
+            if (!window.CutsceneMode)
+            {
+                window.SceneEdits.Keys(window.Selection);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Opens the tree to the row of the rename and scrolls to it. A rename of an item that the scene does not show
+    /// ends, because it has no row.
+    /// </summary>
+    private void FollowRename(HierarchyModel tree)
+    {
+        if (window.SceneEdits.Renaming is not { } section || !window.SceneEdits.RenameStarted)
+        {
+            return;
+        }
+
+        if (window.Scene.ItemOf(section) is not { } item || item is StarSystem)
+        {
+            if (!window.Scene.IsBehind)
+            {
+                window.SceneEdits.CancelRename();
+            }
+
+            return;
+        }
+
+        if (tree.Reveal(item))
+        {
+            scrollRequest = (item, true);
+        }
+        else if (tree.NodeOf(item) != null)
+        {
+            // The search hides the row, so the field cannot show.
+            window.SceneEdits.CancelRename();
         }
     }
 
@@ -230,17 +298,120 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.SetItemTooltip(node.Tooltip);
         }
 
-        if (node.Item != null && ImGui.BeginPopupContextItem())
+        if (ImGui.BeginPopupContextItem())
         {
             EditorTheme.PushMenuColors();
-            ContextMenu(node.Item);
+            if (node.Item != null)
+            {
+                ContextMenu(node.Item);
+            }
+            else if (!window.CutsceneMode)
+            {
+                // A group row opens the Create menu (decision D255 of the M3 design).
+                window.SceneEdits.CreateMenu(null);
+            }
+
             EditorTheme.PopMenuColors();
             ImGui.EndPopup();
         }
 
         // The text starts where ImGui puts the label of a tree node: after the arrow.
-        ListRow.Text(start, start.X + ImGui.GetFontSize() + 2 * style.FramePadding.X, right, node.Kind.Icon,
-            node.Kind.Abgr, node.Name, node.Detail, node.CountText);
+        var textStart = start.X + ImGui.GetFontSize() + 2 * style.FramePadding.X;
+        var section = window.CutsceneMode ? null : window.SceneEdits.SectionOf(node.Item);
+        if (section != null && section.Equals(window.SceneEdits.Renaming))
+        {
+            RenameField(start, textStart, right);
+            return;
+        }
+
+        ListRow.Text(start, textStart, right, node.Kind.Icon, node.Kind.Abgr, node.Name, node.Detail, node.CountText);
+        if (section != null)
+        {
+            Mark(HierarchyModel.MarkOf(window.Session?.Edits.Get(section)), start, textStart);
+        }
+    }
+
+    /// <summary>
+    /// The mark of a row whose section the active mod changes or adds, as Unity marks the overrides of a prefab
+    /// (decision D245 of the M3 design): a blue bar at the left of the row, and a "+" on the glyph of an added item.
+    /// </summary>
+    private static void Mark(RowMark mark, Vector2 start, float textStart)
+    {
+        if (mark == RowMark.None)
+        {
+            return;
+        }
+
+        var drawList = ImGui.GetWindowDrawList();
+        var height = ImGui.GetFrameHeight();
+        var scale = ImGuiHelper.Scale;
+        var left = ImGui.GetWindowPos().X + MathF.Max(1, scale);
+        drawList.AddRectFilled(new Vector2(left, start.Y + 1), new Vector2(left + MathF.Max(2, 2 * scale), start.Y + height - 1),
+            ImGui.GetColorU32(EditorTheme.Accent));
+        if (mark == RowMark.Added)
+        {
+            var font = ImGui.GetFont();
+            var size = ImGui.GetFontSize() * 0.75f;
+            drawList.AddText(font, size, new Vector2(textStart - size * 0.35f, start.Y), ImGui.GetColorU32(EditorTheme.Accent), "+");
+        }
+
+        if (ImGui.IsMouseHoveringRect(new Vector2(left, start.Y), new Vector2(textStart, start.Y + height)))
+        {
+            ImGui.SetTooltip(mark == RowMark.Added ? "The active mod adds this item." : "The active mod changes this item.");
+        }
+    }
+
+    /// <summary>
+    /// The rename field of a row (decision D242 of the M3 design), as Unity renames in the Hierarchy. The field checks
+    /// the text while you type and shows the problem below the row. Enter runs the rename, and a click outside does too.
+    /// Esc ends the field without a rename.
+    /// </summary>
+    private void RenameField(Vector2 start, float left, float right)
+    {
+        var edits = window.SceneEdits;
+        var after = ImGui.GetCursorScreenPos();
+        ImGui.SetCursorScreenPos(new Vector2(left, start.Y));
+        ImGui.SetNextItemWidth(Math.Max(40, right - left));
+        if (edits.RenameStarted)
+        {
+            ImGui.SetKeyboardFocusHere();
+            edits.RenameStarted = false;
+        }
+
+        var enter = ImGui.InputText("##rename", ref edits.RenameText, 128,
+            ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+        var escape = ImGui.IsItemActive() && ImGui.IsKeyPressed(ImGuiKey.Escape, false);
+        var deactivated = ImGui.IsItemDeactivated();
+        var problem = edits.RenameProblem();
+        if (problem != null)
+        {
+            // The problem shows below the field, over the next row.
+            var drawList = ImGui.GetForegroundDrawList();
+            var min = new Vector2(left, ImGui.GetItemRectMax().Y);
+            var size = ImGui.CalcTextSize(problem);
+            drawList.AddRectFilled(min, min + size + new Vector2(8, 4), ImGui.GetColorU32(EditorTheme.Strip));
+            drawList.AddText(min + new Vector2(4, 2), ImGui.GetColorU32(EditorTheme.Error), problem);
+        }
+
+        if (escape)
+        {
+            edits.CancelRename();
+        }
+        else if ((enter || deactivated) && problem == null)
+        {
+            edits.CommitRename();
+        }
+        else if (enter)
+        {
+            // Enter with a problem keeps the field, so the user can correct the text.
+            edits.RenameStarted = true;
+        }
+        else if (deactivated)
+        {
+            edits.CancelRename();
+        }
+
+        ImGui.SetCursorScreenPos(after);
     }
 
     /// <summary>Scrolls the panel so that the row that was just drawn is in view.</summary>
@@ -358,6 +529,20 @@ internal sealed class HierarchyPanel(EditorWindow window)
         {
             CutsceneMenu(item);
             return;
+        }
+
+        // The actions of the item first, as in the Unity Hierarchy (decision D255 of the M3 design). Create on an object
+        // row gives the new object the position and the parent of the row.
+        if (window.SceneEdits.SectionOf(item) is { } section)
+        {
+            if (ImGui.BeginMenu($"{EditorIcons.Plus}   Create"))
+            {
+                window.SceneEdits.CreateMenu(item is SystemObject ? section : null);
+                ImGui.EndMenu();
+            }
+
+            window.SceneEdits.ItemMenu(item);
+            ImGui.Separator();
         }
 
         if (Theme.IconMenuItem(EditorIcons.CompressArrowsAlt, "Frame in Scene", true))

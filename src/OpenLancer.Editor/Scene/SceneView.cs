@@ -65,6 +65,9 @@ internal sealed class SceneView : IDisposable
 
     // The item under the mouse in this frame. Its zone volume shows also when the Zones toggle is off.
     private object? hovered;
+
+    // The section to select when the scene shows its item (see SelectWhenShown), or null.
+    private SectionRef? pendingSelection;
     private Vector2 dragStart;
 
     // The scene button was active in the last frame: an orbit, a pan, a fly or a click is in progress.
@@ -133,6 +136,28 @@ internal sealed class SceneView : IDisposable
     /// null.</summary>
     public SectionRef? SectionOf(object item) => sync?.SectionOf(item);
 
+    /// <summary>The object, zone, light, nebula or field of the open system that a section of W sets, or null. A section
+    /// of the fields of the system gives the system.</summary>
+    public object? ItemOf(SectionRef section) => sync?.ItemOf(section);
+
+    /// <summary>The orbit point of the camera, where Create puts a new item (decision D234 of the M3 design).</summary>
+    public Vector3 Pivot => controller.Pivot;
+
+    /// <summary>
+    /// Selects the item of a section as soon as the scene shows it (decision D249 of the M3 design): Create, Duplicate and
+    /// the undo of a delete select the new item. Until then the selection is the section. The first flush that maps the
+    /// section to an item selects that item.
+    /// </summary>
+    public void SelectWhenShown(SectionRef section)
+    {
+        pendingSelection = section;
+        window.Selection = ItemOf(section) is { } item and not StarSystem ? item : section;
+        if (window.Selection is not SectionRef)
+        {
+            pendingSelection = null;
+        }
+    }
+
     /// <summary>Why the scene does not show the W state of a section of the open system, for example a missing archetype
     /// or an unknown attenuation curve. Empty when it shows it.</summary>
     public IReadOnlyList<Diagnostic> Problems(SectionRef section) => sync?.Problems(section) ?? [];
@@ -199,6 +224,10 @@ internal sealed class SceneView : IDisposable
         System = system;
         Index = new SystemIndex(system, source);
         sync = new SceneSync(window, session, data.Items, resources, system, world, renderer, objects, IndexChanged);
+        pendingSelection = null;
+        // The text scan of the story mentions builds in a worker task, so a delete or a rename does not wait for it
+        // (decision D261 of the M3 design).
+        session.Edits.StartStoryMentions();
         var center = system.Objects.Count == 0
             ? Vector3.Zero
             : system.Objects.Aggregate(Vector3.Zero, (sum, o) => sum + o.Position) / system.Objects.Count;
@@ -284,6 +313,7 @@ internal sealed class SceneView : IDisposable
 
         // Flush A: the changes of W since the last frame, before this frame reads the scene.
         sync!.Flush();
+        FollowSelection();
         ImGuiHelper.AnimatingElement();
         var avail = ImGui.GetContentRegionAvail();
         var width = Math.Max(64, (int)avail.X);
@@ -332,6 +362,11 @@ internal sealed class SceneView : IDisposable
         }
 
         transform.Keys(ImGui.IsWindowHovered() || ImGui.IsWindowFocused());
+        // F2, Ctrl+D and Delete act on the selection, as in the Unity Scene view (decision D255 of the M3 design).
+        if (ImGui.IsWindowFocused() && !transform.IsDragging)
+        {
+            window.SceneEdits.Keys(window.Selection);
+        }
 
         // No hover while the camera moves or the gizmo has the mouse, so that the markers that pass under the mouse do
         // not flash. The axis widget is on top, so a marker below it gets no hover.
@@ -371,6 +406,31 @@ internal sealed class SceneView : IDisposable
         {
             overlay.ResetLabels();
             NamesVersion++;
+        }
+
+        FollowSelection();
+    }
+
+    /// <summary>
+    /// Follows the selection after a change of the items (decision D249 of the M3 design): the item of a section that
+    /// waits for the scene becomes the selection, and a selected item that the scene does not have now leaves the
+    /// selection empty, as a delete in Unity does.
+    /// </summary>
+    private void FollowSelection()
+    {
+        if (pendingSelection != null && ItemOf(pendingSelection) is { } item and not StarSystem)
+        {
+            if (window.Selection is SectionRef waiting && waiting.Equals(pendingSelection))
+            {
+                window.Selection = item;
+            }
+
+            pendingSelection = null;
+        }
+
+        if (window.Selection is SystemObject or Zone or LightSource or Nebula or AsteroidField && !Contains(window.Selection))
+        {
+            window.Selection = null;
         }
     }
 

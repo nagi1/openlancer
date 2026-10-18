@@ -302,8 +302,28 @@ public sealed class EditSessionTests
         Assert.Equal(["g4"], Values(session, Good("g4"), "nickname"));
         Assert.Throws<InvalidOperationException>(() => session.Execute(EditCommand.Rename(Good("g4"), "G4")));
         Assert.Throws<InvalidOperationException>(() => session.Execute(EditCommand.Rename(Good("g4"), "g2")));
-        Assert.Throws<InvalidOperationException>(() => session.Execute(EditCommand.Rename(Good("g1"), "g9")));
         Assert.Throws<InvalidOperationException>(() => session.Execute(Set(Good("g4"), "nickname", new StringValue("g5"))));
+    }
+
+    /// <summary>A section of the lower layer gets a new key through <c>ol.rename</c> and keeps its place (decision D231 of
+    /// the M3 design). A key of another section of the lower layer stays refused, also when W deleted that section.</summary>
+    [Fact]
+    public void RenameGivesASectionOfTheLowerLayerANewKeyInPlace()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        session.Execute(EditCommand.DeleteSection(Good("g2")));
+        Assert.Throws<InvalidOperationException>(() => session.Execute(EditCommand.Rename(Good("g1"), "g2")));
+
+        session.Execute(EditCommand.Rename(Good("g1"), "g9"));
+
+        Assert.Null(session.Get(Good("g1")));
+        var renamed = session.Get(Good("g9"))!;
+        Assert.Equal((false, true), (renamed.IsNew, renamed.IsChanged));
+        Assert.Equal([Good("g9")], session.Sections(GoodsPath));
+        // A rename back to the key of the lower layer ends the rename.
+        session.Execute(EditCommand.Rename(Good("g9"), "g1"));
+        Assert.False(session.Get(Good("g1"))!.IsNew);
     }
 
     [Fact]

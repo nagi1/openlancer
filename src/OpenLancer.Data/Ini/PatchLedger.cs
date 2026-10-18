@@ -11,10 +11,11 @@ namespace OpenLancer.Data.Ini;
 /// between mods. The editor uses it to tell which mod gives a value.
 /// </summary>
 /// <remarks>
-/// <para>A mod can change the lines of a name (it sets or removes them), delete a section, add a section, or replace
-/// the whole file. A whole-file override discards the earlier changes of the file. So <see cref="Record"/> and
-/// <see cref="Changes"/> see only the changes after the last override. <see cref="Owner"/> and
-/// <see cref="ModsThatChange"/> see the override itself.</para>
+/// <para>A mod can change the lines of a name (it sets or removes them), delete a section, add a section, rename a
+/// section, or replace the whole file. A rename is also a delete of the old identity and an add of the new one. A
+/// whole-file override discards the earlier changes of the file. So <see cref="Record"/> and <see cref="Changes"/> see
+/// only the changes after the last override. <see cref="Owner"/> and <see cref="ModsThatChange"/> see the override
+/// itself.</para>
 /// <para>Sections compare by <see cref="SectionIdentity"/>, and names compare without letter case.</para>
 /// </remarks>
 internal sealed class PatchLedger
@@ -39,6 +40,35 @@ internal sealed class PatchLedger
     {
         var log = Log(path);
         log.Add(section, new Change(log.Next(), ChangeKind.Add, null, modId));
+    }
+
+    /// <summary>
+    /// Records that <paramref name="modId"/> gives a section a new key (<c>ol.rename</c>). The caller also records the
+    /// delete of the old identity and the add of the new identity.
+    /// </summary>
+    public void RecordRename(string path, SectionIdentity from, SectionIdentity to, string modId)
+    {
+        var log = Log(path);
+        log.Renames.Add((log.Next(), from, to, modId));
+    }
+
+    /// <summary>
+    /// The sections of a file that <paramref name="modId"/> gives a new key, after the last whole-file override, as
+    /// (identity before the mod, identity after the mod). Two renames of one section give one pair. A rename back to the
+    /// old key gives no pair.
+    /// </summary>
+    public IReadOnlyList<(SectionIdentity From, SectionIdentity To)> Renames(string path, string modId)
+    {
+        if (!files.TryGetValue(path, out var log))
+            return [];
+        // The identity after each rename, to the identity before the first rename of the mod.
+        var first = new Dictionary<SectionIdentity, SectionIdentity>();
+        foreach (var (_, from, to, _) in log.Renames.Where(r => r.Sequence > log.LastOverride && r.ModId == modId))
+        {
+            var before = first.Remove(from, out var earlier) ? earlier : from;
+            first[to] = before;
+        }
+        return first.Where(p => !p.Key.Equals(p.Value)).Select(p => (p.Value, p.Key)).ToList();
     }
 
     /// <summary>Records that <paramref name="modId"/> replaces the whole file, which discards the earlier changes.</summary>
@@ -96,6 +126,22 @@ internal sealed class PatchLedger
             .ToList();
     }
 
+    /// <summary>
+    /// The mods that change a section in any way: they set or remove its lines, add, delete or rename it, or replace the
+    /// file. In load order.
+    /// </summary>
+    public IReadOnlyList<string> ModsThatChangeSection(string path, SectionIdentity section)
+    {
+        if (!files.TryGetValue(path, out var log))
+            return [];
+        return log.Changes(section).Select(c => (c.Sequence, c.ModId))
+            .Concat(log.Overrides)
+            .OrderBy(c => c.Sequence)
+            .Select(c => c.ModId)
+            .Distinct()
+            .ToList();
+    }
+
     private FileLog Log(string path)
     {
         if (!files.TryGetValue(path, out var log))
@@ -136,6 +182,9 @@ internal sealed class PatchLedger
 
         /// <summary>The whole-file overrides, as (sequence, mod).</summary>
         public List<(int Sequence, string ModId)> Overrides { get; } = [];
+
+        /// <summary>The renames, as (sequence, old identity, new identity, mod).</summary>
+        public List<(int Sequence, SectionIdentity From, SectionIdentity To, string ModId)> Renames { get; } = [];
 
         /// <summary>The sequence of the last whole-file override, or -1.</summary>
         public int LastOverride => Overrides.Count > 0 ? Overrides[^1].Sequence : -1;

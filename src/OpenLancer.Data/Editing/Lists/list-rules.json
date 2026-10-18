@@ -23,7 +23,9 @@
     "weapon_mod":   { "paths": ["EQUIPMENT\\WeaponModDB.ini"], "engine": false },
     "universe":     { "universe": true },
     "system":       { "systemFiles": true },
-    "room":         { "roomFiles": true }
+    "room":         { "roomFiles": true },
+    "nebula_files": { "fieldFiles": "Nebula" },
+    "field_files":  { "fieldFiles": "Asteroids" }
   },
   "lists": [
     { "id": "solar_archetype", "label": "Solar archetype", "kind": "SolarArchetype", "hash": true,
@@ -138,18 +140,21 @@
       { "index": 0, "list": "system", "label": "System", "closed": true, "effect": "degrade",
         "evidence": "Client\\NavmapBestPathPlanner.cs:307, GameStates\\SpaceGameplay.cs:1966" },
       { "index": 1, "list": "object_of_system", "scope": "systemOf:0", "label": "Exit object", "closed": true,
-        "effect": "degrade", "evidence": "Client\\NavmapBestPathPlanner.cs:310, Interface\\Widgets\\Navmap.cs:252" },
+        "effect": "degrade", "onDelete": "refuse",
+        "evidence": "Client\\NavmapBestPathPlanner.cs:310, Interface\\Widgets\\Navmap.cs:252" },
       { "index": 2, "list": "gate_tunnel", "label": "Tunnel", "evidence": "Open: the fork loads no gate_tunnel.ini" } ] },
     { "role": "system", "section": "Object", "key": "jump_effect", "list": "jump_gate_effect",
       "evidence": "Open: stored only (GameItemDb.cs:2613), the fork loads no jumpeffect.ini" },
     { "role": "system", "section": "Object", "key": "parent", "list": "object_of_system", "scope": "file",
-      "evidence": "Open: stored only (GameItemDb.cs:2596, :2610)" },
+      "onDelete": "cascade", "evidence": "Open: stored only (GameItemDb.cs:2596, :2610)" },
     { "role": "system", "section": "Object", "key": "next_ring", "list": "object_of_system", "scope": "file",
-      "closed": true, "effect": "degrade", "evidence": "Server\\Components\\STradelaneMoveComponent.cs:153" },
+      "closed": true, "effect": "degrade", "onDelete": "refuse",
+      "evidence": "Server\\Components\\STradelaneMoveComponent.cs:153" },
     { "role": "system", "section": "Object", "key": "prev_ring", "list": "object_of_system", "scope": "file",
-      "closed": true, "effect": "degrade", "evidence": "Server\\Components\\STradelaneMoveComponent.cs:153" },
+      "closed": true, "effect": "degrade", "onDelete": "refuse",
+      "evidence": "Server\\Components\\STradelaneMoveComponent.cs:153" },
     { "role": "system", "section": "Object", "key": "ring", "values": [
-      { "index": 0, "list": "zone_of_system", "scope": "file", "label": "Zone",
+      { "index": 0, "list": "zone_of_system", "scope": "file", "label": "Zone", "onDelete": "clear",
         "evidence": "Open: stored only (GameItemDb.cs:2614)" } ] },
     { "role": "system", "section": "Object", "key": "space_costume", "values": [
       { "index": 0, "list": "head", "label": "Head", "empty": true, "evidence": "Open: stored only (GameItemDb.cs:2612)" },
@@ -168,14 +173,16 @@
       { "index": 0, "list": "faction", "label": "Faction", "closed": true, "effect": "degrade",
         "evidence": "Server\\SpacePopulationSpawner.cs:180, :196" } ] },
     { "role": "system", "section": "Nebula", "key": "zone", "list": "zone_of_system", "scope": "file",
-      "closed": true, "required": true, "effect": "drop", "consequence": "The game drops this nebula.",
+      "closed": true, "required": true, "effect": "drop", "onDelete": "cascade",
+      "consequence": "The game drops this nebula.",
       "evidence": "GameItemDb.cs:1714-1728, ZoneReference.cs:13-14 (NebulaRuleRetailTests)" },
     { "role": "system", "section": "Nebula", "key": "file", "list": "nebula_file", "closed": true, "required": true,
       "exists": true, "effect": "loadBreak", "consequence": "The game crashes when it loads the data.",
       "missing": "The game drops this nebula.",
       "evidence": "Schema\\Universe\\Nebula.cs:38-45, IO\\FileSystem.cs:65-77, Schema\\FreelancerData.cs:442-443, ZoneReference.cs:11-12 (NebulaRuleRetailTests)" },
     { "role": "system", "section": "Asteroids", "key": "zone", "list": "zone_of_system", "scope": "file",
-      "closed": true, "required": true, "effect": "drop", "consequence": "The game drops this asteroid field.",
+      "closed": true, "required": true, "effect": "drop", "onDelete": "cascade",
+      "consequence": "The game drops this asteroid field.",
       "evidence": "GameItemDb.cs:1692-1701, :1773-1777, ZoneReference.cs:13-14 (NebulaRuleRetailTests)" },
     { "role": "system", "section": "Asteroids", "key": "file", "list": "asteroid_file", "closed": true, "required": true,
       "exists": true, "effect": "loadBreak", "consequence": "The game crashes when it loads the data.",
@@ -302,6 +309,40 @@
       "evidence": "GameItemDb.cs:309, RoomGameplay.cs:858-860" },
     { "role": "room", "section": "Room_Info", "key": "goodscart_script", "list": "cutscene",
       "consequence": "The game does not play cart scripts.",
-      "evidence": "Open: ResourceLoadExtensions.cs:63 has no caller" }
+      "evidence": "Open: ResourceLoadExtensions.cs:63 has no caller" },
+    { "role": "nebula_files", "section": "Exclusion Zones", "key": "exclusion", "values": [
+      { "index": 0, "list": "zone_of_system", "scope": "owner", "label": "Zone", "closed": true, "effect": "degrade",
+        "onDelete": "clearHole",
+        "consequence": "The game skips this hole. Retail gives the lines of this hole to the hole before it.",
+        "evidence": "GameItemDb.cs:2016-2028" } ] },
+    { "role": "nebula_files", "section": "Exclusion Zones", "key": "exclude", "values": [
+      { "index": 0, "list": "zone_of_system", "scope": "owner", "label": "Zone", "closed": true, "effect": "degrade",
+        "onDelete": "clearHole", "unused": true,
+        "consequence": "The game skips this hole. Retail gives the lines of this hole to the hole before it.",
+        "evidence": "GameItemDb.cs:2016-2028" } ] },
+    { "role": "field_files", "section": "Exclusion Zones", "key": "exclusion", "values": [
+      { "index": 0, "list": "zone_of_system", "scope": "owner", "label": "Zone", "closed": true, "effect": "degrade",
+        "onDelete": "clearHole",
+        "consequence": "The game skips this hole. Retail gives the lines of this hole to the hole before it.",
+        "evidence": "GameItemDb.cs:1912-1919" } ] },
+    { "role": "field_files", "section": "Exclusion Zones", "key": "exclude", "values": [
+      { "index": 0, "list": "zone_of_system", "scope": "owner", "label": "Zone", "closed": true, "effect": "degrade",
+        "onDelete": "clearHole",
+        "consequence": "The game skips this hole. Retail gives the lines of this hole to the hole before it.",
+        "evidence": "GameItemDb.cs:1912-1919" } ] },
+    { "role": "field_files", "section": "LootableZone", "key": "zone", "list": "zone_of_system", "scope": "owner",
+      "onDelete": "cascade",
+      "consequence": "The game gives this loot to no zone. Retail gives it to the whole field.",
+      "evidence": "Open: the fork keeps no zone loot (GameItemDb.cs:1883-1905)" }
+  ],
+  "// sceneTemplates": "The templates of Create in the Scene (milestone M3, decisions D233 and D253). Each template lists the [Solar] types of its archetypes. A connection type (a jump gate, a jump hole, an airlock gate or a trade lane ring) is in no template, because the editor adds connections in milestone M27.",
+  "connectionTypes": ["jump_gate", "jump_hole", "jumphole", "airlock_gate", "tradelane_ring"],
+  "sceneTemplates": [
+    { "id": "station", "label": "Station", "types": ["station", "docking_ring"], "needs": "docking_sphere", "then": "base" },
+    { "id": "planet", "label": "Planet", "types": ["planet"] },
+    { "id": "sun", "label": "Sun", "types": ["sun"] },
+    { "id": "satellite", "label": "Satellite or buoy", "types": ["satellite", "waypoint"] },
+    { "id": "solar", "label": "Other solar",
+      "types": ["mission_satellite", "non_targetable", "weapons_platform", "destroyable_depot"] }
   ]
 }

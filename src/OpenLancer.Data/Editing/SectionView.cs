@@ -73,7 +73,14 @@ public sealed record KeySchema(string Name, Type? ClrType, bool Multiline, bool 
 /// <param name="Cutscenes">The install paths of the cutscene scripts that changed, in normal form (see
 /// <c>VfsPath.Normalize</c>). A change of a cutscene alone lists no section.</param>
 public sealed record EditChange(IReadOnlyList<SectionRef> Sections, bool Structural, bool Text,
-    IReadOnlyList<string> Cutscenes);
+    IReadOnlyList<string> Cutscenes)
+{
+    /// <summary>
+    /// The sections that got a new key, as (old reference, new reference), in order. An undo gives the pairs in the other
+    /// direction and in reverse order. The scene uses them to keep the item of a renamed section (milestone M3).
+    /// </summary>
+    public IReadOnlyList<(SectionRef From, SectionRef To)> Renames { get; init; } = [];
+}
 
 /// <summary>The result of <see cref="EditSession.Save"/>.</summary>
 /// <param name="Saved">True when the save wrote its files, so the session has no unsaved edits now. False when the

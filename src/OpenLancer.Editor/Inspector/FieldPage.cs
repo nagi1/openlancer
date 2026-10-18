@@ -31,6 +31,7 @@ internal sealed class FieldPage(EditorWindow window, PropertyGrid grid)
     private const string FileNote = "The Scene shows another file when you open the system again after the save.";
 
     private readonly SectionExtras extras = new(window, grid);
+    private readonly UsedBySection usedBy = new(window, grid);
 
     // The sections of the last file, for one version of the edit view.
     private (EditorSession? Session, int Version, string? File) fileVersion;
@@ -60,6 +61,8 @@ internal sealed class FieldPage(EditorWindow window, PropertyGrid grid)
         File(item, section);
         if (section != null)
         {
+            // The lines that name the zone of the item (decision D246 of the M3 design).
+            usedBy.Draw(section, item.GetType().Name);
             extras.Draw([section], item.GetType().Name, moreKeys: true);
         }
     }

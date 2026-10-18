@@ -46,6 +46,9 @@ public sealed class ListRulesTests
         ["system"] = typeof(StarSystem),
         // The room files of the bases (decision D135 of the M8b design).
         ["room"] = typeof(Room),
+        // The nebula and asteroid field files that the system files name (milestone M3).
+        ["nebula_files"] = typeof(Nebula),
+        ["field_files"] = typeof(AsteroidField),
     };
 
     /// <summary>The section classes of the files that the engine reads itself and gives section by section to a

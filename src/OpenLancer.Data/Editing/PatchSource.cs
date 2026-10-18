@@ -218,8 +218,8 @@ internal sealed class PatchSource
     /// <summary>
     /// Groups the loaded sections by the section that they change. A section that adds a section with a key, a
     /// singleton section, or a section without a line of an optional key, starts a group. The later sections with the
-    /// same type and key join the group, up to a section that deletes it. Another section without a key only adds a
-    /// section.
+    /// same type and key join the group, up to a section that deletes it. After a section with <c>ol.rename</c>, the
+    /// later sections with the new key join the group. Another section without a key only adds a section.
     /// </summary>
     private void Group(IReadOnlyList<SourceSection> texts)
     {
@@ -247,6 +247,13 @@ internal sealed class PatchSource
             {
                 group.Deleted = true;
                 open.Remove(id);
+            }
+            else if (IniPatcher.RenameOf(Sections[i]) is { } newKey)
+            {
+                // After ol.rename, a later section finds the section by its new key. The group keeps the old key,
+                // because the writer finds the section of B by it.
+                open.Remove(id);
+                open[new SectionIdentity(Sections[i].Name, newKey)] = group;
             }
         }
         foreach (var (id, group) in groups)

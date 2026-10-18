@@ -40,6 +40,7 @@ internal sealed class ChangeSet(string label)
     private readonly Dictionary<string, (IFileState Before, IFileState After)> files = new(VfsPath.Comparer);
     private readonly List<SectionRef> sections = [];
     private readonly List<string> cutscenes = [];
+    private readonly List<(SectionRef From, SectionRef To)> renames = [];
     private (ModText Before, ModText After)? text;
 
     public string Label { get; } = label;
@@ -59,8 +60,19 @@ internal sealed class ChangeSet(string label)
     public bool ChangesState =>
         files.Values.Any(s => !s.Before.Equals(s.After)) || text is { } t && !t.Before.SameAs(t.After);
 
+    /// <summary>What the entry changes, for the change and its redo.</summary>
     public EditChange Change =>
-        new(sections.Distinct().ToList(), Structural, ChangesText, cutscenes.Distinct(VfsPath.Comparer).ToList());
+        new(sections.Distinct().ToList(), Structural, ChangesText, cutscenes.Distinct(VfsPath.Comparer).ToList())
+        {
+            Renames = renames.ToList(),
+        };
+
+    /// <summary>What an undo of the entry changes: the same sections, and each rename in the other direction, in
+    /// reverse order.</summary>
+    public EditChange UndoChange => Change with
+    {
+        Renames = renames.AsEnumerable().Reverse().Select(r => (r.To, r.From)).ToList(),
+    };
 
     private bool Structural { get; set; }
 
@@ -75,6 +87,9 @@ internal sealed class ChangeSet(string label)
         sections.Add(section);
         Structural |= structural;
     }
+
+    /// <summary>Records that a section got a new key.</summary>
+    public void NoteRename(SectionRef from, SectionRef to) => renames.Add((from, to));
 
     /// <summary>Records a change of a cutscene script.</summary>
     /// <param name="path">The install path, in <see cref="VfsPath.Normalize"/> form.</param>

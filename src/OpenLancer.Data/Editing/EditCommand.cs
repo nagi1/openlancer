@@ -92,16 +92,50 @@ public abstract class EditCommand
     public static EditCommand DeleteSection(SectionRef target) => new DeleteSectionCommand($"Delete {target.Id}", target);
 
     /// <summary>
-    /// Gives a section a new key. A patch cannot rename a section, so only a section that the active mod adds can get a
-    /// new key. The new key must differ from the old key in more than letter case, and no other section of the type can
-    /// have it.
+    /// Gives a section a new key. The new key must differ from the old key in more than letter case, and no other
+    /// section of the type in W can have it. A section of the lower layer gets the new key through <c>ol.rename</c> and
+    /// keeps its place (milestone M3). Then the new key must also differ from the key of each other section of the type
+    /// in the lower layer, also of a section that W deleted. A rename back to the key of the lower layer ends the rename.
+    /// A section of the lower layer with child sections, and a child section of the lower layer, cannot get a new key.
     /// </summary>
     public static EditCommand Rename(SectionRef target, string newKey)
     {
         if (string.IsNullOrWhiteSpace(newKey))
             throw new ArgumentException("The new key cannot be empty.", nameof(newKey));
-        return new RenameCommand($"Rename {target.Id} to {newKey}", target, newKey);
+        return new RenameCommand($"Rename {target.Id} to {newKey}", target, newKey, onlyAdded: false);
     }
+
+    /// <summary>
+    /// Gives a section that the active mod adds a new key, as <see cref="Rename"/> does. The command throws an
+    /// <see cref="InvalidOperationException"/> when it runs on a section of the lower layer. The Database renames its
+    /// items with it, because a patch cannot change the lines of a lower <c>[BaseGood]</c> that name an item.
+    /// </summary>
+    internal static EditCommand RenameAdded(SectionRef target, string newKey)
+    {
+        if (string.IsNullOrWhiteSpace(newKey))
+            throw new ArgumentException("The new key cannot be empty.", nameof(newKey));
+        return new RenameCommand($"Rename {target.Id} to {newKey}", target, newKey, onlyAdded: true);
+    }
+
+    /// <summary>
+    /// Sets one value of one line in place: value <paramref name="index"/> of the line <paramref name="line"/> (from 0)
+    /// of a name. The other lines keep their order, so a line of a group of lines that belong together stays with its
+    /// group. The command throws an <see cref="ArgumentException"/> when it runs on a section without such a value.
+    /// </summary>
+    internal static EditCommand SetValueAt(SectionRef target, string name, int line, int index, ValueBase value)
+    {
+        CheckName(name);
+        return new SetValueCommand($"Set {name}", target, name, line, index, value);
+    }
+
+    /// <summary>
+    /// Removes <paramref name="count"/> lines of a section from the line at <paramref name="first"/> (from 0, among all
+    /// lines of the section). The other lines keep their order. The command throws an <see cref="ArgumentException"/>
+    /// when it runs on a section without these lines, and an <see cref="InvalidOperationException"/> when the lines
+    /// hold the key line.
+    /// </summary>
+    internal static EditCommand RemoveEntries(SectionRef target, int first, int count) =>
+        new RemoveEntriesCommand($"Remove lines of {target.Id}", target, first, count);
 
     /// <summary>Sets the text of a key in the active mod's strings.json, or removes it when the text is null.</summary>
     public static EditCommand SetText(StringKind kind, string key, string? text)
@@ -200,7 +234,17 @@ public abstract class EditCommand
                 // The names lose their pins.
                 document.Replace(index, lower, old.Concat(lower).Select(e => e.Name).ToList());
             }
-            scope.Changed(target, structural: false);
+            // A revert of a section that the active mod renames gives it its key of B again (milestone M3). The scene
+            // then keeps its item, as for a rename.
+            var reverted = new SectionRef(document.Path, document.IdentityAt(index));
+            if (reverted.Id.Equals(id))
+            {
+                scope.Changed(target, structural: false);
+                return;
+            }
+            scope.Changed(target, structural: true);
+            scope.Changed(reverted, structural: true);
+            scope.Renamed(target, reverted);
         }
     }
 
@@ -248,7 +292,8 @@ public abstract class EditCommand
         }
     }
 
-    private sealed class RenameCommand(string label, SectionRef target, string newKey) : EditCommand(label)
+    /// <param name="onlyAdded">True to refuse a section of the lower layer.</param>
+    private sealed class RenameCommand(string label, SectionRef target, string newKey, bool onlyAdded) : EditCommand(label)
     {
         internal override void Run(EditSession.CommandScope scope)
         {
@@ -256,9 +301,25 @@ public abstract class EditCommand
             var section = document.Working[index];
             var keyName = KeyName(section) ??
                           throw new InvalidOperationException($"A [{section.Name}] section has no key to change.");
-            if (document.InBase(document.IdentityAt(index)))
-                throw new InvalidOperationException(
-                    $"{target.Id}: the editor can change the key only of a section that the active mod adds.");
+            if (document.BaseIdOf(document.IdentityAt(index)) is { } before)
+            {
+                if (onlyAdded)
+                    throw new InvalidOperationException(
+                        $"{target.Id}: the editor can change the key only of a section that the active mod adds.");
+                if (SectionKeys.IsChild(section.Name))
+                    throw new InvalidOperationException(
+                        $"{target.Id}: a patch cannot give a child section of the lower layer a new key.");
+                // The identities of the child sections hold the identity of their parent (review finding R20 of M3).
+                if (SectionKeys.ChildCount(document.Working, index) > 0)
+                    throw new InvalidOperationException(
+                        $"{target.Id}: the editor cannot give a section of the lower layer with child sections a new key.");
+                // The merge would find two sections with the key, also when W deleted the other one.
+                if (!string.Equals(before.Key, newKey, StringComparison.OrdinalIgnoreCase) &&
+                    document.Base.Any(s => s.Name.Equals(section.Name, StringComparison.OrdinalIgnoreCase) &&
+                                           string.Equals(SectionIdentity.KeyOf(s), newKey, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException(
+                        $"Another [{section.Name}] section of the lower layer has {keyName} = {newKey}.");
+            }
             if (string.Equals(SectionIdentity.KeyOf(section), newKey, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
                     $"{target.Id}: the new key must differ from the old key in more than letter case.");
@@ -266,8 +327,43 @@ public abstract class EditCommand
                                           string.Equals(SectionIdentity.KeyOf(s), newKey, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException($"Another [{section.Name}] section has {keyName} = {newKey}.");
             document.Replace(index, SectionEdits.WithLines(section, keyName, [[new StringValue(newKey)]]), [keyName]);
+            var renamed = new SectionRef(document.Path, document.IdentityAt(index));
             scope.Changed(target, structural: true);
-            scope.Changed(new SectionRef(document.Path, document.IdentityAt(index)), structural: true);
+            scope.Changed(renamed, structural: true);
+            scope.Renamed(target, renamed);
+        }
+    }
+
+    private sealed class SetValueCommand(string label, SectionRef target, string name, int line, int index,
+        ValueBase value) : EditCommand(label)
+    {
+        internal override void Run(EditSession.CommandScope scope)
+        {
+            var (document, i) = scope.Find(target);
+            var old = document.Working[i];
+            if (string.Equals(KeyName(old), name, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"'{name}' is the key of {target.Id}. Use Rename to change it.");
+            var changed = SectionEdits.WithValue(old, name, line, index, value) ??
+                          throw new ArgumentException($"{target.Id} has no value {index + 1} in line {line + 1} of '{name}'.");
+            document.Replace(i, changed, [name]);
+            scope.Changed(target, structural: false);
+        }
+    }
+
+    private sealed class RemoveEntriesCommand(string label, SectionRef target, int first, int count) : EditCommand(label)
+    {
+        internal override void Run(EditSession.CommandScope scope)
+        {
+            var (document, i) = scope.Find(target);
+            var old = document.Working[i];
+            if (first < 0 || count < 1 || first + count > old.Count)
+                throw new ArgumentException($"{target.Id} has no lines {first + 1} to {first + count}.");
+            var removed = old.Skip(first).Take(count).ToList();
+            if (KeyName(old) is { } key && removed.Any(e => Is(e, key)))
+                throw new InvalidOperationException($"{target.Id}: the lines hold the key line. Delete the section instead.");
+            document.Replace(i, SectionEdits.Without(old, first, count),
+                removed.Select(e => e.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+            scope.Changed(target, structural: false);
         }
     }
 
@@ -314,6 +410,41 @@ internal static class SectionEdits
         }
         if (!placed)
             Add(result, spelling, lines);
+        return result;
+    }
+
+    /// <summary>
+    /// A copy of <paramref name="old"/> in which value <paramref name="index"/> of the line <paramref name="line"/> of
+    /// <paramref name="name"/> is <paramref name="value"/>, or null when the section has no such value.
+    /// </summary>
+    public static Section? WithValue(Section old, string name, int line, int index, ValueBase value)
+    {
+        var result = new Section(old.Name, old.Count) { File = old.File, Line = old.Line };
+        var n = 0;
+        var done = false;
+        foreach (var entry in old)
+        {
+            if (Is(entry, name) && n++ == line && index >= 0 && index < entry.Count)
+            {
+                result.Add(Line(result, entry.Name, entry.Select((v, i) => i == index ? value : v), entry.Line));
+                done = true;
+            }
+            else
+                result.Add(Line(result, entry.Name, entry, entry.Line));
+        }
+        return done ? result : null;
+    }
+
+    /// <summary>A copy of <paramref name="old"/> without <paramref name="count"/> lines from the line at
+    /// <paramref name="first"/>.</summary>
+    public static Section Without(Section old, int first, int count)
+    {
+        var result = new Section(old.Name, old.Count) { File = old.File, Line = old.Line };
+        for (var i = 0; i < old.Count; i++)
+        {
+            if (i < first || i >= first + count)
+                result.Add(Line(result, old[i].Name, old[i], old[i].Line));
+        }
         return result;
     }
 

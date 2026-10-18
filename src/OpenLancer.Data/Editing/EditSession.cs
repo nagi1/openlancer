@@ -316,7 +316,7 @@ public sealed partial class EditSession : IDisposable
         if (ActiveMod != null && (!document.InBase(id) || document.Pins(id).Contains(name) ||
                                   !SameLines(document.BaseSection(id)!, document.Working[index], name, document.IsBinary)))
             return (ValueOrigin.ActiveMod, ActiveMod.Id);
-        var owner = lowerView.Ledger.Owner(document.Path, id, name);
+        var owner = lowerView.Ledger.Owner(document.Path, document.BaseIdOf(id) ?? id, name);
         return owner == null ? (ValueOrigin.Base, null) : (ValueOrigin.LowerMod, owner);
     }
 
@@ -370,7 +370,7 @@ public sealed partial class EditSession : IDisposable
         var change = history.Undo();
         text = change.Undo(FileAt) ?? text;
         Revision++;
-        Changed?.Invoke(change.Change);
+        Changed?.Invoke(change.UndoChange);
     }
 
     /// <exception cref="InvalidOperationException">There is nothing to redo, or a transaction is open.</exception>
@@ -412,7 +412,7 @@ public sealed partial class EditSession : IDisposable
         }
         text = change.Undo(FileAt) ?? text;
         if (!change.IsEmpty)
-            Changed?.Invoke(change.Change);
+            Changed?.Invoke(change.UndoChange);
     }
 
     /// <summary>Runs a command. When it throws, puts back the states before the change set.</summary>
@@ -599,7 +599,13 @@ public sealed partial class EditSession : IDisposable
         }
 
         public void Changed(SectionRef section, bool structural) =>
-            change.Note(section with { Path = VfsPath.Normalize(section.Path) ?? section.Path }, structural);
+            change.Note(Normal(section), structural);
+
+        /// <summary>Records that a section got a new key, for <see cref="EditChange.Renames"/>.</summary>
+        public void Renamed(SectionRef from, SectionRef to) => change.NoteRename(Normal(from), Normal(to));
+
+        private static SectionRef Normal(SectionRef section) =>
+            section with { Path = VfsPath.Normalize(section.Path) ?? section.Path };
 
         private EditDocument Editable(EditDocument document)
         {

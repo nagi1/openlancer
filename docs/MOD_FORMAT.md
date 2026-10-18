@@ -74,6 +74,7 @@ Some section types use another key:
 | Asteroid field files: `[Field]`, `[Cube]`, `[Band]`, `[ExclusionBand]`, `[AsteroidBillboards]`, `[properties]`, `[Exclusion Zones]` | none: the file has one of each |
 | `[DynamicAsteroids]` | `asteroid` |
 | `[LootableZone]` | `zone`, or none for the section without a `zone` line (see below) |
+| `[locked_gates]` of `DATA\InitialWorld.ini` | none: the file has one |
 
 If the key matches no section, or more than one section, the merge fails with an error.
 
@@ -159,8 +160,25 @@ Directives start with `ol.`. Do not use `@`: the INI parser ignores lines that s
 | `ol.delete = true` | Remove the target section and its child sections. The patch section has only the key and this directive. |
 | `ol.remove = name1, name2` | Remove all target entries with these names. |
 | `ol.parent = <key>` | With `ol.new`, add a child section to the parent section with this key (see below). |
+| `ol.rename = <new key>` | Give the target section a new key. The section keeps its place (see "Renames"). |
 
 An unknown `ol.` directive is an error.
+
+### Renames
+
+A patch section with `ol.rename` gives a section of a lower layer a new key. The patch section finds its target by the old key, as a change does. The other lines of the patch section change the target. Then the merge gives the key line the new key. The section keeps its place in the file, and its child sections stay after it:
+
+```ini
+[Object]
+nickname = Li01_14_depot_water
+ol.rename = Li01_14_depot_water_old
+pos = -37675, 0, -27705
+```
+
+- After the rename, a later patch section finds the section only by its new key. A patch of the old key fails with "no section to patch".
+- The merge refuses `ol.rename` with `ol.new`, `ol.delete` or `ol.parent`. It also refuses it on a section type without a key and on a child section. The patch section must have exactly one key line and one `ol.rename` line.
+- The new key must differ from the old key in more than letter case. No other section of the type in the file can have the new key.
+- The place counts, because the engine reads some sections in file order. For example, a player launches from the first object of a system that docks with the base. A delete and a new section would move the section to the end of the file.
 
 ### Child sections
 
@@ -435,7 +453,7 @@ The Snap button of the Scene toolbar (a magnet) makes a drag move by steps. The 
 
 One drag is one entry of the edit history. The item moves at once, and the Inspector shows the new line. The drag ends when the left mouse button goes up, also over another panel. `Esc` or the right mouse button cancels the drag, and the item goes back. Undo, redo, save and the recovery file wait until the drag ends. A drag that ends where it started is no edit.
 
-A move or a turn changes only the selected item. The zones, the trade lane paths and the other objects that belong to the item stay in place, for example the docking ring of a planet. The editor cannot add or delete an item of a system, or change its nickname, yet.
+A move or a turn changes only the selected item. The zones, the trade lane paths and the other objects that belong to the item stay in place, for example the docking ring of a planet. To add, copy, rename or delete an item, see "Create, duplicate, rename and delete".
 
 The numbers that a drag writes:
 
@@ -463,6 +481,127 @@ These keys are locked, and the other keys of the section take edits:
 - The `file` of a `[system]` of `universe.ini`, because a change moves all the contents of the system.
 
 The gizmo also does not show when a line that it reads has an error, for example a `pos` line with text. Correct the line in the Inspector first.
+
+### Create, duplicate, rename and delete
+
+The Scene adds, copies, renames and deletes the objects, zones and lights of the open system, as Unity does with GameObjects. It also deletes nebulae and asteroid fields. Each action is one entry of the edit history, so one Undo takes back all of it. The actions start in these places:
+
+| Place | Actions |
+|---|---|
+| The `+` button at the left of the Hierarchy toolbar | Create |
+| The menu of a row of the Hierarchy | Create, Duplicate, Rename and Delete, then the other items |
+| The menu of empty space and of a group row of the Hierarchy | Create |
+| The item menu of the Inspector header | Duplicate, Rename and Delete |
+| The Edit menu | Create, Duplicate, Rename and Delete |
+| The keys, while the Hierarchy or the Scene has the focus | `F2` Rename, `Ctrl+D` Duplicate, `Delete` Delete |
+
+The keys work only when no text field is active and no field edit or drag is open. A disabled menu item tells why in its tooltip. Jump gates, jump holes, airlock gates and trade lane rings are connection objects. A connection object has a `goto`, a `prev_ring` or a `next_ring` line, or an archetype of such a type. The editor cannot add, copy or delete them before milestone M27, because the partner gate, the neighbor rings and the route files must change with them. A rename of a connection object works.
+
+#### Create
+
+The Create menu has five object templates, a zone of each shape, and a light:
+
+| Template | Archetypes |
+|---|---|
+| Station | the `station` and `docking_ring` types with a `docking_sphere` line |
+| Planet | `planet` |
+| Sun | `sun` |
+| Satellite or buoy | `satellite` and `waypoint` |
+| Other solar | `mission_satellite`, `non_targetable`, `weapons_platform` and `destroyable_depot` |
+
+An object template opens the picker of its archetypes. `Esc` makes nothing. The station then opens the picker of the bases, with the bases of the system first. The new station docks with the base that you pick (`dock_with`). `Esc` in the base picker makes the station without a base.
+
+The new item goes to the orbit point of the Scene camera, as Unity puts a new object at the pivot of the Scene view. Its `pos` has whole numbers. Create on an object row of the Hierarchy puts a new object at the position of that object and gives it `parent = <that object>`. A zone and a light have no `parent` key, so they get the position only.
+
+The nickname is `<system>_<template>_<n>` in lowercase with the first free n, for example `li01_station_1`, `li01_zone_1` or `li01_light_1`. The new item is selected, and its Hierarchy row opens the rename field. A zone gets the `size` of its shape. A sphere gets `1000`, an ellipsoid `2000, 1000, 2000` and a box `2000, 2000, 2000`. A cylinder gets `1000, 2000`, and a ring gets `2000, 1000, 200` (outer radius, inner radius, height). A light gets `color = 255, 255, 255`, `range = 5000`, `type = POINT` and `attenuation = 1, 0, 0.000001`. Without the attenuation, the engine makes a point light that is almost black at 1,000 m.
+
+A new item has its full lines in the patch, with `ol.new = true`. A system file needs no `[Archetype]` line for a new object. The loaded game data does not have an unsaved archetype of the active mod. An object with such an archetype shows in the Scene after the save and the game data reload.
+
+#### Duplicate
+
+`Ctrl+D` copies the selected item at the same place, and the copy is selected. An object takes its `parent` children with it, and their children. The `parent` line of a child copy names the copy of its parent. The copies go at the end of the file, the parent before its children, so the launch object of a base does not change.
+
+A nickname that ends with `_` and digits keeps its stem in the copy. The copy takes the first free number with the same count of digits, as Unity numbers "Cube (1)" and "Cube (2)". For example, the copy of `li01_station_1` is `li01_station_2`, and the copy of `Li01_depot` is `Li01_depot_1`.
+
+- A copy leaves out the `base` line, because a base has one object in space. The Console tells it.
+- A text placeholder of the active mod gets a copy of its text with a new key, as New from template does. A numeric text id stays.
+- The editor copies nebulae and asteroid fields, and the zones that hold them, in milestone M26.
+
+#### Delete
+
+`Delete` removes the item, as Unity does:
+
+- The child sections of the section go with it, and so do the objects whose `parent` names the object, again and again.
+- A zone takes its `[Nebula]` and `[Asteroids]` sections, and the `[LootableZone]` sections that name it. The engine drops a nebula or a field without its zone.
+- A line that names the item gets a safe fix in the same entry when one exists. The `ring` line of a planet goes. The lines of each hole of a deleted zone go from the `[Exclusion Zones]` sections of the nebula and field files. The engine skips a hole whose zone is not there. But retail gives the lines of that hole to the hole before it, so the lines must go.
+- Another line keeps its value and shows "Missing" (see "Data lists and pickers"). In milestone M3, only a fix of a line that the editor cannot change gives such a line.
+- A line whose rule refuses the delete names the line and stops the delete, as Unity RequireComponent does. A jump gate, a jump hole and a trade lane ring refuse their delete until milestone M27.
+- A delete of a nebula or an asteroid field removes only its section, as Unity "Remove Component" does. Its zone stays, with its encounters, its music and its damage.
+
+A delete that removes only the item and its child sections runs at once. Another delete opens a dialog. It lists the items that go too, the lines that change and the lines that show "Missing". It also lists the files that name the item as text, and these warnings:
+
+- A base that loses the last object of its system that docks with it. The game then puts the player at the center of the system after a launch.
+- A base that loses the last object of its system with `base = <base>`. The navigation map then does not list the base, and its rooms show no planet.
+- A mod that loads later and changes a section that goes. Its patch cannot find the section after the delete.
+
+A delete of a read-only section is refused with the reason, for example a light of the St02c file whose nickname another light also has.
+
+#### Rename
+
+`F2` opens the nickname of the item in its Hierarchy row, as in Unity. The field checks the text while you type and shows the problem below the row. `Enter` or a click outside the field runs the rename. `Esc` cancels. The name text (`ids_name`) stays a field of the Inspector. A rename of a nebula or a field renames its zone, because the zone is the key of its section.
+
+The rename changes each line that the data lists find:
+
+- The `parent`, `next_ring`, `prev_ring` and `ring` lines of the system file, and the `goto` line of the partner gate in its system file.
+- The `[Nebula]`, `[Asteroids]` and `[LootableZone]` sections that a zone is the key of. These sections get the new key with `ol.rename`, so they keep their place.
+- The hole lines of the nebula and field files.
+- The `locked_gate` and `npc_locked_gate` lines of `[locked_gates]` in `InitialWorld.ini`. Each of these lines holds the FLHash of a gate nickname as a number. Retail locks these gates at the start of a new game.
+
+A section of a lower layer gets its new key with `ol.rename` (see "Renames"). A section of the lower layer with child sections keeps its key.
+
+The editor refuses a nickname that another object or zone of any system has, without letter case, or that has the same FLHash. Retail keeps the zones of all systems in one map by the hash of the zone nickname. It also keeps the visit flags of objects and zones by the hash of the nickname. A light nickname must be unique in its file only. The editor also refuses a change of letter case only. It refuses a nickname that another section of the lower layer of the file has, also when the active mod deleted that section.
+
+A rename with a warning opens a dialog first:
+
+- The files that name the old nickname as text: the mission files, the cutscenes and the other INI files. A mission or a cutscene that names the old nickname does not find the item. Milestone M29 adds the index of the mission files.
+- `KnowledgeMap.ini`: a text of the game then does not reveal the item on the navigation map.
+- A mod that loads later and changes the section. Its patch cannot find the section after the rename.
+- A zone nickname that gets or loses the word `Tradelane` or `vignette` (letter case counts). Retail makes a zone with `Tradelane` a trade lane zone when its shape fits, and a zone with `vignette` lawful.
+- Lines that name the new nickname while no item has it. After the rename, they name this item.
+
+A rename changes the hash of the item. A saved game keeps the visit flags and the gate locks of the old hash.
+
+#### Components
+
+The Inspector page of an object starts with its components, as Unity shows the components of a GameObject. Each component is a view over keys of the `[Object]` section:
+
+| Component | Keys | Add | Remove |
+|---|---|---|---|
+| Solar | `nickname`, `pos`, `rotate`, `archetype` | each object has it | refused: each object needs an archetype |
+| Loadout user | `loadout` | the loadout picker | removes `loadout`, so the object gets the loadout of its archetype |
+| Dockable station | `dock_with` | the base picker, only for an archetype with a docking sphere | removes `dock_with` |
+| Base object | `base` | the base picker | removes `base` |
+| Faction member | `reputation` | the faction picker | removes `reputation` |
+| Jump connection | `goto` | milestone M27 | refused until milestone M27 |
+| Trade lane ring | `prev_ring`, `next_ring`, `tradelane_space_name` | milestone M27 | refused until milestone M27 |
+| Planet ring | `ring` | milestone M26 | removes `ring` |
+
+A click on a chip opens the section of the page with its keys. A chip with a glyph has a problem, and its tooltip tells it. "Add component" offers the components that the object does not have. A right click on a chip offers "Remove component". Each add and each remove is one entry of the edit history.
+
+These component checks give warnings, until a retail comparison proves an effect:
+
+- A Dockable station whose archetype has no docking sphere. The player cannot dock there.
+- A Dockable station that docks with a base of another system. After a launch, the game puts the player in the system of the base.
+- An object with the nickname or the FLHash of an object of any system. The game can confuse the two objects.
+- A `[Base]` without an object in its system that docks with it, or without an object with `base` of it. The Inspector of the base shows these warnings.
+
+#### Used by, Behaviors and marks
+
+The pages of an object, a zone, a nebula and a field have a "Used by" section. It lists each line that names the item, from the data lists of the edit view with the unsaved edits. A button selects the item of the line, or its section.
+
+The page of an object has a "Behaviors" section. It shows the pilot, the behavior, the difficulty and the reputation of the object. It also shows the encounters of the zones that hold its position, and the files that name it as text. It is read-only, except the rows of its keys. Milestone M29 adds the cutscene scripts and the mission triggers.
+
+The Hierarchy marks a row whose section the active mod changes with a blue bar at its left, as Unity marks a prefab override. A row whose section the active mod adds also gets a `+`.
 
 ### Data lists and pickers
 
@@ -520,6 +659,7 @@ Each save runs the save gate first, also a save with nothing to write, and also 
   | A value that is not a number, in a key of numbers | The game reads 0 in its place. In a text file, the game reads the digits at the start of the value, for example 100 for `100x`. |
   | A name that is not in the list of names of the key, for example `type = BOAT`, or a value that is not a GUID | The game ignores the line. |
   | A required key without a line, for example `da_archetype` of a `[Ship]` | The game drops this section. |
+- A zone of the active mod with the nickname or the FLHash of another zone of any system. The game drops one of the two zones.
 - An error of the checks of a cutscene that the active mod changes, when the lower cutscene does not have the error. For example, a LIGHT has no `spatialprops.pos`. A whole cutscene file of the active mod that the engine cannot read is an error too. The game crashes when it plays such a cutscene, so the message starts with "The game crashes when it plays this cutscene." These checks run without the game data, so they do not check templates and costumes.
 
 An entry is unusable when the engine cannot use it. A curve without points is unusable, and so is a name that two curves have. An entry is also unusable when its own checks give an error that makes the game drop it or stop loading. Some examples:
@@ -620,7 +760,7 @@ A copy keeps a text id of the base data. A text of a mod gets a copy in `strings
 
 Copies of sections that share a text share the copy of the text.
 
-The editor has no menu item for Rename yet. Only the data API (`ItemEdits.Rename` in OpenLancer.Data) renames an item. Rename is only for an item that the mod adds. Equipment and its good keep the same nickname, because the engine finds the equipment of a good by that nickname. The editor changes each line that names the item in a section that the mod can change: the `ship`, `hull`, `equipment` and `addon` lines of goods, `projectile_archetype`, and `marketgood`. The new nickname must be a value that a patch line can hold, for example without `,` or `;`.
+The Database has no menu item for Rename yet. Only the data API (`ItemEdits.Rename` in OpenLancer.Data) renames an item of the item files. It renames only an item that the mod adds. Equipment and its good keep the same nickname, because the engine finds the equipment of a good by that nickname. The editor changes each line that names the item in a section that the mod can change: the `ship`, `hull`, `equipment` and `addon` lines of goods, `projectile_archetype`, and `marketgood`. The new nickname must be a value that a patch line can hold, for example without `,` or `;`. The Scene renames the objects, zones and lights of the system files, also of the lower layers (see "Rename").
 
 When you change the text of a key that holds a text id (see "Text: strings.json"), the editor writes the text into `strings.json` and sets the line to its placeholder. The text of no other section changes:
 

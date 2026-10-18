@@ -116,7 +116,7 @@ public static class SceneFields
     public static IReadOnlyList<SceneField> Rows { get; } =
     [
         // [Object]: GetSystemObject (GameItemDb.cs:2583-2668).
-        Locked(SceneSection.Object, "nickname", "GameItemDb.cs:2587. A rename is a later milestone."),
+        Locked(SceneSection.Object, "nickname", "GameItemDb.cs:2587. Rename (F2) in the Hierarchy changes it (milestone M3)."),
         Row(SceneSection.Object, "pos", SceneEffect.Transform, "GameItemDb.cs:2591"),
         Row(SceneSection.Object, "rotate", SceneEffect.Transform, "GameItemDb.cs:2633-2636"),
         Row(SceneSection.Object, "archetype", DataReinit | SceneEffect.Label | SceneEffect.Lanes,
@@ -155,7 +155,7 @@ public static class SceneFields
         Row(SceneSection.Object, "size", SceneEffect.None, "SystemPart.size exists, but GetSystemObject does not read it."),
 
         // [Zone]: InitSystems (GameItemDb.cs:1601-1676).
-        Locked(SceneSection.Zone, "nickname", "GameItemDb.cs:1603. A rename is a later milestone."),
+        Locked(SceneSection.Zone, "nickname", "GameItemDb.cs:1603. Rename (F2) in the Hierarchy changes it (milestone M3)."),
         Row(SceneSection.Zone, "pos", SceneEffect.Transform, "GameItemDb.cs:1610"),
         Row(SceneSection.Zone, "rotate", SceneEffect.Transform, "GameItemDb.cs:1647-1661"),
         Row(SceneSection.Zone, "size", SceneEffect.Transform | SceneEffect.Volume,
@@ -207,7 +207,8 @@ public static class SceneFields
         Row(SceneSection.Zone, "reputation", SceneEffect.None, "The schema has it. InitSystems does not read it."),
 
         // [LightSource]: InitSystems (GameItemDb.cs:1466-1516).
-        Locked(SceneSection.LightSource, "nickname", "GameItemDb.cs:1516. A rename is a later milestone."),
+        Locked(SceneSection.LightSource, "nickname",
+            "GameItemDb.cs:1516. Rename (F2) in the Hierarchy changes it (milestone M3)."),
         Row(SceneSection.LightSource, "pos", SceneEffect.Transform, "GameItemDb.cs:1483-1490"),
         Row(SceneSection.LightSource, "color", SceneEffect.Light, "GameItemDb.cs:1472-1481"),
         Row(SceneSection.LightSource, "range", SceneEffect.Light, "GameItemDb.cs:1492-1500"),

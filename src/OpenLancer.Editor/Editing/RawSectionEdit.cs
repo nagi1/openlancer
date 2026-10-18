@@ -60,7 +60,8 @@ internal static class RawSectionEdit
         if (keyEntry != null && !SameLines(Lines(start, keyEntry), Lines(end, keyEntry)))
         {
             var line = end.FirstOrDefault(l => Is(l.Name, keyEntry))?.Number ?? 0;
-            return Stop(line, "The nickname finds the section. Rename comes with M3.");
+            return Stop(line, "The nickname finds the section, so this block cannot change it. To rename an item of a " +
+                              "system, press F2 in the Hierarchy.");
         }
 
         var names = start.Concat(end).Select(l => l.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();

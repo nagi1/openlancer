@@ -21,7 +21,7 @@ public static class ItemEdits
     /// </summary>
     /// <remarks>The edit is one entry of the edit history. Run it at once: it holds the lines that it changes, so it
     /// fails when it runs after the edit view changed. It also fails when it runs if a section that it renames is not
-    /// a section that the active mod adds (see <see cref="EditCommand.Rename"/>).</remarks>
+    /// a section that the active mod adds (see <see cref="EditCommand.RenameAdded"/>).</remarks>
     /// <param name="item">A section of an item file with a nickname.</param>
     /// <exception cref="ArgumentException">The section is not a section of an item file with a nickname, or the new
     /// nickname cannot be the value of a patch line.</exception>
@@ -46,7 +46,7 @@ public static class ItemEdits
                     $"Another section of the {sectionKind.ToString().ToLowerInvariant()} files has the nickname {newNickname}.");
         }
 
-        var commands = renamed.Select(r => EditCommand.Rename(r.Section, newNickname)).ToList();
+        var commands = renamed.Select(r => EditCommand.RenameAdded(r.Section, newNickname)).ToList();
         // A section that the edit renames has another identity when its links change.
         var moved = renamed.ToDictionary(r => r.Section, r => r.Section with { Id = r.Section.Id with { Key = newNickname } });
         var relinked = new List<SectionRef>();

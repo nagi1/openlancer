@@ -114,6 +114,7 @@ internal sealed class InspectorPanel
         if (window.SectionOf(item) is { } itemSection)
         {
             SaveErrors(itemSection);
+            BaseChecks(itemSection);
         }
 
         // The sections have no window padding, so their headers run from edge to edge.
@@ -430,6 +431,30 @@ internal sealed class InspectorPanel
         }
     }
 
+    /// <summary>
+    /// The warnings of a <c>[Base]</c> of <c>universe.ini</c> (decision D254 of the M3 design): no object of its system
+    /// docks with it, or no object of its system is its object in space.
+    /// </summary>
+    private void BaseChecks(SectionRef section)
+    {
+        if (!section.Id.Type.Equals("Base", StringComparison.OrdinalIgnoreCase) || window.Session is not { } session)
+        {
+            return;
+        }
+
+        var warnings = Data.Editing.Scene.ObjectComponents.Checks(session.Edits, section);
+        if (warnings.Count > 0)
+        {
+            Strip("##base-checks", () =>
+            {
+                foreach (var warning in warnings)
+                {
+                    PropertyGrid.ProblemText(warning);
+                }
+            });
+        }
+    }
+
     /// <summary>A strip with padding above the sections, for a note or a warning.</summary>
     private static void Strip(string id, Action content)
     {
@@ -473,6 +498,13 @@ internal sealed class InspectorPanel
         }
 
         ImGui.SetItemTooltip(window.RevertTooltip(section));
+        // Duplicate, Rename and Delete of an item of the open system (milestone M3). Rename starts the field of its
+        // Hierarchy row.
+        if (IsSceneItem(item))
+        {
+            window.SceneEdits.ItemMenu(item);
+        }
+
         ImGui.Separator();
         var nickname = Nickname(item);
         if (Theme.IconMenuItem(EditorIcons.Copy, "Copy nickname", nickname != null))

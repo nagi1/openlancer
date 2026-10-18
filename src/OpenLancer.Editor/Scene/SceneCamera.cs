@@ -66,6 +66,10 @@ internal sealed class SceneCamera(CameraScale? scale = null)
 
     public Vector3 Position => position;
 
+    /// <summary>The orbit point of the camera. Create in the Scene puts a new item there, as Unity puts a new object at
+    /// the pivot of the Scene view (decision D234 of the M3 design).</summary>
+    public Vector3 Pivot => target;
+
     /// <summary>
     /// The turn of the camera. It turns -Z into the view direction and +Y into the up of the view. A ship flies along its
     /// -Z too, so a ship with this orientation points where the camera looks (section 9.5 of the M4 design). The camera

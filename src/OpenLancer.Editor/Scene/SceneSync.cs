@@ -29,8 +29,10 @@ internal sealed class SceneSync : ISceneHost, IDisposable
     /// <param name="system">The clone of the system that the scene shows.</param>
     /// <param name="indexChanged">Builds the index of the scene again, or reads the names again (see
     /// <see cref="ISceneHost.IndexChanged"/>).</param>
+    /// <param name="objects">The world object of each object of the system. The applier adds and removes entries for new
+    /// and deleted objects, so the views that share the map see them.</param>
     public SceneSync(EditorWindow window, EditorSession session, GameItemDb items, ResourceManager resources,
-        StarSystem system, GameWorld world, SystemRenderer renderer, IReadOnlyDictionary<SystemObject, GameObject> objects,
+        StarSystem system, GameWorld world, SystemRenderer renderer, IDictionary<SystemObject, GameObject> objects,
         Action<SceneEffect> indexChanged)
     {
         this.window = window;
@@ -57,6 +59,9 @@ internal sealed class SceneSync : ISceneHost, IDisposable
 
     /// <summary>The section of W that a scene item shows, or null (see <see cref="SceneApplier.SectionOf"/>).</summary>
     public SectionRef? SectionOf(object item) => applier.SectionOf(item);
+
+    /// <summary>The scene item of a section of W, or null (see <see cref="SceneApplier.ItemOf"/>).</summary>
+    public object? ItemOf(SectionRef section) => applier.ItemOf(section);
 
     /// <summary>Why the scene does not show the W state of a section, for example a missing archetype. Empty when it
     /// shows it.</summary>

@@ -22,6 +22,8 @@ namespace OpenLancer.Data.Ini;
 /// <item><c>ol.new = true</c> adds the section. No section with that key may exist.</item>
 /// <item>A new child section (see <see cref="SectionKeys.IsChild"/>) needs <c>ol.parent = &lt;parent key&gt;</c>.
 /// Child sections that directly follow a new parent section in the patch belong to that parent.</item>
+/// <item><c>ol.rename = &lt;new key&gt;</c> gives the target a new key. The section keeps its place, and the other
+/// lines of the patch section change it.</item>
 /// </list>
 /// Directives use the <c>ol.</c> prefix because the upstream text parser drops lines that start with <c>@</c>.
 /// String values <c>$str:key</c> and <c>$ifc:key</c> become the resource ids of the mod's text.
@@ -36,6 +38,7 @@ internal static class IniPatcher
     internal const string DirectiveDelete = "ol.delete";
     internal const string DirectiveRemove = "ol.remove";
     internal const string DirectiveParent = "ol.parent";
+    internal const string DirectiveRename = "ol.rename";
 
     public static void Apply(IniDocument target, IReadOnlyList<Section> patch, PatchContext context)
     {
@@ -105,11 +108,21 @@ internal static class IniPatcher
         document.Sections.SelectMany(s => s).SelectMany(e => e)
             .Any(v => StringPlaceholder.TryParse(v.ToString(), out _));
 
+    /// <summary>The new key of an <c>ol.rename</c> line of a patch section, or null when the section has no such line
+    /// with one value.</summary>
+    internal static string? RenameOf(Section patch) =>
+        patch.Where(e => Is(e, DirectiveRename)).ToList() is [{ Count: 1 } line] ? line[0].ToString() : null;
+
     /// <summary>Applies one section. Returns the section that it added when it is a new parent section.</summary>
     private static Section? ApplySection(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
     {
         var match = SectionKeys.For(patch.Name);
         var isChild = SectionKeys.IsChild(patch.Name);
+        if (p.RenameLines > 0)
+        {
+            Rename(target, patch, p, context);
+            return null;
+        }
         if (p.ParentKey != null && !(p.IsNew && isChild))
         {
             context.Error($"[{patch.Name}]: {DirectiveParent} is only for a new child section.");
@@ -203,6 +216,104 @@ internal static class IniPatcher
         var changes = p.Content.Where(e => keyValue == null || !Is(e, match.KeyEntry!)).ToList();
         target.Sections[position] = Modify(original, changes, p.RemoveNames, identity, context, target.IsBinary);
         return null;
+    }
+
+    /// <summary>
+    /// Applies a patch section with <c>ol.rename</c>: it finds the target by the old key, changes it with the other
+    /// lines, and gives its key line the new key. The section keeps its place, and its child sections stay after it.
+    /// The ledger records a delete of the old identity, an add of the new identity and the rename. So a later patch of
+    /// the old key finds no section, and a later patch of the new key finds the section.
+    /// </summary>
+    private static void Rename(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
+    {
+        var match = SectionKeys.For(patch.Name);
+        var name = $"[{patch.Name}]";
+        if (p.IsNew || p.IsDelete || p.ParentKey != null)
+        {
+            context.Error($"{name}: {DirectiveRename} cannot be used with {DirectiveNew}, {DirectiveDelete} or {DirectiveParent}.");
+            return;
+        }
+        if (match.Kind != SectionMatchKind.Keyed)
+        {
+            context.Error($"{name}: {DirectiveRename} needs a section type with a key line, and {name} has none.");
+            return;
+        }
+        if (SectionKeys.IsChild(patch.Name))
+        {
+            context.Error($"{name}: {DirectiveRename} cannot rename a child section.");
+            return;
+        }
+        if (p.RenameLines != 1 || p.RenameKey == null)
+        {
+            context.Error($"{name} needs exactly one '{DirectiveRename}' line with one value.");
+            return;
+        }
+        var keyEntries = p.Content.Where(e => Is(e, match.KeyEntry!)).ToList();
+        if (keyEntries.Count != 1 || keyEntries[0].Count != 1)
+        {
+            context.Error($"{name} needs exactly one '{match.KeyEntry}' entry with one value to find the section that " +
+                          $"{DirectiveRename} renames.");
+            return;
+        }
+        var oldKey = keyEntries[0][0].ToString();
+        var newKey = p.RenameKey;
+        var identity = new SectionIdentity(patch.Name, oldKey);
+        var label = identity.ToString();
+        if (newKey.Equals(oldKey, StringComparison.OrdinalIgnoreCase))
+        {
+            context.Error($"{label}: the new key '{newKey}' of {DirectiveRename} must differ from the old key in more " +
+                          "than letter case.");
+            return;
+        }
+        var candidates = target.Sections
+            .Select((section, index) => (section, index))
+            .Where(c => c.section.Name.Equals(patch.Name, StringComparison.OrdinalIgnoreCase) &&
+                        KeyEquals(c.section, match.KeyEntry!, oldKey))
+            .ToList();
+        if (candidates.Count != 1)
+        {
+            context.Error(candidates.Count == 0
+                ? $"{label}: no section to rename in {target.Path}."
+                : $"{label}: matches {candidates.Count} sections in {target.Path}. {DirectiveRename} needs one.");
+            return;
+        }
+        if (target.Sections.Any(s => s.Name.Equals(patch.Name, StringComparison.OrdinalIgnoreCase) &&
+                                     KeyEquals(s, match.KeyEntry!, newKey)))
+        {
+            context.Error($"{label}: another {name} section in {target.Path} has {match.KeyEntry} = {newKey}.");
+            return;
+        }
+
+        var (original, position) = candidates[0];
+        var renamed = new SectionIdentity(patch.Name, newKey);
+        context.Record(identity, null);
+        context.RecordAdd(renamed);
+        context.RecordRename(identity, renamed);
+        var changes = p.Content.Where(e => !Is(e, match.KeyEntry!)).ToList();
+        var changed = changes.Count > 0 || p.RemoveNames.Count > 0
+            ? Modify(original, changes, p.RemoveNames, renamed, context, target.IsBinary)
+            : original;
+        target.Sections[position] = WithKey(changed, match.KeyEntry!, newKey);
+    }
+
+    /// <summary>A copy of a section whose first key line has the new key, as a string.</summary>
+    private static Section WithKey(Section section, string keyEntry, string key)
+    {
+        var result = new Section(section.Name, section.Count) { File = section.File, Line = section.Line };
+        var done = false;
+        foreach (var entry in section)
+        {
+            if (!done && Is(entry, keyEntry))
+            {
+                done = true;
+                var line = new Entry(result, entry.Name, 1) { Line = entry.Line };
+                line.Add(new StringValue(key) { Entry = line, Line = entry.Line });
+                result.Add(line);
+                continue;
+            }
+            result.Add(Copy(result, entry, null, false, null));
+        }
+        return result;
     }
 
     private static void AddChild(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
@@ -331,6 +442,11 @@ internal static class IniPatcher
                 p.RemoveNames.AddRange(entry.Select(v => v.ToString()));
             else if (Is(entry, DirectiveParent))
                 p.ParentKey = entry.Count == 1 ? entry[0].ToString() : null;
+            else if (Is(entry, DirectiveRename))
+            {
+                p.RenameLines++;
+                p.RenameKey = entry.Count == 1 && entry[0].ToString().Trim() is { Length: > 0 } key ? key : null;
+            }
             else if (entry.Name.StartsWith(DirectivePrefix, StringComparison.OrdinalIgnoreCase))
             {
                 context?.Error($"[{patch.Name}]: unknown directive '{entry.Name}'.");
@@ -437,6 +553,10 @@ internal static class IniPatcher
         public bool IsNew;
         public bool IsDelete;
         public string? ParentKey;
+
+        /// <summary>The number of <c>ol.rename</c> lines, and the new key of the last one when it has one value.</summary>
+        public int RenameLines;
+        public string? RenameKey;
         public readonly List<string> RemoveNames = [];
         public readonly List<Entry> Content = [];
     }
@@ -500,4 +620,7 @@ internal sealed class PatchContext(
 
     /// <summary>Records that this mod adds a section.</summary>
     public void RecordAdd(SectionIdentity section) => ledger.RecordAdd(targetPath, section, modId);
+
+    /// <summary>Records that this mod gives a section a new key (<c>ol.rename</c>).</summary>
+    public void RecordRename(SectionIdentity from, SectionIdentity to) => ledger.RecordRename(targetPath, from, to, modId);
 }

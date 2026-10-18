@@ -144,6 +144,8 @@ public sealed partial class EditSession
     /// 2026-10-18). For example, the active mod removes the points of a curve, and a retail light names the curve.
     /// See <see cref="DataLists.ReferrerErrors"/>.</item>
     /// <item>Each FLHash collision of a hash list that the active mod adds a name to.</item>
+    /// <item>The errors of the component checks (layer 3, milestone M3): a zone of the active mod whose nickname another
+    /// zone of any system has, also by FLHash. Retail drops one of the two zones.</item>
     /// <item>The errors of the checks of each cutscene that the active mod changes, that the lower cutscene does not
     /// have, and each whole cutscene file of the active mod that does not evaluate (decision D137 of the M8b design,
     /// see <see cref="CutsceneErrors"/>). The game crashes when it plays such a cutscene.</item>
@@ -187,6 +189,10 @@ public sealed partial class EditSession
 
         foreach (var problem in Lists.ReferrerErrors())
             Add(problem.Diagnostic);
+
+        // Layer 3: a zone nickname that another zone of any system has, also by FLHash (milestone M3).
+        foreach (var problem in Scene.ComponentChecks.SaveErrors(this))
+            Add(problem);
 
         var changed = ActiveChangedPaths().ToHashSet(VfsPath.Comparer);
         foreach (var definition in Lists.RuleData.Lists.Values.Where(d => d is { Hash: true, Source.Role: not null }))

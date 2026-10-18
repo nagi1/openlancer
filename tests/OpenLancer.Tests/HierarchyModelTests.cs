@@ -402,4 +402,37 @@ public sealed class HierarchyModelTests
         Assert.NotSame(renamed, reindexed);
         Assert.Equal("New York", reindexed.Root.Name);
     }
+
+    /// <summary>The marks of the rows (decision D245 of the M3 design): a section that the active mod adds, a section
+    /// that it changes, and a section of the lower layer.</summary>
+    [Fact]
+    public void TheMarksFollowTheSectionsOfTheActiveMod()
+    {
+        var section = new LibreLancer.Data.Ini.Section("Object");
+
+        Assert.Equal(RowMark.None, HierarchyModel.MarkOf(null));
+        Assert.Equal(RowMark.Added, HierarchyModel.MarkOf(new Data.Editing.SectionView(section, null, true, true)));
+        Assert.Equal(RowMark.Changed, HierarchyModel.MarkOf(new Data.Editing.SectionView(section, null, false, true)));
+        Assert.Equal(RowMark.None, HierarchyModel.MarkOf(new Data.Editing.SectionView(section, null, false, false)));
+    }
+
+    /// <summary>A create and a delete give the scene a new index, and the new tree has the row of the new item and no row
+    /// of the deleted item. It keeps the open groups.</summary>
+    [Fact]
+    public void TheRowsFollowAnAddAndADelete()
+    {
+        var system = System();
+        var model = HierarchyModel.For(new SystemIndex(system, system), 1, IdText, null);
+        model.SetOpen(Group(model, "stations"), true);
+
+        var added = Object("li01_station_1", ArchetypeType.station);
+        system.Objects.Add(added);
+        system.Objects.RemoveAll(o => o.Nickname == "gate1");
+        var after = HierarchyModel.For(new SystemIndex(system, system), 1, IdText, model);
+
+        Assert.NotNull(after.NodeOf(added));
+        Assert.Contains(after.NodeOf(added)!, Group(after, "stations").Children);
+        Assert.DoesNotContain(after.Rows, r => r.Node.Detail == "gate1" || r.Node.Name == "gate1");
+        Assert.True(after.IsOpen(Group(after, "stations")));
+    }
 }

@@ -208,7 +208,8 @@ internal static class ListChecks
     private static void CheckHash(DataLists lists, SectionRef target, Section section, EditDocument document, int index,
         List<ListProblem> result)
     {
-        if (document.InBase(document.IdentityAt(index)))
+        // A section of B keeps its name, unless the active mod renames it.
+        if (document.InBase(document.IdentityAt(index)) && !document.IsRenamed(document.IdentityAt(index)))
             return;
         foreach (var definition in lists.SourcesOf(target.Path, section.Name).Where(d => d.Hash))
         {

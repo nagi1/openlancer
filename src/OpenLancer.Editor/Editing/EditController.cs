@@ -127,7 +127,13 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         return Execute(command);
     }
 
-    public void Undo() => Step(session => session.Edits.Undo());
+    public void Undo()
+    {
+        var label = window.Session?.Edits.UndoLabel;
+        Step(session => session.Edits.Undo());
+        // The undo of a delete in the Scene selects the item again (decision D249 of the M3 design).
+        window.SceneEdits.Undone(label);
+    }
 
     public void Redo() => Step(session => session.Edits.Redo());
 

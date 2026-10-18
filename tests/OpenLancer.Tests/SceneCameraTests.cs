@@ -38,6 +38,17 @@ public sealed class SceneCameraTests
         Assert.Equal(view.View, sky.View);
     }
 
+    /// <summary>The pivot is the orbit point, where Create puts a new item (decision D234 of the M3 design).</summary>
+    [Fact]
+    public void ThePivotIsTheOrbitPoint()
+    {
+        var (camera, _) = Framed();
+
+        Assert.Equal(Center, camera.Pivot);
+        camera.LookAlong(-Vector3.UnitX);
+        Assert.Equal(Center, camera.Pivot);
+    }
+
     [Fact]
     public void LooksAlongAnAxisFromTheSameDistanceAtTheSameOrbitPoint()
     {

@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Data.Editing;
@@ -7,9 +9,10 @@ using OpenLancer.Editor.Ui;
 namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
-/// The Inspector page of a system object: identity, transform, archetype and loadout, docking, faction, visit flags
-/// and appearance. With the section of the object in W, the rows edit its keys, and the page ends with the keys that
-/// no row shows, and the panel adds the raw INI block (see <see cref="SectionExtras"/>).
+/// The Inspector page of a system object: the components strip, identity, transform, archetype and loadout, docking,
+/// faction, behaviors, visit flags and appearance, and the lines that name the object. With the section of the object in
+/// W, the rows edit its keys, and the page ends with the keys that no row shows, and the panel adds the raw INI block
+/// (see <see cref="SectionExtras"/>).
 /// </summary>
 /// <remarks>In a bound scope, a row of a key that not every object has shows when the section has a line of the key
 /// (see <see cref="PropertyGrid.Shows(bool, string[])"/>). Rows of the values of other files, for example the model
@@ -21,10 +24,20 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
     private static readonly string[] AppearanceKeys = ["atmosphere_range", "burn_color", "ambient_color", "ambient", "ring"];
 
     private readonly SectionExtras extras = new(window, grid);
+    private readonly ComponentStrip strip = new(window, grid);
+    private readonly UsedBySection usedBy = new(window, grid);
+
+    // The story mentions of the last object, with the edit view that they came from (decision D261 of the M3 design).
+    private (string Nickname, object View, IReadOnlyList<Data.Editing.Scene.StoryMention> Mentions)? mentions;
 
     /// <param name="section">The section of the object in W, or null when the edit view has none.</param>
     public void Draw(SystemObject obj, SectionRef? section)
     {
+        if (section != null)
+        {
+            strip.Draw(section);
+        }
+
         using (grid.Bind(section))
         {
             Identity(obj);
@@ -32,12 +45,14 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
             ArchetypeAndLoadout(obj);
             Docking(obj);
             FactionAndReputation(obj);
+            Behaviors(obj, section);
             Visit(obj);
             Appearance(obj);
         }
 
         if (section != null)
         {
+            usedBy.Draw(section, "SystemObject");
             extras.Draw([section], "SystemObject", moreKeys: true);
         }
     }
@@ -215,14 +230,69 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
         }
 
         grid.Text("Reputation", Named(obj.Reputation), "reputation");
-        grid.Text("Pilot", obj.Pilot?.Nickname, "pilot");
-        grid.Number("Difficulty level", obj.DifficultyLevel, iniKey: "difficulty_level");
         grid.Text("Voice", obj.Voice, "voice");
-        grid.Text("Behavior", obj.Behavior, "behavior");
         grid.SetNextNote("The engine does not use this field. The editor keeps it so that the INI text stays the " +
                          "same.");
         grid.Text("Faction", Named(obj.Faction), "faction");
         grid.EndSection();
+    }
+
+    /// <summary>
+    /// The behaviors of the object (decision D247 of the M3 design): its pilot, behavior and difficulty, its reputation,
+    /// the encounters of the zones that hold its position, and the files that name it as text. The rows of keys stay
+    /// bound, so a raw edit shows at once. The other rows are read-only, and each one selects its item. Milestone M29 adds
+    /// the cutscene scripts and the mission triggers.
+    /// </summary>
+    private void Behaviors(SystemObject obj, SectionRef? section)
+    {
+        if (!grid.BeginSection("SystemObject.Behaviors", EditorIcons.Bolt, "Behaviors"))
+        {
+            return;
+        }
+
+        grid.Text("Pilot", obj.Pilot?.Nickname, "pilot");
+        grid.Text("Behavior", obj.Behavior, "behavior");
+        grid.Number("Difficulty level", obj.DifficultyLevel, iniKey: "difficulty_level");
+        using (grid.Bind(null))
+        {
+            grid.Reference("Reputation", ObjectKinds.OfList("faction"), obj.Reputation?.Nickname, Name(obj.Reputation), null);
+            foreach (var zone in window.Scene.System?.Zones.Where(z => z.Encounters is { Length: > 0 } && z.ContainsPoint(obj.Position)) ?? [])
+            {
+                foreach (var encounter in zone.Encounters!)
+                {
+                    var factions = encounter.FactionSpawns is { Count: > 0 } spawns
+                        ? string.Join(", ", spawns.Select(f => f.Faction))
+                        : "";
+                    grid.Reference("Encounter", window.Scene.KindOf(zone) ?? ObjectKinds.Of(ZoneRole.Population),
+                        $"{encounter.Archetype} in {zone.Nickname}", factions, zone);
+                }
+            }
+
+            foreach (var mention in Mentions(section))
+            {
+                grid.Text("Named in", $"{mention.Path} ({mention.Count} {(mention.Count == 1 ? "time" : "times")})");
+            }
+        }
+
+        grid.EndSection();
+    }
+
+    /// <summary>The story mentions of the object, when the text scan is ready. The page asks in each frame, so it keeps
+    /// the result until the object or the edit view changes.</summary>
+    private IReadOnlyList<Data.Editing.Scene.StoryMention> Mentions(SectionRef? section)
+    {
+        if (section?.Id.Key is not { } nickname || window.Session is not { } session || !session.Edits.StoryMentionsReady)
+        {
+            return [];
+        }
+
+        var view = session.Edits.EditView;
+        if (mentions is not { } known || known.Nickname != nickname || !ReferenceEquals(known.View, view))
+        {
+            mentions = (nickname, view, session.Edits.StoryMentions(nickname));
+        }
+
+        return mentions.Value.Mentions;
     }
 
     private void Visit(SystemObject obj)

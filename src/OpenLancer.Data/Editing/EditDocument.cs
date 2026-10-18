@@ -17,11 +17,17 @@ namespace OpenLancer.Data.Editing;
 /// </summary>
 /// <param name="Working">The sections of W.</param>
 /// <param name="Pins">The pinned names of each section.</param>
-/// <param name="Deleted">The sections that the loaded patch or an edit deleted.</param>
+/// <param name="Deleted">The sections that the loaded patch or an edit deleted. A rename does not delete.</param>
 internal sealed record DocumentState(
     ImmutableList<Section> Working,
     ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>> Pins,
-    ImmutableHashSet<SectionIdentity> Deleted) : IFileState;
+    ImmutableHashSet<SectionIdentity> Deleted) : IFileState
+{
+    /// <summary>The sections of B that W has under a new key (<c>ol.rename</c>): the identity in W to the identity in
+    /// B.</summary>
+    public ImmutableDictionary<SectionIdentity, SectionIdentity> Renamed { get; init; } =
+        ImmutableDictionary<SectionIdentity, SectionIdentity>.Empty;
+}
 
 /// <summary>
 /// One INI file in the editor: B, the document that the merge gives to the active mod's patch, and W, the working
@@ -36,6 +42,9 @@ internal sealed record DocumentState(
 /// <see cref="PatchSectionBuilder"/>).</para>
 /// <para>The document records the sections that the loaded patch or an edit deleted. When W has such a section again
 /// at the end, the writer deletes it and adds it again, as the edit did.</para>
+/// <para>The document also records the sections of B that W has under a new key (<c>ol.rename</c>, milestone M3). Such a
+/// section is a section of B for <see cref="InBase"/> and <see cref="BaseSection"/>, and the writer writes its rename.
+/// A section of W with the old key of a renamed section is a new section.</para>
 /// <para>The document gives no patch, and is read-only, in these cases:</para>
 /// <list type="bullet">
 /// <item>The loaded patch has an error. Then some of its lines are not in W, and a save would lose them.</item>
@@ -162,16 +171,35 @@ internal sealed class EditDocument : IEditFile
         return workingIndex.GetValueOrDefault(id, -1);
     }
 
-    /// <summary>True when B has a section with this identity.</summary>
-    public bool InBase(SectionIdentity id) => BaseIndexOf(id) >= 0;
+    /// <summary>True when B has the section of W with this identity, also under another key (see
+    /// <see cref="BaseIdOf"/>).</summary>
+    public bool InBase(SectionIdentity id) => BaseIdOf(id) != null;
+
+    /// <summary>
+    /// The identity in B of the section of W with this identity: the identity before a rename, or the identity itself.
+    /// Null for a section that B does not have, also for a new section with the old key of a renamed section.
+    /// </summary>
+    public SectionIdentity? BaseIdOf(SectionIdentity id)
+    {
+        if (state.Renamed.TryGetValue(id, out var before))
+            return before;
+        return BaseIndexOf(id) >= 0 && !IsRenamedAway(id) ? id : null;
+    }
+
+    /// <summary>True when the section of W with this identity is a section of B under a new key.</summary>
+    public bool IsRenamed(SectionIdentity id) => state.Renamed.ContainsKey(id);
+
+    /// <summary>True when B has a section with this identity and W has that section under a new key.</summary>
+    private bool IsRenamedAway(SectionIdentity id) => state.Renamed.Count > 0 && state.Renamed.ContainsValue(id);
 
     /// <summary>True when W had a section with this identity when the document opened or the last save reopened it, so
     /// the mod files have it.</summary>
     public bool InInitial(SectionIdentity id) =>
         (initialIds ??= SectionIdentity.Identify(Initial.Working).ToHashSet()).Contains(id);
 
-    /// <summary>The section of B with this identity, or null.</summary>
-    public Section? BaseSection(SectionIdentity id) => BaseIndexOf(id) is >= 0 and var i ? b.Sections[i] : null;
+    /// <summary>The section of B of the section of W with this identity (see <see cref="BaseIdOf"/>), or null.</summary>
+    public Section? BaseSection(SectionIdentity id) =>
+        BaseIdOf(id) is { } before && BaseIndexOf(before) is >= 0 and var i ? b.Sections[i] : null;
 
     /// <summary>
     /// Why a patch cannot change the section at <paramref name="index"/> of W, or null. A section that B does not
@@ -181,39 +209,65 @@ internal sealed class EditDocument : IEditFile
     {
         if (refusal != null)
             return refusal.Message;
-        var i = BaseIndexOf(IdentityAt(index));
-        if (i < 0)
+        var id = IdentityAt(index);
+        if (BaseIdOf(id) is not { } before)
             return null;
+        var i = BaseIndexOf(before);
         baseCounts ??= new KeyCounts(b.Sections);
         workingCounts ??= new KeyCounts(state.Working);
-        return PatchWriter.NotPatchable(b.Sections[i], kept: true, baseCounts, workingCounts) ??
+        // W has a renamed section under its new key, so only B must give the old key once.
+        return PatchWriter.NotPatchable(b.Sections[i], kept: before.Equals(id), baseCounts, workingCounts) ??
                PatchWriter.OrderNotKept(b.Sections[i]);
     }
 
     /// <summary>
-    /// Puts <paramref name="section"/> in place of the section at <paramref name="index"/>. When the section has
-    /// another identity, the old section counts as deleted.
+    /// Puts <paramref name="section"/> in place of the section at <paramref name="index"/>. When a section of B gets
+    /// another identity, it counts as renamed and keeps its pins. A rename back to its identity in B ends the rename.
+    /// When another section gets another identity, the old section counts as deleted.
     /// </summary>
     /// <param name="touched">The names that the edit sets or removes. They lose their pins.</param>
     public void Replace(int index, Section section, IEnumerable<string> touched)
     {
         var old = IdentityAt(index);
+        var before = BaseIdOf(old);
         Change(state with { Working = state.Working.SetItem(index, section) });
-        var same = IdentityAt(index).Equals(old);
-        var pins = same && state.Pins.TryGetValue(old, out var names)
-            ? state.Pins.SetItem(old, names.Except(touched))
-            : state.Pins.Remove(old);
-        state = state with { Pins = pins, Deleted = same ? state.Deleted : state.Deleted.Add(old) };
+        var now = IdentityAt(index);
+        if (now.Equals(old))
+        {
+            if (state.Pins.TryGetValue(old, out var names))
+                state = state with { Pins = state.Pins.SetItem(old, names.Except(touched)) };
+            return;
+        }
+        var pins = state.Pins.Remove(old);
+        if (before == null)
+        {
+            state = state with { Pins = pins, Deleted = state.Deleted.Add(old) };
+            return;
+        }
+        // A rename of a section of B does not delete it (review finding R19 of the M3 design).
+        if (state.Pins.TryGetValue(old, out var kept))
+            pins = pins.SetItem(now, kept.Except(touched));
+        var renamed = state.Renamed.Remove(old);
+        if (!now.Equals(before))
+            renamed = renamed.SetItem(now, before);
+        state = state with { Pins = pins, Renamed = renamed };
     }
 
     public void Insert(int index, Section section) => Change(state with { Working = state.Working.Insert(index, section) });
 
-    /// <summary>Removes <paramref name="count"/> sections from <paramref name="index"/>, and their pins.</summary>
+    /// <summary>Removes <paramref name="count"/> sections from <paramref name="index"/>, and their pins. A removed
+    /// section that has a new key counts as a deleted section of B under its old key.</summary>
     public void Remove(int index, int count)
     {
         var removed = WorkingIds().Skip(index).Take(count).ToList();
-        Change(new DocumentState(state.Working.RemoveRange(index, count), state.Pins.RemoveRange(removed),
-            state.Deleted.Union(removed)));
+        var deleted = removed.Select(id => state.Renamed.GetValueOrDefault(id, id));
+        Change(state with
+        {
+            Working = state.Working.RemoveRange(index, count),
+            Pins = state.Pins.RemoveRange(removed),
+            Deleted = state.Deleted.Union(deleted),
+            Renamed = state.Renamed.RemoveRange(removed),
+        });
     }
 
     /// <summary>Puts back a state that <see cref="State"/> gave, to undo or redo an edit.</summary>
@@ -241,7 +295,8 @@ internal sealed class EditDocument : IEditFile
 
     private PatchText Write(DocumentState s) =>
         refusal == null
-            ? PatchWriter.Write(Path, b, s.Working, id => s.Pins.GetValueOrDefault(id, NoPins), source, s.Deleted)
+            ? PatchWriter.Write(Path, b, s.Working, id => s.Pins.GetValueOrDefault(id, NoPins), source, s.Deleted,
+                s.Renamed)
             : new PatchText([], [refusal]);
 
     private static EditDocument Load(string path, IniDocument b, string modId, string? patchFile, byte[]? bytes,
@@ -251,6 +306,7 @@ internal sealed class EditDocument : IEditFile
         var w = b.WithSections(b.Sections);
         var pins = ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>>.Empty;
         var deleted = ImmutableHashSet<SectionIdentity>.Empty;
+        var renamed = ImmutableDictionary<SectionIdentity, SectionIdentity>.Empty;
         PatchSource? source = null;
         Diagnostic? refusal = null;
         if (bytes != null)
@@ -276,13 +332,21 @@ internal sealed class EditDocument : IEditFile
                     .ToImmutableDictionary(g => g.Key,
                         g => ImmutableHashSet.CreateRange(StringComparer.OrdinalIgnoreCase, g.Select(c => c.Name!)));
                 deleted = changes.Where(c => c.Name == null).Select(c => c.Section).ToImmutableHashSet();
+                // A loaded ol.rename opens as a rename, not as a delete of the old identity. A renamed section that a
+                // later patch section deleted is a delete of its old identity.
+                var inW = SectionIdentity.Identify(w.Sections).ToHashSet();
+                var inB = SectionIdentity.Identify(b.Sections).ToHashSet();
+                renamed = ledger.Renames(path, modId)
+                    .Where(r => inW.Contains(r.To) && inB.Contains(r.From))
+                    .ToImmutableDictionary(r => r.To, r => r.From);
+                deleted = deleted.Except(renamed.Values);
             }
             if (diagnostics.Skip(count).Any(d => d.Severity == DiagnosticSeverity.Error))
                 refusal = Diagnostic.Error(patchFile!, "This patch has an error, so the editor cannot apply all its " +
                                                        "lines. Correct the file, then open it again.");
         }
-        return new EditDocument(path, b, new DocumentState(w.Sections.ToImmutableList(), pins, deleted), source, refusal,
-            bytes == null ? null : ContentHash.Of(bytes));
+        return new EditDocument(path, b, new DocumentState(w.Sections.ToImmutableList(), pins, deleted) { Renamed = renamed },
+            source, refusal, bytes == null ? null : ContentHash.Of(bytes));
     }
 
     private static EditDocument Refused(string path, IniDocument b, List<Diagnostic> diagnostics, Diagnostic refusal)

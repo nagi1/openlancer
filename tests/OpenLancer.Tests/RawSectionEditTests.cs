@@ -62,7 +62,7 @@ public sealed class RawSectionEditTests
     [InlineData("[Object]\n[Object]", 2, "One block holds one section.")]
     [InlineData("[Object]\n; note", 2, "A comment is not kept.")]
     [InlineData("[Object]\nno equals sign", 2, "A line must be 'name = values' or 'name ='.")]
-    [InlineData("[Object]\nnickname = Li01_99", 2, "The nickname finds the section. Rename comes with M3.")]
+    [InlineData("[Object]\nnickname = Li01_99", 2, "The nickname finds the section, so this block cannot change it.")]
     [InlineData("[Object]\npos = 1, 2", 2, "A 'pos' line needs 3 values")]
     public void ATextThatIsNotASectionStopsThePlanWithItsLine(string replace, int line, string message)
     {

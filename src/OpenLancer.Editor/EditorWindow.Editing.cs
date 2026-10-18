@@ -193,6 +193,18 @@ internal sealed partial class EditorWindow : IClosePromptHost
         }
 
         ImGui.SetItemTooltip(RevertTooltip(section));
+        // The actions on the items of the open system (milestone M3). Their keys belong to the Hierarchy and the Scene,
+        // as in Unity.
+        ImGui.Separator();
+        if (ImGui.BeginMenu($"{EditorIcons.Plus}   Create", session != null && !CutsceneMode))
+        {
+            EditorTheme.PushMenuColors();
+            SceneEdits.CreateMenu(null);
+            EditorTheme.PopMenuColors();
+            ImGui.EndMenu();
+        }
+
+        SceneEdits.ItemMenu(Selection);
     }
 
     private void ModMenu()
@@ -305,12 +317,13 @@ internal sealed partial class EditorWindow : IClosePromptHost
         newModDialog.Draw();
         newProfileDialog.Draw();
         templateDialog.Draw();
+        SceneEdits.Draw();
         closeDialog.Draw();
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
     private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || templateDialog.IsOpen ||
-                               closeDialog.IsOpen;
+                               SceneEdits.IsOpen || closeDialog.IsOpen;
 
     /// <summary>
     /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5 and Shift+F5. They

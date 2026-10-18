@@ -85,6 +85,10 @@ internal sealed class TestWorkspace : IDisposable
 
     public string ModFolder(string id) => Path.Combine(Root, "mods", id);
 
+    /// <summary>The text of the patch file of a mod for an install path.</summary>
+    public string ReadModPatch(string installPath, string modId = "act") =>
+        File.ReadAllText(Path.Combine(ModFolder(modId), Data.Mods.Mod.PatchesFolder, installPath));
+
     /// <summary>Writes a profile with the mods of this workspace, in load order.</summary>
     public void WriteProfile(params string[] modIds) =>
         Write(ProfilePath, $$"""{ "base": "../base", "mods": [ {{string.Join(", ", modIds.Select(id => $"\"../mods/{id}\""))}} ] }""");

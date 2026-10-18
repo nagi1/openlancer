@@ -417,6 +417,63 @@ public sealed class PatchWriterTests
         Assert.Equal(Lines("[Ship]", "nickname = s1", "mass = 120.0", "hash = -1980013182"), result.Text);
     }
 
+    /// <summary>A section of B under a new key in W gets <c>ol.rename</c> and its changed lines only, and no
+    /// <c>ol.delete</c> (decision D231 of the M3 design). The merge of the patch gives W.</summary>
+    [Fact]
+    public void ARenamedSectionWritesOlRenameAndItsChangedLines()
+    {
+        var w = Text(Ships.Replace("nickname = s1", "nickname = s9").Replace("mass = 100", "mass = 120"));
+
+        var result = PatchWriter.Write(FilePath, Text(Ships), w.Sections, _ => [], renamed: Renamed("Ship", "s9", "s1"));
+
+        Assert.True(result.Succeeded, string.Join("\n", result.Problems));
+        Assert.Equal(Lines("[Ship]", "nickname = s1", "ol.rename = s9", "mass = 120"), result.Text);
+    }
+
+    /// <summary>After a rename, a new section can take the old key. The merge renames first and adds the new section at
+    /// the end.</summary>
+    [Fact]
+    public void ANewSectionCanTakeTheOldKeyOfARenamedSection()
+    {
+        var w = Text(Ships.Replace("nickname = s1", "nickname = s9") + "\n\n[Ship]\nnickname = s1\nmass = 1");
+
+        var result = PatchWriter.Write(FilePath, Text(Ships), w.Sections, _ => [], renamed: Renamed("Ship", "s9", "s1"));
+
+        Assert.True(result.Succeeded, string.Join("\n", result.Problems));
+        Assert.Equal(Lines("[Ship]", "nickname = s1", "ol.rename = s9", "", "[Ship]", "ol.new = true", "nickname = s1",
+            "mass = 1"), result.Text);
+    }
+
+    /// <summary>The child sections of a renamed section stay its children, so a change of a child is a change of a kept
+    /// section. A loaded patch can rename such a parent.</summary>
+    [Fact]
+    public void TheChildrenOfARenamedSectionAreKept()
+    {
+        const string b = "[Ship]\nnickname = s1\n[CollisionGroup]\nobj = a\nmass = 1\n[Ship]\nnickname = s2";
+        var w = Text(b.Replace("nickname = s1", "nickname = s9"));
+
+        var result = PatchWriter.Write(FilePath, Text(b), w.Sections, _ => [], renamed: Renamed("Ship", "s9", "s1"));
+
+        Assert.True(result.Succeeded, string.Join("\n", result.Problems));
+        Assert.Equal(Lines("[Ship]", "nickname = s1", "ol.rename = s9"), result.Text);
+    }
+
+    /// <summary>A change of one <c>locked_gate</c> value writes all lines of the name, each hash as its exact decimal
+    /// text (decision D257 of the M3 design).</summary>
+    [Fact]
+    public void AChangeOfALockedGateWritesAllItsLinesWithExactNumbers()
+    {
+        const string b = "[locked_gates]\nlocked_gate = 2926089285\nlocked_gate = 100\nnpc_locked_gate = 7";
+
+        var patch = Patch(b, b.Replace("2926089285", "3000000000"));
+
+        Assert.Equal(Lines("[locked_gates]", "locked_gate = 3000000000", "locked_gate = 100"), patch);
+    }
+
+    /// <summary>The renames of a document: the identity in W to the identity in B.</summary>
+    private static Dictionary<SectionIdentity, SectionIdentity> Renamed(string type, string to, string from) =>
+        new() { [new SectionIdentity(type, to)] = new SectionIdentity(type, from) };
+
     /// <summary>Writes the patch from B to W, which must succeed.</summary>
     private static string Patch(string b, string w)
     {

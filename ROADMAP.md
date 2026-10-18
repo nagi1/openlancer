@@ -29,14 +29,15 @@ Each milestone goes through four steps: design, adversarial review, build and ve
 | M11a | Game link and first-run setup | editor | in progress | At the first start, the editor asks for your game folder. It finds the game and its version, makes the profile and shows the link status. |
 | R1 | First release, v0.1.0 (preview) | none | in progress | One zip with the editor, Play and oltool. It holds no game files. |
 | M22 | Nebula and asteroid field picking | editor | next | Select nebulae and asteroid fields in the Scene, also from inside them. |
-| M3 | Create, delete and rename | 1 | next | Create objects, zones and lights from lists. A delete fixes or marks the references, as in Unity. A rename changes each reference. |
+| M3 | Create, delete and rename | 1 | done | Create, duplicate, rename and delete objects, zones and lights in the Scene. A delete fixes or marks the references, as in Unity. A rename changes each reference. Objects show their components. |
+| M3b | Scene editing, part 2 | 1 | next | Multi-selection, move with children, the encounter group editor, new factions and a Problems panel. |
 | M23 | Asset browser and prop groups | 1 | next | Browse all base-game assets with thumbnails and drag them into the Scene. Save a group of props and place it again. |
 | M11 | Export and play in the game | 1 | next | Export a mod for HD Edition 0.7.1 and vanilla 1.1, in the FLMM and Nexus formats. Install it into the linked game folder, and play it in the game that you linked. |
 | M34 | Prop scale | 2 | later | A scale key for objects. The model, the hit test, the collision and the dock paths scale with it. |
 | M24 | Game tab | editor | later | The game window docks in a tab of the editor. The game stays a separate process. |
 | M28 | Prefab viewer | 1 | later | One page for each asset: archetype, model parts, hardpoints and loadout. |
 | M29 | Space cutscene clips | 1 | later | The in-space cutscenes show as clips in the system view, with their markers and nav points. |
-| M26 | Nebula and asteroid field areas | 1 | later | Change the shape of a nebula or a field, cut holes, edit mining zones, and add new nebulae and fields. |
+| M26 | Nebula and asteroid field areas | 1 | later | Change the shape of a nebula or a field, cut holes, edit mining zones, add new nebulae and fields, and duplicate them. |
 | M27 | Connections and network map | 1 | later | A universe map. Create jump gates, jump holes, trade lanes and new systems. |
 | GA2 | Gap audit, retail comparisons | engine | later | Compare each GA1 row with the retail game. |
 | M6 | Mission graph | 1 | later | Edit missions as a graph of triggers, conditions and actions. |

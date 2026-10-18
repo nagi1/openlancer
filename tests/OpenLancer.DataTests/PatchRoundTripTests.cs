@@ -329,6 +329,79 @@ public sealed class PatchRoundTripTests(ITestOutputHelper output)
     }
 
     /// <summary>Applies a patch to a copy of the section list with the real merge.</summary>
+    /// <summary>
+    /// Milestone M3: 1,000 keyed sections of the retail system files, picked with a fixed seed, get a new key. The writer
+    /// writes <c>ol.rename</c> for each, and the merge of the patch must give W: each section at its place, with its new
+    /// key and its lines.
+    /// </summary>
+    [Fact]
+    public void ARenameOfRetailSystemSectionsKeepsThemInPlace()
+    {
+        var baseFolder = GameDataPaths.RequireBase();
+        var random = new Random(20_261_019);
+        var candidates = new List<(string File, IniDocument Document, int Index)>();
+        foreach (var (file, document) in RetailDocuments(baseFolder)
+                     .Where(d => d.File.StartsWith(@"DATA\UNIVERSE\SYSTEMS\", StringComparison.OrdinalIgnoreCase)))
+        {
+            var sections = document.Sections;
+            var keyCounts = ProofSections.KeyCounts(sections);
+            for (var i = 0; i < sections.Count; i++)
+            {
+                if (sections[i].Name is not ("Object" or "zone" or "Zone" or "LightSource") ||
+                    ProofSections.KeyOf(sections[i]) is not { } key || keyCounts[(sections[i].Name, key)] != 1 ||
+                    ProofSections.ChildCount(sections, i) > 0)
+                    continue;
+                candidates.Add((file, document, i));
+            }
+        }
+        var picked = candidates.OrderBy(_ => random.Next()).Take(1_000).ToList();
+        var failures = new List<string>();
+        var renamed = 0;
+        foreach (var group in picked.GroupBy(p => p.File))
+        {
+            var document = group.First().Document;
+            var w = document.Sections.ToList();
+            var map = new Dictionary<SectionIdentity, SectionIdentity>();
+            foreach (var (_, _, index) in group)
+            {
+                var original = w[index];
+                var key = ProofSections.KeyOf(original)!;
+                var copy = new Section(original.Name);
+                foreach (var entry in original)
+                    copy.Add(entry.Name.Equals("nickname", StringComparison.OrdinalIgnoreCase)
+                        ? new Entry(copy, entry.Name) { new StringValue(key + "_m3") }
+                        : entry);
+                w[index] = copy;
+                map[new SectionIdentity(original.Name, key + "_m3")] = new SectionIdentity(original.Name, key);
+                renamed++;
+            }
+            var patch = PatchWriter.Write(group.Key, document, w, _ => [], renamed: map);
+            if (!patch.Succeeded)
+            {
+                failures.Add($"{group.Key}: {string.Join("; ", patch.Problems.Select(p => p.Message))}");
+                continue;
+            }
+            if (patch.Sections.Any(s => s.Lines.Any(l => l.StartsWith("ol.delete") || l.StartsWith("ol.new"))))
+                failures.Add($"{group.Key}: the patch deletes or adds a section.");
+            var merged = Merge(document, patch, failures, group.Key);
+            var expected = SectionIdentity.Identify(w);
+            var actual = SectionIdentity.Identify(merged);
+            if (!expected.SequenceEqual(actual))
+                failures.Add($"{group.Key}: the merge does not give the sections of W in their order.");
+            for (var k = 0; k < Math.Min(merged.Count, w.Count); k++)
+            {
+                if (!SectionComparer.Equivalent(merged[k], w[k], document.IsBinary))
+                    failures.Add($"{group.Key} {expected[k]}: the merge gives other lines.");
+            }
+        }
+
+        output.WriteLine($"Candidates: {candidates.Count}. Renamed: {renamed}. Failures: {failures.Count}.");
+        foreach (var failure in failures.Take(20))
+            output.WriteLine(failure);
+        Assert.Equal(1_000, renamed);
+        Assert.Empty(failures);
+    }
+
     private static List<Section> Merge(IniDocument target, PatchText patch, List<string> failures, string where)
     {
         var result = target.WithSections(target.Sections);
