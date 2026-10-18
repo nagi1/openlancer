@@ -68,6 +68,8 @@ public sealed record ListProblem(Diagnostic Diagnostic, ListProblemKind Kind, Li
 /// crash error stays an error of its own line only.</item>
 /// <item>The name of a section of the active mod with the FLHash of another name of a hash list is an error (D82).</item>
 /// <item>A value of a lower layer outside a list is a warning (D108).</item>
+/// <item>A value of a rule with the flag exists outside its list is valid when its file exists in the edit view. A value
+/// whose file does not exist is "Missing" (decision D160 of the M22 design).</item>
 /// </list>
 /// <para>Each error tells what the game does with the data, from the effect of the rule.</para>
 /// </remarks>
@@ -157,6 +159,9 @@ internal static class ListChecks
                 // A value outside an enum is an error of the field checks.
                 continue;
             }
+            // The engine reads a file of any folder (decision D160 of the M22 design).
+            if (rule.Exists && lists.FileExists(value))
+                continue;
             _ = lists.ScopeOf(rule, target.Path, values, out var scope);
             if (rule.Closed && list.Closed &&
                 rule.Lists.Select(l => lists.RemovedOf(l, scope, value)).FirstOrDefault(r => r != null) is { } removed)
@@ -166,7 +171,13 @@ internal static class ListChecks
                     rule.ConsequenceText);
                 continue;
             }
-            if (active && rule.Closed && list.Closed)
+            if (active && rule.Closed && list.Closed && rule.Exists)
+            {
+                Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.Missing, rule, i, value, list,
+                    $"{shown}: the file '{value}' does not exist.", rule.ConsequenceText,
+                    $"Pick {Article(list.Label)} {Lower(list.Label)}, or add the file to the mod.");
+            }
+            else if (active && rule.Closed && list.Closed)
             {
                 Add(result, DiagnosticSeverity.Error, target, key, ListProblemKind.Missing, rule, i, value, list,
                     $"{shown}: no {Lower(list.Label)} has the name '{value}'.", rule.ConsequenceText);
@@ -235,6 +246,9 @@ internal static class ListChecks
     }
 
     internal static string Lower(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text[1..];
+
+    /// <summary>"an" before a label that starts with a vowel, else "a".</summary>
+    private static string Article(string label) => label.Length > 0 && "aeiouAEIOU".Contains(label[0]) ? "an" : "a";
 
     private static bool Is(string? a, string? b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }

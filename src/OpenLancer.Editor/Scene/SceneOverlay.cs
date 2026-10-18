@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer;
-using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using LibreLancer.Render;
@@ -14,7 +13,7 @@ namespace OpenLancer.Editor.Scene;
 
 /// <summary>
 /// The 2D layer over the 3D scene: the markers (<see cref="SceneMarkers"/>), the labels, and the corner brackets around
-/// the selected and the hovered item.
+/// the selected and the hovered item. It also shows the caption of the pick stack.
 /// </summary>
 /// <param name="objects">The world object of each system object, for the model bounds of the brackets.</param>
 internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<SystemObject, GameObject> objects)
@@ -27,6 +26,7 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     private const float BracketArm = 10;
     private const float SelectionThickness = 2;
     private const float HoverThickness = 1.5f;
+    private const float HintMargin = 8;
     private static readonly Vector2 PillPadding = new(5, 1);
     private static readonly Vector2 ShadowOffset = new(1, 1);
 
@@ -76,10 +76,12 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
         Markers.Update(sceneProjection, systemIndex, window.Settings, window.Selection);
     }
 
-    /// <summary>Draws the markers, the brackets and the labels into the current window, clipped to the scene.</summary>
+    /// <summary>Draws the markers, the brackets, the labels and the caption into the current window, clipped to the
+    /// scene.</summary>
     /// <param name="hovered">The item under the mouse, or null.</param>
     /// <param name="widget">The screen rectangle of the axis widget. Labels do not go there.</param>
-    public void Draw(object? hovered, (Vector2 Min, Vector2 Max) widget)
+    /// <param name="hint">The caption of the pick stack (see <see cref="PickCycle.Hint"/>), or null.</param>
+    public void Draw(object? hovered, (Vector2 Min, Vector2 Max) widget, string? hint = null)
     {
         var drawList = ImGui.GetWindowDrawList();
         drawList.PushClipRect(projection.Origin, projection.Origin + projection.Size, true);
@@ -112,7 +114,26 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
         }
 
         DrawLabels(drawList, hovered, widget);
+        if (hint != null)
+        {
+            DrawHint(drawList, hint);
+        }
+
         drawList.PopClipRect();
+    }
+
+    /// <summary>The caption of the pick stack at the bottom-left of the scene, on a dark pill.</summary>
+    private void DrawHint(ImDrawListPtr drawList, string hint)
+    {
+        var scale = ImGuiHelper.Scale;
+        var fontSize = Pixels(EditorTheme.CaptionSize);
+        var padding = PillPadding * scale;
+        var size = ImGuiHelper.Roboto.CalcTextSizeA(fontSize, float.MaxValue, 0, hint) + 2 * padding;
+        var margin = HintMargin * scale;
+        var min = new Vector2(MathF.Round(projection.Origin.X + margin),
+            MathF.Round(projection.Origin.Y + projection.Size.Y - margin - size.Y));
+        drawList.AddRectFilled(min, min + size, PillColor, PillRounding * scale);
+        drawList.AddText(ImGuiHelper.Roboto, fontSize, min + padding, LabelColor, hint);
     }
 
     /// <summary>
@@ -186,8 +207,9 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     }
 
     /// <summary>
-    /// The screen bounds of an item for its brackets. A zone or a light has no shape on the screen, so its bounds are
-    /// the box of its marker. Returns false when the item is behind the camera or has no position.
+    /// The screen bounds of an item for its brackets. A zone, a light, a nebula or a field has no shape on the screen, so
+    /// its bounds are the box of its marker. A nebula or a field has its marker at the center of its zone. Returns false
+    /// when the item is behind the camera or has no position.
     /// </summary>
     private bool BracketBounds(object item, out Vector2 min, out Vector2 max)
     {
@@ -198,9 +220,8 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
 
         Vector3? position = item switch
         {
-            Zone zone => zone.Position,
             LightSource light => light.Light.Position,
-            _ => null,
+            _ => SceneItems.ZoneOf(item)?.Position,
         };
         min = max = default;
         if (position == null || index?.KindOf(item) is not { } kind ||
@@ -399,14 +420,16 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     private static bool Overlaps(Vector2 min, Vector2 max, Vector2 otherMin, Vector2 otherMax) =>
         min.X < otherMax.X && max.X > otherMin.X && min.Y < otherMax.Y && max.Y > otherMin.Y;
 
-    /// <summary>The display name of an item, or its nickname when it has no name, and the size of the text.</summary>
+    /// <summary>
+    /// The display name of an item and the size of the text. An item without a name shows its nickname. A nebula or a
+    /// field without a name shows its file name without the extension (see <see cref="SceneItems.FallbackName"/>).
+    /// </summary>
     private (string Text, Vector2 Size) Label(object item, float fontSize)
     {
         if (!labels.TryGetValue(item, out var label))
         {
             var text = window.Session?.ItemName(item) is { Length: > 0 } name ? name
-                : item is NicknameItem named ? named.Nickname
-                : item.ToString() ?? "";
+                : SceneItems.FallbackName(item) ?? item.ToString() ?? "";
             label = (text, ImGuiHelper.Roboto.CalcTextSizeA(fontSize, float.MaxValue, 0, text));
             labels[item] = label;
         }

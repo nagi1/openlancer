@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Editor.Ui;
@@ -31,6 +32,15 @@ internal enum ZoneUseKind
 internal sealed record ZoneUse(ZoneUseKind Kind, object Item);
 
 /// <summary>
+/// A nebula or an asteroid field of the open system as a scene item: its <c>[Nebula]</c> or <c>[Asteroids]</c> section
+/// (decision D151 of the M22 design). As in a Unity GameObject, its zone is its Transform.
+/// </summary>
+/// <param name="Item">The <see cref="Nebula"/> or the <see cref="AsteroidField"/>.</param>
+/// <param name="Zone">The zone of the item.</param>
+/// <param name="Kind"><see cref="ObjectKinds.Nebula"/> or <see cref="ObjectKinds.AsteroidField"/>.</param>
+internal sealed record VolumeItem(object Item, Zone Zone, ObjectKind Kind);
+
+/// <summary>
 /// Data about the open system that the Hierarchy, the Scene and the Inspector share. The Scene builds it once when it
 /// opens a system.
 /// </summary>
@@ -38,6 +48,7 @@ internal sealed class SystemIndex
 {
     private readonly Dictionary<Zone, ZoneRole> zoneRoles;
     private readonly Dictionary<Zone, List<ZoneUse>> zoneUses;
+    private readonly Dictionary<object, VolumeItem> volumeOf;
 
     /// <param name="system">The copy of the system that the Scene shows.</param>
     /// <param name="source">The loaded system that <paramref name="system"/> is a copy of.</param>
@@ -79,6 +90,16 @@ internal sealed class SystemIndex
         VolumeZones = volumes;
         PatrolPaths = paths;
         MarkerZones = markers;
+
+        // The fields first, then the nebulae, each in file order. An item whose zone the system does not have is no
+        // scene item: the engine drops it (GameItemDb.cs:1714-1728, :1773-1777).
+        var items = new List<VolumeItem>();
+        items.AddRange(system.AsteroidFields.Where(f => f.Zone != null)
+            .Select(f => new VolumeItem(f, f.Zone!, ObjectKinds.AsteroidField)));
+        items.AddRange(system.Nebulae.Where(n => n.Zone != null)
+            .Select(n => new VolumeItem(n, n.Zone!, ObjectKinds.Nebula)));
+        VolumeItems = items;
+        volumeOf = items.ToDictionary(v => v.Item, ReferenceEqualityComparer.Instance);
     }
 
     /// <summary>The copy of the system that the Scene shows. The user selects its objects.</summary>
@@ -113,6 +134,13 @@ internal sealed class SystemIndex
 
     /// <summary>All other zones. The Scene shows each one as a diamond marker.</summary>
     public IReadOnlyList<Zone> MarkerZones { get; }
+
+    /// <summary>The asteroid fields and then the nebulae of <see cref="System"/> that have a zone, in file order. A field
+    /// and a nebula that share a zone give two items.</summary>
+    public IReadOnlyList<VolumeItem> VolumeItems { get; }
+
+    /// <summary>The volume item of a nebula or a field of <see cref="System"/>, or null for another item.</summary>
+    public VolumeItem? VolumeOf(object? item) => item != null && volumeOf.TryGetValue(item, out var volume) ? volume : null;
 
     /// <summary>The role of a zone of <see cref="System"/>. A zone of another system gets the Other role.</summary>
     public ZoneRole ZoneRole(Zone zone) => zoneRoles.GetValueOrDefault(zone, Ui.ZoneRole.Other);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using LibreLancer;
 using LibreLancer.Data.GameData.World;
@@ -9,10 +10,22 @@ using LibreLancer.World;
 
 namespace OpenLancer.Editor.Scene;
 
+/// <summary>What the Scene shows, for the pick: the pick follows what the user can see.</summary>
+/// <param name="Camera">The position of the camera.</param>
+/// <param name="Zones">True when the Zones toggle shows the zone volumes, the patrol paths and the zone markers.</param>
+/// <param name="Nebulae">True when the Nebulae toggle shows the nebulae.</param>
+/// <param name="Fog">True when the Fog toggle shows the fog of the nebula that holds the camera.</param>
+internal readonly record struct PickView(Vector3 Camera, bool Zones, bool Nebulae, bool Fog);
+
 /// <summary>What a click in the Scene hits.</summary>
 /// <param name="Axis">The direction of the end of the axis widget under the mouse, or null.</param>
-/// <param name="Item">The object, zone or light under the mouse, or null for empty space.</param>
-internal readonly record struct ScenePick(Vector3? Axis, object? Item);
+/// <param name="Items">The items under the mouse, each one once, in the order of the pick stack (see
+/// <see cref="ScenePicker"/>). Empty for empty space and for an axis end.</param>
+internal readonly record struct ScenePick(Vector3? Axis, IReadOnlyList<object> Items)
+{
+    /// <summary>The first item of the stack, which a click selects, or null for empty space.</summary>
+    public object? Item => Items is { Count: > 0 } items ? items[0] : null;
+}
 
 /// <summary>The part of a ray in a volume: from the distance Enter to the distance Exit, in units of the length of the
 /// ray direction. It is empty when Enter is after Exit.</summary>
@@ -28,19 +41,24 @@ internal readonly record struct RaySpan(float Enter, float Exit)
 }
 
 /// <summary>
-/// Finds what a click in the Scene selects, in this order:
+/// Finds what a click in the Scene hits: the axis widget, or a stack of all the items under the mouse (milestone M22).
+/// The stack has four layers, in this order:
 /// <list type="number">
-/// <item>The axis widget, then the markers as they show. A marker that faded out with the distance cannot be
-/// picked.</item>
-/// <item>A ray against the pick shape of each object of the system, with no distance limit. The nearest hit
-/// wins.</item>
-/// <item>Only when the ray hits no object: the zone volumes and the patrol path lines that the Zones toggle shows. The
-/// nearest hit wins.</item>
+/// <item>The glyphs under the mouse: the object and light markers, then the nebula and field markers. The overlay draws
+/// each glyph on top of the 3D scene, so its item comes first. A marker that faded out cannot be picked.</item>
+/// <item>The objects that the ray hits, the nearest entry first, with no distance limit.</item>
+/// <item>The nebulae and asteroid fields that the user can see (see <see cref="CanPick"/>). First the volumes that the
+/// ray enters ahead, the nearest entry first. Then the volumes that hold the start of the ray: first the nebulae in file
+/// order, then the fields, the smallest first. The renderer shows the fog of the first nebula.</item>
+/// <item>The zone diamonds under the mouse. Then, with the Zones toggle on, the patrol path lines and the zone volumes
+/// that the ray enters. Last, the zone volumes that hold the start of the ray, the smallest first. A diamond shows only
+/// with the Zones toggle, or for the selected zone, so each diamond that shows can be picked.</item>
 /// </list>
-/// The ray starts at the near plane, because nothing nearer to the camera shows. A shape that holds the start of the ray
-/// is not hit. Without this rule, the large box of a station around the camera would take every click. A patrol path
-/// line stops at the near plane for the same reason, and its distance is measured from the start of the ray too. This
-/// class has no ImGui call and no GPU call.
+/// Each item is in the stack once. The ray starts at the near plane, because nothing nearer to the camera shows. An
+/// object shape that holds the start of the ray is not hit. Else the large box of a station around the camera would take
+/// every click. A volume that holds it is a hit with a lower rank: inside a nebula, the fog covers each pixel. A
+/// patrol path line stops at the near plane, and its distance is measured from the start of the ray too. This class has
+/// no ImGui call and no GPU call.
 /// </summary>
 /// <param name="axes">The axis widget of the frame.</param>
 /// <param name="markers">The markers of the frame.</param>
@@ -58,22 +76,48 @@ internal sealed class ScenePicker(
     private const float MinModelRadius = 50;
 
     /// <summary>What a click at a point of the screen hits.</summary>
-    /// <param name="showZones">True when the Zones toggle shows the zone volumes and the patrol paths.</param>
-    public ScenePick Pick(SceneProjection projection, Vector2 mouse, SystemIndex index, bool showZones)
+    public ScenePick Pick(SceneProjection projection, Vector2 mouse, SystemIndex index, PickView view)
     {
         if (axes.HitTest(mouse) is { } axis)
         {
-            return new ScenePick(axis, null);
+            return new ScenePick(axis, []);
         }
 
-        if (markers.HitTest(mouse) is { } marker)
+        var stack = new Stack();
+        var glyphs = markers.HitAll(mouse);
+        foreach (var marker in glyphs)
         {
-            return new ScenePick(null, marker);
+            if (marker.Item is not Zone && index.VolumeOf(marker.Item) == null)
+            {
+                stack.Add(marker.Item);
+            }
+        }
+
+        foreach (var marker in glyphs)
+        {
+            if (index.VolumeOf(marker.Item) != null)
+            {
+                stack.Add(marker.Item);
+            }
         }
 
         var ray = projection.Ray(mouse);
-        var item = (object?)NearestObject(ray) ?? (showZones ? NearestZone(projection, ray, mouse, index) : null);
-        return new ScenePick(null, item);
+        stack.AddRange(Objects(ray));
+        stack.AddRange(Volumes(index, view, ray));
+        foreach (var marker in glyphs)
+        {
+            if (marker.Item is Zone)
+            {
+                stack.Add(marker.Item);
+            }
+        }
+
+        if (view.Zones)
+        {
+            stack.AddRange(Zones(projection, ray, mouse, index));
+        }
+
+        return new ScenePick(null, stack.Items);
     }
 
     /// <summary>
@@ -97,10 +141,7 @@ internal sealed class ScenePicker(
     /// </summary>
     internal static RaySpan ZoneSpan(Zone zone, Ray ray)
     {
-        // In the frame of the zone. The rotation keeps lengths, so a distance in this frame is a world distance.
-        var inverse = Matrix4x4.Transpose(zone.RotationMatrix);
-        var origin = Vector3.TransformNormal(ray.Position - zone.Position, inverse);
-        var direction = Vector3.TransformNormal(ray.Direction, inverse);
+        var (origin, direction) = InZone(zone, ray);
         var size = zone.Size;
         return zone.Shape switch
         {
@@ -113,23 +154,177 @@ internal sealed class ScenePicker(
         };
     }
 
-    private SystemObject? NearestObject(Ray ray)
+    /// <summary>
+    /// The part of a ray in the pick shape of a nebula or a field (section 6.2 of the M22 design). A nebula with puffs
+    /// and a sphere or ellipsoid zone is the ellipsoid of <see cref="NebulaPickRadii"/> in the frame of its zone. So a
+    /// click on an outer puff selects it. Each other nebula and each field is its zone.
+    /// </summary>
+    internal static RaySpan VolumeSpan(VolumeItem volume, Ray ray)
     {
-        var nearest = new Nearest<SystemObject>();
-        foreach (var (obj, gameObject) in objects)
+        if (volume.Item is Nebula nebula && NebulaPickRadii(nebula) is { } radii)
         {
-            nearest.Offer(obj, Entry(ObjectSpan(obj, gameObject, ray)));
+            var (origin, direction) = InZone(volume.Zone, ray);
+            return Ellipsoid(origin, direction, radii);
         }
 
-        return nearest.Item;
+        return ZoneSpan(volume.Zone, ray);
     }
 
-    private static Zone? NearestZone(SceneProjection projection, Ray ray, Vector2 mouse, SystemIndex index)
+    /// <summary>
+    /// The radii of the pick shape of a nebula: the zone radii plus the largest puff radius on each axis. The renderer
+    /// puts the center of each puff on the surface of the zone ellipsoid. A puff is up to
+    /// <c>bit_radius * (1 + bit_radius_random_variation)</c> in size (NebulaRenderer.cs:385). Null for a nebula without
+    /// puffs, and for a box, cylinder or ring zone, which draws no puffs. The pick shape is then the zone.
+    /// </summary>
+    internal static Vector3? NebulaPickRadii(Nebula nebula) =>
+        nebula.HasExteriorBits && nebula.Zone != null && NebulaRenderer.ZoneRadii(nebula.Zone) is { } radii
+            ? radii + new Vector3(nebula.ExteriorBitRadius * (1 + nebula.ExteriorBitRandomVariation))
+            : null;
+
+    /// <summary>
+    /// The volume of a zone, to put the smallest volume first. A sphere or an ellipsoid gives 4/3 pi times the product
+    /// of its radii, and a box the product of its sizes. A cylinder gives pi r^2 h, and a ring pi (R^2 - r^2) h. With
+    /// <paramref name="radii"/>, the volume of the ellipsoid of these radii.
+    /// </summary>
+    internal static float VolumeSize(Zone zone, Vector3? radii = null)
     {
-        var nearest = new Nearest<Zone>();
+        var size = zone.Size;
+        const float sphere = 4 * MathF.PI / 3;
+        if (radii is { } r)
+        {
+            return sphere * r.X * r.Y * r.Z;
+        }
+
+        return zone.Shape switch
+        {
+            ShapeKind.Sphere => sphere * size.X * size.X * size.X,
+            ShapeKind.Ellipsoid => sphere * size.X * size.Y * size.Z,
+            ShapeKind.Box => size.X * size.Y * size.Z,
+            ShapeKind.Cylinder => MathF.PI * size.X * size.X * size.Y,
+            ShapeKind.Ring => MathF.PI * (size.X * size.X - size.Z * size.Z) * size.Y,
+            _ => 0,
+        };
+    }
+
+    /// <summary>
+    /// True when a nebula or a field is a target of the pick, because the user can see it. Unity has the same rule
+    /// (decision D157 of the M22 design). With the Zones toggle on, each volume shows, so each one is a target. Else a
+    /// nebula is a target when the Nebulae toggle shows it and the renderer draws it. With the fog of <paramref name="fogNebula"/>, only that
+    /// nebula draws (SystemRenderer.cs:236-252). Without the fog, a nebula draws a cloud only for a sphere or ellipsoid
+    /// zone with <c>fill_shape</c> or puffs (NebulaRenderer.cs:548-552). A field is a target when its asteroids draw: the
+    /// camera is within the largest zone size plus <c>fill_dist</c> of the zone center (AsteroidFieldRenderer.cs:45-57,
+    /// :109). A field with a band and a sphere or ellipsoid zone draws its band from any distance (:66-80).
+    /// </summary>
+    /// <param name="fogNebula">The nebula whose fog the renderer shows (see <see cref="FogNebula"/>), or null.</param>
+    internal static bool CanPick(VolumeItem volume, Nebula? fogNebula, PickView view)
+    {
+        if (view.Zones)
+        {
+            return true;
+        }
+
+        var zone = volume.Zone;
+        var round = NebulaRenderer.ZoneRadii(zone) != null;
+        switch (volume.Item)
+        {
+            case Nebula nebula:
+                if (!view.Nebulae)
+                {
+                    return false;
+                }
+
+                return fogNebula != null
+                    ? ReferenceEquals(nebula, fogNebula)
+                    : round && (nebula.ExteriorFill != null || nebula.HasExteriorBits);
+            case AsteroidField field:
+                var reach = Math.Max(zone.Size.X, Math.Max(zone.Size.Y, zone.Size.Z)) + field.FillDist;
+                return Vector3.DistanceSquared(view.Camera, zone.Position) <= reach * reach ||
+                       field.Band != null && round;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// The nebula whose fog the renderer shows, or null when no fog shows. With the Nebulae and Fog toggles on, it is the
+    /// first nebula in file order that holds the camera (SystemRenderer.cs:389-402).
+    /// </summary>
+    internal static Nebula? FogNebula(SystemIndex index, PickView view) =>
+        view.Nebulae && view.Fog
+            ? index.System.Nebulae.FirstOrDefault(n => n.Zone?.ContainsPoint(view.Camera) == true)
+            : null;
+
+    /// <summary>Layer 2: the objects that the ray enters, the nearest entry first.</summary>
+    private IEnumerable<object> Objects(Ray ray)
+    {
+        var hits = new List<(object Item, float Value)>();
+        foreach (var (obj, gameObject) in objects)
+        {
+            if (Entry(ObjectSpan(obj, gameObject, ray)) is { } entry)
+            {
+                hits.Add((obj, entry));
+            }
+        }
+
+        return Sorted(hits);
+    }
+
+    /// <summary>
+    /// Layer 3: the nebulae and fields that are targets. First the volumes that the ray enters ahead, the nearest entry
+    /// first. Then the volumes that hold the start of the ray: the nebulae in file order, then the fields, the smallest
+    /// first. Decision D153 of the M22 design gives this order.
+    /// </summary>
+    private static IEnumerable<object> Volumes(SystemIndex index, PickView view, Ray ray)
+    {
+        var fog = FogNebula(index, view);
+        var ahead = new List<(object Item, float Value)>();
+        var nebulae = new List<(object Item, float Value)>();
+        var fields = new List<(object Item, float Value)>();
+        foreach (var volume in index.VolumeItems)
+        {
+            if (!CanPick(volume, fog, view))
+            {
+                continue;
+            }
+
+            var span = VolumeSpan(volume, ray);
+            if (Entry(span) is { } entry)
+            {
+                ahead.Add((volume.Item, entry));
+            }
+            else if (span.HoldsOrigin && volume.Item is Nebula nebula)
+            {
+                nebulae.Add((nebula, index.System.Nebulae.IndexOf(nebula)));
+            }
+            else if (span.HoldsOrigin)
+            {
+                fields.Add((volume.Item, VolumeSize(volume.Zone)));
+            }
+        }
+
+        return Sorted(ahead).Concat(Sorted(nebulae)).Concat(Sorted(fields));
+    }
+
+    /// <summary>
+    /// Layer 4 without the diamonds. First come the patrol path lines and the zone volumes that the ray enters, by the
+    /// distance from the start of the ray. Then come the zone volumes that hold the start of the ray, the smallest
+    /// first.
+    /// </summary>
+    private static IEnumerable<object> Zones(SceneProjection projection, Ray ray, Vector2 mouse, SystemIndex index)
+    {
+        var ahead = new List<(object Item, float Value)>();
+        var holders = new List<(object Item, float Value)>();
         foreach (var zone in index.VolumeZones)
         {
-            nearest.Offer(zone, ZoneEntry(zone, ray));
+            var span = ZoneSpan(zone, ray);
+            if (Entry(span) is { } entry)
+            {
+                ahead.Add((zone, entry));
+            }
+            else if (span.HoldsOrigin)
+            {
+                holders.Add((zone, VolumeSize(zone)));
+            }
         }
 
         // A patrol path shows as a line, so the click must be near the line. Its cylinder is not a volume of the
@@ -138,11 +333,26 @@ internal sealed class ScenePicker(
         foreach (var zone in index.PatrolPaths)
         {
             var (start, end) = SystemIndex.PathLine(zone);
-            var point = LinePoint(projection, start, end, mouse, margin);
-            nearest.Offer(zone, point is { } hit ? Vector3.Distance(ray.Position, hit) : null);
+            if (LinePoint(projection, start, end, mouse, margin) is { } hit)
+            {
+                ahead.Add((zone, Vector3.Distance(ray.Position, hit)));
+            }
         }
 
-        return nearest.Item;
+        return Sorted(ahead).Concat(Sorted(holders));
+    }
+
+    /// <summary>The items by their value, the smallest first. Items with the same value keep their order.</summary>
+    private static IEnumerable<object> Sorted(List<(object Item, float Value)> items) =>
+        items.OrderBy(i => i.Value).Select(i => i.Item);
+
+    /// <summary>The origin and the direction of a ray in the frame of a zone. The rotation keeps lengths, so a distance
+    /// in this frame is a world distance.</summary>
+    private static (Vector3 Origin, Vector3 Direction) InZone(Zone zone, Ray ray)
+    {
+        var inverse = Matrix4x4.Transpose(zone.RotationMatrix);
+        return (Vector3.TransformNormal(ray.Position - zone.Position, inverse),
+            Vector3.TransformNormal(ray.Direction, inverse));
     }
 
     /// <summary>
@@ -325,19 +535,27 @@ internal sealed class ScenePicker(
         return hole.Enter >= start ? span with { Exit = Math.Min(span.Exit, hole.Enter) } : span;
     }
 
-    /// <summary>The item with the smallest hit distance of the items that it got.</summary>
-    private struct Nearest<T>() where T : class
+    /// <summary>The pick stack: each item once, in the order of the first add.</summary>
+    private sealed class Stack
     {
-        private float distance = float.PositiveInfinity;
+        private readonly HashSet<object> added = new(ReferenceEqualityComparer.Instance);
+        private readonly List<object> items = [];
 
-        public T? Item { get; private set; }
+        public IReadOnlyList<object> Items => items;
 
-        public void Offer(T item, float? hit)
+        public void Add(object item)
         {
-            if (hit is { } value && value < distance)
+            if (added.Add(item))
             {
-                Item = item;
-                distance = value;
+                items.Add(item);
+            }
+        }
+
+        public void AddRange(IEnumerable<object> range)
+        {
+            foreach (var item in range)
+            {
+                Add(item);
             }
         }
     }

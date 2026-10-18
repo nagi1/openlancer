@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using LibreLancer.Data;
 using LibreLancer.Data.Ini;
 
 namespace OpenLancer.Data.Editing.Lists;
@@ -62,6 +63,13 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
     /// </summary>
     public bool Scene { get; init; }
 
+    /// <summary>
+    /// True when a value outside the list is valid if its file exists in the edit view (milestone M22, decision D160).
+    /// Only a rule of a files list can have it. The list holds the files of one folder and one class, for example the
+    /// nebula files of <c>SOLAR\NEBULA</c>. But the engine reads a file of any folder.
+    /// </summary>
+    public bool Exists { get; init; }
+
     /// <summary>The index of the value that the rule reads in a line, or -1 when the line has no such value. Without
     /// <see cref="Scene"/>, it is <see cref="Index"/>.</summary>
     public int IndexIn(Entry line) => IndexIn(line.Count, line.Count > 0 ? line[0].ToString() : null);
@@ -102,9 +110,14 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
         _ => "The game does not use this value.",
     };
 
-    /// <summary>What the game does when the key has no valid line, in plain words: the consequence, or the text of the
-    /// effect.</summary>
-    public string MissingText => Consequence ?? Effect switch
+    /// <summary>What the game does when the key has no line, or null when it does the same as with a value that is not
+    /// valid. For example, the engine drops a <c>[Nebula]</c> without a <c>file</c> line, but it crashes with a file that
+    /// does not exist (milestone M22).</summary>
+    public string? MissingConsequence { get; init; }
+
+    /// <summary>What the game does when the key has no valid line, in plain words. It is the consequence for a missing
+    /// line, the consequence, or the text of the effect.</summary>
+    public string MissingText => MissingConsequence ?? Consequence ?? Effect switch
     {
         RuleEffect.LoadBreak => "The game stops loading without this key.",
         _ => ConsequenceText,
@@ -146,9 +159,18 @@ internal sealed record RoleDefinition(string Name, string? Data, bool Last, stri
 /// <param name="Scoped">True when the rule gives the file (a scoped list).</param>
 /// <param name="Files">For a files list: the extension of the files whose paths are the entries, for example <c>.thn</c>
 /// (section 5.6 of the M8b design). Null for the other lists.</param>
+/// <param name="Folder">For a files list: the folder below the data folder that holds the files, for example
+/// <c>SOLAR\NEBULA</c> (milestone M22). Null for all files of the edit view.</param>
+/// <param name="FileClass">For a files list: the full name of a <c>[ParsedIni]</c> class of the engine, for example
+/// <c>LibreLancer.Data.Schema.Universe.Nebula</c> (milestone M22). A file is an entry only when it has a section and
+/// each of its section types is a section of the class. Null for a file of any content.</param>
 internal sealed record ListSource(string? Role, IReadOnlyList<string> Sections, IReadOnlyList<string>? Keys,
     IReadOnlyDictionary<string, string> Where, (string Section, string Key, int Index)? Values, bool Scoped,
-    string? Files = null);
+    string? Files = null, string? Folder = null, string? FileClass = null)
+{
+    /// <summary>The engine class of <see cref="FileClass"/>, or null.</summary>
+    public Type? FileClassType => FileClass == null ? null : typeof(FLHash).Assembly.GetType(FileClass);
+}
 
 /// <summary>One list of the rule data.</summary>
 /// <param name="Kind">The kind of the entries, for the glyph of the editor.</param>
@@ -228,6 +250,9 @@ internal sealed class ListRules
                 .ToDictionary(r => r.Name, StringComparer.OrdinalIgnoreCase);
             var lists = root.GetProperty("lists").EnumerateArray().Select(ReadList).ToList();
             var rules = root.GetProperty("rules").EnumerateArray().SelectMany(ReadRules).ToList();
+            var files = lists.Where(l => l.Source?.Files != null).Select(l => l.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var rule in rules.Where(r => r.Exists && !r.Lists.All(files.Contains)))
+                throw new FormatException($"The rule {rule.Section} {rule.Key} has 'exists', which needs a files list.");
             return new ListRules(roles, lists, rules);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or
@@ -255,7 +280,12 @@ internal sealed class ListRules
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             source = new ListSource(String(s, "role"), Strings(s, "sections"),
                 s.TryGetProperty("keys", out _) ? Strings(s, "keys") : null, where, values,
-                String(s, "scope") == "file", String(s, "files"));
+                String(s, "scope") == "file", String(s, "files"), String(s, "folder"), String(s, "fileClass"));
+            var id = e.GetProperty("id").GetString();
+            if (source.Files == null && (source.Folder != null || source.FileClass != null))
+                throw new FormatException($"The list {id} has a folder or a file class, which needs 'files'.");
+            if (source.FileClass != null && source.FileClassType?.IsDefined(typeof(ParsedIniAttribute), false) != true)
+                throw new FormatException($"The file class {source.FileClass} of the list {id} is not a [ParsedIni] class.");
         }
         return new ListDefinition(e.GetProperty("id").GetString()!, e.GetProperty("label").GetString()!,
             String(e, "kind") ?? "Other", Bool(e, "hash"), Bool(e, "unique"), Strings(e, "requires"),
@@ -295,6 +325,8 @@ internal sealed class ListRules
         {
             Unused = Bool(e, "unused"),
             Scene = Bool(e, "scene"),
+            Exists = Bool(e, "exists"),
+            MissingConsequence = String(e, "missing"),
         };
     }
 

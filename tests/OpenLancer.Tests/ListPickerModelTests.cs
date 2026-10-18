@@ -41,6 +41,28 @@ public sealed class ListPickerModelTests
         Assert.Equal("", model.Rows.Single(r => r.Value == "li_a").Tag);
     }
 
+    /// <summary>
+    /// A rule with the flag exists accepts a value outside the list of files when its file exists (decision D160 of the
+    /// M22 design). Its row reads "value (other folder)", not "Missing: value", and it is the current row.
+    /// </summary>
+    [Fact]
+    public void AnExistingFileOutsideTheListIsNotMissing()
+    {
+        var files = new (ListEntry, string)[] { (Entry(@"SOLAR\NEBULA\cloud.ini"), "cloud") };
+        var model = new ListPickerModel(files, none: false, current: @"solar\more\far_cloud.ini", currentExists: true);
+
+        var row = model.Rows[0];
+        Assert.Equal((ListRowKind.Other, @"solar\more\far_cloud.ini (other folder)"), (row.Kind, row.Text));
+        Assert.Equal(0, model.Current);
+        Assert.Contains("exists", ListPickerModel.Footer(row, "Nebula file", _ => 0).Single());
+        // A filter shows only the entries.
+        Assert.Equal([1], model.Visible("cloud"));
+
+        // Without the file, the value is missing.
+        var missing = new ListPickerModel(files, none: false, current: @"solar\more\far_cloud.ini");
+        Assert.Equal("Missing: solar\\more\\far_cloud.ini", missing.Rows[0].Text);
+    }
+
     [Fact]
     public void NoneShowsOnlyForAKeyThatIsNotRequired()
     {

@@ -289,6 +289,35 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// The nebulae and fields of Li01 are scene items with their sections (section 12 of the M22 design). The 2 nebulae
+    /// and 9 fields give 11 sections, each keyed by the zone of the item. The applier maps each section back to its item.
+    /// They are not sections of the system, so a change of one never runs a system effect.
+    /// </summary>
+    [Fact]
+    public void EachNebulaAndFieldOfLi01HasItsSection()
+    {
+        using var workspace = Workspace();
+        var session = workspace.Open();
+        using var scene = new HeadlessScene(session, "Li01");
+        Assert.Equal(0, scene.Applier.CatchUp());
+        object[] items = [.. scene.System.Nebulae, .. scene.System.AsteroidFields];
+
+        Assert.Equal((2, 9), (scene.System.Nebulae.Count, scene.System.AsteroidFields.Count));
+        var sections = items.Select(scene.SectionOf).ToList();
+        Assert.Equal(11, sections.Distinct().Count());
+        foreach (var (item, section) in items.Zip(sections))
+        {
+            var zone = item is Nebula nebula ? nebula.Zone! : ((AsteroidField)item).Zone!;
+            Assert.Equal((item is Nebula ? "Nebula" : "Asteroids", zone.Nickname), (section.Id.Type, section.Id.Key));
+            Assert.Same(item, scene.Applier.ItemOf(section));
+        }
+
+        // The Badlands nebula and its field share a zone, and each has its own section.
+        var badlands = scene.System.Nebulae.Single(n => n.Zone!.Nickname == Nebula);
+        Assert.Equal(new SectionIdentity("Nebula", Nebula), scene.SectionOf(badlands).Id);
+    }
+
+    /// <summary>
     /// (7) An archetype edit while the game data loads again changes the object at once (Data), but its model loads only
     /// after the reload ends (Reinit, review finding F5).
     /// </summary>

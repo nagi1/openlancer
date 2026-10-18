@@ -123,10 +123,13 @@ public sealed class ListRulesTests
                 continue;
             }
             var source = list.Source!;
-            // A files list has no sections: its entries are the paths of files (section 5.6 of the M8b design).
+            // A files list has no sections: its entries are the paths of files (section 5.6 of the M8b design). The
+            // cutscenes are .thn files of any folder. The nebula and asteroid files are the INI files of one folder
+            // whose sections are all sections of one [ParsedIni] class (milestone M22).
             if (source.Files != null)
             {
-                Assert.Equal(".thn", source.Files);
+                Assert.True(source.Files == ".thn" ? source.Folder == null && source.FileClass == null
+                    : source.Files == ".ini" && source.Folder != null && source.FileClassType != null, list.Id);
                 continue;
             }
 
@@ -208,6 +211,85 @@ public sealed class ListRulesTests
         var dock = Assert.Single(Rules.Rules("system", "Object", "dock_with"));
         Assert.Equal((RuleEffect.Crash, "The game crashes when the player docks here."), (dock.Effect, dock.ConsequenceText));
         Assert.Equal("The game drops this object.", Assert.Single(Rules.Rules("system", "Object", "archetype")).ConsequenceText);
+    }
+
+    /// <summary>A minimal rule data with one files list, for the parse tests of the M22 fields.</summary>
+    private static string FilesRules(string listSource, string ruleFlags) => $$"""
+        {
+          "roles": { "system": { "systemFiles": true } },
+          "lists": [
+            { "id": "zone_of_system", "label": "Zone", "kind": "Zone", "source": { "scope": "file", "sections": ["zone"] } },
+            { "id": "nebula_file", "label": "Nebula file", "kind": "Nebula", "source": {{listSource}} }
+          ],
+          "rules": [
+            { "role": "system", "section": "Nebula", "key": "file", "list": "nebula_file", "closed": true,
+              "effect": "loadBreak", "evidence": "Schema\\Universe\\Nebula.cs:38-45"{{ruleFlags}} }
+          ]
+        }
+        """;
+
+    /// <summary>The flag exists accepts a file outside the list, so it needs a list of files (decision D160 of the M22
+    /// design).</summary>
+    [Fact]
+    public void ExistsNeedsAFilesList()
+    {
+        var files = ListRules.Parse(FilesRules("""{ "files": ".ini", "folder": "SOLAR\\NEBULA" }""", """, "exists": true"""));
+        Assert.True(Assert.Single(files.Rules("system", "Nebula", "file")).Exists);
+
+        var error = Assert.Throws<InvalidDataException>(() => ListRules.Parse(
+            FilesRules("""{ "files": ".ini" }""", """, "exists": true""").Replace("\"list\": \"nebula_file\"",
+                "\"list\": \"zone_of_system\"", StringComparison.Ordinal)));
+        Assert.Contains("needs a files list", error.Message);
+        Assert.False(Assert.Single(ListRules.Parse(FilesRules("""{ "files": ".ini" }""", "")).All).Exists);
+    }
+
+    [Fact]
+    public void FolderAndFileClassParse()
+    {
+        var rules = ListRules.Parse(FilesRules(
+            """{ "files": ".ini", "folder": "SOLAR\\NEBULA", "fileClass": "LibreLancer.Data.Schema.Universe.Nebula" }""",
+            ""));
+        var source = rules.Lists["nebula_file"].Source!;
+        Assert.Equal((".ini", @"SOLAR\NEBULA", typeof(Nebula)), (source.Files, source.Folder, source.FileClassType));
+
+        // A folder or a class needs a files list, and the class must be a [ParsedIni] class of the engine.
+        Assert.Throws<InvalidDataException>(() => ListRules.Parse(FilesRules(
+            """{ "role": "system", "sections": ["zone"], "folder": "SOLAR" }""", "")));
+        Assert.Throws<InvalidDataException>(() => ListRules.Parse(FilesRules(
+            """{ "files": ".ini", "fileClass": "LibreLancer.Data.Schema.Universe.Zone" }""", "")));
+        Assert.Throws<InvalidDataException>(() => ListRules.Parse(FilesRules(
+            """{ "files": ".ini", "fileClass": "No.Such.Class" }""", "")));
+
+        // The retail lists of the nebula and asteroid files.
+        Assert.Equal((@"SOLAR\NEBULA", typeof(Nebula)),
+            (Rules.Lists["nebula_file"].Source!.Folder, Rules.Lists["nebula_file"].Source!.FileClassType));
+        Assert.Equal((@"SOLAR\ASTEROIDS", typeof(AsteroidField)),
+            (Rules.Lists["asteroid_file"].Source!.Folder, Rules.Lists["asteroid_file"].Source!.FileClassType));
+    }
+
+    /// <summary>
+    /// The rules of the zone and the file of a nebula and a field (section 11 of the M22 design). A zone that the system
+    /// does not have makes the engine drop the item. A file that does not exist makes the game crash while it loads the
+    /// data. A section without a file line is dropped. NebulaRuleRetailTests proves the three effects.
+    /// </summary>
+    [Fact]
+    public void TheZoneRulesHaveEvidence()
+    {
+        foreach (var (section, item) in new[] { ("Nebula", "nebula"), ("Asteroids", "asteroid field") })
+        {
+            var zone = Assert.Single(Rules.Rules("system", section, "zone"));
+            Assert.Equal(["zone_of_system"], zone.Lists);
+            Assert.Equal(("file", true, true, RuleEffect.Drop), (zone.Scope, zone.Closed, zone.Required, zone.Effect));
+            Assert.Equal($"The game drops this {item}.", zone.ConsequenceText);
+            Assert.Contains("GameItemDb.cs:", zone.Evidence);
+
+            var file = Assert.Single(Rules.Rules("system", section, "file"));
+            Assert.Equal((true, true, true, RuleEffect.LoadBreak), (file.Closed, file.Required, file.Exists, file.Effect));
+            Assert.Equal(section == "Nebula" ? ["nebula_file"] : ["asteroid_file"], file.Lists);
+            Assert.Equal("The game crashes when it loads the data.", file.ConsequenceText);
+            Assert.Equal($"The game drops this {item}.", file.MissingText);
+            Assert.Contains("FileSystem.cs:", file.Evidence);
+        }
     }
 
     [Fact]

@@ -29,7 +29,9 @@ internal sealed class SceneView : IDisposable
     private static readonly Color4 AxisZColor = new(EditorTheme.AxisZ);
     private static readonly Color4 SelectionColor = new(EditorTheme.Accent);
 
-    // The opacity of the zone volumes: the fields and nebulae, and the selected or hovered zone.
+    // The opacity of the zone volumes: the fields and nebulae, and the selected or hovered item. A selected volume that
+    // holds the camera keeps the normal opacity, so that it does not hide the view. The accent outline shows the
+    // selection (decision D161 of the M22 design).
     private const float VolumeAlpha = 0.15f;
     private const float HighlightAlpha = 0.35f;
 
@@ -53,6 +55,7 @@ internal sealed class SceneView : IDisposable
     private readonly GridRenderer grid;
     private readonly AxisGizmo gizmo = new();
     private readonly ScenePicker scenePicker;
+    private readonly PickCycle cycle = new();
     private readonly TransformGizmo transform;
     private SystemRenderer? renderer;
     private GameWorld? world;
@@ -92,7 +95,9 @@ internal sealed class SceneView : IDisposable
         ("Alt + left mouse drag", "Orbit"),
         ("Middle mouse drag", "Pan"),
         ("Wheel", "Zoom"),
-        ("Click", "Select"),
+        ("Click", "Select. Objects first, then nebulae and asteroid fields, then zones"),
+        ("Click again at the same place", "Select the next item under the mouse"),
+        ("Alt + click", "Select the next item under the mouse"),
         ("Click an axis end", "Look along the axis"),
         ("F", "Focus on the selection"),
         ("W, E and R", "Move, rotate or scale tool of the gizmo, when the selected item takes it"),
@@ -124,7 +129,8 @@ internal sealed class SceneView : IDisposable
     /// <summary>The kind of an item. A zone of the open system gets the kind of its role.</summary>
     public ObjectKind? KindOf(object? item) => Index?.KindOf(item) ?? ObjectKinds.Of(item);
 
-    /// <summary>The section of W that an object, a zone or a light of the open system shows, or null.</summary>
+    /// <summary>The section of W that an object, a zone, a light, a nebula or a field of the open system shows, or
+    /// null.</summary>
     public SectionRef? SectionOf(object item) => sync?.SectionOf(item);
 
     /// <summary>Why the scene does not show the W state of a section of the open system, for example a missing archetype
@@ -155,6 +161,7 @@ internal sealed class SceneView : IDisposable
         SystemObject obj => objects.ContainsKey(obj),
         Zone zone => System?.Zones.Contains(zone) == true,
         LightSource light => System?.LightSources.Contains(light) == true,
+        Nebula or AsteroidField => Index?.VolumeOf(item) != null,
         _ => false,
     };
 
@@ -214,6 +221,7 @@ internal sealed class SceneView : IDisposable
         objects.Clear();
         overlay.Reset();
         picker.Reset();
+        cycle.Reset();
         world?.Dispose();
         // With fork commit OL-0022, the renderer also frees the meshes of the asteroid fields.
         renderer?.Dispose();
@@ -239,11 +247,14 @@ internal sealed class SceneView : IDisposable
         }
     }
 
-    /// <summary>Moves the camera to the selected object.</summary>
+    /// <summary>Moves the camera to the selected item. A nebula or a field frames its zone.</summary>
     public void Focus(object? item)
     {
         switch (item)
         {
+            case Nebula or AsteroidField when SceneItems.ZoneOf(item) is { } area:
+                Focus(area);
+                break;
             case SystemObject obj:
                 controller.Focus(obj.Position, 3 * Radius(obj));
                 break;
@@ -327,7 +338,7 @@ internal sealed class SceneView : IDisposable
         var mouse = ImGui.GetMousePos();
         var hoverMouse = sceneHovered && !active ? mouse : (Vector2?)null;
         hovered = hoverMouse is { } point && gizmo.HitTest(point) == null ? overlay.Markers.HitTest(point) : null;
-        overlay.Draw(hovered, gizmo.Bounds);
+        overlay.Draw(hovered, gizmo.Bounds, hoverMouse is { } at ? cycle.Hint(at, window.Selection) : null);
         // The gizmo draws over the markers and the labels. A handle over the axis widget wins over the widget.
         transform.Draw(camera, projection);
         var drawList = ImGui.GetWindowDrawList();
@@ -502,8 +513,10 @@ internal sealed class SceneView : IDisposable
     }
 
     /// <summary>
-    /// A click without a drag selects what <see cref="ScenePicker"/> finds under the mouse, and a click on empty space
-    /// clears the selection. A click on an axis end of the axis widget looks at the scene from that side.
+    /// A click without a drag selects an item of the stack that <see cref="ScenePicker"/> finds under the mouse.
+    /// <see cref="PickCycle"/> tells which item. A click selects the first item. A click again at the same place, or an
+    /// Alt+click, selects the next item. A click on empty space clears the selection. A click on an axis end of the axis widget looks at the
+    /// scene from that side. An Alt+drag stays an orbit.
     /// </summary>
     /// <param name="activated">The scene button became active in this frame.</param>
     /// <param name="deactivated">The scene button stopped being active in this frame.</param>
@@ -514,20 +527,28 @@ internal sealed class SceneView : IDisposable
             dragStart = ImGui.GetMousePos();
         }
 
-        if (!deactivated || !ImGui.IsMouseReleased(ImGuiMouseButton.Left) || ImGui.GetIO().KeyAlt ||
-            Vector2.Distance(dragStart, ImGui.GetMousePos()) > 4)
+        var mouse = ImGui.GetMousePos();
+        if (!deactivated || !ImGui.IsMouseReleased(ImGuiMouseButton.Left) ||
+            Vector2.Distance(dragStart, mouse) > PickCycle.SamePlace)
         {
             return;
         }
 
-        var pick = scenePicker.Pick(projection, ImGui.GetMousePos(), index, window.Settings.ShowZones);
+        var settings = window.Settings;
+        var pick = scenePicker.Pick(projection, mouse, index,
+            new PickView(controller.Position, settings.ShowZones, settings.ShowNebulae, settings.ShowFog));
         if (pick.Axis is { } axis)
         {
             controller.LookAlong(-axis);
             return;
         }
 
-        window.Selection = pick.Item;
+        var (changes, selection) = cycle.Click(pick.Items, mouse,
+            new CameraPose(controller.Position, controller.Orientation), window.Selection, ImGui.GetIO().KeyAlt);
+        if (changes)
+        {
+            window.Selection = selection;
+        }
     }
 
     private void DrawWorld(int x, int y, int width, int height)
@@ -582,7 +603,9 @@ internal sealed class SceneView : IDisposable
 
     /// <summary>
     /// Draws the volumes of the fields and nebulae when the Zones toggle is on, and the volume of the selected and the
-    /// hovered zone always. A volume that holds the camera shows its inside faces.
+    /// hovered item always: a zone, or the zone of a nebula or a field. The volume of a nebula or a field has the color
+    /// of its kind, so a shared zone has the color of the selected kind. A volume that holds the camera shows its inside
+    /// faces.
     /// </summary>
     private void DrawZones()
     {
@@ -592,36 +615,49 @@ internal sealed class SceneView : IDisposable
         }
 
         zoneRenderer.Begin(camera.Position);
+        var selected = Highlight(window.Selection);
+        var hover = Highlight(hovered);
         if (window.Settings.ShowZones)
         {
             foreach (var zone in Index.VolumeZones)
             {
-                if (!IsHighlighted(zone))
+                if (!ReferenceEquals(zone, selected?.Zone) && !ReferenceEquals(zone, hover?.Zone))
                 {
-                    AddZone(zone, VolumeAlpha);
+                    AddZone(zone, VolumeAlpha, Index.KindOf(zone)!);
                 }
             }
         }
 
-        if (window.Selection is Zone selected && Contains(selected))
+        if (selected is var (selectedZone, selectedKind))
         {
-            AddZone(selected, HighlightAlpha);
+            // A selected volume that holds the camera keeps the normal opacity (decision D161 of the M22 design).
+            AddZone(selectedZone, selectedZone.ContainsPoint(camera.Position) ? VolumeAlpha : HighlightAlpha,
+                selectedKind);
         }
 
-        if (hovered is Zone hover && !ReferenceEquals(hover, window.Selection))
+        if (hover is var (hoverZone, hoverKind) && !ReferenceEquals(hoverZone, selected?.Zone))
         {
-            AddZone(hover, HighlightAlpha);
+            AddZone(hoverZone, HighlightAlpha, hoverKind);
         }
 
         zoneRenderer.Finish();
     }
 
+    /// <summary>The zone that an item of the open system highlights, and the kind that gives its color. A zone highlights
+    /// itself in the color of its role. A nebula or a field highlights its zone in the color of the item. Null for another
+    /// item.</summary>
+    private (Zone Zone, ObjectKind Kind)? Highlight(object? item) =>
+        item is Zone or Nebula or AsteroidField && Contains(item) && SceneItems.ZoneOf(item) is { } zone &&
+        Index!.KindOf(item) is { } kind
+            ? (zone, kind)
+            : null;
+
     private bool IsHighlighted(Zone zone) => ReferenceEquals(zone, window.Selection) || ReferenceEquals(zone, hovered);
 
-    /// <summary>Adds the volume of a zone in the color of its role.</summary>
-    private void AddZone(Zone zone, float alpha)
+    /// <summary>Adds the volume of a zone in the color of a kind.</summary>
+    private void AddZone(Zone zone, float alpha, ObjectKind kind)
     {
-        var color = new Color4(Index!.KindOf(zone)!.Color with { W = alpha });
+        var color = new Color4(kind.Color with { W = alpha });
         var inside = zone.ContainsPoint(camera.Position);
         var size = zone.Size;
         switch (zone.Shape)
@@ -701,11 +737,23 @@ internal sealed class SceneView : IDisposable
     }
 
     /// <summary>
-    /// Draws the wireframe of the selected object in the accent color. A model without wireframe data, for example a
-    /// planet sphere, gets its oriented bounding box.
+    /// Draws the selection in the accent color. A selected object shows its wireframe. A selected nebula, field or zone
+    /// shows the outline of its zone (decision D163 of the M22 design). A model without wireframe data, for example a
+    /// planet sphere, gets its oriented bounding box. A patrol path keeps its line.
     /// </summary>
     private void DrawSelection()
     {
+        if (renderer != null && Highlight(window.Selection) is var (zone, _) &&
+            !(window.Selection is Zone && Index!.PatrolPaths.Contains(zone)))
+        {
+            foreach (var (a, b) in ZoneOutline.Lines(zone))
+            {
+                renderer.DebugRenderer.DrawLine(a, b, SelectionColor);
+            }
+
+            return;
+        }
+
         if (window.Selection is not SystemObject selected || !objects.TryGetValue(selected, out var obj) ||
             obj.RenderComponent is not ModelRenderer { Model: { } model } || renderer == null)
         {
@@ -746,12 +794,18 @@ internal sealed class SceneView : IDisposable
         }
     }
 
-    /// <summary>The section of the selected item when it is an object, a zone or a light of the open system, or
-    /// null.</summary>
-    private SectionRef? SelectedSection() =>
-        window.Selection is (SystemObject or Zone or LightSource) and var item && Contains(item)
-            ? SectionOf(item)
-            : null;
+    /// <summary>
+    /// The section that the gizmo moves, or null for another selection. For an object, a zone or a light of the open
+    /// system, it is the section of the item. For a nebula or a field, it is the section of its zone. As Unity moves the
+    /// Transform of the selected GameObject, the gizmo moves the zone of the item (decision D159 of the M22 design).
+    /// </summary>
+    private SectionRef? SelectedSection() => window.Selection switch
+    {
+        Nebula or AsteroidField when Contains(window.Selection) && SceneItems.ZoneOf(window.Selection) is { } zone =>
+            SectionOf(zone),
+        (SystemObject or Zone or LightSource) and var item when Contains(item) => SectionOf(item),
+        _ => null,
+    };
 
     private float Radius(SystemObject obj) =>
         ScenePicker.Radius(objects.TryGetValue(obj, out var go) &&

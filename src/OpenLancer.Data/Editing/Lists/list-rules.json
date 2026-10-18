@@ -107,7 +107,11 @@
       "source": { "role": "weapon_mod", "values": { "section": "WeaponType", "key": "shield_mod", "index": 0 } } },
     { "id": "dock_sphere_type", "label": "Dock type", "kind": "Enum",
       "enum": "LibreLancer.Data.Schema.Solar.DockSphereType" },
-    { "id": "cutscene", "label": "Cutscene", "kind": "Cutscene", "source": { "files": ".thn" } }
+    { "id": "cutscene", "label": "Cutscene", "kind": "Cutscene", "source": { "files": ".thn" } },
+    { "id": "nebula_file", "label": "Nebula file", "kind": "Nebula",
+      "source": { "files": ".ini", "folder": "SOLAR\\NEBULA", "fileClass": "LibreLancer.Data.Schema.Universe.Nebula" } },
+    { "id": "asteroid_file", "label": "Asteroid file", "kind": "AsteroidField",
+      "source": { "files": ".ini", "folder": "SOLAR\\ASTEROIDS", "fileClass": "LibreLancer.Data.Schema.Universe.AsteroidField" } }
   ],
   "rules": [
     { "role": "system", "section": "Object", "key": "archetype", "list": "solar_archetype",
@@ -163,6 +167,20 @@
     { "role": "system", "section": "zone", "key": "faction", "values": [
       { "index": 0, "list": "faction", "label": "Faction", "closed": true, "effect": "degrade",
         "evidence": "Server\\SpacePopulationSpawner.cs:180, :196" } ] },
+    { "role": "system", "section": "Nebula", "key": "zone", "list": "zone_of_system", "scope": "file",
+      "closed": true, "required": true, "effect": "drop", "consequence": "The game drops this nebula.",
+      "evidence": "GameItemDb.cs:1714-1728, ZoneReference.cs:13-14 (NebulaRuleRetailTests)" },
+    { "role": "system", "section": "Nebula", "key": "file", "list": "nebula_file", "closed": true, "required": true,
+      "exists": true, "effect": "loadBreak", "consequence": "The game crashes when it loads the data.",
+      "missing": "The game drops this nebula.",
+      "evidence": "Schema\\Universe\\Nebula.cs:38-45, IO\\FileSystem.cs:65-77, Schema\\FreelancerData.cs:442-443, ZoneReference.cs:11-12 (NebulaRuleRetailTests)" },
+    { "role": "system", "section": "Asteroids", "key": "zone", "list": "zone_of_system", "scope": "file",
+      "closed": true, "required": true, "effect": "drop", "consequence": "The game drops this asteroid field.",
+      "evidence": "GameItemDb.cs:1692-1701, :1773-1777, ZoneReference.cs:13-14 (NebulaRuleRetailTests)" },
+    { "role": "system", "section": "Asteroids", "key": "file", "list": "asteroid_file", "closed": true, "required": true,
+      "exists": true, "effect": "loadBreak", "consequence": "The game crashes when it loads the data.",
+      "missing": "The game drops this asteroid field.",
+      "evidence": "Schema\\Universe\\AsteroidField.cs:39-46, IO\\FileSystem.cs:65-77, Schema\\FreelancerData.cs:442-443, ZoneReference.cs:11-12 (NebulaRuleRetailTests)" },
     { "role": "system", "section": "Music", "key": "space", "list": "sound", "closed": true, "effect": "degrade",
       "evidence": "GameStates\\SpaceGameplay.cs:918-919, GameDataManager.cs:252-258" },
     { "role": "system", "section": "Music", "key": "danger", "list": "sound",

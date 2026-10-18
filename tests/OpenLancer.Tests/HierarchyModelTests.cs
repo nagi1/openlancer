@@ -6,6 +6,7 @@ using LibreLancer.Data.Schema.Solar;
 using OpenLancer.Editor;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Scene;
+using OpenLancer.Editor.Ui;
 using Xunit;
 
 namespace OpenLancer.Tests;
@@ -91,9 +92,9 @@ public sealed class HierarchyModelTests
         Assert.Equal("New York", model.Root.Name);
         Assert.Equal("li01", model.Root.Detail);
         Assert.Equal("", model.Root.CountText);
-        Assert.Equal(["suns", "stations", "gates", "lanes", "satellites", "other", "zones", "lights"],
+        Assert.Equal(["suns", "stations", "gates", "lanes", "satellites", "other", "fields", "zones", "lights"],
             model.Root.Children.Select(c => c.Id));
-        Assert.Equal(["2", "2", "3", "3", "1", "1", "2", "1"], model.Root.Children.Select(c => c.CountText));
+        Assert.Equal(["2", "2", "3", "3", "1", "1", "1", "2", "1"], model.Root.Children.Select(c => c.CountText));
     }
 
     [Fact]
@@ -129,7 +130,77 @@ public sealed class HierarchyModelTests
     {
         var zones = Group(Model(), "zones");
 
-        Assert.Equal(["Asteroid fields", "Other zones"], zones.Children.Select(c => c.Name));
+        Assert.Equal(["Field zones", "Other zones"], zones.Children.Select(c => c.Name));
+    }
+
+    /// <summary>
+    /// The nebulae and the asteroid fields are scene items with top-level groups after "Other objects" and before
+    /// "Zones" (decision D158 of the M22 design). A row shows the name of the zone, or else the file name, and the zone
+    /// nickname. The id of a row is its prefix and the zone nickname, with "#k" for the k-th repeat.
+    /// </summary>
+    [Fact]
+    public void NebulaeAndFieldsHaveTheirOwnGroups()
+    {
+        var system = System();
+        var cloudZone = SystemIndexTests.Zone("zone_cloud");
+        cloudZone.IdsName = 10;
+        system.Zones.Add(cloudZone);
+        var cloud = new Nebula { SourceFile = @"solar\nebula\cloud.ini", Zone = cloudZone };
+        var repeat = new Nebula { SourceFile = @"solar\nebula\cloud_two.ini", Zone = cloudZone };
+        system.Nebulae.AddRange([cloud, repeat]);
+        var model = Model(system);
+
+        var ids = model.Root.Children.Select(c => c.Id).ToList();
+        Assert.Equal(ids.IndexOf("other") + 1, ids.IndexOf("nebulae"));
+        Assert.Equal(ids.IndexOf("nebulae") + 1, ids.IndexOf("fields"));
+        Assert.Equal(ids.IndexOf("fields") + 1, ids.IndexOf("zones"));
+        var nebulae = Group(model, "nebulae");
+        Assert.Equal(("Nebulae", ObjectKinds.Nebula), (nebulae.Name, nebulae.Kind));
+        Assert.Equal(["n:zone_cloud", "n:zone_cloud#2"], nebulae.Children.Select(c => c.Id));
+        Assert.All(nebulae.Children, c => Assert.Equal(("New York", "zone_cloud"), (c.Name, c.Detail)));
+        Assert.Equal([cloud, repeat], nebulae.Children.Select(c => c.Item));
+
+        // A zone without a name gives the file name without the extension.
+        var field = Group(model, "fields").Children.Single();
+        Assert.Equal(("f:zone_field", "zone_field", "zone_field"), (field.Id, field.Name, field.Detail));
+        system.AsteroidFields[0] = new AsteroidField { SourceFile = @"solar\asteroids\li01_rock.ini", Zone = system.Zones[0] };
+        Assert.Equal("li01_rock", Group(Model(system), "fields").Children.Single().Name);
+    }
+
+    /// <summary>A nebula of a zone that a field also uses has its row in "Nebulae", and the field in "Asteroid
+    /// fields". The zone is in "Field zones" only, as before.</summary>
+    [Fact]
+    public void ANebulaOfASharedZoneIsInTheNebulae()
+    {
+        var system = System();
+        var shared = system.AsteroidFields[0].Zone!;
+        var nebula = new Nebula { SourceFile = "smog.ini", Zone = shared };
+        system.Nebulae.Add(nebula);
+        var model = Model(system);
+
+        Assert.Same(nebula, Group(model, "nebulae").Children.Single().Item);
+        Assert.Same(system.AsteroidFields[0], Group(model, "fields").Children.Single().Item);
+        Assert.Equal(["Field zones", "Other zones"], Group(model, "zones").Children.Select(c => c.Name));
+        Assert.True(model.Reveal(nebula));
+    }
+
+    [Fact]
+    public void TypeWordsSelectTheItems()
+    {
+        var system = System();
+        system.Nebulae.Add(new Nebula { SourceFile = "smog.ini", Zone = system.Zones[1] });
+        var model = Model(system);
+
+        model.SetSearch("t:nebula");
+        Assert.Equal(["New York", "Nebulae", "smog"], RowNames(model));
+
+        model.SetSearch("t:field");
+        Assert.Equal(["New York", "Asteroid fields", "zone_field"], RowNames(model));
+
+        // "t:zone" still selects the zones, so a user who searched the zones of fields uses it.
+        model.SetSearch("t:zone");
+        Assert.Equal(2, model.Root.Matches);
+        Assert.Equal(1, HierarchyModel.TypeCounts(system)["nebula"]);
     }
 
     [Fact]
@@ -137,7 +208,7 @@ public sealed class HierarchyModelTests
     {
         var model = Model();
 
-        Assert.Equal(9, model.Rows.Count);
+        Assert.Equal(10, model.Rows.Count);
         Assert.Equal(0, model.Rows[0].Depth);
         Assert.All(model.Rows.Skip(1), r => Assert.Equal(1, r.Depth));
     }

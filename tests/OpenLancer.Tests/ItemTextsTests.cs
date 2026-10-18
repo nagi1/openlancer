@@ -123,6 +123,54 @@ public sealed class ItemTextsTests
         Assert.Equal("", texts.TextOf(LightItem, "ids_name"));
     }
 
+    /// <summary>
+    /// A nebula and a field have no text key in their sections. So they take the name of their zone from W (section 5
+    /// of the M22 design). A rename of the zone shows on the nebula before the save.
+    /// </summary>
+    [Fact]
+    public void ANebulaTakesTheNameOfItsZone()
+    {
+        using var ws = SystemWorkspace.Create();
+        var session = ws.Session("act");
+        var zone = new Zone { Nickname = "Zone_death", IdsName = 261164 };
+        var zoneSection = SystemWorkspace.Li01Section("Zone", "Zone_death");
+        var nebula = new Nebula { SourceFile = @"solar\nebula\death_cloud.ini", Zone = zone };
+        var texts = new ItemTexts(session, id => GameNames.GetValueOrDefault(id, ""), _ => "")
+        {
+            SceneSections = item => ReferenceEquals(item, zone) ? zoneSection : null,
+        };
+
+        // W has no name line for the zone yet, so the zone has no name, and the nebula neither.
+        Assert.Equal("", texts.NameOf(nebula));
+
+        session.Execute(EditCommand.SetLines(zoneSection, "ids_name", [[new Int32Value(196609)]]));
+
+        Assert.Equal("New York", texts.NameOf(zone));
+        Assert.Equal("New York", texts.NameOf(nebula));
+        Assert.Equal("Zone_death", SceneItems.Nickname(nebula));
+    }
+
+    [Fact]
+    public void AFieldWithoutAZoneNameHasNoName()
+    {
+        using var ws = SystemWorkspace.Create();
+        var texts = Texts(ws.Session("act"));
+        var field = new AsteroidField
+        {
+            SourceFile = @"solar\asteroids\Li01_Badlands_Asteroids.ini", Zone = new Zone { Nickname = "Zone_badlands" },
+        };
+
+        Assert.Equal("", texts.NameOf(field));
+        // The Hierarchy and the labels then show the file name without its extension.
+        Assert.Equal("Li01_Badlands_Asteroids", SceneItems.FallbackName(field));
+        Assert.Equal("Zone_badlands", SceneItems.FallbackName(field.Zone));
+        // A field without a zone has no nickname, and its texts are empty.
+        var lost = new AsteroidField { SourceFile = "" };
+        Assert.Null(SceneItems.Nickname(lost));
+        Assert.Null(SceneItems.FallbackName(lost));
+        Assert.Equal("", texts.NameOf(lost));
+    }
+
     /// <summary>An item without a section in W shows the text of its id: an object of another system, or a ring with
     /// its lane name.</summary>
     [Fact]

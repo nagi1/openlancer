@@ -102,6 +102,33 @@ public sealed class ObjectKindsTests
         Assert.Null(ObjectKinds.Of((object)"text"));
     }
 
+    /// <summary>
+    /// A nebula and a field are scene items with kinds of their own (section 5 of the M22 design), with the marker values
+    /// of decision D164. Their zones keep the zone kinds, with the labels "Nebula zone" and "Asteroid field zone".
+    /// </summary>
+    [Fact]
+    public void TheItemKindsAndTheZoneRoleKindsHaveTheirLabels()
+    {
+        Assert.Same(ObjectKinds.Nebula, ObjectKinds.Of((object)new Nebula { SourceFile = "" }));
+        Assert.Same(ObjectKinds.AsteroidField, ObjectKinds.Of((object)new AsteroidField { SourceFile = "" }));
+        Assert.Equal(("Nebula", EditorIcons.Cloud, 14f, 30, float.PositiveInfinity),
+            (ObjectKinds.Nebula.Label, ObjectKinds.Nebula.Icon, ObjectKinds.Nebula.MarkerSize,
+                ObjectKinds.Nebula.LabelPriority, ObjectKinds.Nebula.FadeDistance));
+        Assert.Equal(("Asteroid field", EditorIcons.Meteor, 12f, 0, 100_000f),
+            (ObjectKinds.AsteroidField.Label, ObjectKinds.AsteroidField.Icon, ObjectKinds.AsteroidField.MarkerSize,
+                ObjectKinds.AsteroidField.LabelPriority, ObjectKinds.AsteroidField.FadeDistance));
+
+        var nebulaZone = ObjectKinds.Of(ZoneRole.Nebula);
+        var fieldZone = ObjectKinds.Of(ZoneRole.AsteroidField);
+        Assert.Equal(("Nebula zone", ObjectKinds.Nebula.Color, 6f), (nebulaZone.Label, nebulaZone.Color, nebulaZone.MarkerSize));
+        Assert.Equal(("Asteroid field zone", ObjectKinds.AsteroidField.Color, 6f),
+            (fieldZone.Label, fieldZone.Color, fieldZone.MarkerSize));
+
+        // The picker of a file list shows the glyph of the item kind.
+        Assert.Same(ObjectKinds.Nebula, ObjectKinds.OfList("Nebula"));
+        Assert.Same(ObjectKinds.AsteroidField, ObjectKinds.OfList("AsteroidField"));
+    }
+
     [Fact]
     public void PacksTheColorAsImGuiAbgr()
     {

@@ -16,9 +16,10 @@ internal readonly record struct SceneMarker(object Item, ObjectKind Kind, uint C
     float Alpha);
 
 /// <summary>
-/// The markers of one Scene frame: a glyph for each object and light, and a diamond for each zone that has no volume or
-/// path line. The overlay draws them, and the picker finds the marker under the mouse in them. A marker that fades out
-/// with the distance does not draw and cannot be picked. This class has no ImGui call and no GPU call.
+/// The markers of one Scene frame. Each object, light, nebula and asteroid field has a glyph, and each zone without a
+/// volume or a path line has a diamond. A nebula or a field has its glyph at the center of its zone. The overlay draws
+/// the markers, and the picker finds the markers under the mouse in them. A marker that fades out with the distance does
+/// not draw and cannot be picked. This class has no ImGui call and no GPU call.
 /// </summary>
 internal sealed class SceneMarkers
 {
@@ -43,7 +44,8 @@ internal sealed class SceneMarkers
 
     /// <summary>
     /// Projects the markers of the system for this frame. The Zones and Lights toggles show the zone and light markers.
-    /// The selected zone or light has its marker also when its toggle is off.
+    /// The Nebulae or the Zones toggle shows the nebula markers. The selected zone, light or nebula has its marker also
+    /// when its toggle is off.
     /// </summary>
     public void Update(SceneProjection projection, SystemIndex index, EditorSettings settings, object? selection)
     {
@@ -76,6 +78,17 @@ internal sealed class SceneMarkers
         {
             var kind = index.KindOf(selectedZone)!;
             Add(projection, selection, selectedZone, kind, kind.Abgr, selectedZone.Position, false);
+        }
+
+        // A nebula glyph shows with the Nebulae or the Zones toggle, and a field glyph always (section 6.3 of the M22
+        // design). The selected item keeps its glyph.
+        foreach (var volume in index.VolumeItems)
+        {
+            var shows = volume.Item is not Nebula || settings.ShowNebulae || settings.ShowZones;
+            if (shows || ReferenceEquals(volume.Item, selection))
+            {
+                Add(projection, selection, volume.Item, volume.Kind, volume.Kind.Abgr, volume.Zone.Position, false);
+            }
         }
 
         foreach (var light in index.System.LightSources)
@@ -153,6 +166,28 @@ internal sealed class SceneMarkers
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// All the markers under <paramref name="mouse"/>, the nearest to the mouse on the screen first. Of two markers at
+    /// the same screen distance, the nearer in depth comes first.
+    /// </summary>
+    public IReadOnlyList<SceneMarker> HitAll(Vector2 mouse)
+    {
+        var hits = new List<(SceneMarker Marker, float Distance)>();
+        foreach (var marker in markers)
+        {
+            var distance = Vector2.Distance(marker.Screen, mouse);
+            if (distance <= (marker.Kind.MarkerSize / 2 + PickMargin) * scale)
+            {
+                hits.Add((marker, distance));
+            }
+        }
+
+        hits.Sort((a, b) => a.Distance != b.Distance
+            ? a.Distance.CompareTo(b.Distance)
+            : a.Marker.Depth.CompareTo(b.Marker.Depth));
+        return hits.ConvertAll(h => h.Marker);
     }
 
     /// <summary>The opacity of a marker at a distance. A kind without a fade distance never fades.</summary>

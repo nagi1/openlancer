@@ -122,6 +122,82 @@ public sealed class ScenePageTests
     /// "More keys" lists one name for each value. Two names of one field set one value, so a value shows its names that
     /// have lines, or else its first name. A value that a row shows is not in the list.
     /// </summary>
+    /// <summary>
+    /// The page of a nebula binds the file to the [Nebula] section, with its list picker. It binds the area to the
+    /// section of the zone (section 10.1 of the M22 design). The zone of the item is the key of its section, so its row is
+    /// read-only. The page reads the file of W, so a pick shows before the save.
+    /// </summary>
+    [Fact]
+    public void TheFieldPageBindsTheFileToTheItemSectionAndTheAreaToTheZone()
+    {
+        using var ws = SystemWorkspace.Create(SceneLi01);
+        ws.WriteBase(@"DATA\SOLAR\NEBULA\cloud.ini", "[Fog]\nfog_enabled = 1\ncolor = 10, 7, 30\n");
+        var session = ws.Session("act");
+        var item = SceneSections[Runtime.Scene.SceneSection.Nebula];
+        var zone = SystemWorkspace.Li01Section("Zone", "Zone_cloud");
+
+        Assert.Null(Bind(session, item, "file").ReadOnlyReason);
+        Assert.True(PropertyGrid.IsListed(session.Lists.Rules(item, "file")));
+        Assert.Equal("'zone' is the key that finds the section. The editor cannot change it.",
+            Bind(session, item, "zone").ReadOnlyReason);
+        Assert.Null(Bind(session, zone, "pos").ReadOnlyReason);
+        Assert.Null(Bind(session, zone, "size").ReadOnlyReason);
+
+        var nebula = new Nebula { SourceFile = @"solar\nebula\cloud.ini", Zone = new Zone { Nickname = "Zone_cloud" } };
+        Assert.Equal(@"solar\nebula\cloud.ini", FieldPage.FileValue(session, item, nebula));
+        session.Execute(EditCommand.SetLinesFromText(item, "file", [@"solar\nebula\other.ini"]));
+        Assert.Equal(@"solar\nebula\other.ini", FieldPage.FileValue(session, item, nebula));
+        // Without a section, the page shows the file that the system loaded with.
+        Assert.Equal(@"solar\nebula\cloud.ini", FieldPage.FileValue(session, null, nebula));
+    }
+
+    /// <summary>
+    /// The notes of the Area section. A shared zone changes the other item too. A box nebula draws no cloud. A field
+    /// draws its asteroids only near the camera.
+    /// </summary>
+    [Fact]
+    public void TheAreaNotesTellWhatAChangeOfTheZoneDoes()
+    {
+        var shared = new Zone { Nickname = "Zone_smog", Shape = ShapeKind.Sphere };
+        var box = new Zone { Nickname = "Zone_box", Shape = ShapeKind.Box };
+        var field = new AsteroidField { SourceFile = "smog_asteroids.ini", Zone = shared, FillDist = 1250 };
+        var smog = new Nebula { SourceFile = "smog_nebula.ini", Zone = shared };
+        var boxed = new Nebula { SourceFile = "box_nebula.ini", Zone = box };
+        var system = new StarSystem
+        {
+            Nickname = "br04", SourceFile = "", Zones = [shared, box], AsteroidFields = [field], Nebulae = [smog, boxed],
+        };
+        var index = new Editor.Scene.SystemIndex(system, system);
+        static string Name(object item) => Editor.Scene.SceneItems.FallbackName(item)!;
+
+        Assert.Equal(["The asteroid field smog_asteroids uses this zone too. A change of the area changes both."],
+            FieldPage.AreaNotes(smog, index, Name));
+        Assert.Equal(["The nebula smog_nebula uses this zone too. A change of the area changes both.",
+            "Asteroids draw only within 1250 of the camera."], FieldPage.AreaNotes(field, index, Name));
+        Assert.Equal(["The game draws no cloud outside a box, cylinder or ring nebula."],
+            FieldPage.AreaNotes(boxed, index, Name));
+    }
+
+    /// <summary>
+    /// The page shows each section of the nebula file. The editor does not know the schema of a nebula file yet. So its
+    /// rows are read-only (decision D123) until a later milestone gives the file a schema.
+    /// </summary>
+    [Fact]
+    public void TheFileRowsOfANebulaFileAreReadOnly()
+    {
+        using var ws = SystemWorkspace.Create(SceneLi01);
+        ws.WriteBase(@"DATA\SOLAR\NEBULA\cloud.ini", "[Fog]\nfog_enabled = 1\ncolor = 10, 7, 30\n[Exterior]\nbit_radius = 300\n");
+        var session = ws.Session("act");
+
+        var sections = FieldPage.FileSections(session, @"solar\nebula\cloud.ini");
+
+        Assert.Equal(["Fog", "Exterior"], sections.Select(s => s.Id.Type));
+        Assert.All(sections, s => Assert.Equal(FieldBinding.NoSchemaReason, Bind(session, s, "color").ReadOnlyReason));
+        Assert.Equal(["10, 7, 30"], Bind(session, sections[0], "color").Lines.Select(l => string.Join(", ", l.Values)));
+        Assert.Empty(FieldPage.FileSections(session, @"solar\nebula\nothing.ini"));
+        Assert.Empty(FieldPage.FileSections(session, null));
+    }
+
     [Fact]
     public void MoreKeysListsOneNameForEachValue()
     {

@@ -20,6 +20,10 @@ internal enum ListRowKind
     /// <summary>The value of the field, which is outside the list.</summary>
     Missing,
 
+    /// <summary>The value of the field, which is outside the list of files but names a file that exists in the edit
+    /// view. A rule with the flag exists accepts it (milestone M22).</summary>
+    Other,
+
     /// <summary>An entry of the list.</summary>
     Entry,
 }
@@ -33,11 +37,12 @@ internal sealed record ListPickerRow(ListRowKind Kind, string Value, string Name
     /// <summary>The tag of an entry of the active mod: "new" for an entry that is not saved, else "mod".</summary>
     public string Tag => Entry is { Origin: ValueOrigin.ActiveMod } entry ? entry.Unsaved ? "new" : "mod" : "";
 
-    /// <summary>The text of the row: the name, or "None" and "Missing: value".</summary>
+    /// <summary>The text of the row: the name, or "None", "Missing: value" and "value (other folder)".</summary>
     public string Text => Kind switch
     {
         ListRowKind.None => "None",
         ListRowKind.Missing => $"Missing: {Value}",
+        ListRowKind.Other => $"{Value} (other folder)",
         _ => Name,
     };
 }
@@ -52,7 +57,10 @@ internal sealed class ListPickerModel
     /// <param name="entries">The entries with their display names.</param>
     /// <param name="none">True when the key can have no line: the first row is "None".</param>
     /// <param name="current">The value of the field: empty when the key has no line.</param>
-    public ListPickerModel(IEnumerable<(ListEntry Entry, string Name)> entries, bool none, string current)
+    /// <param name="currentExists">True when the value of the field names a file that exists, for a rule with the flag
+    /// exists. A value outside the list then gets an "other folder" row, not a "Missing" row.</param>
+    public ListPickerModel(IEnumerable<(ListEntry Entry, string Name)> entries, bool none, string current,
+        bool currentExists = false)
     {
         var rows = new List<ListPickerRow>();
         if (none)
@@ -64,7 +72,7 @@ internal sealed class ListPickerModel
             .ToList();
         current = current.Trim();
         if (current.Length > 0 && !sorted.Any(r => Is(r.Value, current)))
-            rows.Add(new ListPickerRow(ListRowKind.Missing, current, current, null));
+            rows.Add(new ListPickerRow(currentExists ? ListRowKind.Other : ListRowKind.Missing, current, current, null));
         rows.AddRange(sorted);
         Rows = rows;
         Current = current.Length == 0
@@ -127,6 +135,9 @@ internal sealed class ListPickerModel
                 return ["No line. The engine uses its default."];
             case ListRowKind.Missing:
                 return [$"{row.Value}: no {kind.ToLowerInvariant()} has this name."];
+            case ListRowKind.Other:
+                return [$"{row.Value}: the file exists, in another folder than the {kind.ToLowerInvariant()} list. The " +
+                        "game reads it."];
         }
         var entry = row.Entry!;
         var lines = new List<string>

@@ -270,21 +270,23 @@ internal sealed class StatusBar(EditorWindow window)
         : new Segment(EditorIcons.Play, text, $"{text}\nStop or Shift+F5 ends the game.",
             status == PlayStatus.Running ? EditorTheme.Success : null);
 
-    /// <summary>The segment of the selected item, or null when nothing is selected.</summary>
+    /// <summary>The segment of the selected item, or null when nothing is selected. A nebula or a field shows the
+    /// nickname of its zone (see <see cref="SceneItems.Nickname"/>).</summary>
     private Segment? SelectionSegment(object? selection)
     {
         var scene = window.Scene;
-        if (selection is not NicknameItem selected || scene.KindOf(selected) is not { } kind)
+        if (selection is not (NicknameItem or Nebula or AsteroidField) ||
+            SceneItems.Nickname(selection) is not { } nickname || scene.KindOf(selection) is not { } kind)
         {
             return null;
         }
 
-        var name = window.Session?.ItemName(selected);
-        var title = string.IsNullOrEmpty(name) ? selected.Nickname : $"{name} ({selected.Nickname})";
-        var inScene = scene.Contains(selected);
-        return new Segment(kind.Icon, selected.Nickname,
+        var name = window.Session?.ItemName(selection);
+        var title = string.IsNullOrEmpty(name) ? nickname : $"{name} ({nickname})";
+        var inScene = scene.Contains(selection);
+        return new Segment(kind.Icon, nickname,
             inScene ? $"{kind.Label}: {title}\nClick to focus the Scene camera on it." : $"{kind.Label}: {title}",
-            kind.Color, inScene ? () => scene.Focus(selected) : null);
+            kind.Color, inScene ? () => scene.Focus(selection) : null);
     }
 
     private static Segment CameraSegment((long X, long Y, long Z, long Speed) values)

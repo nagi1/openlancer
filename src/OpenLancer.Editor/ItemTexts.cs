@@ -2,6 +2,7 @@ using System;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
+using OpenLancer.Editor.Scene;
 
 namespace OpenLancer.Editor;
 
@@ -9,7 +10,8 @@ namespace OpenLancer.Editor;
 /// The texts of items as the edit view gives them, for example the name of an object of the open system. A text comes
 /// from the section of the item in W, so it shows an edit before the save: a placeholder through the text of the active
 /// mod, and a number through the game data. An item without a section in W shows the text of its id in the game data.
-/// A light has no text, as in the game.
+/// A light has no text, as in the game. A nebula and an asteroid field take their texts from their zone, because their
+/// sections have no text key (section 5 of the M22 design).
 /// </summary>
 /// <remarks>
 /// A scene item keeps the text id that the system loaded with when W holds a placeholder (see
@@ -36,6 +38,8 @@ internal sealed class ItemTexts(EditSession edits, Func<int, string> name, Func<
     /// </summary>
     public string TextOf(object? item, string key)
     {
+        if (item is Nebula or AsteroidField)
+            item = SceneItems.ZoneOf(item);
         if (SectionOf(item) is { } section && edits.Get(section) is { } view)
             return TextOf(view, key, edits.Schema(section, key)?.TextKind ?? StringKind.String);
         return IdOf(item, key) is var id and > 0 ? name(id) : "";

@@ -63,6 +63,13 @@ public enum SceneSection
 
     /// <summary>The <c>[system]</c> section of a system in <c>universe.ini</c>.</summary>
     UniverseSystem,
+
+    /// <summary>A <c>[Nebula]</c> section of a system file: the scene item of a nebula (milestone M22).</summary>
+    Nebula,
+
+    /// <summary>An <c>[Asteroids]</c> section of a system file: the scene item of an asteroid field (milestone
+    /// M22).</summary>
+    Asteroids,
 }
 
 /// <summary>One key of a section type and what the scene does when it changes.</summary>
@@ -100,6 +107,8 @@ public static class SceneFields
         ["TexturePanels"] = SceneSection.TexturePanels,
         ["Archetype"] = SceneSection.Preloads,
         ["EncounterParameters"] = SceneSection.EncounterParameters,
+        ["Nebula"] = SceneSection.Nebula,
+        ["Asteroids"] = SceneSection.Asteroids,
     };
 
     private const string UniverseSystemType = "system";
@@ -240,6 +249,13 @@ public static class SceneFields
         Row(SceneSection.EncounterParameters, "filename", SceneEffect.None,
             "GameItemDb.cs:1420. The editor scene runs no encounters."),
 
+        // [Nebula] and [Asteroids]: the universe parse reads the file (ZoneReference.cs:9-19), and InitSystems finds the
+        // zone (GameItemDb.cs:1686-1728). The scene builds no nebula or field from W.
+        Locked(SceneSection.Nebula, "zone", "The key of the section (SectionKeys.cs). GameItemDb.cs:1714."),
+        Row(SceneSection.Nebula, "file", SceneEffect.None, FileEvidence),
+        Locked(SceneSection.Asteroids, "zone", "The key of the section (SectionKeys.cs). GameItemDb.cs:1773."),
+        Row(SceneSection.Asteroids, "file", SceneEffect.None, FileEvidence),
+
         // The [system] section of universe.ini (GameItemDb.cs:1393-1416).
         Locked(SceneSection.UniverseSystem, "nickname", "GameItemDb.cs:1404. A rename is a later milestone."),
         Locked(SceneSection.UniverseSystem, "file",
@@ -254,6 +270,10 @@ public static class SceneFields
         Row(SceneSection.UniverseSystem, "name", SceneEffect.None,
             "Schema/Universe/UniverseElement.cs has it. The engine does not read it."),
     ];
+
+    private const string FileEvidence =
+        "Schema/Universe/Nebula.cs:38-45 and AsteroidField.cs:39-46 read the file when the universe loads. The Scene " +
+        "shows another file when the system opens again after the save.";
 
     private const string PreloadEvidence =
         "GameItemDb.cs:1423-1455. A section without a key entry, so a patch cannot find it (PatchWriter.cs:146-152).";

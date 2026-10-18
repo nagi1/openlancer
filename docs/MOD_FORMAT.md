@@ -400,13 +400,30 @@ Revert, in the menu of a row or in the item menu, puts back the lines of the low
 
 ### Edits in the Scene
 
-The Scene edits the objects, zones and lights of the open star system. Click an item in the Scene or in the Hierarchy to select it. The Scene, the Hierarchy and the Inspector then show the same item. You can select one item at a time. The gizmo on the selected item has three tools, and each tool changes one key of the section of the item:
+The Scene edits the objects, zones, lights, nebulae and asteroid fields of the open star system. Click an item in the Scene or in the Hierarchy to select it. The Scene, the Hierarchy and the Inspector then show the same item. You can select one item at a time. The gizmo on the selected item has three tools, and each tool changes one key of the section of the item:
 
 | Tool | Key | Items |
 |---|---|---|
-| Move (`W`) | `pos` | objects, zones and lights |
-| Rotate (`E`) | `rotate` | objects and zones |
-| Scale (`R`) | `size` | zones |
+| Move (`W`) | `pos` | objects, zones, lights, nebulae and asteroid fields |
+| Rotate (`E`) | `rotate` | objects, zones, nebulae and asteroid fields |
+| Scale (`R`) | `size` | zones, nebulae and asteroid fields |
+
+A nebula is its `[Nebula]` section of the system file, and an asteroid field is its `[Asteroids]` section. As in a Unity GameObject, the item has a Transform: its zone. The gizmo on a nebula or a field changes the `pos`, `rotate` and `size` of its zone. Some retail nebulae and fields share one zone, for example the smog clouds of Br04. A change of a shared zone changes both items, and the Area section of the Inspector tells it.
+
+A click selects the first item of the stack of items under the mouse. The stack has four layers:
+
+1. The glyphs under the mouse: first the objects and lights, then the nebulae and fields. A glyph draws on top of the 3D scene, so a click on a glyph selects its item.
+2. The objects that the ray hits, the nearest first.
+3. The nebulae and fields that you can see. First the volumes that the ray enters, the nearest first. Then the volumes that hold the camera: first the nebulae in file order, then the fields, the smallest first. The game shows the fog of the first nebula. Inside a nebula, the fog covers the view, so a click on empty space selects the nebula.
+4. The zones: first the zone diamonds that show. With the Zones toggle on, the patrol paths and the zone volumes follow, the nearest first. The zone volumes that hold the camera come last, the smallest first.
+
+A click again at the same place selects the next item of the stack, and so does `Alt` + click at any place. After the last item, the first item comes again. A caption at the bottom-left of the Scene tells the place in the stack, for example "Item 2 of 4 under the mouse". A plain click selects the first item again when you move the mouse or the camera, or when you selected another item in the Hierarchy. A click on empty space clears the selection. `Alt` + click on empty space keeps it, because `Alt` + drag orbits the camera.
+
+A nebula or a field is in layer 3 only when you can see it. With the Zones toggle on, each volume shows. With the toggle off, a nebula shows when the Nebulae toggle is on and the game draws it. With the fog on and the camera in a nebula, only that nebula draws. Without the fog, a nebula draws a cloud only for a sphere or ellipsoid zone with `fill_shape` or puffs. A nebula with puffs also holds its outer puffs, up to `bit_radius * (1 + bit_radius_random_variation)` outside its zone.
+
+A field shows when its asteroids draw: the camera is within the largest size of its zone plus its `fill_dist` of the zone center. A field with a band draws its band from any distance. The editor does not test single asteroids: the volume of the field holds each asteroid that draws.
+
+A nebula and a field have a glyph at the center of their zone. A nebula glyph never fades and shows with the Nebulae or the Zones toggle. A field glyph fades out at 100,000 and shows its label only on hover and selection. The selected nebula, field or zone shows its volume and an accent outline of its zone shape.
 
 - The engine reads no rotation and no size for a light, and no size for an object. The tooltip of a tool button tells why the tool is not available.
 - `X` changes between Local and World: a move or a turn along the axes of the item, or along the world axes. A scale always uses the axes of the item. A turn is about one axis.
@@ -471,6 +488,12 @@ The script keys of these sections use the list of the cutscenes. The list holds 
 | `[Room_Info] goodscart_script` | Picker | Warning: the game does not play cart scripts. |
 
 A `scene` line names its script by its place: value 2 when value 0 is `all`, else value 1. The check reads that value, as the engine does, also when the value does not end with `.thn`. A `scene` line with fewer values gets no check, because the engine skips it.
+
+The `file` key of a `[Nebula]` and of an `[Asteroids]` section uses the list of the nebula files or of the asteroid files. The list holds the INI files below `SOLAR\NEBULA` or `SOLAR\ASTEROIDS` whose sections all belong to a nebula file or to an asteroid file. So the texture files of these folders, for example `edge_shapes.ini`, are not in the list. The engine reads a file of any folder. So a value outside the list is valid when its file exists, and the picker shows it as "value (other folder)". A file that does not exist is an error: the game crashes when it loads the data.
+
+The `zone` key uses the list of the zones of the system file. A zone that the system does not have is an error: the game drops the nebula or the field. A section without a `file` line is an error of a section that the active mod changes: the game drops the item.
+
+The Inspector page of a nebula or a field shows the zone and the file with its picker. It also shows the area of the zone, the holes and the sections of the file. The sections of a nebula or asteroid file are read-only until a later milestone. The Scene shows another file when you open the system again after the save.
 
 The editor reads some files only for the lists, for example `solararch.ini` and `loadouts.ini`. Their sections are read-only in the Inspector until a later milestone gives them their pages.
 

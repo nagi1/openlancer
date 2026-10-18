@@ -69,6 +69,19 @@ internal static class ObjectKinds
     public static readonly ObjectKind OtherObject =
         new("Object", EditorIcons.CubeSolid, EditorTheme.Rgb(0x909090), 10, 0, 30_000);
 
+    /// <summary>
+    /// A nebula: its <c>[Nebula]</c> section, as a scene item (decision D151 of the M22 design). Its glyph is at the center
+    /// of its zone, and it never fades, because a nebula is a large landmark (decision D164).
+    /// </summary>
+    public static readonly ObjectKind Nebula = new("Nebula", EditorIcons.Cloud, EditorTheme.Rgb(0xB080E0), 14, 30);
+
+    /// <summary>
+    /// An asteroid field: its <c>[Asteroids]</c> section, as a scene item. One system can have many fields (Li01 has 9).
+    /// So a field shows its label only on hover and selection, and its glyph fades out at 100,000 (decision D164).
+    /// </summary>
+    public static readonly ObjectKind AsteroidField =
+        new("Asteroid field", EditorIcons.Meteor, EditorTheme.Rgb(0xE0905A), 12, 0, 100_000);
+
     /// <summary>A trade lane: a chain of trade lane rings. It has the color of the rings.</summary>
     public static readonly ObjectKind TradeLane = new("Trade lane", EditorIcons.Stream, TradeLaneRing.Color);
 
@@ -188,6 +201,8 @@ internal static class ObjectKinds
         SystemObject obj => Of(obj),
         Zone => Zones.Other,
         LightSource => Light,
+        LibreLancer.Data.GameData.World.Nebula => Nebula,
+        LibreLancer.Data.GameData.World.AsteroidField => AsteroidField,
         LibreLancer.Data.GameData.World.StarSystem => StarSystem,
         LibreLancer.Data.GameData.Ship => Ship,
         Equipment equipment => Of(equipment),
@@ -254,6 +269,8 @@ internal static class ObjectKinds
         "fuse" => Lists.Fuse,
         "enum" => Lists.Enum,
         "cutscene" => Thn.Script,
+        "nebula" => Nebula,
+        "asteroidfield" => AsteroidField,
         _ => OtherObject,
     };
 
@@ -306,8 +323,10 @@ internal static class ObjectKinds
 
     private static class Zones
     {
-        public static readonly ObjectKind AsteroidField = Zone("Asteroid field", EditorIcons.Meteor, 0xE0905A);
-        public static readonly ObjectKind Nebula = Zone("Nebula", EditorIcons.Cloud, 0xB080E0);
+        // The zone of a field or a nebula has the glyph and the color of its item. Its label tells that it is the zone, not
+        // the item (section 5 of the M22 design).
+        public static readonly ObjectKind AsteroidField = Zone("Asteroid field zone", EditorIcons.Meteor, 0xE0905A);
+        public static readonly ObjectKind Nebula = Zone("Nebula zone", EditorIcons.Cloud, 0xB080E0);
         public static readonly ObjectKind Exclusion = Zone("Exclusion zone", EditorIcons.Ban, 0x50C0C0);
         public static readonly ObjectKind Population = Zone("Population zone", EditorIcons.Users, 0x60C0A0);
         public static readonly ObjectKind PatrolPath = Zone("Patrol path", EditorIcons.Route, 0xE0C040);

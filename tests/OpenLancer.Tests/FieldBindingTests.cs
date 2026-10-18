@@ -263,7 +263,8 @@ public sealed class FieldBindingTests
 
     /// <summary>
     /// A star system file with a section of each scene section type, a zone with encounter lines, and two lights with
-    /// one nickname (section 12 of the M2 design).
+    /// one nickname (section 12 of the M2 design). A nebula and an asteroid field share the zone of the cloud (section 12
+    /// of the M22 design).
     /// </summary>
     internal const string SceneLi01 = """
         [SystemInfo]
@@ -318,6 +319,20 @@ public sealed class FieldBindingTests
         [LightSource]
         nickname = light_twice
         pos = 0, 0, 0
+
+        [Zone]
+        nickname = Zone_cloud
+        pos = 1000, 0, 0
+        shape = ELLIPSOID
+        size = 3000, 1000, 2000
+
+        [Nebula]
+        file = solar\nebula\cloud.ini
+        zone = Zone_cloud
+
+        [Asteroids]
+        file = solar\asteroids\cloud_rocks.ini
+        zone = Zone_cloud
         """;
 
     /// <summary>The section of each scene section type in <see cref="SceneLi01"/> and universe.ini.</summary>
@@ -335,6 +350,8 @@ public sealed class FieldBindingTests
         [SceneSection.Preloads] = SystemWorkspace.Li01Section("Archetype", null),
         [SceneSection.EncounterParameters] = SystemWorkspace.Li01Section("EncounterParameters", "area_scout"),
         [SceneSection.UniverseSystem] = SystemWorkspace.System("Li01"),
+        [SceneSection.Nebula] = SystemWorkspace.Li01Section("Nebula", "Zone_cloud"),
+        [SceneSection.Asteroids] = SystemWorkspace.Li01Section("Asteroids", "Zone_cloud"),
     };
 
     /// <summary>

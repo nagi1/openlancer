@@ -32,6 +32,83 @@ public sealed class ListChecksTests
         Assert.Equal(problem.Diagnostic, Assert.Single(session.CheckLists(Li01("Li01_01"))));
     }
 
+    /// <summary>
+    /// A file of a nebula that does not exist makes the game crash while it loads the data (section 11 of the M22 design
+    /// and NebulaRuleRetailTests). So it is an error of the active mod, with the consequence and the fix.
+    /// </summary>
+    [Fact]
+    public void AMissingNebulaFileIsAnError()
+    {
+        using var ws = NebulaFiles.Create();
+        var session = ws.Session("act");
+        Assert.Empty(session.Lists.Problems(NebulaFiles.Nebula));
+
+        session.Execute(EditCommand.SetLinesFromText(NebulaFiles.Nebula, "file", [@"solar\nebula\nothing.ini"]));
+
+        var problem = Single(session, NebulaFiles.Nebula);
+        Assert.Equal((ListProblemKind.Missing, true, "file"), (problem.Kind, problem.IsError, problem.Diagnostic.Key));
+        Assert.Equal(@"[Nebula] zone = Zone_cloud: 'file = solar\nebula\nothing.ini': the file 'solar\nebula\nothing.ini' " +
+                     "does not exist. The game crashes when it loads the data. Pick a nebula file, or add the file to the mod.",
+            problem.Diagnostic.Message);
+        Assert.Contains(problem.Diagnostic, session.SaveProblems());
+
+        // A file line that the active mod removes drops the nebula, and the game goes on.
+        session.Execute(EditCommand.RemoveName(NebulaFiles.Nebula, "file"));
+        problem = Single(session, NebulaFiles.Nebula);
+        Assert.Equal(ListProblemKind.RequiredMissing, problem.Kind);
+        Assert.EndsWith("the key 'file' is missing. The game drops this nebula.", problem.Diagnostic.Message);
+    }
+
+    /// <summary>The engine reads a file of any folder. So a file that exists outside the folder of the list is valid
+    /// (decision D160 of the M22 design).</summary>
+    [Fact]
+    public void AnExistingFileInAnotherFolderIsNoProblem()
+    {
+        using var ws = NebulaFiles.Create();
+        var session = ws.Session("act");
+
+        session.Execute(EditCommand.SetLinesFromText(NebulaFiles.Nebula, "file", [NebulaFiles.FarCloud]));
+        session.Execute(EditCommand.SetLinesFromText(NebulaFiles.Asteroids, "file", [NebulaFiles.Cloud]));
+
+        Assert.Empty(session.Lists.Problems(NebulaFiles.Nebula));
+        Assert.Empty(session.Lists.Problems(NebulaFiles.Asteroids));
+        Assert.Empty(session.SaveProblems());
+    }
+
+    /// <summary>A zone that the system does not have makes the engine drop the nebula (GameItemDb.cs:1714-1728). So a
+    /// new nebula of the active mod with such a zone is an error.</summary>
+    [Fact]
+    public void ANebulaZoneOutsideTheZonesIsAnErrorOfTheActiveMod()
+    {
+        using var ws = NebulaFiles.Create(activeFiles: new()
+        {
+            [@"patches\DATA\UNIVERSE\SYSTEMS\LI01\li01.ini"] =
+                $"[Nebula]\nol.new = true\nzone = no_zone\nfile = {NebulaFiles.Cloud}\n",
+        });
+        var session = ws.Session("act");
+
+        var problem = Single(session, Li01Section("Nebula", "no_zone"));
+        Assert.Equal((ListProblemKind.Missing, true, "zone"), (problem.Kind, problem.IsError, problem.Diagnostic.Key));
+        Assert.EndsWith("'zone = no_zone': no zone has the name 'no_zone'. The game drops this nebula.",
+            problem.Diagnostic.Message);
+    }
+
+    [Fact]
+    public void ALowerLayerZoneOutsideTheListIsAWarning()
+    {
+        using var ws = NebulaFiles.Create(lowerFiles: new()
+        {
+            [@"patches\DATA\UNIVERSE\SYSTEMS\LI01\li01.ini"] =
+                $"[Asteroids]\nol.new = true\nzone = no_zone\nfile = {NebulaFiles.Rocks}\n",
+        });
+        var session = ws.Session("act");
+
+        var problem = Single(session, Li01Section("Asteroids", "no_zone"));
+        Assert.Equal((ListProblemKind.NotListed, false, "zone"), (problem.Kind, problem.IsError, problem.Diagnostic.Key));
+        Assert.EndsWith("The value comes from mod 'lower'.", problem.Diagnostic.Message);
+        Assert.Empty(session.SaveProblems());
+    }
+
     [Fact]
     public void AValueOfTheActiveModOutsideAnOpenListIsAWarning()
     {

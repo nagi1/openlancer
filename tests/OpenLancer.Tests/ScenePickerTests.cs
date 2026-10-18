@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using LibreLancer;
 using LibreLancer.Data.GameData;
@@ -19,7 +20,8 @@ namespace OpenLancer.Tests;
 /// <summary>
 /// The picks of the Scene with synthetic shapes. The camera is at the world origin and looks along -Z with Y up, unless
 /// a test moves or turns it. Its near plane is at 1 unit, and the UI scale is 1. The scene rectangle starts at
-/// (100, 50) and is 800 by 600 pixels.
+/// (100, 50) and is 800 by 600 pixels. The pick stack of milestone M22 has four layers: glyphs, objects, nebulae and
+/// fields, then zones (section 6.1 of the M22 design).
 /// </summary>
 public sealed class ScenePickerTests
 {
@@ -31,6 +33,7 @@ public sealed class ScenePickerTests
     private readonly List<SystemObject> systemObjects = [];
     private readonly List<Zone> zones = [];
     private readonly List<AsteroidField> fields = [];
+    private readonly List<Nebula> nebulae = [];
 
     // Markers are off by default, so that a test of the ray sees no marker.
     private readonly EditorSettings settings = new() { ShowMarkers = false };
@@ -148,6 +151,7 @@ public sealed class ScenePickerTests
         var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 1_500, -5_000), new Vector3(1_000)));
 
         Assert.Same(station, Item(Center));
+        Assert.Single(Pick(Center).Items);
         Assert.Same(field, Item(Screen(new Vector3(0, 1_500, -5_000))));
 
         // The near plane cuts open a box that it crosses, as a box that holds the camera is open around it. This box
@@ -287,30 +291,255 @@ public sealed class ScenePickerTests
     }
 
     [Fact]
-    public void PicksAZoneOnlyWhenNoObjectIsHit()
+    public void PicksAFieldOnlyWhenNoObjectIsHit()
     {
         var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 0, -5_000), new Vector3(1_000)));
         var station = Add("station", new Vector3(0, 0, -20_000), ArchetypeType.station, BoxModel(new Vector3(100)));
         var besideStation = Screen(new Vector3(700, 0, -5_000));
 
-        Assert.Same(station, Item(Center));
-        Assert.Same(field, Item(besideStation));
+        Assert.Equal([station, field, field.Zone!], Pick(Center).Items);
+        // The field item comes first, and its zone second.
+        Assert.Equal([field, field.Zone!], Pick(besideStation).Items);
 
-        // The Zones toggle shows the volumes. Without it, a volume is not hit.
+        // The Zones toggle shows the volumes. Without it, the field is a target only when its asteroids draw, and the
+        // camera is 5,000 from its center, beyond its size of 1,000.
         settings.ShowZones = false;
         Assert.Null(Item(besideStation));
     }
 
     [Fact]
-    public void SkipsAZoneThatHoldsTheCamera()
+    public void AVolumeAheadComesBeforeAVolumeThatHoldsTheCamera()
     {
-        AddField(Volume("around", ShapeKind.Sphere, Vector3.Zero, new Vector3(10_000)));
+        var around = AddField(Volume("around", ShapeKind.Sphere, Vector3.Zero, new Vector3(10_000)));
 
-        Assert.Null(Item(Center));
+        // A volume that holds the camera is in the stack: inside it, each click is a click on it.
+        Assert.Equal([around, around.Zone!], Pick(Center).Items);
 
         var ahead = AddField(Volume("ahead", ShapeKind.Sphere, new Vector3(0, 0, -30_000), new Vector3(1_000)));
 
-        Assert.Same(ahead, Item(Center));
+        Assert.Equal([ahead, around, ahead.Zone!, around.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void ANebulaGlyphComesBeforeAPlanetBehindIt()
+    {
+        settings.ShowMarkers = true;
+        // The planet covers the center of the screen, but its glyph is far to the right. The glyph of the nebula is at
+        // the center, in front of the planet.
+        var planet = Add("planet", new Vector3(5_000, 0, -30_000), ArchetypeType.planet, SphereModel(8_000));
+        var nebula = AddNebula(Volume("nebula", ShapeKind.Sphere, new Vector3(0, 0, -60_000), new Vector3(2_000)));
+
+        Assert.Equal([nebula, planet, nebula.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void AnObjectOnTheRayComesBeforeANebulaInFrontOfIt()
+    {
+        var nebula = AddNebula(Volume("nebula", ShapeKind.Sphere, new Vector3(0, 0, -5_000), new Vector3(1_000)));
+        var station = Add("station", new Vector3(0, 0, -20_000), ArchetypeType.station, BoxModel(new Vector3(100)));
+
+        Assert.Equal([station, nebula, nebula.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void ANebulaThatHoldsTheCameraComesBeforeAFieldThatHoldsIt()
+    {
+        var field = AddField(Volume("field", ShapeKind.Sphere, Vector3.Zero, new Vector3(5_000)));
+        var nebula = AddNebula(Volume("nebula", ShapeKind.Sphere, Vector3.Zero, new Vector3(20_000)));
+
+        // Inside a field, only the asteroids cover pixels, so the nebula comes first. The zones give the smaller first.
+        Assert.Equal([nebula, field, field.Zone!, nebula.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void TwoNebulaeThatHoldTheCameraKeepTheirFileOrder()
+    {
+        // The renderer draws the first nebula in file order that holds the camera (SystemRenderer.cs:243-249).
+        var large = AddNebula(Volume("large", ShapeKind.Sphere, Vector3.Zero, new Vector3(20_000)));
+        var small = AddNebula(Volume("small", ShapeKind.Sphere, Vector3.Zero, new Vector3(5_000)));
+
+        Assert.Equal([large, small, small.Zone!, large.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void TwoFieldsThatHoldTheCameraGiveTheSmallerFirst()
+    {
+        var large = AddField(Volume("large", ShapeKind.Sphere, Vector3.Zero, new Vector3(20_000)));
+        var small = AddField(Volume("small", ShapeKind.Box, Vector3.Zero, new Vector3(5_000)));
+
+        Assert.Equal([small, large, small.Zone!, large.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void ZonesComeLastAndOnlyWithTheZonesToggle()
+    {
+        // The camera is within the size plus fill_dist of the field center, so the asteroids draw.
+        var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 0, -1_500), new Vector3(1_000)));
+        field.FillDist = 1_000;
+        var path = AddPath(new Vector3(0, -10, -1_500), Matrix4x4.CreateRotationX(MathF.PI / 2), 1_000);
+
+        // The ray enters the zone at 500, and the click is at the far end of the path line, at 2,000.
+        Assert.Equal([field, field.Zone!, path], Pick(Center + new Vector2(0, 2)).Items);
+
+        settings.ShowZones = false;
+        Assert.Equal([field], Pick(Center + new Vector2(0, 2)).Items);
+    }
+
+    /// <summary>
+    /// The selected zone keeps its diamond when the Zones toggle is off, and a diamond that shows can be picked. A zone
+    /// diamond comes after the glyphs and the volumes.
+    /// </summary>
+    [Fact]
+    public void AZoneDiamondThatShowsIsInTheStack()
+    {
+        settings.ShowMarkers = true;
+        var population = Volume("population", ShapeKind.Sphere, new Vector3(0, 0, -10_000), new Vector3(500));
+        population.Encounters = [new Encounter()];
+        zones.Add(population);
+        var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 0, -30_000), new Vector3(2_000)));
+
+        Assert.Equal([field, population, field.Zone!], Pick(Center).Items);
+
+        // Without the Zones toggle, the field keeps its glyph, and only the selected zone has a diamond.
+        settings.ShowZones = false;
+        Assert.Equal([field], Pick(Center).Items);
+        selection = population;
+        Assert.Equal([field, population], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void AZoneThatHoldsTheCameraIsInTheStack()
+    {
+        var field = AddField(Volume("field", ShapeKind.Ellipsoid, new Vector3(100, 0, 0), new Vector3(3_000, 1_000, 2_000)));
+
+        Assert.Equal([field, field.Zone!], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void EachItemIsInTheStackOnce()
+    {
+        // A field and a nebula that share a zone: the field, the nebula and the zone, each once.
+        var zone = Volume("shared", ShapeKind.Sphere, new Vector3(0, 0, -10_000), new Vector3(1_000));
+        var field = AddField(zone);
+        var nebula = AddNebula(zone, addZone: false);
+
+        Assert.Equal([field, nebula, zone], Pick(Center).Items);
+
+        // With the markers, the glyphs come first, and the volumes do not come again.
+        settings.ShowMarkers = true;
+        var items = Pick(Center).Items;
+        Assert.Equal(3, items.Count);
+        Assert.Equal([field, nebula], items.Take(2).OrderBy(i => i is Nebula));
+        Assert.Same(zone, items[2]);
+    }
+
+    [Fact]
+    public void TheOuterPuffsOfANebulaArePickable()
+    {
+        // The puff radius of 200 with a variation of 0.5 gives up to 300 on each axis (NebulaRenderer.cs:385).
+        var nebula = AddNebula(Volume("nebula", ShapeKind.Sphere, new Vector3(0, 0, -10_000), new Vector3(1_000)));
+        nebula.HasExteriorBits = true;
+        nebula.ExteriorBitRadius = 200;
+        nebula.ExteriorBitRandomVariation = 0.5f;
+
+        Assert.Equal(new Vector3(1_300), ScenePicker.NebulaPickRadii(nebula));
+        // At 10,000 units, these points are 1,200 and 1,400 units from the center, near the plane of the center.
+        Assert.Equal([nebula], Pick(Screen(new Vector3(1_200, 0, -10_000))).Items);
+        Assert.Empty(Pick(Screen(new Vector3(1_400, 0, -10_000))).Items);
+    }
+
+    [Fact]
+    public void ABoxNebulaUsesItsZone()
+    {
+        // A box nebula draws no puffs, so its pick shape is its zone: from -1,000 to 1,000 on each axis.
+        var nebula = AddNebula(Volume("nebula", ShapeKind.Box, new Vector3(0, 0, -10_000), new Vector3(2_000)));
+        nebula.HasExteriorBits = true;
+        nebula.ExteriorBitRadius = 500;
+
+        Assert.Null(ScenePicker.NebulaPickRadii(nebula));
+        Assert.Equal([nebula, nebula.Zone!], Pick(Screen(new Vector3(900, 0, -9_000))).Items);
+        Assert.Empty(Pick(Screen(new Vector3(1_100, 0, -9_000))).Items);
+    }
+
+    [Fact]
+    public void AHiddenNebulaIsNoTarget()
+    {
+        var nebula = AddNebula(Volume("nebula", ShapeKind.Sphere, new Vector3(0, 0, -10_000), new Vector3(1_000)));
+        nebula.ExteriorFill = "fill";
+        settings.ShowZones = false;
+        settings.ShowNebulae = false;
+
+        Assert.Empty(Pick(Center).Items);
+
+        // The Nebulae toggle shows its cloud, so it is a target.
+        settings.ShowNebulae = true;
+        Assert.Equal([nebula], Pick(Center).Items);
+
+        // A nebula without fill_shape and without puffs draws no cloud from outside.
+        nebula.ExteriorFill = null;
+        Assert.Empty(Pick(Center).Items);
+    }
+
+    [Fact]
+    public void WithTheFogOnlyTheFogNebulaIsATarget()
+    {
+        settings.ShowZones = false;
+        var around = AddNebula(Volume("around", ShapeKind.Sphere, Vector3.Zero, new Vector3(5_000)));
+        var ahead = AddNebula(Volume("ahead", ShapeKind.Sphere, new Vector3(0, 0, -20_000), new Vector3(1_000)));
+        around.ExteriorFill = ahead.ExteriorFill = "fill";
+
+        // With the fog, the renderer draws only the nebula that holds the camera.
+        Assert.Equal([around], Pick(Center).Items);
+
+        // Without the fog, each nebula draws as from outside.
+        settings.ShowFog = false;
+        Assert.Equal([ahead, around], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void AFarFieldWithoutABandIsNoTargetWithTheZonesOff()
+    {
+        settings.ShowZones = false;
+        var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 0, -10_000), new Vector3(1_000)));
+        field.FillDist = 1_000;
+
+        // The camera is 10,000 from the center, beyond the size plus fill_dist of 2,000.
+        Assert.Empty(Pick(Center).Items);
+
+        // Within that distance, the asteroids draw.
+        eye = new Vector3(0, 0, -8_000);
+        Assert.Equal([field], Pick(Center).Items);
+    }
+
+    [Fact]
+    public void AFieldWithABandIsATargetFromFar()
+    {
+        settings.ShowZones = false;
+        var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 0, -100_000), new Vector3(1_000)));
+        field.Band = new AsteroidBand();
+
+        Assert.Equal([field], Pick(Center).Items);
+
+        // A band draws only around a sphere or an ellipsoid zone (AsteroidFieldRenderer.cs:66-80).
+        field.Zone!.Shape = ShapeKind.Box;
+        Assert.Empty(Pick(Center).Items);
+    }
+
+    [Fact]
+    public void TheVolumeSizeOfEachShape()
+    {
+        Assert.Equal(4 * MathF.PI / 3 * 8, ScenePicker.VolumeSize(Volume("s", ShapeKind.Sphere, default, new Vector3(2))),
+            0.01f);
+        Assert.Equal(4 * MathF.PI / 3 * 24,
+            ScenePicker.VolumeSize(Volume("e", ShapeKind.Ellipsoid, default, new Vector3(2, 3, 4))), 0.01f);
+        Assert.Equal(24, ScenePicker.VolumeSize(Volume("b", ShapeKind.Box, default, new Vector3(2, 3, 4))), 0.01f);
+        // A cylinder of radius 2 and height 3, and a ring of outer radius 2, height 3 and inner radius 1.
+        Assert.Equal(MathF.PI * 12, ScenePicker.VolumeSize(Volume("c", ShapeKind.Cylinder, default, new Vector3(2, 3, 0))),
+            0.01f);
+        Assert.Equal(MathF.PI * 9, ScenePicker.VolumeSize(Volume("r", ShapeKind.Ring, default, new Vector3(2, 3, 1))), 0.01f);
+        // The pick radii of a nebula give the volume of their ellipsoid.
+        Assert.Equal(4 * MathF.PI / 3 * 6,
+            ScenePicker.VolumeSize(Volume("b", ShapeKind.Box, default, new Vector3(9)), new Vector3(1, 2, 3)), 0.01f);
     }
 
     [Fact]
@@ -335,14 +564,16 @@ public sealed class ScenePickerTests
         // The path runs along Z, 100 units below the camera, from a depth of 1,000 to 100,000.
         var path = AddPath(new Vector3(0, -100, -50_500), Matrix4x4.CreateRotationX(MathF.PI / 2), 99_000);
         var field = AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, -100, -50_000), new Vector3(1_000)));
+        var zone = field.Zone!;
         // The point of the path at a depth of 20,000. On the screen it is 4% of the way from the far end of the path,
-        // so a distance that is linear on the screen would give 96,000 and lose to the field at 49,000.
+        // so a distance that is linear on the screen would give 96,000 and lose to the zone at 49,000. The field item
+        // comes first, and the path and the zone volume compare in the zone layer.
         var click = Screen(new Vector3(0, -100, -20_000));
 
-        Assert.Same(path, Item(click));
+        Assert.Equal([field, path, zone], Pick(click).Items);
 
-        field.Position = new Vector3(0, -100, -10_000);
-        Assert.Same(field, Item(click));
+        zone.Position = new Vector3(0, -100, -10_000);
+        Assert.Equal([field, zone, path], Pick(click).Items);
     }
 
     [Theory]
@@ -400,7 +631,10 @@ public sealed class ScenePickerTests
         AddField(Volume("field", ShapeKind.Sphere, new Vector3(0, 5_000, -5_000), new Vector3(1_000)));
         Add("behind", new Vector3(0, 0, 5_000), ArchetypeType.station, BoxModel(new Vector3(100)));
 
-        Assert.Equal(default, Pick(Center));
+        var pick = Pick(Center);
+        Assert.Null(pick.Axis);
+        Assert.Empty(pick.Items);
+        Assert.Null(pick.Item);
     }
 
     [Fact]
@@ -497,12 +731,27 @@ public sealed class ScenePickerTests
         Position = position,
     };
 
-    /// <summary>Adds the zone of an asteroid field. The Scene draws its volume.</summary>
-    private Zone AddField(Zone zone)
+    /// <summary>Adds an asteroid field with its zone. The Scene draws its volume.</summary>
+    private AsteroidField AddField(Zone zone)
     {
         zones.Add(zone);
-        fields.Add(new AsteroidField { SourceFile = "", Zone = zone });
-        return zone;
+        var field = new AsteroidField { SourceFile = "", Zone = zone };
+        fields.Add(field);
+        return field;
+    }
+
+    /// <summary>Adds a nebula with its zone, after the nebulae before it in file order.</summary>
+    /// <param name="addZone">False for a zone that the system has already, for example the zone of a field.</param>
+    private Nebula AddNebula(Zone zone, bool addZone = true)
+    {
+        if (addZone)
+        {
+            zones.Add(zone);
+        }
+
+        var nebula = new Nebula { SourceFile = "", Zone = zone };
+        nebulae.Add(nebula);
+        return nebula;
     }
 
     /// <summary>Adds a patrol path: a cylinder of radius 500 whose axis is its line.</summary>
@@ -539,13 +788,14 @@ public sealed class ScenePickerTests
         var system = new StarSystem
         {
             Nickname = "li01", SourceFile = "", Objects = [.. systemObjects], Zones = [.. zones],
-            AsteroidFields = [.. fields],
+            AsteroidFields = [.. fields], Nebulae = [.. nebulae],
         };
         var index = new SystemIndex(system, system);
         var axes = new AxisGizmo();
         axes.Update(projection);
         var markers = new SceneMarkers();
         markers.Update(projection, index, settings, selection);
-        return new ScenePicker(axes, markers, objects).Pick(projection, mouse, index, settings.ShowZones);
+        return new ScenePicker(axes, markers, objects).Pick(projection, mouse, index,
+            new PickView(eye, settings.ShowZones, settings.ShowNebulae, settings.ShowFog));
     }
 }

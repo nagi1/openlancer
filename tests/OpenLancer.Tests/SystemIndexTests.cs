@@ -178,6 +178,84 @@ public sealed class SystemIndexTests
         Assert.Equal([boxPath, population, other], index.MarkerZones);
     }
 
+    /// <summary>A system with two fields and three nebulae. One field and one nebula share a zone. One nebula has no
+    /// zone, as in a clone of a nebula whose zone the system does not have.</summary>
+    private static (StarSystem System, AsteroidField Debris, AsteroidField Smog, Nebula Cloud, Nebula Lost) Volumes()
+    {
+        var debris = Zone("debris");
+        var shared = Zone("smog");
+        var cloudZone = Zone("cloud");
+        var debrisField = new AsteroidField { SourceFile = "debris.ini", Zone = debris };
+        var smogField = new AsteroidField { SourceFile = "smog_asteroids.ini", Zone = shared };
+        var smogCloud = new Nebula { SourceFile = "smog_nebula.ini", Zone = shared };
+        var cloud = new Nebula { SourceFile = "cloud.ini", Zone = cloudZone };
+        var lost = new Nebula { SourceFile = "lost.ini" };
+        var system = new StarSystem
+        {
+            Nickname = "br04",
+            SourceFile = "",
+            Zones = [debris, shared, cloudZone],
+            AsteroidFields = [debrisField, smogField],
+            Nebulae = [cloud, lost, smogCloud],
+        };
+        return (system, debrisField, smogField, smogCloud, lost);
+    }
+
+    [Fact]
+    public void VolumeItemsHoldEachFieldAndNebulaWithAZone()
+    {
+        var (system, debris, smog, smogCloud, _) = Volumes();
+
+        var index = new SystemIndex(system, system);
+
+        // The fields first, then the nebulae, each in file order.
+        Assert.Equal([debris, smog, system.Nebulae[0], smogCloud], index.VolumeItems.Select(v => v.Item));
+        Assert.Equal(["debris", "smog", "cloud", "smog"], index.VolumeItems.Select(v => v.Zone.Nickname));
+    }
+
+    [Fact]
+    public void ASharedZoneGivesTwoItems()
+    {
+        var (system, _, smog, smogCloud, _) = Volumes();
+
+        var index = new SystemIndex(system, system);
+
+        Assert.Same(smog.Zone, index.VolumeOf(smog)!.Zone);
+        Assert.Same(smog.Zone, index.VolumeOf(smogCloud)!.Zone);
+        Assert.NotSame(index.VolumeOf(smog), index.VolumeOf(smogCloud));
+        // The zone keeps the role of the field, and both items use it.
+        Assert.Equal(ZoneRole.AsteroidField, index.ZoneRole(smog.Zone!));
+        Assert.Equal([ZoneUseKind.AsteroidField, ZoneUseKind.Nebula], index.UsesOf(smog.Zone!).Select(u => u.Kind));
+    }
+
+    [Fact]
+    public void AnItemWithoutAZoneIsNotAVolumeItem()
+    {
+        var (system, _, _, _, lost) = Volumes();
+
+        var index = new SystemIndex(system, system);
+
+        Assert.Null(index.VolumeOf(lost));
+        Assert.DoesNotContain(index.VolumeItems, v => ReferenceEquals(v.Item, lost));
+        Assert.Null(index.VolumeOf(system.Zones[0]));
+        Assert.Null(index.VolumeOf(null));
+    }
+
+    [Fact]
+    public void KindOfAnItemIsItsKind()
+    {
+        var (system, debris, _, smogCloud, _) = Volumes();
+
+        var index = new SystemIndex(system, system);
+
+        Assert.Same(ObjectKinds.AsteroidField, index.KindOf(debris));
+        Assert.Same(ObjectKinds.Nebula, index.KindOf(smogCloud));
+        Assert.Same(ObjectKinds.AsteroidField, index.VolumeOf(debris)!.Kind);
+        Assert.Same(ObjectKinds.Nebula, index.VolumeOf(smogCloud)!.Kind);
+        // The zone keeps the kind of its role.
+        Assert.Same(ObjectKinds.Of(ZoneRole.AsteroidField), index.KindOf(debris.Zone));
+    }
+
     [Fact]
     public void FindsObjectsByNicknameWithoutCase()
     {

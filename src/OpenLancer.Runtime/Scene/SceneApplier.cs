@@ -114,16 +114,17 @@ public sealed class SceneApplier
     public bool HasPending => catchUpNoted || textNoted || noted.Count > 0 || deferred.Count > 0;
 
     /// <summary>
-    /// The section of W that a scene item shows: the section of an object, a zone or a light of the system, or the
-    /// <c>[system]</c> section in <c>universe.ini</c> for the system. Null for another item, and for an item whose
-    /// section W does not have. The catch-up finds the sections of the items, so call <see cref="CatchUp"/> first.
+    /// The section of W that a scene item shows. An object, a zone, a light, a nebula or an asteroid field of the system
+    /// shows its section. The system shows its <c>[system]</c> section in <c>universe.ini</c>. Null for another item,
+    /// and for an item whose section W does not have. The catch-up finds the sections of the items, so call
+    /// <see cref="CatchUp"/> first.
     /// </summary>
     public SectionRef? SectionOf(object item) => item is StarSystem other
         ? other.Nickname.Equals(system.Nickname, StringComparison.OrdinalIgnoreCase) ? universe : null
         : sectionOf.GetValueOrDefault(item);
 
-    /// <summary>The scene item that a section of W sets: an object, a zone, a light, or the system for a section of the
-    /// fields of the system. Null for another section.</summary>
+    /// <summary>The scene item that a section of W sets: an object, a zone, a light, a nebula or an asteroid field. A
+    /// section of the fields of the system sets the system. Null for another section.</summary>
     public object? ItemOf(SectionRef section) =>
         itemOf.GetValueOrDefault(section) ?? (KindOf(section) is { } kind && IsSystemKind(kind) ? system : null);
 
@@ -191,15 +192,22 @@ public sealed class SceneApplier
 
     /// <summary>True for a section that sets the fields of the system.</summary>
     private static bool IsSystemKind(SceneSection kind) =>
-        kind is not (SceneSection.Object or SceneSection.Zone or SceneSection.LightSource);
+        kind is not (SceneSection.Object or SceneSection.Zone or SceneSection.LightSource or SceneSection.Nebula or
+            SceneSection.Asteroids);
+
+    /// <summary>True for the section of a nebula or a field. The scene does not build these items from W, because no
+    /// key of their sections has an effect (see <see cref="SceneFields"/>). The applier only maps them to their
+    /// items.</summary>
+    private static bool IsVolumeKind(SceneSection kind) => kind is SceneSection.Nebula or SceneSection.Asteroids;
 
     /// <summary>The sections of the system file and the <c>[system]</c> of the system, in file order.</summary>
     private IEnumerable<SectionRef> Sections() =>
         (SystemPath == null ? [] : session.Sections(SystemPath)).Concat(universe == null ? [] : [universe]);
 
-    /// <summary>Finds the section of each object, zone and light of the system. The k-th item with a nickname is the
-    /// section with that nickname and the ordinal k, because the engine keeps the file order
-    /// (GameItemDb.cs:1466-1676).</summary>
+    /// <summary>Finds the section of each object, zone, light, nebula and field of the system. The k-th item with a
+    /// nickname is the section with that nickname and the ordinal k, because the engine keeps the file order
+    /// (GameItemDb.cs:1466-1728). A nebula and a field have the nickname of their zone, which is the key of their
+    /// section.</summary>
     private void Map()
     {
         itemOf.Clear();
@@ -209,6 +217,8 @@ public sealed class SceneApplier
             [SceneSection.Object] = ByNickname(system.Objects),
             [SceneSection.Zone] = ByNickname(system.Zones),
             [SceneSection.LightSource] = ByNickname(system.LightSources),
+            [SceneSection.Nebula] = ByZone(system.Nebulae.Select(n => (n.Zone, (object)n))),
+            [SceneSection.Asteroids] = ByZone(system.AsteroidFields.Select(f => (f.Zone, (object)f))),
         };
         foreach (var section in Sections())
         {
@@ -234,6 +244,21 @@ public sealed class SceneApplier
         return result;
     }
 
+    /// <summary>The items with a zone by the nickname of the zone, in list order.</summary>
+    private static Dictionary<string, List<object>> ByZone(IEnumerable<(Zone? Zone, object Item)> list)
+    {
+        var result = new Dictionary<string, List<object>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (zone, item) in list)
+        {
+            if (zone == null)
+                continue;
+            if (!result.TryGetValue(zone.Nickname, out var same))
+                result[zone.Nickname] = same = [];
+            same.Add(item);
+        }
+        return result;
+    }
+
     /// <summary>The catch-up of <see cref="CatchUp"/>, without the effects that apply once.</summary>
     private int CatchUpSections()
     {
@@ -248,6 +273,12 @@ public sealed class SceneApplier
         {
             if (KindOf(section) is not { } kind || session.Get(section) is not { } view)
                 continue;
+            if (IsVolumeKind(kind))
+            {
+                // No key of these sections changes the scene, so the scene shows the lines of W.
+                applied[section] = view.Entries;
+                continue;
+            }
             if (IsSystemKind(kind))
             {
                 systemSections.Add(section);

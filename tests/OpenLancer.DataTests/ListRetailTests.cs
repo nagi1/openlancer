@@ -69,6 +69,43 @@ public sealed class ListRetailTests(ITestOutputHelper output)
     }
 
     /// <summary>
+    /// The lists of the nebula and asteroid files (section 11 of the M22 design). They hold the INI files of
+    /// <c>SOLAR\NEBULA</c> and <c>SOLAR\ASTEROIDS</c> whose sections all belong to the file class. The 5 texture files of
+    /// each folder are no entries. Each of the 259 <c>file</c> lines of the 53 retail system files names an entry, and no <c>file</c> or
+    /// <c>zone</c> line gives a list problem.
+    /// </summary>
+    [Fact]
+    public void TheFileListsHoldTheRetailFiles()
+    {
+        using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m22lists");
+        var session = workspace.Open();
+        var lists = session.Lists;
+        var nebulae = lists.List("nebula_file")!;
+        var fields = lists.List("asteroid_file")!;
+
+        output.WriteLine($"nebula files {nebulae.Entries.Count}, asteroid files {fields.Entries.Count}");
+        Assert.Equal((59, 153), (nebulae.Entries.Count, fields.Entries.Count));
+        Assert.DoesNotContain(nebulae.Entries.Concat(fields.Entries),
+            e => e.Value.EndsWith("_shapes.ini", StringComparison.OrdinalIgnoreCase));
+        Assert.All(nebulae.Entries, e => Assert.StartsWith(@"SOLAR\NEBULA\", e.Value, StringComparison.OrdinalIgnoreCase));
+
+        var lines = 0;
+        foreach (var path in session.DataFiles.Paths("system"))
+        {
+            foreach (var section in session.Sections(path).Where(s => s.Id.Type.ToLowerInvariant() is "nebula" or "asteroids"))
+            {
+                var file = session.Get(section)!.Lines("file")[^1].Values[0].ToString()!;
+                var list = section.Id.Type.Equals("Nebula", StringComparison.OrdinalIgnoreCase) ? nebulae : fields;
+                Assert.True(list.Find(file) != null, $"{section}: {file}");
+                Assert.Empty(lists.Problems(section));
+                lines++;
+            }
+        }
+
+        Assert.Equal(259, lines);
+    }
+
+    /// <summary>
     /// With no edit of the active mod, no rule gives an error. The warnings are the 4 retail values outside a list, two
     /// <c>parent</c> lines that name an object of another system and two <c>lens_glow</c> lines, and the 3 rooms without
     /// <c>set_script</c>: the <c>Cityscape</c> rooms of the intro bases, which the engine plays through

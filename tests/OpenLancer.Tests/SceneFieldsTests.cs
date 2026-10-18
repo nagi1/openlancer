@@ -122,6 +122,11 @@ public sealed class SceneFieldsTests
         Rows(SceneSection.UniverseSystem, data | label, false, "strid_name");
         Rows(SceneSection.UniverseSystem, data, false, "navmapscale");
         Rows(SceneSection.UniverseSystem, none, false, "ids_info", "pos", "msg_id_prefix", "visit", "name");
+        // Section 12 of the M22 design: the [Nebula] and [Asteroids] items.
+        Rows(SceneSection.Nebula, none, true, "zone");
+        Rows(SceneSection.Nebula, none, false, "file");
+        Rows(SceneSection.Asteroids, none, true, "zone");
+        Rows(SceneSection.Asteroids, none, false, "file");
 
         Assert.Equal(expected.Order(StringComparer.Ordinal),
             SceneFields.Rows.Select(r => Describe(r.Section, r.Key, r.Effect, r.Locked)).Order(StringComparer.Ordinal));
@@ -152,9 +157,28 @@ public sealed class SceneFieldsTests
         Assert.Equal(SceneSection.UniverseSystem, SceneFields.SectionOf("System", universe: true));
         Assert.Null(SceneFields.SectionOf("system", universe: false));
         Assert.Null(SceneFields.SectionOf("Object", universe: true));
-        // Field and nebula files are later work.
-        Assert.Null(SceneFields.SectionOf("Nebula", universe: false));
-        Assert.Null(SceneFields.SectionOf("Asteroids", universe: false));
+        // The [Nebula] and [Asteroids] sections of a system file are the scene items of milestone M22.
+        Assert.Equal(SceneSection.Nebula, SceneFields.SectionOf("nebula", universe: false));
+        Assert.Equal(SceneSection.Asteroids, SceneFields.SectionOf("Asteroids", universe: false));
+        Assert.Null(SceneFields.SectionOf("Nebula", universe: true));
+    }
+
+    /// <summary>
+    /// The rows of a nebula and a field (section 12 of the M22 design): the zone is the key of the section, so it is
+    /// locked. The file has no effect on the open scene, because the engine reads the file when the universe loads. The
+    /// coverage test above needs exactly these two rows for each section.
+    /// </summary>
+    [Fact]
+    public void NebulaAndAsteroidsRows()
+    {
+        foreach (var section in new[] { SceneSection.Nebula, SceneSection.Asteroids })
+        {
+            var rows = SceneFields.Rows.Where(r => r.Section == section).OrderBy(r => r.Key).ToList();
+            Assert.Equal(["file", "zone"], rows.Select(r => r.Key));
+            Assert.Equal([(SceneEffect.None, false), (SceneEffect.None, true)], rows.Select(r => (r.Effect, r.Locked)));
+            Assert.Equal(SceneEffect.None, SceneFields.All(section));
+            Assert.Contains("opens again", rows[0].Evidence);
+        }
     }
 
     private static string Describe(SceneSection section, string key, SceneEffect effect, bool locked) =>

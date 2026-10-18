@@ -13,6 +13,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Inspector;
@@ -43,6 +44,7 @@ internal sealed class InspectorPanel
     private readonly SectionExtras rawBlock;
     private readonly SystemObjectPage systemObjectPage;
     private readonly ZonePage zonePage;
+    private readonly FieldPage fieldPage;
     private readonly LightPage lightPage;
     private readonly ShipPage shipPage;
     private readonly EquipmentPage equipmentPage;
@@ -58,6 +60,7 @@ internal sealed class InspectorPanel
         rawBlock = new SectionExtras(window, grid);
         systemObjectPage = new SystemObjectPage(window, grid);
         zonePage = new ZonePage(window, grid);
+        fieldPage = new FieldPage(window, grid);
         lightPage = new LightPage(window, grid);
         shipPage = new ShipPage(window, grid);
         equipmentPage = new EquipmentPage(window, grid);
@@ -86,6 +89,7 @@ internal sealed class InspectorPanel
         shipPage.Reset();
         equipmentPage.Reset();
         starSystemPage.Reset();
+        fieldPage.Reset();
     }
 
     public void Draw(object? item)
@@ -100,8 +104,8 @@ internal sealed class InspectorPanel
 
         Header(item, window.Cutscenes.KindOf(item) ?? window.Scene.KindOf(item) ?? ObjectKinds.Unknown);
         Banner();
-        // An object, a zone or a light of the open system shows its section of W.
-        var sceneSection = item is SystemObject or Zone or LightSource ? window.SectionOf(item) : null;
+        // An object, a zone, a light, a nebula or a field of the open system shows its section of W.
+        var sceneSection = IsSceneItem(item) ? window.SectionOf(item) : null;
         if (sceneSection != null)
         {
             SceneProblems(sceneSection);
@@ -126,6 +130,9 @@ internal sealed class InspectorPanel
                     break;
                 case Zone zone:
                     zonePage.Draw(zone, sceneSection);
+                    break;
+                case Nebula or AsteroidField:
+                    fieldPage.Draw(item, sceneSection);
                     break;
                 case LightSource light:
                     lightPage.Draw(light, sceneSection);
@@ -306,10 +313,10 @@ internal sealed class InspectorPanel
 
         if (session == null || section == null)
         {
-            reason ??= item is SystemObject or Zone or LightSource or StarSystem
+            reason ??= IsSceneItem(item) || item is StarSystem
                 ? "The edit view has no section for this item, so the editor cannot change it."
-                : "The editor edits ships, equipment, goods, markets, and the objects, zones, lights and settings of " +
-                  "star systems.";
+                : "The editor edits ships, equipment, goods, markets, and the objects, zones, lights, nebulae, " +
+                  "asteroid fields and settings of star systems.";
         }
         else if (reason == null)
         {
@@ -382,10 +389,15 @@ internal sealed class InspectorPanel
 
     /// <summary>The settings key and the sections of the raw block of the page of an item. No section for an item whose
     /// page edits no section.</summary>
-    /// <param name="sceneSection">The section of an object, a zone or a light of the open system, or null.</param>
+    /// <param name="sceneSection">The section of an object, a zone, a light, a nebula or a field of the open system, or
+    /// null.</param>
     private (string Key, IReadOnlyList<SectionRef> Sections) RawSections(object item, SectionRef? sceneSection) => item switch
     {
         SystemObject or Zone or LightSource => (item.GetType().Name, sceneSection == null ? [] : [sceneSection]),
+        // The section of the item, then the section of its zone (section 10.1 of the M22 design).
+        Nebula or AsteroidField => (item.GetType().Name,
+            new[] { sceneSection, SceneItems.ZoneOf(item) is { } zone ? window.SectionOf(zone) : null }
+                .OfType<SectionRef>().ToList()),
         StarSystem system => (nameof(StarSystem), starSystemPage.RawSections(system)),
         Ship ship => (nameof(Ship), shipPage.RawSections(ship)),
         Equipment equipment => (nameof(Equipment), equipmentPage.RawSections(equipment)),
@@ -434,13 +446,18 @@ internal sealed class InspectorPanel
         ImGui.PopStyleVar();
     }
 
-    /// <summary>The nickname of an item, or the key of a section, or null.</summary>
+    /// <summary>The nickname of an item, the zone nickname of a nebula or a field, or the key of a section, or
+    /// null.</summary>
     private static string? Nickname(object item) => item switch
     {
-        NicknameItem named => named.Nickname,
         SectionRef section => section.Id.Key ?? section.Id.ToString(),
-        _ => null,
+        _ => SceneItems.Nickname(item),
     };
+
+    /// <summary>True for an item of a system with a section in the system file. These are the objects, zones, lights,
+    /// nebulae and asteroid fields.</summary>
+    private static bool IsSceneItem(object item) =>
+        item is SystemObject or Zone or LightSource or Nebula or AsteroidField;
 
     private void ItemMenu(object item)
     {

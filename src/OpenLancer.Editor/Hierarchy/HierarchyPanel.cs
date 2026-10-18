@@ -8,6 +8,7 @@ using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
+using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Hierarchy;
@@ -343,13 +344,12 @@ internal sealed class HierarchyPanel(EditorWindow window)
     }
 
     /// <summary>The text that Ctrl+C copies: the nickname of an item of a system, or the name of an entity or of the
-    /// cutscene. Null for another item.</summary>
+    /// cutscene. A nebula or a field gives the nickname of its zone. Null for another item.</summary>
     private static string? CopyText(HierarchyModel tree, object item) => item switch
     {
-        NicknameItem named => named.Nickname,
         CutsceneRoot root => root.Path,
         ThnRef => tree.NodeOf(item)?.Name,
-        _ => null,
+        _ => SceneItems.Nickname(item),
     };
 
     private void ContextMenu(object item)
@@ -366,9 +366,9 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         ImGui.Separator();
-        if (item is NicknameItem named && Theme.IconMenuItem(EditorIcons.Copy, "Copy nickname", true))
+        if (SceneItems.Nickname(item) is { } nickname && Theme.IconMenuItem(EditorIcons.Copy, "Copy nickname", true))
         {
-            ImGui.SetClipboardText(named.Nickname);
+            ImGui.SetClipboardText(nickname);
         }
 
         var name = window.Session?.ItemName(item) ?? "";
@@ -441,12 +441,12 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
     }
 
-    /// <summary>The position of an item in its system, or null for an item without a position.</summary>
+    /// <summary>The position of an item in its system, or null for an item without a position. A nebula or a field
+    /// has the position of its zone.</summary>
     private static Vector3? Position(object item) => item switch
     {
         SystemObject obj => obj.Position,
-        Zone zone => zone.Position,
         LightSource light => light.Light.Position,
-        _ => null,
+        _ => SceneItems.ZoneOf(item)?.Position,
     };
 }

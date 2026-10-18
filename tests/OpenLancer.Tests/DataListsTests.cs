@@ -231,9 +231,89 @@ internal static class ListWorkspace
         new(name, values.Select(v => (ValueBase)new StringValue(v)).ToList());
 }
 
+/// <summary>
+/// The files of the nebula and asteroid lists (section 11 of the M22 design), on top of <see cref="ListWorkspace"/>.
+/// Li01 has a nebula and a field on one zone. <c>SOLAR\NEBULA</c> has a nebula file and a texture file, and
+/// <c>SOLAR\ASTEROIDS</c> has an asteroid file and a nebula file. Another folder has one more nebula file.
+/// </summary>
+internal static class NebulaFiles
+{
+    public const string Cloud = @"solar\nebula\cloud.ini";
+    public const string Rocks = @"solar\asteroids\rocks.ini";
+    public const string FarCloud = @"solar\more\far_cloud.ini";
+    public static readonly SectionRef Nebula = ListWorkspace.Li01Section("Nebula", "Zone_cloud");
+    public static readonly SectionRef Asteroids = ListWorkspace.Li01Section("Asteroids", "Zone_cloud");
+
+    public static TestWorkspace Create(Dictionary<string, string>? lowerFiles = null,
+        Dictionary<string, string>? activeFiles = null)
+    {
+        var ws = ListWorkspace.Create(lowerFiles, activeFiles);
+        ws.WriteBase(ListWorkspace.Li01Path, ListWorkspace.Li01Text + $"""
+
+            [Zone]
+            nickname = Zone_cloud
+            pos = 0, 0, 0
+            shape = SPHERE
+            size = 5000
+            [Nebula]
+            file = {Cloud}
+            zone = Zone_cloud
+            [Asteroids]
+            file = {Rocks}
+            zone = Zone_cloud
+            """);
+        ws.WriteBase(@"DATA\SOLAR\NEBULA\cloud.ini", "[Fog]\nfog_enabled = 1\ncolor = 10, 7, 30\n[Exterior]\nbit_radius = 300\n");
+        ws.WriteBase(@"DATA\SOLAR\NEBULA\cloud_shapes.ini", "[Texture]\nfile = solar\\nebula\\cloud.txm\n[Shape]\ntexture_name = puff\n");
+        ws.WriteBase(@"DATA\SOLAR\ASTEROIDS\rocks.ini", "[Field]\nfill_dist = 1250\n[Exclusion Zones]\nexclusion = Zone_cloud\n");
+        ws.WriteBase(@"DATA\SOLAR\ASTEROIDS\lost_cloud.ini", "[Fog]\nfog_enabled = 1\n");
+        ws.WriteBase(@"DATA\SOLAR\MORE\far_cloud.ini", "[Fog]\nfog_enabled = 1\n");
+        return ws;
+    }
+}
+
 /// <summary>The data lists of a session (section 20.1 item 4 of the M21 design).</summary>
 public sealed class DataListsTests
 {
+    /// <summary>A files list with a folder holds only the files below its folder (section 11 of the M22 design). A value
+    /// is a path below the data folder, in the letter case of the file.</summary>
+    [Fact]
+    public void AFilesListWithAFolderHoldsOnlyItsFolder()
+    {
+        using var ws = NebulaFiles.Create();
+        var session = ws.Session("act");
+
+        Assert.Equal([@"SOLAR\NEBULA\cloud.ini"], session.Lists.List("nebula_file")!.Entries.Select(e => e.Value));
+        Assert.Equal([@"SOLAR\ASTEROIDS\rocks.ini"], session.Lists.List("asteroid_file")!.Entries.Select(e => e.Value));
+        var cloud = session.Lists.List("nebula_file")!.Find(NebulaFiles.Cloud)!;
+        Assert.Equal(("cloud", ValueOrigin.Base), (cloud.Name, cloud.Origin));
+        // A file of another folder is not in the list, but it exists in the edit view.
+        Assert.Null(session.Lists.List("nebula_file")!.Find(NebulaFiles.FarCloud));
+        Assert.True(session.Lists.FileExists(NebulaFiles.FarCloud));
+        Assert.False(session.Lists.FileExists(@"solar\nebula\nothing.ini"));
+        Assert.False(session.Lists.FileExists(""));
+    }
+
+    /// <summary>A file is an entry only when each of its sections is a section of the class of the list. So the texture
+    /// file of the nebula folder is no nebula file, and a nebula file in the asteroid folder is no asteroid file.</summary>
+    [Fact]
+    public void AFileOfAnotherClassIsNoEntry()
+    {
+        using var ws = NebulaFiles.Create(activeFiles: new()
+        {
+            [@"files\DATA\SOLAR\NEBULA\mod_cloud.ini"] = "[Exterior]\nbit_radius = 100\n[TexturePanels]\nfile = a.ini\n",
+            [@"files\DATA\SOLAR\NEBULA\empty.ini"] = "",
+        });
+        var session = ws.Session("act");
+
+        var nebulae = session.Lists.List("nebula_file")!;
+        Assert.Equal([@"SOLAR\NEBULA\cloud.ini", @"SOLAR\NEBULA\mod_cloud.ini"],
+            nebulae.Entries.Select(e => e.Value).Order(StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(ValueOrigin.ActiveMod, nebulae.Find(@"solar\nebula\MOD_CLOUD.ini")!.Origin);
+        Assert.Null(nebulae.Find(@"solar\nebula\cloud_shapes.ini"));
+        Assert.Null(nebulae.Find(@"solar\nebula\empty.ini"));
+        Assert.Null(session.Lists.List("asteroid_file")!.Find(@"solar\asteroids\lost_cloud.ini"));
+    }
+
     [Fact]
     public void ASectionsListHoldsTheNamesOfItsSectionTypesInLoadOrder()
     {

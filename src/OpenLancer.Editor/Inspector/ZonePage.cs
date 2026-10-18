@@ -98,11 +98,11 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
     {
         switch (use)
         {
-            case { Kind: ZoneUseKind.AsteroidField, Item: AsteroidField field }:
-                grid.Text("Asteroid field", field.SourceFile, "file");
-                break;
-            case { Kind: ZoneUseKind.Nebula, Item: Nebula nebula }:
-                grid.Text("Nebula", nebula.SourceFile, "file");
+            // A nebula and a field are scene items, so their rows select them (section 10.2 of the M22 design).
+            case { Kind: ZoneUseKind.AsteroidField or ZoneUseKind.Nebula, Item: var item }:
+                grid.Reference(use.Kind == ZoneUseKind.Nebula ? "Nebula" : "Asteroid field",
+                    window.Scene.KindOf(item) ?? ObjectKinds.Unknown, SceneItems.FallbackName(item), Name(item), item,
+                    "file");
                 break;
             case { Kind: ZoneUseKind.Exclusion, Item: Zone parent }:
                 grid.Reference("Exclusion zone of", window.Scene.KindOf(parent) ?? ObjectKinds.Of(ZoneRole.Other),
@@ -121,17 +121,20 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
             return;
         }
 
-        grid.Vector("Position", zone.Position, "pos");
-        // The game data keeps the INI angles in radians.
-        grid.SetNextNote("The rotation in degrees, as in the INI file.");
-        grid.Vector("Rotation", zone.RotationAngles * (180 / MathF.PI), "rotate");
+        TransformRows(grid, zone);
         grid.Number("Sort", zone.Sort, iniKey: "sort");
         grid.EndSection();
     }
 
-    /// <summary>
-    /// The shape and the size. The size labels depend on the shape, because each shape uses the size in its own way.
-    /// </summary>
+    /// <summary>The position and the rotation of a zone. The page of a nebula or a field draws the same rows.</summary>
+    internal static void TransformRows(PropertyGrid grid, Zone zone)
+    {
+        grid.Vector("Position", zone.Position, "pos");
+        // The game data keeps the INI angles in radians.
+        grid.SetNextNote("The rotation in degrees, as in the INI file.");
+        grid.Vector("Rotation", zone.RotationAngles * (180 / MathF.PI), "rotate");
+    }
+
     private void ShapeAndSize(Zone zone)
     {
         if (!grid.BeginSection("Zone.Shape", EditorIcons.VectorSquare, "Shape and size"))
@@ -139,6 +142,16 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
             return;
         }
 
+        ShapeRows(grid, zone);
+        grid.EndSection();
+    }
+
+    /// <summary>
+    /// The shape, the size and the edge fraction of a zone. The size labels depend on the shape, because each shape uses
+    /// the size in its own way. The page of a nebula or a field draws the same rows.
+    /// </summary>
+    internal static void ShapeRows(PropertyGrid grid, Zone zone)
+    {
         grid.Enum("Shape", zone.Shape, "shape");
         if (zone.Shape switch
             {
@@ -154,7 +167,6 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
 
         grid.Size("Size", zone.Shape, zone.Size, "size");
         grid.Number("Edge fraction", zone.EdgeFraction, iniKey: "edge_fraction");
-        grid.EndSection();
     }
 
     private void FlagsAndEnvironment(Zone zone)

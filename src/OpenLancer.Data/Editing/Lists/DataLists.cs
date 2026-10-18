@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using LibreLancer.Data;
 using LibreLancer.Data.Ini;
+using LibreLancer.Data.IO;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Overlay;
@@ -43,8 +44,13 @@ public sealed class DataLists
     private readonly Dictionary<string, RemovedPart> removedParts = new(VfsPath.Comparer);
     private int checksRevision = int.MinValue;
 
-    // The files of the edit view with an extension, for a files list. The edit view changes only with a save.
-    private (ModOverlay View, string Extension, List<string> Paths)? editViewFiles;
+    // The files of the edit view of each files list source: its extension, its folder and its class. The edit view
+    // changes only with a save.
+    private readonly Dictionary<(string Extension, string? Folder, string? FileClass), (ModOverlay View, List<string> Paths)>
+        editViewFiles = [];
+
+    // The file system of the edit view, for the file test of a rule with the flag exists.
+    private (ModOverlay View, FileSystem Files)? editViewSystem;
     private (int Revision, IReadOnlyList<RemovedEntry> Entries, Dictionary<(string, string, string), RemovedEntry> Keys)? removed;
 
     internal DataLists(EditSession session, ListRules rules)
@@ -375,8 +381,8 @@ public sealed class DataLists
         }
         if (definition.Source is not { } source)
             return null;
-        if (source.Files is { } extension)
-            return (FileEntries(extension), true, []);
+        if (source.Files != null)
+            return (FileEntries(source), true, []);
         IReadOnlyList<string> paths = source.Scoped ? scope == null ? [] : [scope] : Files.Paths(source.Role!);
         var order = new List<string>();
         var byName = new Dictionary<string, (ListEntry Entry, int Count, bool AnyChanged)>(StringComparer.OrdinalIgnoreCase);
@@ -435,19 +441,21 @@ public sealed class DataLists
     }
 
     /// <summary>
-    /// The entries of a files list (section 5.6 of the M8b design): each file of the edit view with the extension, and
-    /// each new cutscene of W. The value of an entry is its path below the data folder, in the letter case of the file,
-    /// as an INI line names it. The name is the file name without the extension. A new cutscene whose New cutscene an
-    /// undo took back is not an entry, because the next save deletes its file.
+    /// The entries of a files list (section 5.6 of the M8b design). They are the files of the edit view with the
+    /// extension, in the folder and of the class of the list (milestone M22). Each new cutscene of W is an entry too. The
+    /// value of an entry is its path below the data folder, in the letter case of the file, as an INI line names it. The
+    /// name is the file name without the extension. A new cutscene whose New cutscene an undo took back is not an entry,
+    /// because the next save deletes its file.
     /// </summary>
-    private IReadOnlyList<ListEntry> FileEntries(string extension)
+    private IReadOnlyList<ListEntry> FileEntries(ListSource source)
     {
+        var extension = source.Files!;
         var view = session.EditView;
-        if (editViewFiles is not { } known || !ReferenceEquals(known.View, view) ||
-            !known.Extension.Equals(extension, StringComparison.OrdinalIgnoreCase))
+        var key = (extension.ToLowerInvariant(), source.Folder?.ToLowerInvariant(), source.FileClass);
+        if (!editViewFiles.TryGetValue(key, out var known) || !ReferenceEquals(known.View, view))
         {
-            known = (view, extension, VfsFiles.Find(view.CreateFileSystem(), extension).ToList());
-            editViewFiles = known;
+            known = (view, FindFiles(view.CreateFileSystem(), source).ToList());
+            editViewFiles[key] = known;
         }
 
         var cutscenes = extension.Equals(".thn", StringComparison.OrdinalIgnoreCase);
@@ -474,6 +482,56 @@ public sealed class DataLists
             });
         }
         return entries;
+    }
+
+    /// <summary>
+    /// The install paths of the files of a files list source in a view. These are the files with the extension below the
+    /// folder of the source, or below the install root without a folder. With a file class, only the files that have a
+    /// section and whose section types are all sections of the class. So the texture files of <c>SOLAR\NEBULA</c> are not
+    /// nebula files.
+    /// </summary>
+    private IEnumerable<string> FindFiles(FileSystem view, ListSource source)
+    {
+        var folder = source.Folder == null ? "" : ThnReferences.PathOf(source.Folder) ?? "";
+        var type = source.FileClassType;
+        foreach (var path in VfsFiles.Find(view, source.Files!, folder))
+        {
+            if (type == null)
+            {
+                yield return path;
+                continue;
+            }
+            IReadOnlyList<Section>? sections;
+            try
+            {
+                sections = session.EditViewSections(path);
+            }
+            catch (Exception)
+            {
+                // A file that the parser cannot read is no entry. The engine cannot read it either.
+                continue;
+            }
+            if (sections is { Count: > 0 } && sections.All(s => SchemaCatalog.Section(type, s.Name) != null))
+                yield return path;
+        }
+    }
+
+    /// <summary>
+    /// True when the file that a value names exists in the edit view. The value is a path below the data folder, as a
+    /// <c>file</c> line of a <c>[Nebula]</c> names it. A rule with the flag exists accepts such a value outside its list
+    /// (see <see cref="ListRule.Exists"/>).
+    /// </summary>
+    public bool FileExists(string value)
+    {
+        if (value.Trim() is not { Length: > 0 } text || ThnReferences.PathOf(text) is not { } path)
+            return false;
+        var view = session.EditView;
+        if (editViewSystem is not { } known || !ReferenceEquals(known.View, view))
+        {
+            known = (view, view.CreateFileSystem());
+            editViewSystem = known;
+        }
+        return known.Files.FileExists(path);
     }
 
     /// <summary>The entry of a name of a section.</summary>

@@ -89,7 +89,8 @@ internal sealed class HierarchyModel
 {
     /// <summary>
     /// The types that a "t:" word in the search selects. Each one tests the kind of an item and the item. A zone has
-    /// the kind of its role.
+    /// the kind of its role. "t:field" and "t:nebula" select the asteroid fields and the nebulae, and "t:zone" selects
+    /// the zones (milestone M22).
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, Func<ObjectKind, object?, bool>> Types =
         new Dictionary<string, Func<ObjectKind, object?, bool>>(StringComparer.OrdinalIgnoreCase)
@@ -104,8 +105,8 @@ internal sealed class HierarchyModel
             ["satellite"] = (k, _) => k == ObjectKinds.Satellite,
             ["platform"] = (k, _) => k == ObjectKinds.WeaponsPlatform,
             ["zone"] = (_, item) => item is Zone,
-            ["field"] = (k, _) => k == ObjectKinds.Of(ZoneRole.AsteroidField),
-            ["nebula"] = (k, _) => k == ObjectKinds.Of(ZoneRole.Nebula),
+            ["field"] = (_, item) => item is AsteroidField,
+            ["nebula"] = (_, item) => item is Nebula,
             ["light"] = (_, item) => item is LightSource,
         };
 
@@ -142,8 +143,8 @@ internal sealed class HierarchyModel
 
     private static readonly Dictionary<ZoneRole, string> RoleNames = new()
     {
-        [ZoneRole.AsteroidField] = "Asteroid fields",
-        [ZoneRole.Nebula] = "Nebulae",
+        [ZoneRole.AsteroidField] = "Field zones",
+        [ZoneRole.Nebula] = "Nebula zones",
         [ZoneRole.Exclusion] = "Exclusion zones",
         [ZoneRole.Population] = "Population zones",
         [ZoneRole.PatrolPath] = "Patrol paths",
@@ -233,6 +234,8 @@ internal sealed class HierarchyModel
             ..system.Objects.Select(o => (ObjectKinds.Of(o), (object)o)),
             ..system.Zones.Select(z => (ObjectKinds.Of(roles.GetValueOrDefault(z, ZoneRole.Other)), (object)z)),
             ..system.LightSources.Select(l => (ObjectKinds.Light, (object)l)),
+            ..system.Nebulae.Select(n => (ObjectKinds.Nebula, (object)n)),
+            ..system.AsteroidFields.Select(f => (ObjectKinds.AsteroidField, (object)f)),
         ];
         return Types.ToDictionary(t => t.Key, t => items.Count(i => t.Value(i.Kind, i.Item)),
             StringComparer.OrdinalIgnoreCase);
@@ -400,8 +403,8 @@ internal sealed class HierarchyModel
         }
     }
 
-    /// <summary>The tree of a system: the system row, the groups of the objects, the zones by role and the
-    /// lights.</summary>
+    /// <summary>The tree of a system: the system row, the groups of the objects, the nebulae, the asteroid fields, the
+    /// zones by role and the lights.</summary>
     private static HierarchyNode SystemTree(SystemIndex index, Func<object, string, string> text)
     {
         var system = index.System;
@@ -436,6 +439,11 @@ internal sealed class HierarchyModel
 
             AddGroup(root, group);
         }
+
+        // A nebula and a field are scene items with their own groups, also when they share a zone (decision D158 of the
+        // M22 design).
+        AddGroup(root, VolumeGroup("nebulae", "Nebulae", ObjectKinds.Nebula, "n:", index, text));
+        AddGroup(root, VolumeGroup("fields", "Asteroid fields", ObjectKinds.AsteroidField, "f:", index, text));
 
         var zones = new HierarchyNode("zones", ObjectKinds.Of(ZoneRole.Other), "Zones");
         foreach (var role in Enum.GetValues<ZoneRole>())
@@ -494,6 +502,32 @@ internal sealed class HierarchyModel
         }
 
         return root;
+    }
+
+    /// <summary>
+    /// The group of the nebulae or of the asteroid fields: one row for each item of that kind. The name of a row is the
+    /// name of the zone, or else the file name without the extension. The detail is the zone nickname. The id is the
+    /// prefix and the zone nickname, with "#k" for the k-th repeat of a zone in the group.
+    /// </summary>
+    private static HierarchyNode VolumeGroup(string id, string groupName, ObjectKind kind, string prefix,
+        SystemIndex index, Func<object, string, string> text)
+    {
+        var group = new HierarchyNode(id, kind, groupName);
+        var repeats = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var rows = new List<HierarchyNode>();
+        foreach (var volume in index.VolumeItems.Where(v => v.Kind == kind))
+        {
+            var nickname = volume.Zone.Nickname;
+            var repeat = repeats[nickname] = repeats.GetValueOrDefault(nickname) + 1;
+            var rowId = prefix + nickname + (repeat > 1 ? $"#{repeat}" : "");
+            var itemName = text(volume.Zone, "ids_name") is { Length: > 0 } named
+                ? named
+                : SceneItems.FallbackName(volume.Item) ?? nickname;
+            rows.Add(new HierarchyNode(rowId, kind, itemName, nickname, volume.Item));
+        }
+
+        AddSorted(group, rows);
+        return group;
     }
 
     /// <summary>Makes the row of an item: its name and its nickname, or only its nickname when it has no

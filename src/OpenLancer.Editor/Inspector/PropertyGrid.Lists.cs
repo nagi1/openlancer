@@ -92,9 +92,18 @@ internal sealed partial class PropertyGrid
         var list = window.Session!.Edits.Lists.List(rule, field.Section, line);
         var value = line is [var first, ..] ? first.ToString().Trim() : "";
         var problem = ListProblems(field).FirstOrDefault(p => p.Rule == rule && p.Line <= 0);
-        var clicked = ListValue(list, value, problem, FillWidth, hint);
-        ListPopup("##list", clicked, field, list, value, !rule.Required, _ => picked);
+        var other = IsOtherFile(rule, list, value);
+        var clicked = ListValue(list, value, problem, FillWidth, hint, other);
+        ListPopup("##list", clicked, field, list, value, !rule.Required, _ => picked, other);
     }
+
+    /// <summary>
+    /// True when a value outside a list of files names a file that exists in the edit view. Only a rule with the flag
+    /// exists accepts such a value (milestone M22). The engine reads the file, so the value is valid.
+    /// </summary>
+    private bool IsOtherFile(ListRule rule, ListView? list, string value) =>
+        rule.Exists && list != null && value.Length > 0 && list.Find(value) == null &&
+        window.Session?.Edits.Lists.FileExists(value) == true;
 
     /// <summary>The slots of a one-line key with labeled rules on its values. Each slot is its own field edit.</summary>
     private void ListSlots(FieldBinding field, IReadOnlyList<ListRule> rules, IReadOnlyList<ComponentLabel> labels)
@@ -129,7 +138,9 @@ internal sealed partial class PropertyGrid
     /// reference. Returns true when the user clicks the field.
     /// </summary>
     /// <param name="width">The width of the field, or a negative width that leaves that room at the right.</param>
-    private bool ListValue(ListView? list, string value, ListProblem? problem, float width, string hint)
+    /// <param name="other">True for a valid value outside a list of files (see <see cref="IsOtherFile"/>).</param>
+    private bool ListValue(ListView? list, string value, ListProblem? problem, float width, string hint,
+        bool other = false)
     {
         var style = ImGui.GetStyle();
         var size = new Vector2(width < 0 ? Math.Max(1, ImGui.GetContentRegionAvail().X + width + 1) : width,
@@ -141,7 +152,9 @@ internal sealed partial class PropertyGrid
         var drawList = ImGui.GetWindowDrawList();
         var kind = ObjectKinds.OfList(list?.Kind ?? "");
         var entry = value.Length == 0 ? null : list?.Find(value);
-        var (text, dim, color, error) = ListText(list, value, entry, problem, hint);
+        var (text, dim, color, error) = other
+            ? (value, "other folder", EditorTheme.Text, false)
+            : ListText(list, value, entry, problem, hint);
         drawList.AddRectFilled(min, max, ImGui.GetColorU32(hovered ? ImGuiCol.FrameBgHovered : ImGuiCol.FrameBg),
             style.FrameRounding);
         drawList.AddRect(min, max, error ? ImGui.GetColorU32(EditorTheme.Error) : ImGui.GetColorU32(ImGuiCol.Border),
@@ -173,7 +186,10 @@ internal sealed partial class PropertyGrid
             DropDown);
         if (list != null && ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
         {
-            ImGui.SetTooltip(ListTooltip(list, value, entry, problem));
+            ImGui.SetTooltip(other
+                ? string.Join("\n", ListPickerModel.Footer(new ListPickerRow(ListRowKind.Other, value, value, null),
+                    list.Label, UsedBy(list)))
+                : ListTooltip(list, value, entry, problem));
         }
 
         return clicked;
@@ -264,15 +280,16 @@ internal sealed partial class PropertyGrid
     /// <param name="value">The value now, for the "Missing" row.</param>
     /// <param name="none">True when the picker offers "None": the value can be empty.</param>
     /// <param name="text">Gives the text of the key after a pick, from the text at the start of the edit.</param>
+    /// <param name="other">True for a valid value outside a list of files (see <see cref="IsOtherFile"/>).</param>
     private void ListPopup(string id, bool open, FieldBinding field, ListView? list, string value, bool none,
-        Func<string, string> text)
+        Func<string, string> text, bool other = false)
     {
         if (list == null || window.Session is not { } session)
         {
             return;
         }
 
-        listPicker.Draw(id, open, () => new ListPickerModel(Named(list), none, PickerValue(list, value)),
+        listPicker.Draw(id, open, () => new ListPickerModel(Named(list), none, PickerValue(list, value), other),
             ObjectKinds.OfList(list.Kind), UsedBy(list), fieldEdits.IsOpenFor, (popup, events, selected) =>
             {
                 picked = selected;
