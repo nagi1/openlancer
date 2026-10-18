@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>OpenLancer</title>
+  <desc>The OpenLancer icon: a lance ship that flies through a ring, in the accent colors of the editor.</desc>
+  <!--
+    An original drawing for OpenLancer, under the MIT license of the repository.
+    tools/make_icon.py makes openlancer.ico and openlancer-256.png from this file. Run it after each change.
+    The script reads only a small part of SVG. Its docstring lists that part.
+  -->
+  <rect width="256" height="256" rx="56" fill="#172433"/>
+  <!-- The ship points up in its own units, with its center at 0,0. This group turns it 45 degrees to the right. -->
+  <g transform="translate(115.5 141.5) rotate(45)">
+    <!-- The full ring is behind the ship, in the dark accent color. -->
+    <ellipse cy="-34" rx="100" ry="38" fill="none" stroke="#2C5D87" stroke-width="22"/>
+    <!-- The ship: a light half and a blue half. -->
+    <polygon points="0,-112 -12,-40 -18,10 -50,64 -44,74 -14,58 -11,86 0,78" fill="#EAF2FB"/>
+    <polygon points="0,-112 12,-40 18,10 50,64 44,74 14,58 11,86 0,78" fill="#75A7E6"/>
+    <!-- The near half of the ring is in front of the ship. A band in the color of the tile keeps a gap around it. -->
+    <g transform="translate(0 -34)">
+      <path d="M-120,0 C-120,32 -66.3,58 0,58 C66.3,58 120,32 120,0 L80,0 C80,9.9 44.2,18 0,18 C-44.2,18 -80,9.9 -80,0 Z"
+            fill="#172433"/>
+      <path d="M-111,0 C-111,27.1 -61.3,49 0,49 C61.3,49 111,27.1 111,0 L89,0 C89,14.9 49.2,27 0,27 C-49.2,27 -89,14.9 -89,0 Z"
+            fill="#3A79BB"/>
+    </g>
+  </g>
+</svg>

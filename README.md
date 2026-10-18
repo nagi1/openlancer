@@ -23,6 +23,7 @@ The repo is one folder in a larger workspace. The game data stays outside the re
     base\             extracted vanilla data (read-only)
     mods\  profiles\  out\  fonts\
   OpenLancer\         this repo
+    assets\icon\            the icon of the programs: openlancer.svg and the files of tools/make_icon.py
     external\Librelancer\   submodule (see docs/UPSTREAM.md)
     release\                the texts and the license data of a binary release (tools/release.ps1)
     tests\

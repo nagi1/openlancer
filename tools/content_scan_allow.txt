@@ -2,5 +2,7 @@
 # Rules: binary, native-source, auto-label, auto-variable, decompiler-helper, retail-address, ida-comment, tool-marker.
 # The owner approves each new entry. The scan fails on an entry that allows nothing.
 # Paths of the engine fork start with external/Librelancer/ and apply to python tools/content_scan.py --fork.
+assets/icon/openlancer.ico	binary	original OpenLancer icon (assets/icon/openlancer.svg)
+assets/icon/openlancer-256.png	binary	original OpenLancer icon (assets/icon/openlancer.svg)
 external/Librelancer/src/Editor/LibreLancer.ImUI/file.png	binary	OL-0037: file icon drawn for the fork, no source image (R1-D20)
 external/Librelancer/src/Editor/LibreLancer.ImUI/folder.png	binary	OL-0037: folder icon drawn for the fork, no source image (R1-D20)

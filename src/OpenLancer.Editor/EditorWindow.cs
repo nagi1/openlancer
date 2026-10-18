@@ -28,6 +28,7 @@ using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Runtime;
 using OpenLancer.Runtime.Strings;
 using OpenLancer.Runtime.Thn;
 
@@ -146,6 +147,7 @@ internal sealed partial class EditorWindow : Game
         FLLog.UIThread = this;
         FLLog.AppendLine = Log.AddEngineLine;
         AllShaders.Compile(RenderContext);
+        ProgramIcon.Apply(this);
         gui = new ImGuiHelper(this, Math.Clamp(Settings.UiScale, UiScales[0], UiScales[^1]));
         // ImGui reads its state before the first frame. A settings file from a first start or from an older editor
         // has no state, and ImGui cannot read null text.

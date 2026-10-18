@@ -10,6 +10,7 @@ using LibreLancer.Net;
 using LibreLancer.Server;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Runtime;
 using OpenLancer.Runtime.Play;
 
 namespace OpenLancer.Play;
@@ -94,10 +95,12 @@ internal sealed class PlayHost
         var reader = new Thread(ReadCommands) { IsBackground = true, Name = "Play commands" };
         var firstFrame = false;
         // The reader starts in the first frame. Each command goes to the queue of the UI thread, and the queue sends an
-        // SDL event. SDL must not get an event from another thread while it starts.
+        // SDL event. SDL must not get an event from another thread while it starts. The window exists in the first
+        // frame, so it also gets its icon there.
         game.QueueUIThread(() =>
         {
             firstFrame = true;
+            ProgramIcon.Apply(game);
             reader.Start();
         });
         game.Run();

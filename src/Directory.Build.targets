@@ -1,6 +1,13 @@
 <Project>
   <!-- Kept out of the repo root so that it does not apply to the Librelancer submodule. -->
 
+  <!-- Each program gets the OpenLancer icon. tools/make_icon.py makes the file from assets/icon/openlancer.svg. On
+       Windows, SDL also takes this icon for the window. This file comes after the project file, so OutputType is
+       known here. -->
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
+    <ApplicationIcon>$(MSBuildThisFileDirectory)..\assets\icon\openlancer.ico</ApplicationIcon>
+  </PropertyGroup>
+
   <!-- PublishAssets.projitems of the engine copies each native of bin/natives next to the program. libmp3lame.dll is
        LAME, under the GNU LGPL. Only the MP3 encoder of LancerEdit uses it, and OpenLancer never calls that encoder.
        So OpenLancer does not copy or ship it. The target removes the item before AssignTargetPaths makes the copy

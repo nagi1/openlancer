@@ -7,6 +7,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The window icon of the editor and Play on Linux and macOS (ProgramIcon). tools/make_icon.py makes the file from
+         assets/icon/openlancer.svg. -->
+    <EmbeddedResource Include="..\..\assets\icon\openlancer-256.png" LogicalName="OpenLancer.Runtime.openlancer-256.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The tests use internal members. For example, they give PlayView a text writer that saves a mod during the
          build, they call PlaySave.Equip with synthetic data, and they give CutsceneClock a fake time. -->
     <InternalsVisibleTo Include="OpenLancer.Tests" />
