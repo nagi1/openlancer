@@ -72,6 +72,18 @@ WHAT WORKS IN THIS PREVIEW
   pickers and drags on the X, Y and Z labels help.
 - Move and rotate objects, and change the size of zones, with snap and
   undo.
+- Select nebulae and asteroid fields in the Scene and in the Hierarchy,
+  also when the camera is inside them. To select the next item under the
+  mouse, click again at the same place, or Alt+click.
+- Create, duplicate, rename and delete objects, zones and lights. Use the
+  "+" button of the Hierarchy, its right-click menu, or the keys Ctrl+D,
+  F2 and Delete. A delete fixes or marks the references to the item. A
+  rename changes each reference that the editor finds.
+- The Assets panel shows the assets of the game and of your mod, with
+  images. Drag an asset into the Scene to place it. Ships and asteroids
+  can become static props.
+- Save an object and its child objects as a prop group. Then place the
+  group again in any system.
 - Save your work as a mod. The editor writes only your changes. Before a
   save, the editor checks the mod. When it finds a value that stops or
   crashes the game, it stops the save and tells you why. It does not find
@@ -106,6 +118,12 @@ WHAT DOES NOT WORK YET
   the editor or Play on them. Play does not run the HD Edition plugins.
 - OpenLancer does not support total conversions such as Discovery. The
   editor can open their data, with a warning.
+- You cannot create or delete jump gates, jump holes and trade lane
+  rings yet. You cannot make new bases, nebulae or asteroid fields yet.
+- You can select only one item at a time.
+- The nebula and field picks, Create, Duplicate, Rename, Delete and the
+  Assets panel are the newest parts of this preview. We tested them
+  mostly with automatic tests.
 - There is no mission editor and no dialogue editor yet.
 - The mod format can change before version 1.0.
 
@@ -115,6 +133,8 @@ WHERE OPENLANCER KEEPS FILES
 - Your profiles and mods: Documents\OpenLancer\profiles and
   Documents\OpenLancer\mods. You can select another folder at the first
   start.
+- Prop groups: the folder props in the folder of each mod.
+- Images of the Assets panel: %LOCALAPPDATA%\OpenLancer\thumbnails
 - Play settings and saves: the folder <profile name>.play next to each
   profile.
 - Editor settings and the list of linked games:
