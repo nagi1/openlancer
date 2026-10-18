@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Ini;
+using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Editing.Lists;
 
@@ -108,7 +109,7 @@ internal static class ListChecks
                 ? lines.Select((l, i) => (Line: l, Index: i)).Where(p => p.Line.Count > 0).TakeLast(1).ToList()
                 : lines.Select((l, i) => (Line: l, Index: i)).ToList();
             foreach (var rule in keyRules.OrderBy(r => r.Index))
-                CheckRule(lists, target, section, key, lines.Count, read, rule, active, origin, changedSection, result);
+                CheckRule(lists, target, section, key, lines.Count, read, rule, active, origin, changedSection, result, null);
         }
         CheckHash(lists, target, section, document, index, result);
         if (wholeFile)
@@ -120,11 +121,53 @@ internal static class ListChecks
         return result;
     }
 
+    /// <summary>
+    /// The list checks of the lines of a section that a plan adds and that W does not have yet (decision D290 of the M23
+    /// design): the placement of a prop group checks each planned line before it goes into W. The lines count as lines
+    /// of the active mod in a section that the active mod adds. A value that names an object or a zone that the plan
+    /// adds to the same file counts as present, also for the scoped lists <c>object_of_system</c> and
+    /// <c>zone_of_system</c>. The checks use the rules of <see cref="Check"/>, without the FLHash check of the name.
+    /// </summary>
+    /// <param name="path">The install path of the file that gets the section.</param>
+    /// <param name="nickname">The nickname of the planned section, for the messages.</param>
+    /// <param name="planned">The nicknames of the objects and zones that the plan adds to the file.</param>
+    public static IReadOnlyList<ListProblem> CheckPlanned(EditSession session, string path, string type, string nickname,
+        IReadOnlyList<EntryView> entries, IReadOnlySet<string> planned)
+    {
+        var normal = VfsPath.Normalize(path) ?? path;
+        var lists = session.Lists;
+        var target = new SectionRef(normal, new SectionIdentity(type, nickname));
+        var section = SectionEdits.Build(type, entries);
+        var result = new List<ListProblem>();
+        var origin = (ValueOrigin.ActiveMod, session.ActiveMod?.Id);
+        var byKey = session.DataFiles.RolesOf(normal)
+            .SelectMany(r => lists.RuleData.ByRoleAndSection.GetValueOrDefault((r.ToLowerInvariant(), type.ToLowerInvariant())) ?? [])
+            .GroupBy(r => r.Key, StringComparer.OrdinalIgnoreCase);
+
+        bool Planned(ListRule rule, IReadOnlyList<ValueBase> values, string value) =>
+            planned.Contains(value) && rule.Lists.Any(lists.IsScoped) && lists.ScopeOf(rule, normal, values, out var scope) &&
+            VfsPath.Comparer.Equals(scope, normal);
+
+        foreach (var keyRules in byKey)
+        {
+            var key = keyRules.Key;
+            var lines = section.Where(e => Is(e.Name, key)).ToList();
+            var read = session.Schema(target, key) is { Multiline: false }
+                ? lines.Select((l, i) => (Line: l, Index: i)).Where(p => p.Line.Count > 0).TakeLast(1).ToList()
+                : lines.Select((l, i) => (Line: l, Index: i)).ToList();
+            foreach (var rule in keyRules.OrderBy(r => r.Index))
+                CheckRule(lists, target, section, key, lines.Count, read, rule, true, origin, true, result, Planned);
+        }
+        return result;
+    }
+
     /// <param name="count">The number of lines of the key.</param>
     /// <param name="read">The lines that the engine reads, with their positions among the lines of the key.</param>
+    /// <param name="planned">True when a value outside its list names an item that a plan adds, or null outside a
+    /// plan (see <see cref="CheckPlanned"/>).</param>
     private static void CheckRule(DataLists lists, SectionRef target, Section section, string key, int count,
         List<(Entry Line, int Index)> read, ListRule rule, bool active, (ValueOrigin Origin, string? ModId) origin,
-        bool changedSection, List<ListProblem> result)
+        bool changedSection, List<ListProblem> result, Func<ListRule, IReadOnlyList<ValueBase>, string, bool>? planned)
     {
         var required = rule.Required || rule.RequiredWith != null && section.Any(e => Is(e.Name, rule.RequiredWith));
         var valid = false;
@@ -159,6 +202,9 @@ internal static class ListChecks
                 // A value outside an enum is an error of the field checks.
                 continue;
             }
+            // An item that the plan adds is not in W yet.
+            if (planned != null && planned(rule, values, value))
+                continue;
             // The engine reads a file of any folder (decision D160 of the M22 design).
             if (rule.Exists && lists.FileExists(value))
                 continue;

@@ -126,6 +126,14 @@ internal sealed class SceneView : IDisposable
     /// <summary>True while a drag of the gizmo is open (see <see cref="TransformGizmo.IsDragging"/>).</summary>
     public bool IsDragging => transform.IsDragging;
 
+    /// <summary>True while the camera moves or a drag of the gizmo runs: the scene button is active for an orbit, a pan,
+    /// a fly or a click. The thumbnails of the Assets panel wait meanwhile (section 7.2 of the M23 design).</summary>
+    public bool IsMoving => buttonActive || transform.IsDragging;
+
+    /// <summary>True when a section of the open system waits for the reload of the game data, for example an object of
+    /// a new static prop archetype (decisions D248 and D282 of the M23 design).</summary>
+    public bool WaitsForReload => sync?.WaitsForReload == true;
+
     /// <summary>The fly speed of the camera, in world units per second.</summary>
     public float CameraSpeed => controller.Speed;
 
@@ -194,7 +202,9 @@ internal sealed class SceneView : IDisposable
     /// Opens a system of the game data of a session. The scene shows a clone of the system, with the unsaved edits of
     /// W, and it follows each later change of W.
     /// </summary>
-    public void Open(StarSystem source, EditorSession session)
+    /// <param name="keepCamera">True to keep the camera pose, for an open of the same system after a reload of the game
+    /// data (decision D282 of the M23 design). Else the camera frames the whole system.</param>
+    public void Open(StarSystem source, EditorSession session, bool keepCamera = false)
     {
         Close();
         var data = session.GameData!;
@@ -234,7 +244,10 @@ internal sealed class SceneView : IDisposable
         var radius = system.Objects.Count == 0 ? 10_000 : system.Objects.Max(o => Vector3.Distance(o.Position, center));
         systemCenter = center;
         systemRadius = radius;
-        controller.Frame(center, radius);
+        if (!keepCamera)
+        {
+            controller.Frame(center, radius);
+        }
     }
 
     /// <summary>
@@ -347,6 +360,11 @@ internal sealed class SceneView : IDisposable
             ImGui.Dummy(size);
         }
 
+        // The button or the Dummy takes a tile of the Assets panel (section 8.1 of the M23 design). The camera has the
+        // pose of the last frame, which is the pose of this frame during a drag.
+        var dropProjection = new SceneProjection(camera, origin, size, ImGuiHelper.Scale);
+        window.AssetDrag.Scene(dropProjection, mouse => ObjectAt(dropProjection, mouse));
+
         buttonActive = active;
         var viewKeys = GizmoInput.ReadsViewKeys(owner, sceneHovered, ImGui.IsWindowHovered(),
             ImGui.IsMouseHoveringRect(origin, origin + size));
@@ -379,6 +397,7 @@ internal sealed class SceneView : IDisposable
         var drawList = ImGui.GetWindowDrawList();
         drawList.PushClipRect(origin, origin + size, true);
         gizmo.Draw(drawList, hoverMouse);
+        window.AssetDrag.DrawGhost(drawList, projection);
         drawList.PopClipRect();
 
         // Flush B: the changes of this frame so far, before the renderer starts its worker tasks. So a step of a drag
@@ -609,6 +628,21 @@ internal sealed class SceneView : IDisposable
         {
             window.Selection = selection;
         }
+    }
+
+    /// <summary>The first object of the pick stack under a screen point, for a dropped loadout or faction (decision D281
+    /// of the M23 design), or null.</summary>
+    private SystemObject? ObjectAt(SceneProjection projection, Vector2 mouse)
+    {
+        if (Index == null)
+        {
+            return null;
+        }
+
+        var settings = window.Settings;
+        return scenePicker.Pick(projection, mouse, Index,
+                new PickView(controller.Position, settings.ShowZones, settings.ShowNebulae, settings.ShowFog))
+            .Items.OfType<SystemObject>().FirstOrDefault();
     }
 
     private void DrawWorld(int x, int y, int width, int height)

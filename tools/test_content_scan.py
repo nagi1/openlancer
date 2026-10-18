@@ -114,6 +114,13 @@ class ContentRuleTests(unittest.TestCase):
             self.assertRegex(self.problem(name, line.encode("utf-8") + b"\n") or "",
                              rf"^decompiled-code pattern \({rule}\): {name}:1: ")
 
+    def test_a_thumbnail_of_the_editor_fails_by_its_type_and_its_signature(self):
+        # The editor renders thumbnails from game data (section 7.5 of the M23 design).
+        self.assertEqual("retail file type: docs/x.olthumb (a thumbnail that the editor renders from game data)",
+                         self.problem("docs/x.olthumb", b"OLTH\x01\x89PNG"))
+        self.assertEqual("retail file signature: docs/preview.png starts like a thumbnail that the editor renders "
+                         "from game data", self.problem("docs/preview.png", b"OLTH\x01\x89PNG"))
+
     def test_a_retail_signature_fails_under_any_name(self):
         for data in (b"BINI\x01\x00\x00\x00", b"UTF \x01\x01\x00\x00", b"\x1bLua\x32\x01\x04"):
             for name in ("mods/m/files/DATA/goods.ini", "docs/notes.txt", "x"):

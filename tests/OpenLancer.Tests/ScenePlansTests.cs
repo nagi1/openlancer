@@ -484,9 +484,70 @@ public sealed class ScenePlansCreateTests
 
         Assert.Contains("milestone M27", Assert.Single(ScenePlans.Create(session, "Li01", SceneTemplate.Solar, "jumpgate",
             Vector3.Zero, null).Refusals).Message);
+        // Decision D277 of the M23 design: a station archetype without a docking sphere is an archetype of the station
+        // template now, so this case takes a planet.
         Assert.Contains("not an archetype of the template", Assert.Single(ScenePlans.Create(session, "Li01",
-            SceneTemplate.Station, "station_nodock", Vector3.Zero, null).Refusals).Message);
+            SceneTemplate.Station, "planet1", Vector3.Zero, null).Refusals).Message);
         Assert.NotEmpty(ScenePlans.Create(session, "Nowhere", SceneTemplate.Zone, null, Vector3.Zero, null).Refusals);
+    }
+
+    /// <summary>
+    /// Decision D277 of the M23 design: the template of an archetype comes from its type, without the <c>needs</c> line.
+    /// So a station archetype without a docking sphere creates without the base step. The Create menu still lists only
+    /// the stations with a docking sphere, and a connection type and an unknown archetype have no template.
+    /// </summary>
+    [Fact]
+    public void AStationWithoutADockingSphereCreatesWithoutTheBaseStep()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+
+        Assert.Equal(SceneTemplate.Station, ScenePlans.TemplateFor(session, "station_nodock"));
+        Assert.Equal(SceneTemplate.Station, ScenePlans.TemplateFor(session, "dock_ring"));
+        Assert.Equal(SceneTemplate.Solar, ScenePlans.TemplateFor(session, "depot"));
+        Assert.Null(ScenePlans.TemplateFor(session, "jumpgate"));
+        Assert.Null(ScenePlans.TemplateFor(session, "no_such_archetype"));
+        Assert.True(ScenePlans.AsksForBase(session, SceneTemplate.Station, "station1"));
+        Assert.False(ScenePlans.AsksForBase(session, SceneTemplate.Station, "station_nodock"));
+        Assert.False(ScenePlans.AsksForBase(session, SceneTemplate.Planet, "planet1"));
+        Assert.DoesNotContain(ScenePlans.Archetypes(session, SceneTemplate.Station), a => a.Nickname == "station_nodock");
+
+        var plan = ScenePlans.Create(session, "Li01", SceneTemplate.Station, "station_nodock", Vector3.Zero, null);
+        session.Execute(plan.Command!);
+
+        Assert.Equal(["nickname = li01_station_1", "pos = 0, 0, 0", "archetype = station_nodock"],
+            ScenePlansDeleteTests.Lines(session, plan.Adds[0]));
+    }
+
+    /// <summary>A type in no template of the rule data gives the reason of section 5.2 of the M23 design.</summary>
+    [Fact]
+    public void ATypeInNoTemplateGivesItsReason()
+    {
+        using var ws = Create();
+        ws.WriteBase(ListWorkspace.SolarPath, Solars + "[Solar]\nnickname = odd\ntype = NO_SUCH_TYPE\n");
+        var session = ws.Session("act");
+
+        Assert.Null(ScenePlans.TemplateFor(session, "odd"));
+        Assert.Equal("The type no_such_type is in no Create template of the rule data.",
+            Assert.Single(ScenePlans.Create(session, "Li01", SceneTemplate.Solar, "odd", Vector3.Zero, null).Refusals).Message);
+    }
+
+    /// <summary>Review finding R9 of the M23 design: Create checks if the system file is read-only, also for a zone and a
+    /// light.</summary>
+    [Fact]
+    public void CreateRefusesAReadOnlySystemFile()
+    {
+        using var ws = Create(activeFiles: new() { [@"files\" + Li01Path] = Li01Text });
+        var session = ws.Session("act");
+        Assert.NotNull(session.OpenDocument(Li01Path)!.ReadOnlyReason);
+
+        foreach (var (template, archetype) in new[] { (SceneTemplate.Planet, "planet1"), (SceneTemplate.Zone, null),
+                     (SceneTemplate.Light, (string?)null) })
+        {
+            var plan = ScenePlans.Create(session, "Li01", template, archetype, Vector3.Zero, null);
+            Assert.Null(plan.Command);
+            Assert.StartsWith("li01.ini: ", Assert.Single(plan.Refusals).Message);
+        }
     }
 
     /// <summary>Decision D234: an object template on an object row gets <c>parent</c>. A zone and a light have no

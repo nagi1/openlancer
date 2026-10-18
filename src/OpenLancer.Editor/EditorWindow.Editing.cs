@@ -117,6 +117,12 @@ internal sealed partial class EditorWindow : IClosePromptHost
         };
         // The preview builds again with the new data (section 8.4 of the M8 design).
         Cutscenes.DataReplaced();
+        // The scene keeps the game data of the open. A section that waits for the reload shows only in a new open of the
+        // system (decision D282 of the M23 design).
+        if (Scene.WaitsForReload)
+        {
+            reopenAfterReload = true;
+        }
     }
 
     /// <summary>The Console warnings of the active mod at the open: the later mods (decision D2) and a mod in the

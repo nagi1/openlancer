@@ -57,6 +57,10 @@ internal sealed class SceneSync : ISceneHost, IDisposable
     /// <see cref="SceneApplier.HasPending"/>).</summary>
     public bool IsBehind => applier.HasPending;
 
+    /// <summary>True when a section of the system waits for the reload of the game data (see
+    /// <see cref="SceneApplier.WaitsForReload"/>).</summary>
+    public bool WaitsForReload => applier.WaitsForReload;
+
     /// <summary>The section of W that a scene item shows, or null (see <see cref="SceneApplier.SectionOf"/>).</summary>
     public SectionRef? SectionOf(object item) => applier.SectionOf(item);
 

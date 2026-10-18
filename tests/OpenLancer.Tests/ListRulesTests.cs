@@ -62,6 +62,8 @@ public sealed class ListRulesTests
         [("bodyparts", "lefthand")] = typeof(Bodypart),
         [("bodyparts", "righthand")] = typeof(Bodypart),
         [("bodyparts", "accessory")] = typeof(Accessory),
+        // The asteroid archetypes of the Assets panel (milestone M23, AsteroidArchIni.cs).
+        [("asteroids", "asteroid")] = typeof(Asteroid),
     };
 
     /// <summary>The keys that a hand parser reads, for the files without a section class (VoicesIni.cs:32-44,
@@ -128,11 +130,17 @@ public sealed class ListRulesTests
             var source = list.Source!;
             // A files list has no sections: its entries are the paths of files (section 5.6 of the M8b design). The
             // cutscenes are .thn files of any folder. The nebula and asteroid files are the INI files of one folder
-            // whose sections are all sections of one [ParsedIni] class (milestone M22).
+            // whose sections are all sections of one [ParsedIni] class (milestone M22). The models are the model files
+            // below the data folder (milestone M23).
             if (source.Files != null)
             {
-                Assert.True(source.Files == ".thn" ? source.Folder == null && source.FileClass == null
-                    : source.Files == ".ini" && source.Folder != null && source.FileClassType != null, list.Id);
+                Assert.True(source.Files switch
+                {
+                    [".thn"] => source.Folder == null && source.FileClass == null,
+                    [".ini"] => source.Folder != null && source.FileClassType != null,
+                    [".cmp", ".3db", ".sph"] => source.Folder == "." && source.FileClass == null,
+                    _ => false,
+                }, list.Id);
                 continue;
             }
 
@@ -246,6 +254,53 @@ public sealed class ListRulesTests
         Assert.False(Assert.Single(ListRules.Parse(FilesRules("""{ "files": ".ini" }""", "")).All).Exists);
     }
 
+    /// <summary>Decision D293 of the M23 design: the <c>files</c> key of a list source takes one extension or a list of
+    /// extensions, each with its dot.</summary>
+    [Fact]
+    public void FilesTakeOneExtensionOrAList()
+    {
+        Assert.Equal([".ini"], ListRules.Parse(FilesRules("""{ "files": ".ini" }""", "")).Lists["nebula_file"].Source!.Files!);
+        Assert.Equal([".cmp", ".3db"],
+            ListRules.Parse(FilesRules("""{ "files": [".cmp", ".3db"] }""", "")).Lists["nebula_file"].Source!.Files!);
+        Assert.Throws<InvalidDataException>(() => ListRules.Parse(FilesRules("""{ "files": [] }""", "")));
+        Assert.Throws<InvalidDataException>(() => ListRules.Parse(FilesRules("""{ "files": ["cmp"] }""", "")));
+
+        // The retail lists of the asset browser: the asteroid archetypes and the models below the data folder.
+        Assert.Equal("asteroids", Rules.Lists["asteroid"].Source!.Role);
+        Assert.Equal(["Asteroid"], Rules.Lists["asteroid"].Source!.Sections);
+        Assert.Equal("asteroids", Rules.Roles["asteroids"].Data);
+        Assert.Equal([".cmp", ".3db", ".sph"], Rules.Lists["model"].Source!.Files!);
+        Assert.Equal(".", Rules.Lists["model"].Source!.Folder);
+    }
+
+    /// <summary>Decision D267 of the M23 design: the categories of the Assets panel are rule data. Each category names
+    /// a list of the rule data or a known kind, and a known split.</summary>
+    [Fact]
+    public void TheAssetCategoriesParse()
+    {
+        Assert.Equal(["groups", "solars", "ships", "asteroids", "equipment", "effects", "loadouts", "factions", "models"],
+            Rules.AssetCategories.Select(c => c.Id));
+        Assert.All(Rules.AssetCategories.Where(c => c.List != null), c => Assert.True(Rules.Lists.ContainsKey(c.List!), c.Id));
+        Assert.Equal(("propGroups", null), (Rules.AssetCategories[0].Kind, Rules.AssetCategories[0].List));
+        Assert.Equal(["sceneTemplates", null, null, "section", null, null, null, "folder"],
+            Rules.AssetCategories.Skip(1).Select(c => c.Split));
+
+        string With(string category) => FilesRules("""{ "files": ".ini" }""", "")[..^1].TrimEnd() +
+                                        $$""", "assetCategories": [ {{category}} ] }""";
+        Assert.Equal("nebulae", Assert.Single(ListRules.Parse(With(
+            """{ "id": "nebulae", "label": "Nebulae", "list": "nebula_file" }""")).AssetCategories).Id);
+        foreach (var bad in new[]
+                 {
+                     """{ "id": "x", "label": "X", "list": "no_such_list" }""",
+                     """{ "id": "x", "label": "X" }""",
+                     """{ "id": "x", "label": "X", "kind": "propGroups", "list": "nebula_file" }""",
+                     """{ "id": "x", "label": "X", "kind": "costumes" }""",
+                     """{ "id": "x/y", "label": "X", "list": "nebula_file" }""",
+                     """{ "id": "x", "label": "X", "list": "nebula_file", "split": "colors" }""",
+                 })
+            Assert.Throws<InvalidDataException>(() => ListRules.Parse(With(bad)));
+    }
+
     [Fact]
     public void FolderAndFileClassParse()
     {
@@ -253,7 +308,8 @@ public sealed class ListRulesTests
             """{ "files": ".ini", "folder": "SOLAR\\NEBULA", "fileClass": "LibreLancer.Data.Schema.Universe.Nebula" }""",
             ""));
         var source = rules.Lists["nebula_file"].Source!;
-        Assert.Equal((".ini", @"SOLAR\NEBULA", typeof(Nebula)), (source.Files, source.Folder, source.FileClassType));
+        Assert.Equal([".ini"], source.Files!);
+        Assert.Equal((@"SOLAR\NEBULA", typeof(Nebula)), (source.Folder, source.FileClassType));
 
         // A folder or a class needs a files list, and the class must be a [ParsedIni] class of the engine.
         Assert.Throws<InvalidDataException>(() => ListRules.Parse(FilesRules(

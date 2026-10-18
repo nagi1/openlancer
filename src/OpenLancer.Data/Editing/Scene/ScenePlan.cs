@@ -22,6 +22,9 @@ public enum SceneAction
     Duplicate,
     Delete,
     Rename,
+
+    /// <summary>A placement of a prop group (milestone M23): several new items, as a Duplicate makes.</summary>
+    Place,
 }
 
 /// <summary>Why a section goes in a delete.</summary>
@@ -56,6 +59,16 @@ public sealed record PlannedFix(SectionRef Section, string Key, string Text);
 /// <param name="Consequence">What the game does with the line, or why the editor cannot fix it.</param>
 /// <param name="BlocksSave">True when the rule of the line is closed, so the save stops until a fix.</param>
 public sealed record MissingReference(ListReference Reference, string Consequence, bool BlocksSave);
+
+/// <summary>A line of a placement of a prop group whose list check gives an error (decision D290 of the M23
+/// design).</summary>
+/// <param name="Member">The member id of the group, for example <c>large_transport_2</c>.</param>
+/// <param name="Key">The key of the line, for example <c>loadout</c>.</param>
+/// <param name="Value">The value that the check refuses, or null for a missing required line.</param>
+/// <param name="Message">What is wrong and what the game does with the line, in plain words, without the member
+/// id.</param>
+/// <param name="Required">True when the rule of the line is required, so the member cannot go without the line.</param>
+public sealed record PlacementError(string Member, string Key, string? Value, string Message, bool Required);
 
 /// <summary>A file that names a nickname as text (see <see cref="StoryMention"/>).</summary>
 public sealed record NamedMention(string Nickname, string Path, int Count);
@@ -100,6 +113,15 @@ public sealed class ScenePlan
 
     /// <summary>The files that name the old nickname of a Rename, or a nickname of a Delete, as text.</summary>
     public IReadOnlyList<NamedMention> Mentions { get; internal set; } = [];
+
+    /// <summary>The lines of a placement of a prop group whose list checks give an error (decision D290 of the M23
+    /// design). A plan with such lines has no command, unless it leaves them out. Empty for the other actions.</summary>
+    public IReadOnlyList<PlacementError> PlacementErrors { get; internal set; } = [];
+
+    /// <summary>The new <c>[Solar]</c> of a static prop archetype that the plan adds with its object (decision D279 of
+    /// the M23 design), or null. The loaded game data does not have it, so the Scene shows the object after the save
+    /// and the reload of the game data.</summary>
+    public SectionRef? NewArchetype { get; internal set; }
 
     /// <summary>The section to select after the action, or null to clear the selection (decision D249).</summary>
     public SectionRef? SelectAfter { get; internal set; }

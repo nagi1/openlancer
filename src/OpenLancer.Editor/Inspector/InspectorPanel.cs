@@ -10,7 +10,9 @@ using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Scene;
@@ -51,6 +53,7 @@ internal sealed class InspectorPanel
     private readonly StarSystemPage starSystemPage;
     private readonly SchemaPage schemaPage;
     private readonly ThnPage thnPage;
+    private readonly AssetPage assetPage;
 
     public InspectorPanel(EditorWindow window)
     {
@@ -67,6 +70,7 @@ internal sealed class InspectorPanel
         starSystemPage = new StarSystemPage(window, grid);
         schemaPage = new SchemaPage(window, grid);
         thnPage = new ThnPage(window, grid);
+        assetPage = new AssetPage(window);
     }
 
     /// <summary>True while a field edit or a drag of a curve point is open. The edit history and the save wait for its
@@ -153,9 +157,13 @@ internal sealed class InspectorPanel
                 case ThnRef or ThnEventSet or CutsceneRoot:
                     thnPage.Draw(item);
                     break;
+                case AssetRef asset:
+                    // A model file or a prop group of the Assets panel (section 6.3 of the M23 design).
+                    assetPage.Draw(asset);
+                    break;
             }
 
-            if (item is not (SectionRef or ThnRef or ThnEventSet or CutsceneRoot))
+            if (item is not (SectionRef or ThnRef or ThnEventSet or CutsceneRoot or AssetRef))
             {
                 rawFields.Draw(item);
             }
@@ -196,7 +204,7 @@ internal sealed class InspectorPanel
 
         var cutscene = window.Cutscenes.Describe(item);
         var nickname = cutscene?.Identifier ?? Nickname(item) ?? "";
-        var name = cutscene?.Title ?? window.Session?.ItemName(item);
+        var name = cutscene?.Title ?? (item is AssetRef asset ? assetPage.Title(asset) : window.Session?.ItemName(item));
         var title = !string.IsNullOrEmpty(name) ? name : nickname.Length > 0 ? nickname : item.GetType().Name;
         // A long title or nickname ends with "..." before the chip.
         var x = min.X + padding + glyphSize + MathF.Truncate(GlyphGap * scale);
@@ -302,6 +310,12 @@ internal sealed class InspectorPanel
             }
 
             return ($"{EditorIcons.Lock}  Read-only", why ?? "No mod is active, so the profile is read-only.", false);
+        }
+
+        if (item is AssetRef)
+        {
+            return ($"{EditorIcons.Images}  Asset", "A model file or a prop group of the Assets panel. A prop group of the " +
+                                                    "active mod has Rename and Delete on its page.", false);
         }
 
         var session = window.Session;
@@ -476,6 +490,7 @@ internal sealed class InspectorPanel
     private static string? Nickname(object item) => item switch
     {
         SectionRef section => section.Id.Key ?? section.Id.ToString(),
+        AssetRef asset => asset.Id,
         _ => SceneItems.Nickname(item),
     };
 

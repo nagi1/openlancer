@@ -5,6 +5,7 @@ using System.Numerics;
 using ImGuiNET;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
@@ -94,7 +95,44 @@ internal sealed partial class PropertyGrid
         var problem = ListProblems(field).FirstOrDefault(p => p.Rule == rule && p.Line <= 0);
         var other = IsOtherFile(rule, list, value);
         var clicked = ListValue(list, value, problem, FillWidth, hint, other);
+        // A tile of the Assets panel drops on the field, as Unity drops an asset on an object field (decision D281 of the
+        // M23 design). The drop sets the value as a pick does.
+        window.AssetDrag.Field(rule.Lists, list?.Label ?? "value",
+            dropped => window.Edits.Execute(EditCommand.SetLinesFromText(field.Section, field.Name, [dropped])));
         ListPopup("##list", clicked, field, list, value, !rule.Required, _ => picked, other);
+    }
+
+    /// <summary>
+    /// The asset of the value of the <c>archetype</c> or the <c>loadout</c> line of an object, for the button "Show in
+    /// Assets" (section 6.3 of the M23 design), as Unity pings an asset from an object field. Null for another key, and
+    /// for a value that no tile has.
+    /// </summary>
+    private (AssetKind Kind, string Id)? AssetOf(FieldBinding field, IReadOnlyList<ListRule> rules)
+    {
+        if (!field.Section.Id.Type.Equals("Object", StringComparison.OrdinalIgnoreCase) ||
+            !(field.Name.Equals("archetype", StringComparison.OrdinalIgnoreCase) ||
+              field.Name.Equals("loadout", StringComparison.OrdinalIgnoreCase)) ||
+            !IsListed(rules) || window.Session is not { } session ||
+            field.Lines is not [{ Values: [var value, ..] } line])
+        {
+            return null;
+        }
+
+        var list = session.Edits.Lists.List(rules[0], field.Section, line.Values);
+        return list?.Find(value.ToString()) is { } entry && session.Edits.Assets.KindOfList(list.Id) is { } kind
+            ? (kind, entry.Value)
+            : null;
+    }
+
+    /// <summary>The button "Show in Assets": it shows the tile of the value in the Assets panel.</summary>
+    private void ShowInAssetsButton((AssetKind Kind, string Id) asset)
+    {
+        if (ImGui.Button($"{EditorIcons.Images}##show-in-assets", new Vector2(ToolbarItems.IconWidth, ImGui.GetFrameHeight())))
+        {
+            window.Assets.Show(asset.Kind, asset.Id);
+        }
+
+        ImGui.SetItemTooltip($"Show {asset.Id} in Assets");
     }
 
     /// <summary>

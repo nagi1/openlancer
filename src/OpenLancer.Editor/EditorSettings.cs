@@ -24,6 +24,16 @@ internal sealed record RecentProfile(string Path, DateTime LastOpenedUtc);
 /// <param name="LastBuild">The build id of the game at the last check, or null.</param>
 internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastName, string? LastBuild);
 
+/// <summary>How the Assets panel shows its tiles (decision D270 of the M23 design).</summary>
+internal enum ThumbnailMode
+{
+    /// <summary>The engine renders a thumbnail of the model of each visible tile.</summary>
+    Rendered,
+
+    /// <summary>Each tile shows the glyph of its kind. A hover shows a rendered preview.</summary>
+    IconsOnly,
+}
+
 /// <summary>
 /// Editor preferences that persist between sessions: the UI scale, the panel sizes, the view options, the gizmo tool
 /// and its snap, the Database category, the open Inspector sections, the ImGui table state, the recent profiles, the
@@ -53,6 +63,9 @@ internal sealed class EditorSettings
     // The category list fits its longest name, "Countermeasure", with its count and the scroll bar.
     public const float DefaultDatabaseCategoryWidth = 190;
     public const float DefaultConsoleDetailHeight = 80;
+    public const float DefaultAssetsTreeWidth = 200;
+    public const float DefaultAssetsTileSize = 96;
+    public const string DefaultAssetsCategory = "solars/station";
 
     // The defaults of the gizmo: the move tool, the world axes and the snap steps of decision D27.
     private const GizmoTool DefaultTool = GizmoTool.Move;
@@ -78,6 +91,32 @@ internal sealed class EditorSettings
 
     /// <summary>The height of the details pane below the Console list.</summary>
     public float ConsoleDetailHeight { get; set; } = DefaultConsoleDetailHeight;
+
+    /// <summary>The id of the category of the Assets panel that shows, for example "solars/station" (milestone
+    /// M23).</summary>
+    public string AssetsCategory { get; set; } = DefaultAssetsCategory;
+
+    /// <summary>The width of the category tree of the Assets panel, in unscaled points.</summary>
+    public float AssetsTreeWidth { get; set; } = DefaultAssetsTreeWidth;
+
+    /// <summary>The size of a tile of the Assets panel, in unscaled points. The smallest size shows a list.</summary>
+    public float AssetsTileSize { get; set; } = DefaultAssetsTileSize;
+
+    /// <summary>
+    /// How the Assets panel shows its tiles (decision D270 of the M23 design): with rendered thumbnails, or with the glyph
+    /// of their kind and a rendered preview on hover.
+    /// </summary>
+    [JsonIgnore]
+    public ThumbnailMode Thumbnails { get; set; } = ThumbnailMode.Rendered;
+
+    // The file holds the mode by name. A name that this editor does not know gives the default.
+    [JsonInclude]
+    [JsonPropertyName(nameof(Thumbnails))]
+    private string ThumbnailsName
+    {
+        get => Thumbnails.ToString();
+        set => Thumbnails = Named(value, ThumbnailMode.Rendered);
+    }
 
     /// <summary>The recent profiles, the newest first.</summary>
     public List<RecentProfile> RecentProfiles { get; set; } = [];

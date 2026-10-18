@@ -24,9 +24,12 @@ namespace OpenLancer.Editor.Ui;
 /// panel that shows has no badges, because the user sees the panel.
 /// </param>
 internal sealed class EditorPanel(string id, string title, char icon, Action draw, Action? toolbar = null,
-    bool padding = true, Func<IReadOnlyList<PanelBadge>>? badges = null)
+    bool padding = true, Func<IReadOnlyList<PanelBadge>>? badges = null, string? tooltip = null)
 {
     public string Id { get; } = id;
+
+    /// <summary>The tooltip of the tab, or null for none.</summary>
+    public string? Tooltip { get; } = tooltip;
     public Action Draw { get; } = draw;
     public Action? Toolbar { get; } = toolbar;
     public bool Padding { get; } = padding;
@@ -348,6 +351,11 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
             }
 
             drawList.PopClipRect();
+        }
+
+        if (panel.Tooltip != null)
+        {
+            ImGui.SetItemTooltip(panel.Tooltip);
         }
 
         return selected;

@@ -5,6 +5,7 @@ using LibreLancer.Data.GameData.Items;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.Data.Schema.Solar;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
 
 namespace OpenLancer.Editor.Ui;
 
@@ -207,6 +208,7 @@ internal static class ObjectKinds
         LibreLancer.Data.GameData.Ship => Ship,
         Equipment equipment => Of(equipment),
         SectionRef section => OfSection(section.Id.Type),
+        AssetRef asset => Assets.Of(asset.Kind),
         _ => null,
     };
 
@@ -238,6 +240,11 @@ internal static class ObjectKinds
         "shieldbattery" => Equip.ShieldBattery,
         "cargopod" => Equip.CargoPod,
         "lootcrate" => Equip.LootCrate,
+        // The sections that the Assets panel selects (milestone M23).
+        "solar" => Lists.SolarArchetype,
+        "asteroid" => Assets.Asteroid,
+        "loadout" => Lists.Loadout,
+        "effect" => Equip.Effect,
         _ => AnyEquipment,
     };
 
@@ -271,8 +278,64 @@ internal static class ObjectKinds
         "cutscene" => Thn.Script,
         "nebula" => Nebula,
         "asteroidfield" => AsteroidField,
+        "asteroid" => Assets.Asteroid,
+        "model" => Assets.Model,
         _ => OtherObject,
     };
+
+    /// <summary>The kinds of the assets of the Assets panel that no other kind fits (milestone M23).</summary>
+    public static class Assets
+    {
+        public static readonly ObjectKind PropGroup = new("Prop group", EditorIcons.Cubes, EditorTheme.Rgb(0x60C0A0));
+        public static readonly ObjectKind Model = new("Model", EditorIcons.CubeSolid, EditorTheme.Text);
+        public static readonly ObjectKind Asteroid = new("Asteroid", EditorIcons.Meteor, EditorTheme.Rgb(0xE0905A));
+
+        /// <summary>The kind of an asset. A list entry gets the kind of its list.</summary>
+        public static ObjectKind Of(AssetKind kind) => kind switch
+        {
+            AssetKind.PropGroup => PropGroup,
+            AssetKind.SolarArchetype => Lists.SolarArchetype,
+            AssetKind.Ship => Ship,
+            AssetKind.Asteroid => Asteroid,
+            AssetKind.Equipment => AnyEquipment,
+            AssetKind.Effect => Equip.Effect,
+            AssetKind.Loadout => Lists.Loadout,
+            AssetKind.Faction => Lists.Faction,
+            _ => Model,
+        };
+
+        /// <summary>The kind of a row: a solar archetype gets the kind of its Create template, and equipment the kind of
+        /// its section type.</summary>
+        public static ObjectKind Of(AssetRow row) => row.Asset.Kind switch
+        {
+            AssetKind.SolarArchetype => OfCategory(row.CategoryId),
+            AssetKind.Equipment => OfSection(row.Detail),
+            var kind => Of(kind),
+        };
+
+        /// <summary>The kind of a category of the tree, for its glyph.</summary>
+        public static ObjectKind OfCategory(string id) => id.ToLowerInvariant() switch
+        {
+            "all" => Lists.Enum,
+            "solars/station" => Station,
+            "solars/planet" => Planet,
+            "solars/sun" => Sun,
+            "solars/satellite" => Satellite,
+            "solars/connections" => JumpGate,
+            "solars/solar" => OtherObject,
+            "groups" => PropGroup,
+            "solars" => Lists.SolarArchetype,
+            "ships" => Ship,
+            "asteroids" => Asteroid,
+            "effects" => Equip.Effect,
+            "loadouts" => Lists.Loadout,
+            "factions" => Lists.Faction,
+            var other when other.StartsWith("equipment/", StringComparison.Ordinal) => OfSection(other["equipment/".Length..]),
+            "equipment" => AnyEquipment,
+            var other when other.StartsWith("models", StringComparison.Ordinal) => Model,
+            _ => OtherObject,
+        };
+    }
 
     /// <summary>The kinds of the entries of the data lists that no other kind fits.</summary>
     private static class Lists

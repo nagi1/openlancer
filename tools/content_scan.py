@@ -4,11 +4,13 @@ Usage: python tools/content_scan.py           scans OpenLancer (the submodule is
        python tools/content_scan.py --fork    scans the changes of the engine fork against its base commit
 
 The scan checks every file that git tracks or would add:
-  1. Retail file types (disc images, cabinets, fonts, UTF models and textures, cutscenes) are not allowed.
+  1. Retail file types (disc images, cabinets, fonts, UTF models and textures, cutscenes) are not allowed. The
+     thumbnails of the editor (.olthumb) are not allowed either, because the editor renders them from game data.
      The one exception is a THN patch of a mod (decision D70): an ASCII .thn file below the patches/ folder of a
      mod (the patches/ folder next to its mod.json) whose first statement after its comment block is
      "ol_thn_patch = 1". A patch holds only keys and changed values.
-  2. No file starts with the signature of a retail container: "BINI", "UTF " or compiled Lua.
+  2. No file starts with the signature of a retail container: "BINI", "UTF " or compiled Lua. No file starts with
+     "OLTH", the signature of a thumbnail of the editor.
   3. No binary file, unless tools/content_scan_allow.txt allows it.
   4. No C, C++ or assembly source. Native code belongs in the engine fork.
   5. Only the Markdown files in MARKDOWN_FILES.
@@ -38,6 +40,11 @@ FORBIDDEN_EXTENSIONS = {
     ".iso", ".cab", ".ttf", ".fl", ".lrpk",
     ".utf", ".cmp", ".3db", ".mat", ".txm", ".vms", ".sph",
     ".ale", ".anm", ".dfm", ".thn", ".sur", ".wmv",
+    ".olthumb",
+}
+# Why a forbidden file type that is not a file of the game is forbidden.
+FORBIDDEN_REASONS = {
+    ".olthumb": "a thumbnail that the editor renders from game data",
 }
 PATCHES_FOLDER = "patches"
 MOD_MANIFEST = "mod.json"
@@ -52,6 +59,7 @@ SIGNATURES = {
     b"BINI": "a binary INI file",
     b"UTF ": "a UTF file (model, texture, sound or font container)",
     b"\x1bLua": "compiled Lua (a retail script)",
+    b"OLTH": "a thumbnail that the editor renders from game data",
 }
 # Git treats a file with a NUL byte in its first 8000 bytes as binary. The scan does the same.
 BINARY_PROBE = 8000
@@ -260,6 +268,8 @@ def file_problem(name, data, hashes, mods, allow, fork=False):
     """The problem of one file from its bytes, or None. With fork=True, only the rules that apply to the fork."""
     extension = os.path.splitext(name)[1].lower()
     if extension in FORBIDDEN_EXTENSIONS:
+        if extension in FORBIDDEN_REASONS:
+            return f"retail file type: {name} ({FORBIDDEN_REASONS[extension]})"
         if extension != ".thn":
             return f"retail file type: {name}"
         if not is_thn_patch(name, data, mods):

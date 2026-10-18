@@ -202,19 +202,39 @@ internal sealed record SceneTemplateDefinition(string Id, string Label, IReadOnl
 /// <param name="Values">For a values list: the section type, the key and the value index whose distinct values are the
 /// entries. Null for a sections list.</param>
 /// <param name="Scoped">True when the rule gives the file (a scoped list).</param>
-/// <param name="Files">For a files list: the extension of the files whose paths are the entries, for example <c>.thn</c>
-/// (section 5.6 of the M8b design). Null for the other lists.</param>
+/// <param name="Files">For a files list: the extensions of the files whose paths are the entries, for example <c>.thn</c>
+/// (section 5.6 of the M8b design), or <c>.cmp</c>, <c>.3db</c> and <c>.sph</c> for the models (milestone M23). Null for
+/// the other lists.</param>
 /// <param name="Folder">For a files list: the folder below the data folder that holds the files, for example
-/// <c>SOLAR\NEBULA</c> (milestone M22). Null for all files of the edit view.</param>
+/// <c>SOLAR\NEBULA</c> (milestone M22), or <c>.</c> for the data folder itself (milestone M23). Null for all files of
+/// the edit view.</param>
 /// <param name="FileClass">For a files list: the full name of a <c>[ParsedIni]</c> class of the engine, for example
 /// <c>LibreLancer.Data.Schema.Universe.Nebula</c> (milestone M22). A file is an entry only when it has a section and
 /// each of its section types is a section of the class. Null for a file of any content.</param>
 internal sealed record ListSource(string? Role, IReadOnlyList<string> Sections, IReadOnlyList<string>? Keys,
     IReadOnlyDictionary<string, string> Where, (string Section, string Key, int Index)? Values, bool Scoped,
-    string? Files = null, string? Folder = null, string? FileClass = null)
+    IReadOnlyList<string>? Files = null, string? Folder = null, string? FileClass = null)
 {
     /// <summary>The engine class of <see cref="FileClass"/>, or null.</summary>
     public Type? FileClassType => FileClass == null ? null : typeof(FLHash).Assembly.GetType(FileClass);
+}
+
+/// <summary>A top category of the Assets panel (milestone M23, decision D267).</summary>
+/// <param name="Id">The id, for example <c>solars</c>. A child category gets the id of its parent, a slash and a part of
+/// its own, for example <c>solars/station</c>.</param>
+/// <param name="Label">The label of the category tree, for example "Solars".</param>
+/// <param name="Kind">A kind of rows that no list gives: <see cref="PropGroupsKind"/> for the prop groups of the mods.
+/// Null for a category of a list.</param>
+/// <param name="List">The list whose entries are the rows, or null for a category of a kind.</param>
+/// <param name="Split">How the category gets its children: <see cref="SplitTemplates"/> (one child for each template of
+/// Create, and one for the connection types), <see cref="SplitSection"/> (one child for each section type) or
+/// <see cref="SplitFolder"/> (one child for each top folder below the data folder). Null for no children.</param>
+internal sealed record AssetCategoryDefinition(string Id, string Label, string? Kind, string? List, string? Split)
+{
+    public const string PropGroupsKind = "propGroups";
+    public const string SplitTemplates = "sceneTemplates";
+    public const string SplitSection = "section";
+    public const string SplitFolder = "folder";
 }
 
 /// <summary>One list of the rule data.</summary>
@@ -248,11 +268,13 @@ internal sealed class ListRules
     private readonly Dictionary<(string Role, string Section, string Key), List<ListRule>> byAddress;
 
     private ListRules(IReadOnlyDictionary<string, RoleDefinition> roles, IReadOnlyList<ListDefinition> lists,
-        IReadOnlyList<ListRule> rules, IReadOnlyList<string> connectionTypes, IReadOnlyList<SceneTemplateDefinition> templates)
+        IReadOnlyList<ListRule> rules, IReadOnlyList<string> connectionTypes, IReadOnlyList<SceneTemplateDefinition> templates,
+        IReadOnlyList<AssetCategoryDefinition> assetCategories)
     {
         Roles = roles;
         ConnectionTypes = connectionTypes;
         SceneTemplates = templates;
+        AssetCategories = assetCategories;
         Lists = lists.ToDictionary(l => l.Id, StringComparer.OrdinalIgnoreCase);
         All = rules;
         byAddress = rules.GroupBy(r => (r.Role.ToLowerInvariant(), r.Section.ToLowerInvariant(), r.Key.ToLowerInvariant()))
@@ -277,6 +299,9 @@ internal sealed class ListRules
 
     /// <summary>The templates of Create in the Scene, in the order of the menu.</summary>
     public IReadOnlyList<SceneTemplateDefinition> SceneTemplates { get; }
+
+    /// <summary>The top categories of the Assets panel, in the order of the category tree (milestone M23).</summary>
+    public IReadOnlyList<AssetCategoryDefinition> AssetCategories { get; }
 
     /// <summary>The rules of each (role, section type) in lower case.</summary>
     public IReadOnlyDictionary<(string Role, string Section), IReadOnlyList<ListRule>> ByRoleAndSection { get; }
@@ -322,7 +347,11 @@ internal sealed class ListRules
                 if (template.Types.FirstOrDefault(connections.Contains) is { } connection)
                     throw new FormatException($"The scene template {template.Id} has the connection type '{connection}'.");
             }
-            return new ListRules(roles, lists, rules, connections, templates);
+            var categories = root.TryGetProperty("assetCategories", out var assets)
+                ? assets.EnumerateArray().Select(ReadAssetCategory).ToList()
+                : [];
+            CheckAssetCategories(categories, lists);
+            return new ListRules(roles, lists, rules, connections, templates, categories);
         }
         catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or
                                        FormatException or ArgumentException)
@@ -335,6 +364,32 @@ internal sealed class ListRules
         String(e, "data"), Bool(e, "last"), String(e, "fallback"), Strings(e, "paths"),
         !e.TryGetProperty("engine", out var engine) || engine.GetBoolean(), Bool(e, "universe"), Bool(e, "systemFiles"),
         Bool(e, "roomFiles"), String(e, "fieldFiles"));
+
+    private static AssetCategoryDefinition ReadAssetCategory(JsonElement e) => new(e.GetProperty("id").GetString()!,
+        e.GetProperty("label").GetString()!, String(e, "kind"), String(e, "list"), String(e, "split"));
+
+    /// <summary>Checks the categories of the Assets panel: an id that is not empty, has no slash and does not repeat,
+    /// either a list of the rule data or a known kind, and a known split.</summary>
+    private static void CheckAssetCategories(IReadOnlyList<AssetCategoryDefinition> categories,
+        IReadOnlyList<ListDefinition> lists)
+    {
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var category in categories)
+        {
+            if (category.Id.Length == 0 || category.Id.Contains('/') || !ids.Add(category.Id))
+                throw new FormatException($"The asset category id '{category.Id}' is empty, has a slash or repeats.");
+            if ((category.Kind == null) == (category.List == null))
+                throw new FormatException($"The asset category {category.Id} needs a list or a kind, not both.");
+            if (category.Kind is { } kind && kind != AssetCategoryDefinition.PropGroupsKind)
+                throw new FormatException($"The kind '{kind}' of the asset category {category.Id} is not known.");
+            if (category.List is { } list && !lists.Any(l => l.Id.Equals(list, StringComparison.OrdinalIgnoreCase)))
+                throw new FormatException($"The asset category {category.Id} names the list '{list}', which the rule " +
+                                          "data does not have.");
+            if (category.Split is not (null or AssetCategoryDefinition.SplitTemplates or
+                AssetCategoryDefinition.SplitSection or AssetCategoryDefinition.SplitFolder))
+                throw new FormatException($"The split '{category.Split}' of the asset category {category.Id} is not known.");
+        }
+    }
 
     private static SceneTemplateDefinition ReadTemplate(JsonElement e) => new(e.GetProperty("id").GetString()!,
         e.GetProperty("label").GetString()!, Strings(e, "types").Select(t => t.ToLowerInvariant()).ToList(),
@@ -351,10 +406,16 @@ internal sealed class ListRules
             var where = s.TryGetProperty("where", out var w)
                 ? w.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString()!, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var id = e.GetProperty("id").GetString();
+            // The extensions of a files list: one text, or an array of texts (milestone M23).
+            IReadOnlyList<string>? files = !s.TryGetProperty("files", out var f) ? null
+                : f.ValueKind == JsonValueKind.Array ? Strings(s, "files")
+                : [f.GetString()!];
+            if (files != null && (files.Count == 0 || files.Any(x => x.Length < 2 || x[0] != '.')))
+                throw new FormatException($"The list {id} needs one or more extensions that start with a dot.");
             source = new ListSource(String(s, "role"), Strings(s, "sections"),
                 s.TryGetProperty("keys", out _) ? Strings(s, "keys") : null, where, values,
-                String(s, "scope") == "file", String(s, "files"), String(s, "folder"), String(s, "fileClass"));
-            var id = e.GetProperty("id").GetString();
+                String(s, "scope") == "file", files, String(s, "folder"), String(s, "fileClass"));
             if (source.Files == null && (source.Folder != null || source.FileClass != null))
                 throw new FormatException($"The list {id} has a folder or a file class, which needs 'files'.");
             if (source.FileClass != null && source.FileClassType?.IsDefined(typeof(ParsedIniAttribute), false) != true)

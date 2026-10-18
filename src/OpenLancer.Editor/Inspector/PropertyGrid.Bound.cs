@@ -218,7 +218,8 @@ internal sealed partial class PropertyGrid
         // its own follow target, and a listed value gets a button that selects its entry.
         var rules = field.Key?.TextKind == null ? ListRules(field) : [];
         follow ??= ListFollow(field, rules);
-        reserve = follow == null ? 0 : ToolbarItems.IconWidth + spacing;
+        var asset = reason == null ? AssetOf(field, rules) : null;
+        reserve = (follow == null ? 0 : ToolbarItems.IconWidth + spacing) + (asset == null ? 0 : ToolbarItems.IconWidth + spacing);
         if (field.Key?.TextKind is { } kind)
         {
             TextKeyField(field, kind, reason);
@@ -268,6 +269,12 @@ internal sealed partial class PropertyGrid
         {
             ImGui.SameLine(0, spacing);
             FollowButton(button);
+        }
+
+        if (asset is { } shown)
+        {
+            ImGui.SameLine(0, spacing);
+            ShowInAssetsButton(shown);
         }
 
         RowProblems(field, reason);

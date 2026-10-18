@@ -31,11 +31,15 @@ public sealed record TemplateArchetype(string Nickname, string Type, ListEntry E
 /// D257).</para>
 /// <para>Jump gates, jump holes, airlock gates and trade lane rings stay out of Create, Duplicate and Delete until
 /// milestone M27 (decision D253). A rename of them works.</para>
+/// <para>The asset browser of milestone M23 adds a static prop archetype with its object (<c>ScenePlans.Props.cs</c>)
+/// and places prop groups (<see cref="Assets.PropGroups"/>). Create, the prop archetype, Duplicate and the prop groups
+/// share the object builder (<see cref="NewObject"/>) and the copy builder (<see cref="CopyLines"/>). So the editor
+/// has one way to write a new object and one way to copy a section (review finding R9 of the M23 design).</para>
 /// </remarks>
-public static class ScenePlans
+public static partial class ScenePlans
 {
     /// <summary>The value of <c>pos</c> of a new item: whole numbers (decision D234).</summary>
-    private static string PositionText(Vector3 position) => string.Join(", ",
+    internal static string PositionText(Vector3 position) => string.Join(", ",
         new[] { position.X, position.Y, position.Z }.Select(v => ((int)MathF.Round(v)).ToString(CultureInfo.InvariantCulture)));
 
     /// <summary>The templates of objects of the rule data, in the order of the Create menu, with their labels.</summary>
@@ -67,9 +71,38 @@ public static class ScenePlans
         return result;
     }
 
-    /// <summary>True when the template asks for a base after the archetype (decision D263): the station.</summary>
+    /// <summary>True when the template asks for a base after the archetype (decision D263): the station. Each archetype
+    /// of <see cref="Archetypes"/> has the line that the template needs, so the Create menu asks for each of them.</summary>
     public static bool AsksForBase(EditSession session, SceneTemplate template) =>
         Definition(session, template)?.Then == "base";
+
+    /// <summary>
+    /// True when the template asks for a base after the archetype, and the archetype has the line that the template
+    /// needs (decision D277 of the M23 design). A base needs a docking sphere. So a station archetype without one gets
+    /// no base step.
+    /// </summary>
+    public static bool AsksForBase(EditSession session, SceneTemplate template, string archetype) =>
+        Definition(session, template) is { Then: "base" } definition &&
+        (definition.Needs == null || session.Lists.List("solar_archetype")?.Find(archetype)?.Section is { } solar &&
+            session.Get(solar)?.Lines(definition.Needs).Count > 0);
+
+    /// <summary>
+    /// The template of Create whose types hold the type of an archetype of the list of the solar archetypes (decision
+    /// D277 of the M23 design). Null for an archetype outside the list, for a connection type (decision D253) and for a
+    /// type in no template. Unlike <see cref="Archetypes"/>, the <c>needs</c> line of a template does not count. So a
+    /// station archetype without a docking sphere has the station template.
+    /// </summary>
+    public static SceneTemplate? TemplateFor(EditSession session, string archetype) =>
+        TypeOf(session, archetype) is { } type
+            ? session.Lists.RuleData.SceneTemplates.Where(t => t.Types.Contains(type)).Select(t => TemplateOf(t.Id))
+                .FirstOrDefault(t => t != null)
+            : null;
+
+    /// <summary>The <c>[Solar] type</c> of an archetype of the list in lowercase, or null.</summary>
+    internal static string? TypeOf(EditSession session, string archetype) =>
+        session.Lists.List("solar_archetype")?.Find(archetype)?.Section is { } solar && session.Get(solar) is { } view
+            ? SceneSections.Last(view, "type")?.ToLowerInvariant()
+            : null;
 
     /// <summary>The bases of the list of the bases: the bases of the system first, then the others, each in list
     /// order (review finding R24).</summary>
@@ -98,9 +131,8 @@ public static class ScenePlans
     {
         var plan = new ScenePlan(SceneAction.Create, "Create");
         var refusals = new List<Diagnostic>();
-        var path = session.SystemPath(system);
-        if (path == null || session.OpenDocument(path) == null)
-            return Refused(plan, Diagnostic.Error(system, $"The system '{system}' has no file in the edit view."));
+        if (SystemFileProblem(session, system, out var path) is { } fileProblem)
+            return Refused(plan, fileProblem);
         void Refuse(string message) => refusals.Add(Diagnostic.Error(path, message));
 
         var type = template switch
@@ -113,22 +145,21 @@ public static class ScenePlans
         {
             if (archetype == null)
                 Refuse("Pick an archetype for the new object.");
-            else if (!Archetypes(session, template).Any(a => a.Nickname.Equals(archetype, StringComparison.OrdinalIgnoreCase)))
-            {
-                var connection = session.Lists.List("solar_archetype")?.Find(archetype)?.Section is { } solar &&
-                                 session.Get(solar) is { } solarView &&
-                                 SceneSections.Last(solarView, "type")?.ToLowerInvariant() is { } solarType &&
-                                 session.Lists.RuleData.ConnectionTypes.Contains(solarType);
-                Refuse(connection
-                    ? $"The archetype {archetype} is a jump gate, a jump hole or a trade lane ring. The editor adds " +
-                      "connections in milestone M27."
-                    : $"The archetype {archetype} is not an archetype of the template {template}.");
-            }
+            else if (TemplateFor(session, archetype) != template)
+                Refuse(TemplateProblem(session, archetype, template));
         }
         if (refusals.Count > 0)
             return Refused(plan, [.. refusals]);
 
         var stem = $"{system}_{TemplateId(template)}".ToLowerInvariant();
+        string? error;
+        if (type == SceneSections.ObjectType)
+        {
+            if (NewObject(session, path, stem, position, archetype!, parent, dockWith, out error) is not { } made)
+                return Refused(plan, Diagnostic.Error(path, error!));
+            return Created(session, plan, path, type, made.Nickname, made.Entries);
+        }
+
         var binary = session.IsBinaryFile(path);
         var nickname = type == SceneSections.LightType
             ? session.Nicknames.FirstFree(stem, 1, taken: n => session.Nicknames.LightTaken(path, n) != null)
@@ -153,17 +184,16 @@ public static class ScenePlans
                 lines.Add(("type", "POINT"));
                 lines.Add(("attenuation", "1, 0, 0.000001"));
                 break;
-            default:
-                lines.Add(("archetype", archetype!));
-                if (parent?.Id.Key is { } parentKey)
-                    lines.Add(("parent", parentKey));
-                if (dockWith != null)
-                    lines.Add(("dock_with", dockWith));
-                break;
         }
-        if (Entries(lines, binary, out var error) is not { } entries)
+        if (Entries(lines, binary, out error) is not { } entries)
             return Refused(plan, Diagnostic.Error(path, error!));
+        return Created(session, plan, path, type, nickname, entries);
+    }
 
+    /// <summary>Gives a Create plan its new section and its command.</summary>
+    private static ScenePlan Created(EditSession session, ScenePlan plan, string path, string type, string nickname,
+        List<EntryView> entries)
+    {
         var added = new SectionRef(path, new SectionIdentity(type, nickname));
         plan.Label = $"Create {nickname}";
         plan.Adds = [added];
@@ -171,6 +201,63 @@ public static class ScenePlans
         plan.Warnings = DanglingWarnings(session, nickname, path);
         plan.Command = EditCommand.Group(plan.Label, [EditCommand.AddSection(path, type, entries)], session.Snapshot());
         return plan;
+    }
+
+    /// <summary>Why an archetype is not an archetype of a template: a connection type (decision D253), a type in no
+    /// template (section 5.2 of the M23 design), or another template.</summary>
+    private static string TemplateProblem(EditSession session, string archetype, SceneTemplate template)
+    {
+        var type = TypeOf(session, archetype);
+        if (type != null && session.Lists.RuleData.ConnectionTypes.Contains(type))
+            return $"The archetype {archetype} is a jump gate, a jump hole or a trade lane ring. The editor adds connections " +
+                   "in milestone M27.";
+        if (type != null && !session.Lists.RuleData.SceneTemplates.Any(t => t.Types.Contains(type)))
+            return NoTemplateReason(type);
+        return $"The archetype {archetype} is not an archetype of the template {template}.";
+    }
+
+    /// <summary>Why an archetype of a type in no template of Create cannot spawn (section 5.2 of the M23
+    /// design).</summary>
+    internal static string NoTemplateReason(string type) => $"The type {type} is in no Create template of the rule data.";
+
+    /// <summary>
+    /// Why a new item cannot go into the file of a system, or null (review finding R9 of the M23 design): the system has
+    /// no file in the edit view, or the file is read-only.
+    /// </summary>
+    /// <param name="path">The install path of the system file, or an empty text when the system has none.</param>
+    internal static Diagnostic? SystemFileProblem(EditSession session, string system, out string path)
+    {
+        path = session.SystemPath(system) ?? "";
+        if (path.Length == 0 || session.OpenDocument(path) is not { } document)
+            return Diagnostic.Error(system, $"The system '{system}' has no file in the edit view.");
+        return document.ReadOnlyReason is { } reason
+            ? Diagnostic.Error(path, $"{SceneSections.FileName(path)}: {reason}")
+            : null;
+    }
+
+    /// <summary>
+    /// The object builder (review finding R9 of the M23 design): the nickname and the lines of a new object of a system
+    /// file. The lines are <c>nickname</c>, <c>pos</c> with whole numbers (decision D234) and <c>archetype</c>. Then come
+    /// <c>parent</c> and <c>dock_with</c> when the caller gives them. The nickname is the first free
+    /// <c>&lt;stem&gt;_&lt;n&gt;</c> (decision D235). Create and the static prop archetype use it.
+    /// </summary>
+    /// <param name="stem">The stem of the nickname, for example <c>li01_station</c>.</param>
+    /// <param name="parent">The object that gets the new object as a child, or null.</param>
+    /// <param name="dockWith">The base of a station, or null.</param>
+    /// <returns>The nickname and the lines, or null when the file cannot hold a line. The error then tells why.</returns>
+    internal static (string Nickname, List<EntryView> Entries)? NewObject(EditSession session, string path, string stem,
+        Vector3 position, string archetype, SectionRef? parent, string? dockWith, out string? error)
+    {
+        var nickname = session.Nicknames.FirstFree(stem, 1);
+        var lines = new List<(string Name, string Text)>
+        {
+            ("nickname", nickname), ("pos", PositionText(position)), ("archetype", archetype),
+        };
+        if (parent?.Id.Key is { } parentKey)
+            lines.Add(("parent", parentKey));
+        if (dockWith != null)
+            lines.Add(("dock_with", dockWith));
+        return Entries(lines, session.IsBinaryFile(path), out error) is { } entries ? (nickname, entries) : null;
     }
 
     /// <summary>
@@ -229,33 +316,13 @@ public static class ScenePlans
             var name = names[section];
             var binary = session.IsBinaryFile(section.Path);
             var copy = new SectionIdentity(source.Name, name);
-            var entries = new List<EntryView>();
-            foreach (var entry in source)
-            {
+            var (objects, zones) = CopiedNames(set.Where(s => VfsPath.Comparer.Equals(s.Path, section.Path)), names);
+            var entries = CopyLines(source.Name, Lines(source), "nickname", "nickname", name, objects, zones,
+                keepOutside: true, (key, i, value) => texts.Copy(source.Name, key, i, value, copy),
                 // A base has one object in space (decision D259).
-                if (SceneSections.Is(entry.Name, "base") && SceneSections.Is(source.Name, SceneSections.ObjectType))
-                {
-                    warnings.Add(Diagnostic.Warning(section.Path, $"{name}: the copy has no 'base' line. A base has one " +
-                                                                  $"object in space, and {section.Id.Key} stays that object.")
-                        with { Target = section });
-                    continue;
-                }
-                var values = new List<ValueBase>();
-                for (var i = 0; i < entry.Count; i++)
-                {
-                    if (i == 0 && SceneSections.Is(entry.Name, "nickname"))
-                        values.Add(new StringValue(name));
-                    else if (i == 0 && SceneSections.Is(entry.Name, "parent") &&
-                             set.FirstOrDefault(s => SceneSections.Is(s.Id.Type, SceneSections.ObjectType) &&
-                                                     VfsPath.Comparer.Equals(s.Path, section.Path) &&
-                                                     string.Equals(s.Id.Key, entry[0].ToString().Trim(), StringComparison.OrdinalIgnoreCase))
-                                 is { } copiedParent)
-                        values.Add(new StringValue(names[copiedParent]));
-                    else
-                        values.Add(texts.Copy(entry, i, copy));
-                }
-                entries.Add(new EntryView(entry.Name, values));
-            }
+                (_, _) => warnings.Add(Diagnostic.Warning(section.Path, $"{name}: the copy has no 'base' line. A base has " +
+                                                                        $"one object in space, and {section.Id.Key} stays " +
+                                                                        "that object.") with { Target = section }));
             commands.Add(EditCommand.AddSection(section.Path, source.Name, entries));
             adds.Add(new SectionRef(section.Path, copy));
             if (PatchFormatter.KeyError(name, binary) is { } keyError)
@@ -636,7 +703,7 @@ public static class ScenePlans
     }
 
     /// <summary>The warning of a new name that dangling lines name (review finding R29).</summary>
-    private static IReadOnlyList<Diagnostic> DanglingWarnings(EditSession session, string name, string path)
+    internal static IReadOnlyList<Diagnostic> DanglingWarnings(EditSession session, string name, string path)
     {
         var dangling = session.Nicknames.Dangling(name, path);
         return dangling.Count == 0
@@ -713,9 +780,98 @@ public static class ScenePlans
         list.Add((first, count, key, text));
     }
 
+    /// <summary>Why the copy builder leaves out a line (see <see cref="CopyLines"/>).</summary>
+    internal enum LeftOutReason
+    {
+        /// <summary>The <c>base</c> line of an object: a base has one object in space (decision D259).</summary>
+        Base,
+
+        /// <summary>A <c>parent</c> or a <c>ring</c> line that names an item that the copy does not take.</summary>
+        Outside,
+    }
+
+    /// <summary>The lines of a section as line views, in order.</summary>
+    internal static IEnumerable<EntryView> Lines(Section section) => section.Select(e => new EntryView(e.Name, e.ToArray()));
+
+    /// <summary>The new names of the copied objects and zones, by their old names without letter case.</summary>
+    internal static (Dictionary<string, string> Objects, Dictionary<string, string> Zones) CopiedNames(
+        IEnumerable<SectionRef> sections, IReadOnlyDictionary<SectionRef, string> names)
+    {
+        var objects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var zones = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var section in sections)
+        {
+            if (section.Id.Key is not { } key || !names.TryGetValue(section, out var name))
+                continue;
+            if (SceneSections.Is(section.Id.Type, SceneSections.ObjectType))
+                objects.TryAdd(key, name);
+            else if (SceneSections.Is(section.Id.Type, SceneSections.ZoneType))
+                zones.TryAdd(key, name);
+        }
+        return (objects, zones);
+    }
+
+    /// <summary>
+    /// The copy builder (review finding R9 of the M23 design): the lines of a copy of an object, a zone or a light.
+    /// Duplicate, the draft of a prop group and its placement use it. So each copy follows one set of line rules:
+    /// <list type="bullet">
+    /// <item>The key line <paramref name="from"/> becomes the line <paramref name="to"/> with the new name. For example,
+    /// <c>nickname</c> becomes <c>member</c> in a prop group.</item>
+    /// <item>A copy of an object has no <c>base</c> line (decision D259): a base has one object in space.</item>
+    /// <item>Value 0 of <c>parent</c> and of <c>ring</c> of an object gets the new name of a copied object or zone. A
+    /// line that names an item outside the copy keeps its name when <paramref name="keepOutside"/> is true. Else the
+    /// line goes (decision D286).</item>
+    /// <item>Each other value goes through <paramref name="value"/>, for example for a copy of its text.</item>
+    /// </list>
+    /// </summary>
+    /// <param name="objects">The new names of the copied objects, by their old names.</param>
+    /// <param name="zones">The new names of the copied zones, by their old names.</param>
+    /// <param name="leftOut">Gets each line that the copy leaves out, with the reason.</param>
+    internal static List<EntryView> CopyLines(string type, IEnumerable<EntryView> source, string from, string to,
+        string name, IReadOnlyDictionary<string, string> objects, IReadOnlyDictionary<string, string> zones,
+        bool keepOutside, Func<string, int, ValueBase, ValueBase> value, Action<EntryView, LeftOutReason> leftOut)
+    {
+        var isObject = SceneSections.Is(type, SceneSections.ObjectType);
+        var result = new List<EntryView>();
+        foreach (var entry in source)
+        {
+            if (SceneSections.Is(entry.Name, from))
+            {
+                result.Add(new EntryView(to, [new StringValue(name), .. entry.Values.Skip(1)]));
+                continue;
+            }
+            if (isObject && SceneSections.Is(entry.Name, "base"))
+            {
+                leftOut(entry, LeftOutReason.Base);
+                continue;
+            }
+            var names = !isObject ? null
+                : SceneSections.Is(entry.Name, "parent") ? objects
+                : SceneSections.Is(entry.Name, "ring") ? zones
+                : null;
+            var values = new List<ValueBase>(entry.Values.Count);
+            if (names != null && entry.Values.Count > 0)
+            {
+                if (names.TryGetValue(entry.Values[0].ToString().Trim(), out var copied))
+                    values.Add(new StringValue(copied));
+                else if (keepOutside)
+                    values.Add(entry.Values[0]);
+                else
+                {
+                    leftOut(entry, LeftOutReason.Outside);
+                    continue;
+                }
+            }
+            for (var i = values.Count; i < entry.Values.Count; i++)
+                values.Add(value(entry.Name, i, entry.Values[i]));
+            result.Add(new EntryView(entry.Name, values));
+        }
+        return result;
+    }
+
     /// <summary>The set of a duplicate: the section, and each object of the file whose <c>parent</c> names an object of
-    /// the set, again and again.</summary>
-    private static void Collect(EditSession session, SectionRef section, List<SectionRef> set)
+    /// the set, again and again. The draft of a prop group takes the same set.</summary>
+    internal static void Collect(EditSession session, SectionRef section, List<SectionRef> set)
     {
         if (set.Contains(section))
             return;
@@ -731,12 +887,12 @@ public static class ScenePlans
     }
 
     /// <summary>True when a <c>[Nebula]</c> or an <c>[Asteroids]</c> section of the file names the zone.</summary>
-    private static bool HoldsVolume(EditSession session, SectionRef zone) =>
+    internal static bool HoldsVolume(EditSession session, SectionRef zone) =>
         session.Sections(zone.Path).Any(s => (SceneSections.Is(s.Id.Type, "Nebula") || SceneSections.Is(s.Id.Type, "Asteroids")) &&
                                              string.Equals(s.Id.Key, zone.Id.Key, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>The lines of a new section from their text, as the merge reads a patch line.</summary>
-    private static List<EntryView>? Entries(IEnumerable<(string Name, string Text)> lines, bool binary, out string? error)
+    internal static List<EntryView>? Entries(IEnumerable<(string Name, string Text)> lines, bool binary, out string? error)
     {
         var result = new List<EntryView>();
         foreach (var (name, text) in lines)
@@ -753,7 +909,7 @@ public static class ScenePlans
         Diagnostic.Error(section.Path, $"{section.Id}: the Scene can {verb} only an object, a zone, a light, a nebula or an " +
                                        "asteroid field of a system file.") with { Target = section };
 
-    private static ScenePlan Refused(ScenePlan plan, params Diagnostic[] refusals)
+    internal static ScenePlan Refused(ScenePlan plan, params Diagnostic[] refusals)
     {
         plan.Refusals = refusals;
         plan.Command = null;
@@ -765,7 +921,7 @@ public static class ScenePlans
 
     private static string TemplateId(SceneTemplate template) => template.ToString().ToLowerInvariant();
 
-    private static SceneTemplate? TemplateOf(string id) =>
+    internal static SceneTemplate? TemplateOf(string id) =>
         Enum.TryParse<SceneTemplate>(id, true, out var template) && template is not (SceneTemplate.Zone or SceneTemplate.Light)
             ? template
             : null;

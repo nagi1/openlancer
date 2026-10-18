@@ -14,9 +14,12 @@ using LibreLancer.ImUI;
 using LibreLancer.Render;
 using LibreLancer.Resources;
 using LibreLancer.Shaders;
+using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Database;
 using OpenLancer.Editor.Dialogs;
@@ -36,7 +39,7 @@ namespace OpenLancer.Editor;
 
 /// <summary>
 /// The OpenLancer editor window: a menu bar, the workspace panels (Hierarchy, Scene and Cutscene, Inspector, and
-/// Database, Console, Timeline and Cutscenes at the bottom) and a status bar. While no profile is open, the Welcome
+/// Assets, Database, Console, Timeline and Cutscenes at the bottom) and a status bar. While no profile is open, the Welcome
 /// screen replaces the panels.
 /// </summary>
 /// <remarks>The edits of the active mod and their menus are in <c>EditorWindow.Editing.cs</c>. Play is in
@@ -58,6 +61,7 @@ internal sealed partial class EditorWindow : Game
     private HierarchyPanel hierarchy = null!;
     private InspectorPanel inspector = null!;
     private DatabasePanel database = null!;
+    private AssetsPanel assets = null!;
     private WelcomeScreen welcome = null!;
     private StatusBar statusBar = null!;
     private CutsceneView cutsceneView = null!;
@@ -68,6 +72,14 @@ internal sealed partial class EditorWindow : Game
 
     // The time since the last frame. The Scene panel reads it while the layout draws.
     private double frameElapsed;
+
+    // The focus of the window in the last frame. When the window gets the focus, the prop groups read their folders
+    // again, as Unity refreshes its assets (section 9.1 of the M23 design).
+    private bool wasFocused;
+
+    // True after a reload of the game data while a section of the open system waits for it (decision D282 of the M23
+    // design). The system opens again when no field edit or drag runs.
+    private bool reopenAfterReload;
 
     // The lists of the File menu. They come from the disk, so they are read when their submenu opens, not each frame.
     private List<string> menuProfiles = [];
@@ -86,6 +98,7 @@ internal sealed partial class EditorWindow : Game
         Cutscenes = new CutsceneWorkspace(this);
         Edits = new EditController(this);
         SceneEdits = new SceneEdits(this);
+        AssetDrag = new AssetDrag(this);
         closePrompt = new ClosePrompt(this);
         Play = new PlayController(this, PlayProcess.Command, () => playClock.Elapsed);
         playMenu = new PlayMenu(this);
@@ -127,6 +140,17 @@ internal sealed partial class EditorWindow : Game
 
     /// <summary>Create, Duplicate, Rename and Delete of the items of the open system (milestone M3).</summary>
     public SceneEdits SceneEdits { get; }
+
+    /// <summary>The Assets panel (milestone M23).</summary>
+    public AssetsPanel Assets => assets;
+
+    /// <summary>The drag and drop of the tiles of the Assets panel and of the Hierarchy rows (milestone M23).</summary>
+    public AssetDrag AssetDrag { get; }
+
+    /// <summary>The folder of the cache of the thumbnails, in the folder of the product in LocalAppData. No setting
+    /// changes it, so the cache never goes into a repository (decision D273 of the M23 design).</summary>
+    private static string ThumbnailFolder => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Product.Name, "thumbnails");
 
     /// <summary>True while a field edit of the Inspector, a drag of a gizmo, a drag on the Timeline or a drag of a curve
     /// point is open. Undo, redo, save, the recovery file and the model loads of the scene wait for its end.</summary>
@@ -170,6 +194,7 @@ internal sealed partial class EditorWindow : Game
         hierarchy = new HierarchyPanel(this);
         inspector = new InspectorPanel(this);
         database = new DatabasePanel(this);
+        assets = new AssetsPanel(this, ThumbnailFolder);
         console = new ConsolePanel(this);
         cutsceneView = new CutsceneView(this, Cutscenes);
         timeline = new TimelinePanel(this, Cutscenes);
@@ -187,6 +212,9 @@ internal sealed partial class EditorWindow : Game
                 padding: false),
             new EditorPanelGroup("bottom",
             [
+                new EditorPanel(AssetsPanel.PanelId, "Assets", EditorIcons.Images, assets.Draw, assets.Toolbar,
+                    padding: false,
+                    tooltip: "The assets of the game data and the mods, as the Unity Project window shows them."),
                 new EditorPanel("database", "Database", EditorIcons.Database, () => database.Draw(Session?.GameData),
                     database.Toolbar, padding: false),
                 new EditorPanel("console", "Console", EditorIcons.Terminal, console.Draw, console.Toolbar,
@@ -273,6 +301,7 @@ internal sealed partial class EditorWindow : Game
 
         Edits.Dispose();
         Cutscenes.Dispose();
+        assets?.Dispose();
         Scene.Dispose();
         Session?.Dispose();
     }
@@ -479,6 +508,8 @@ internal sealed partial class EditorWindow : Game
         hierarchy.Reset();
         inspector.Reset();
         database.Reset();
+        assets.Reset();
+        reopenAfterReload = false;
         Selection = null;
         Session.Dispose();
         Log.Add(ConsoleSeverity.Info, EditorSource, $"Closed profile {Session.Profile.Name}.");
@@ -524,6 +555,57 @@ internal sealed partial class EditorWindow : Game
 
     protected override void Update(double elapsed) => Scene.Update(elapsed);
 
+    /// <summary>When the window gets the focus, the prop groups read their folders again, as Unity refreshes its
+    /// assets. So a group that another program wrote shows (section 9.1 of the M23 design).</summary>
+    private void RefreshOnFocus()
+    {
+        var focused = Focused;
+        if (focused && !wasFocused && Session is { } session)
+        {
+            PropGroups.Refresh(session.Edits);
+        }
+
+        wasFocused = focused;
+    }
+
+    /// <summary>
+    /// Opens the open system again after a reload of the game data, when a section of it waited for the reload, for
+    /// example an object of a new static prop archetype (decision D282 of the M23 design). The open waits until no
+    /// field edit and no drag runs. The camera pose and the selection stay.
+    /// </summary>
+    private void ReopenAfterReload()
+    {
+        if (!reopenAfterReload || IsEditing || AssetDrag.IsDragging ||
+            Session is not { IsBusy: false, GameData: { } data } session || Scene.System is not { } open)
+        {
+            return;
+        }
+
+        reopenAfterReload = false;
+        if (data.Items.Systems.Get(open.Nickname) is not { } system)
+        {
+            return;
+        }
+
+        // A selected item of the old scene becomes its section, which the new scene maps to its new item. A selected
+        // section of an object that waited for the reload, for example of a new static prop, gets its item too.
+        var section = Selection switch
+        {
+            SystemObject or Zone or LightSource or Nebula or AsteroidField => Scene.SectionOf(Selection),
+            SectionRef selected when selected.Path.Equals(Session.Edits.SystemPath(open.Nickname),
+                StringComparison.OrdinalIgnoreCase) => selected,
+            _ => null,
+        };
+        Scene.Open(system, session, keepCamera: true);
+        if (section != null)
+        {
+            Scene.SelectWhenShown(section);
+        }
+
+        Log.Add(ConsoleSeverity.Info, EditorSource,
+            $"Opened {system.Nickname} again with the game data of the save, so the Scene shows its new archetypes.");
+    }
+
     protected override void Draw(double elapsed)
     {
         RenderContext.ReplaceViewport(0, 0, Width, Height);
@@ -533,6 +615,8 @@ internal sealed partial class EditorWindow : Game
         EditorTheme.ApplyIfScaleChanged();
         ImGui.PushFont(ImGuiHelper.Roboto, 0);
 
+        RefreshOnFocus();
+        ReopenAfterReload();
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;
@@ -773,9 +857,19 @@ internal sealed partial class EditorWindow : Game
             ImGui.EndMenu();
         }
 
+        var rendered = Settings.Thumbnails == ThumbnailMode.Rendered;
+        if (ImGui.MenuItem($"{EditorIcons.Images}   Thumbnails: Rendered", "", rendered))
+        {
+            Settings.Thumbnails = rendered ? ThumbnailMode.IconsOnly : ThumbnailMode.Rendered;
+            Settings.Save();
+        }
+
+        ImGui.SetItemTooltip("On: the Assets panel renders an image of the model of each tile. Off: each tile shows the " +
+                             "glyph of its kind, and a hover shows the image.");
         if (Theme.IconMenuItem(EditorIcons.Table, "Reset layout", true))
         {
             Settings.HierarchyWidth = EditorSettings.DefaultHierarchyWidth;
+            Settings.AssetsTreeWidth = EditorSettings.DefaultAssetsTreeWidth;
             Settings.InspectorWidth = EditorSettings.DefaultInspectorWidth;
             Settings.BottomHeight = EditorSettings.DefaultBottomHeight;
             Settings.DatabaseCategoryWidth = EditorSettings.DefaultDatabaseCategoryWidth;

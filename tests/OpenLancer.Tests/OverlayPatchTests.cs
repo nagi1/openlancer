@@ -472,6 +472,26 @@ public sealed class OverlayPatchTests
         Assert.Throws<System.InvalidOperationException>(() => ws.Build(lower).Document(GoodsPath));
     }
 
+    /// <summary>Section 9.1 of the M23 design (review finding R19): the merge ignores the <c>props</c> folder of a mod,
+    /// also a group file whose text looks like a patch of the file.</summary>
+    [Fact]
+    public void TheMergeIgnoresThePropGroupsOfAMod()
+    {
+        using var ws = Workspace();
+        const string patch = "[Good]\nnickname = alpha\nprice = 150\n";
+        var plain = ws.Build(ws.Mod("plain", Patch(patch)));
+        var files = Patch(patch);
+        files[@"props\trio.ini"] = "[PropGroup]\nnickname = trio\nformat = 1\n[Good]\nnickname = alpha\nprice = 999\n";
+        files[@"props\trio.strings.json"] = """{ "strings": { "trio": "Trio" } }""";
+        files[@"props\DATA\goods.ini"] = "[Good]\nnickname = gamma\n";
+        var withProps = ws.Build(ws.Mod("props", files));
+
+        Assert.Empty(withProps.Diagnostics);
+        Assert.Equal(Describe(plain, GoodsPath), Describe(withProps, GoodsPath));
+        Assert.Equal(150, Section(withProps, "alpha")["price"]![0].ToInt32());
+        Assert.Equal(plain.StringIds.Strings, withProps.StringIds.Strings);
+    }
+
     private static TestWorkspace Workspace()
     {
         var ws = new TestWorkspace();

@@ -59,6 +59,8 @@ internal static class EditorIcons
     public const char Crosshairs = '\uf05b';
     public const char Box = '\uf466';
     public const char CubeSolid = '\uf1b2';
+    public const char Cubes = '\uf1b3';
+    public const char Images = '\uf302';
     public const char Meteor = '\uf753';
     public const char Users = '\uf0c0';
     public const char Route = '\uf4d7';

@@ -20,6 +20,10 @@ namespace OpenLancer.Editor.Hierarchy;
 /// double-click frames it in the Scene or in the Free mode of the Cutscene view. The arrow keys move the selection
 /// along the visible rows.
 /// </summary>
+/// <remarks>
+/// The rows of a system take a tile of the Assets panel, and a row drags onto the prop groups of the Assets panel
+/// (section 8.1 of the M23 design). The rows of a cutscene take no drop (review finding R20).
+/// </remarks>
 internal sealed class HierarchyPanel(EditorWindow window)
 {
     private const string SearchTip =
@@ -139,6 +143,13 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         Rows(tree, focused);
+        // The empty space below the rows takes a tile: the asset spawns at the camera pivot.
+        if (!window.CutsceneMode && ImGui.GetContentRegionAvail().Y > 1)
+        {
+            ImGui.Dummy(new Vector2(Math.Max(1, ImGui.GetContentRegionAvail().X), ImGui.GetContentRegionAvail().Y));
+            window.AssetDrag.Hierarchy(null);
+        }
+
         if (tree.IsSearching && tree.Root.Matches == 0)
         {
             PanelStates.Message(window.CutsceneMode ? "No entity matches the search." : "No object matches the search.",
@@ -298,6 +309,11 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.SetItemTooltip(node.Tooltip);
         }
 
+        if (!window.CutsceneMode)
+        {
+            DragAndDrop(node);
+        }
+
         if (ImGui.BeginPopupContextItem())
         {
             EditorTheme.PushMenuColors();
@@ -329,6 +345,24 @@ internal sealed class HierarchyPanel(EditorWindow window)
         {
             Mark(HierarchyModel.MarkOf(window.Session?.Edits.Get(section)), start, textStart);
         }
+    }
+
+    /// <summary>
+    /// The drag and drop of a row of a system (section 8.1 of the M23 design): a row of an item drags onto the prop
+    /// groups of the Assets panel, as a GameObject drags into the Unity Project window. Each row takes a tile of the
+    /// Assets panel: an object row makes a child or gets a loadout or a faction, and another row spawns at the pivot.
+    /// The drag starts only after the drag threshold, so the click and the double-click of the row keep their actions.
+    /// </summary>
+    private void DragAndDrop(HierarchyNode node)
+    {
+        if (node.Item is { } item && window.SceneEdits.SectionOf(item) is { } section &&
+            ImGui.BeginDragDropSource())
+        {
+            window.AssetDrag.SourceOf(section, node.Name, node.Kind);
+            ImGui.EndDragDropSource();
+        }
+
+        window.AssetDrag.Hierarchy(node.Item);
     }
 
     /// <summary>
@@ -542,6 +576,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             }
 
             window.SceneEdits.ItemMenu(item);
+            window.SceneEdits.SaveGroupMenuItem(item);
             ImGui.Separator();
         }
 

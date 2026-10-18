@@ -22,20 +22,25 @@ internal sealed class HeadlessScene : IDisposable
     private readonly EditSession session;
 
     public HeadlessScene(EditSession session, string system)
+        : this(session, system, RetailGame.Instance.Data, RetailGame.Instance.Resources)
+    {
+    }
+
+    /// <summary>A scene of the system of other loaded data, for example the data that loads again after a save.</summary>
+    public HeadlessScene(EditSession session, string system, GameDataManager data, ResourceManager resources)
     {
         this.session = session;
-        var game = RetailGame.Instance;
-        Source = game.Data.Items.Systems.Get(system) ?? throw new ArgumentException($"No system {system}.", nameof(system));
+        Source = data.Items.Systems.Get(system) ?? throw new ArgumentException($"No system {system}.", nameof(system));
         System = Source.Clone();
         // A world without a renderer is a server world unless the caller says otherwise (GameWorld.cs:81). This scene
         // has the type of the editor scene (SceneView).
-        World = new GameWorld(null, null, game.Resources, () => 0, true)
+        World = new GameWorld(null, null, resources, () => 0, true)
         {
             DefaultObjectType = EquipmentType.Editor,
         };
-        World.LoadSystem(System, game.Resources, null);
+        World.LoadSystem(System, resources, null);
         Objects = World.Objects.Where(o => o.SystemObject != null).ToDictionary(o => o.SystemObject!);
-        Applier = new SceneApplier(session, game.Data.Items, game.Resources, System, World, Objects, Host);
+        Applier = new SceneApplier(session, data.Items, resources, System, World, Objects, Host);
         session.Changed += Applier.Note;
     }
 

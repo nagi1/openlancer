@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
@@ -6,8 +7,10 @@ using LibreLancer.ImUI;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Editing.Scene;
+using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
@@ -26,6 +29,9 @@ namespace OpenLancer.Editor.Editing;
 /// D238). A rename starts in the Hierarchy row (decision D242), and asks only when the plan has warnings.</para>
 /// <para>The selection follows Unity (decision D249): Create and Duplicate select the new item, Delete clears the
 /// selection, and a rename keeps it.</para>
+/// <para>The asset browser of milestone M23 adds the spawn of an asset, the static prop archetypes, the components of a
+/// dropped loadout or faction, and "Save as prop group". A spawn opens the pickers that its asset needs and runs its
+/// plan as a Create. A placement of a prop group selects its first member, as a Duplicate does.</para>
 /// </remarks>
 internal sealed class SceneEdits(EditorWindow window)
 {
@@ -39,6 +45,7 @@ internal sealed class SceneEdits(EditorWindow window)
 
     private readonly PickDialog picker = new();
     private readonly PlanDialog dialog = new();
+    private readonly PropGroupDialog groupDialog = new();
 
     /// <summary>The section whose Hierarchy row shows the rename field, or null.</summary>
     public SectionRef? Renaming { get; private set; }
@@ -50,12 +57,13 @@ internal sealed class SceneEdits(EditorWindow window)
     public bool RenameStarted { get; set; }
 
     /// <summary>True while a dialog of the actions is open.</summary>
-    public bool IsOpen => picker.IsOpen || dialog.IsOpen;
+    public bool IsOpen => picker.IsOpen || dialog.IsOpen || groupDialog.IsOpen;
 
     public void Draw()
     {
         picker.Draw();
         dialog.Draw();
+        groupDialog.Draw();
     }
 
     /// <summary>The section of an item of the open system that the actions take: an object, a zone, a light, a nebula or
@@ -145,6 +153,225 @@ internal sealed class SceneEdits(EditorWindow window)
             Delete(SectionOf(item)!);
     }
 
+    /// <summary>The menu item "Save as prop group..." of a Hierarchy row (section 6.4 of the M23 design), disabled with its
+    /// reason when it cannot run.</summary>
+    public void SaveGroupMenuItem(object? item)
+    {
+        var unavailable = window.Session is not { } session ? "No profile is open."
+            : session.NoEditReason ?? (SectionOf(item) == null
+                ? "Select an object, a zone or a light of the open system."
+                : null);
+        if (Theme.IconMenuItem(EditorIcons.Cubes, "Save as prop group...", unavailable == null))
+            SaveGroup(SectionOf(item)!);
+        ImGui.SetItemTooltip(unavailable ?? "Saves the item and its children as a prop group of the mod.");
+    }
+
+    /// <summary>
+    /// Opens the dialog "Save as prop group" for an item and its <c>parent</c> children (decision D291 of the M23 design).
+    /// The dialog writes the group at once, as Unity writes a prefab asset. Then the Assets panel shows the new tile.
+    /// </summary>
+    public void SaveGroup(SectionRef section)
+    {
+        if (window.Session is not { } session)
+            return;
+        if (session.NoEditReason is { } reason)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, Source, reason, section);
+            return;
+        }
+
+        var draft = PropGroups.Draft(session.Edits, [section]);
+        groupDialog.ShowSave(session.Edits, draft, group =>
+        {
+            window.Log.Add(ConsoleSeverity.Info, Source,
+                $"Saved the prop group {group.Name} with {group.Members.Count} members in {group.File}.");
+            window.Assets.Show(new AssetRef(AssetKind.PropGroup, group.Nickname, null, group.File));
+        });
+    }
+
+    /// <summary>Opens the rename dialog of a prop group of the active mod (decision D294 of the M23 design).</summary>
+    public void RenameGroup(PropGroup group)
+    {
+        if (window.Session is not { } session)
+            return;
+        groupDialog.ShowRename(session.Edits, group, renamed =>
+            window.Assets.Show(new AssetRef(AssetKind.PropGroup, renamed.Nickname, null, renamed.File)));
+    }
+
+    /// <summary>Deletes a prop group of the active mod after the question of decision D294. The copies in the systems
+    /// stay. Undo does not take the delete back, as in the Unity Project window.</summary>
+    public void DeleteGroup(PropGroup group)
+    {
+        if (window.Session is not { } session)
+            return;
+        window.Choice.Show("Delete prop group", $"Delete the prop group {group.Name}? You cannot undo this.",
+        [
+            new Choice("Delete", () =>
+            {
+                try
+                {
+                    PropGroups.Delete(session.Edits, group);
+                    window.Log.Add(ConsoleSeverity.Info, Source, $"Deleted the prop group {group.Name}.");
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+                {
+                    window.Log.Add(ConsoleSeverity.Error, Source, $"The prop group {group.Name} was not deleted: {e.Message}");
+                }
+            }),
+            new Choice("Cancel", () => { }),
+        ]);
+    }
+
+    /// <summary>
+    /// Spawns an asset at a point of the open system (section 8 of the M23 design): a solar archetype with its template,
+    /// a ship, an asteroid or a model through a static prop archetype, or a prop group. The pickers of the asset open
+    /// first. Each spawn is one entry of the edit history.
+    /// </summary>
+    /// <param name="parentRow">The object of a Hierarchy row that gets the new object, or each root object of a group,
+    /// as a child (decision D234), or null.</param>
+    public void Spawn(AssetRow row, Vector3 point, SectionRef? parentRow)
+    {
+        if (window.Session is not { } session || window.Scene.System is not { } system)
+            return;
+        if (Unavailable(SceneAction.Create, null) is { } reason)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, Source, reason);
+            return;
+        }
+
+        var parent = parentRow is { Id.Type: var type } && type.Equals("Object", StringComparison.OrdinalIgnoreCase)
+            ? parentRow
+            : null;
+        switch (row.Asset.Kind)
+        {
+            case AssetKind.SolarArchetype:
+                SpawnArchetype(session, system.Nickname, row.Asset.Id, point, parent);
+                break;
+            case AssetKind.Ship or AssetKind.Asteroid or AssetKind.Model:
+                SpawnProp(session, system.Nickname, row, point, parent);
+                break;
+            case AssetKind.PropGroup:
+                PlaceGroup(session, system.Nickname, row.Asset, point, parent);
+                break;
+            default:
+                window.Log.Add(ConsoleSeverity.Warning, Source, row.NotPlaceable ?? "The Scene does not place this asset.");
+                break;
+        }
+    }
+
+    /// <summary>A solar archetype spawns with the template of its type, without the archetype picker (decision D277). A
+    /// station with a docking sphere then opens the base picker.</summary>
+    private void SpawnArchetype(EditorSession session, string system, string archetype, Vector3 point, SectionRef? parent)
+    {
+        var edits = session.Edits;
+        // An archetype without a template gives the reason of the plan.
+        var template = ScenePlans.TemplateFor(edits, archetype) ?? SceneTemplate.Solar;
+        if (!ScenePlans.AsksForBase(edits, template, archetype))
+        {
+            Run(ScenePlans.Create(edits, system, template, archetype, point, parent));
+            return;
+        }
+
+        PickBase(session, system, template, archetype, point, parent);
+    }
+
+    /// <summary>
+    /// A ship, an asteroid or a model spawns through a solar archetype of its model (decision D278): the picker lists the
+    /// archetypes of W with the model, and its button "New static prop archetype" makes a new one (decision D279). Esc
+    /// makes nothing.
+    /// </summary>
+    private void SpawnProp(EditorSession session, string system, AssetRow row, Vector3 point, SectionRef? parent)
+    {
+        var edits = session.Edits;
+        if (edits.Assets.ModelOf(row.Asset) is not { } source)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, Source, row.NotPlaceable ?? $"{row.Nickname} has no model.");
+            return;
+        }
+
+        var stem = row.Asset.Kind == AssetKind.Model ? Path.GetFileNameWithoutExtension(row.Asset.Id) : row.Asset.Id;
+        var name = row.Asset.Section != null && session.SectionName(row.Asset.Section) is { Length: > 0 } text
+            ? text
+            : row.Nickname;
+        var existing = PropArchetypes.Existing(edits, source);
+        picker.Show($"Create: prop of {name}",
+            existing.Count == 0
+                ? "No solar archetype has this model. Make a new static prop archetype, or press Esc to make nothing."
+                : "Pick a solar archetype with this model, or make a new static prop archetype. Esc makes nothing.",
+            ObjectKinds.OtherObject,
+            existing.Select(a => (a.Entry, session.SectionName(a.Entry.Section!) is { Length: > 0 } archetypeName
+                ? archetypeName
+                : a.Nickname, a.Type)).ToList(),
+            picked => SpawnArchetype(session, system, picked.Value, point, parent),
+            "Cancel", null,
+            "New static prop archetype",
+            () => Run(ScenePlans.CreateProp(edits, system, source, stem, point, parent)));
+    }
+
+    /// <summary>The menu item "New static prop archetype" of a tile: a new <c>[Solar]</c> of the model of a ship, an
+    /// asteroid or a model, and an object of it at a point, without the picker (decision D279).</summary>
+    public void NewProp(AssetRow row, Vector3 point)
+    {
+        if (window.Session is not { } session || window.Scene.System is not { } system)
+            return;
+        if (Unavailable(SceneAction.Create, null) is { } reason)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, Source, reason);
+            return;
+        }
+
+        if (session.Edits.Assets.ModelOf(row.Asset) is not { } source)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, Source, row.NotPlaceable ?? $"{row.Nickname} has no model.");
+            return;
+        }
+
+        var stem = row.Asset.Kind == AssetKind.Model ? Path.GetFileNameWithoutExtension(row.Asset.Id) : row.Asset.Id;
+        Run(ScenePlans.CreateProp(session.Edits, system.Nickname, source, stem, point, null));
+    }
+
+    /// <summary>
+    /// Places a prop group (decisions D288 and D290). When a planned line has an error, the dialog lists each such line
+    /// and offers "Place without these lines" and Cancel.
+    /// </summary>
+    private void PlaceGroup(EditorSession session, string system, AssetRef asset, Vector3 point, SectionRef? parent)
+    {
+        var edits = session.Edits;
+        if (PropGroups.Of(edits).FirstOrDefault(g => g.File == asset.File) is not { } group)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, Source, $"The prop group {asset.Id} is not on disk now.");
+            return;
+        }
+
+        var plan = PropGroups.Place(edits, system, group, point, parent);
+        if (plan.Command != null || plan.PlacementErrors.Count == 0)
+        {
+            Run(plan);
+            return;
+        }
+
+        var message = "These lines name entries that this profile does not have. A line with an error cannot go into " +
+                      "the mod:\n\n" + string.Join("\n", plan.PlacementErrors.Select(e => $"{e.Member}: {e.Message}"));
+        window.Choice.Show($"Place {group.Name}", message,
+        [
+            new Choice("Place without these lines", () => Run(PropGroups.Place(edits, system, group, point, parent, true))),
+            new Choice("Cancel", () => { }),
+        ]);
+    }
+
+    /// <summary>
+    /// Sets the loadout or the faction of a dropped tile on an object (decision D281 of the M23 design), as one entry of
+    /// the edit history "Set loadout of &lt;object&gt;". It also replaces a present line (review finding R18).
+    /// </summary>
+    public void SetComponent(SectionRef section, AssetRow row)
+    {
+        var (kind, what) = row.Asset.Kind == AssetKind.Loadout
+            ? (ObjectComponent.LoadoutUser, "loadout")
+            : (ObjectComponent.FactionMember, "faction");
+        window.Edits.Execute(() => EditCommand.Group($"Set {what} of {section.Id.Key}",
+            [ObjectComponents.Add(section, kind, row.Asset.Id)]));
+    }
+
     private bool MenuItem(char icon, string label, string shortcut, SceneAction action, object? item)
     {
         var unavailable = Unavailable(action, item);
@@ -184,15 +411,23 @@ internal sealed class SceneEdits(EditorWindow window)
                     return;
                 }
 
-                var bases = ScenePlans.Bases(edits, system.Nickname);
-                picker.Show("Create: base", $"Pick the base that {archetype.Value} docks with. Esc makes the station " +
-                                            "without a base.", ObjectKinds.Station,
-                    bases.Select(b => (b, BaseName(b), BaseSystem(edits, b))).ToList(),
-                    picked => Run(ScenePlans.Create(edits, system.Nickname, template, archetype.Value, position, parent,
-                        picked.Value)),
-                    "No base",
-                    () => Run(ScenePlans.Create(edits, system.Nickname, template, archetype.Value, position, parent)));
+                PickBase(session, system.Nickname, template, archetype.Value, position, parent);
             });
+    }
+
+    /// <summary>The base picker of a station (decision D263): the bases of the system first. Esc makes the station
+    /// without a base. The station and its base are one entry of the edit history.</summary>
+    private void PickBase(EditorSession session, string system, SceneTemplate template, string archetype, Vector3 position,
+        SectionRef? parent)
+    {
+        var edits = session.Edits;
+        var bases = ScenePlans.Bases(edits, system);
+        picker.Show("Create: base", $"Pick the base that {archetype} docks with. Esc makes the station without a base.",
+            ObjectKinds.Station,
+            bases.Select(b => (b, BaseName(b), BaseSystem(edits, b))).ToList(),
+            picked => Run(ScenePlans.Create(edits, system, template, archetype, position, parent, picked.Value)),
+            "No base",
+            () => Run(ScenePlans.Create(edits, system, template, archetype, position, parent)));
 
         string BaseName(ListEntry entry) =>
             entry.Section != null && session.ItemName(entry.Section) is { Length: > 0 } name ? name : entry.Value;
@@ -320,9 +555,15 @@ internal sealed class SceneEdits(EditorWindow window)
             case SceneAction.Delete:
                 window.Selection = null;
                 break;
-            case SceneAction.Create or SceneAction.Duplicate when plan.SelectAfter is { } added:
+            case SceneAction.Create or SceneAction.Duplicate or SceneAction.Place when plan.SelectAfter is { } added:
                 window.Scene.SelectWhenShown(added);
-                if (plan.Action == SceneAction.Create)
+                // A new static prop archetype is not in the loaded game data, so the Hierarchy has no row for its object
+                // until the reload (decision D282 of the M23 design).
+                if (plan.NewArchetype is { } archetype)
+                    window.Log.Add(ConsoleSeverity.Info, Source, $"The Scene shows {added.Id.Key} after the save. The game " +
+                                                                 $"data then loads the new archetype {archetype.Id.Key}.",
+                        added);
+                else if (plan.Action == SceneAction.Create)
                     BeginRename(added);
                 break;
             case SceneAction.Rename when plan.SelectAfter is { } renamed && window.Selection is SectionRef:

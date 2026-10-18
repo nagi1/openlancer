@@ -13,6 +13,8 @@ Format version 2 adds the tier and the targets of a mod to `mod.json`. The patch
   patches/<install path>.ini   entry-level changes to an INI file
   patches/<install path>.thn   changes to a cutscene script (see "Cutscenes")
   files/<install path>         a file that the mod adds or replaces
+  props/<nickname>.ini         a prop group of the editor (see "Prop groups"). The merge ignores it.
+  props/<nickname>.strings.json  the text of a prop group. The merge ignores it.
   .olsave/                     the editor's save folder (see "The editor"). The merge ignores it.
 ```
 
@@ -241,6 +243,68 @@ Freelancer also shows a string id in `ids_info` as an infocard with plain text, 
 
 A file in `files/` adds a new file, or replaces the file at the same install path. Patches of later mods apply to the replaced file. A replacement discards the changes of the mods that load before it, and the merge reports a warning that names them. Put new assets under `DATA/MODS/<mod id>/` so that they do not collide with other mods.
 
+## Prop groups
+
+A prop group is a set of separate objects, zones and lights. The editor saves it in the `props/` folder of a mod, as Unity saves a prefab asset. The editor places a group again in any system, and each member becomes a separate item. The merge, the game, `oltool deploy` and the validation ignore the folder. So a group changes no game data until you place it.
+
+A group file is plain INI with the comment of the editor at the top:
+
+```ini
+; OpenLancer prop group, format 1. The game does not read this file.
+; The editor places each member as a separate object, zone or light.
+[PropGroup]
+nickname = transport_trio
+name = Three transports
+format = 1
+
+[Object]
+member = large_transport_2
+pos = -285, 0, 20
+archetype = large_transport
+```
+
+- `[PropGroup]` is the first section. `nickname` is the file name. It has lowercase letters, digits, `-` and `_`, and starts with a letter. `name` is ASCII text without `;`.
+- The editor reads format 1. A file with a later format does not read: "OpenLancer cannot read prop group format 2. It reads format 1."
+- Each member has the section type of the system file: `[Object]`, `[zone]` or `[LightSource]`. `member` replaces `nickname`, and each member id is unique in the file without letter case. A member id can hold a space, as some retail nicknames do.
+- `pos` is relative to the anchor of the group. The other lines keep their text.
+- `parent` and `ring` name a member id.
+- A text placeholder `$str:<key>` or `$ifc:<key>` names a key of `props/<nickname>.strings.json`, in the format of `strings.json`.
+
+The editor shows each problem of a group file with its line. The problems are: no `[PropGroup]` section first, a repeated member id, and a `parent` or a `ring` that names no member. Also an unknown section type, a `pos` that is not three numbers, and a text key that the file of the texts does not have. A group with a problem does not place.
+
+### Save as prop group
+
+"Save as prop group..." in the menu of a Hierarchy row saves the item and its `parent` children, again and again. You can also drag a Hierarchy row onto the category "Prop groups" of the Assets panel. This is how you drag a GameObject into the Unity Project window. The dialog shows the members with their positions, the lines that the group leaves out with their reasons, and the warnings.
+
+- The member id is the nickname without its system, for example `large_transport_2` for `Li01_large_transport_2`. A repeated id takes the next number, as a copy does.
+- The anchor is the center of the box that holds the member positions, in whole numbers.
+- A `base` line goes, because a base has one object in space.
+- A `parent` or a `ring` line that names an item outside the group goes. Such a line that names a member names its member id.
+- A `dock_with` line stays in the file.
+- A text of the active mod, and a text of a lower mod, go into the file of the texts. A numeric text id of the base data stays.
+- A line that names an entry that the active mod did not save gets a warning. Save the mod, or the group names an entry that the mod does not have.
+- The editor refuses connection objects, nebulae, asteroid fields, the zones that hold them, and items of more than one system file.
+
+The editor writes the group at once, under the lock of the mod: the file of the texts first, then the group file. `Ctrl+S` does not save it, and Undo does not remove it, as in Unity. Rename (`F2`) moves both files and changes the `nickname` line. Delete asks first and removes both files. The placed copies stay.
+
+The Assets panel shows the groups of the active mod and of the mods that load before it. Only a group of the active mod can change. The editor reads the folders again when its window gets the focus, so a group that another program wrote shows.
+
+### Place a prop group
+
+A drag of a group tile into the Scene places the group, and so does "Place at the camera pivot". The placement is one entry of the edit history, "Place <name>". One Undo removes all members.
+
+- Each member gets the nickname `<system>_<member>` in lowercase. When an item has the nickname, the member takes the numbering of a copy. A light checks the lights of the file only.
+- The position is the point of the drop plus the relative position, in whole numbers. Each member keeps its `rotate`.
+- The members go to the end of the system file, the parents first. The first member is selected.
+- A drop on an object row of the Hierarchy gives each root object `parent = <that object>`.
+- A `dock_with` whose base is in another system goes, with a warning. Add the Dockable station component to pick a base.
+- Each text of the group becomes a new text of the active mod.
+- The copies keep no link to the group, as a Unity prefab that you unpack.
+
+The placement checks each planned line with the data lists before the line goes into W. A line with an error never reaches the mod. The dialog lists each such line with what the game does with it, and offers "Place without these lines" and Cancel. A required line cannot go, so an unknown archetype refuses the whole placement: "<member>: the archetype <value> is not in this profile. The game drops this object. Add the mod that has <value> to the profile."
+
+The game package of an export leaves `props/` out, because the game does not read it. Milestone M11 decides if a source package for other modders holds the group files.
+
 ## Cutscenes
 
 A cutscene script (`.thn`) is a Lua 3.2 script. The retail scripts are bytecode. The engine also reads Lua text, so a mod gives its cutscene changes as text. A mod changes a cutscene in one of two ways:
@@ -465,7 +529,7 @@ The numbers that a drag writes:
 
 For example, a snapped move of `Li01_14_depot_water` by 1,000 along the world X axis writes `pos = -37675, 0, -27705`. The save then writes `patches/DATA/Universe/Systems/Li01/Li01.ini` with the `nickname` line and the `pos` line of the depot.
 
-The Scene shows each edit of an item or of a section of the system in the next frame. This includes a drag, an edit in the Inspector, an undo, a redo and a restore of the unsaved edits of an earlier session. A key that loads a model, for example `archetype` or `loadout`, shows after the field or the drag ends. While the game data loads again after a save, it shows after the load. A new name shows in the label, the Hierarchy, the window title and the system list before the save. The unsaved edits stay in the Scene when you open another system and then open the system again. When the Scene cannot show the state of a section, it keeps the last valid state of the item. The Inspector and the Console tell why. For example, the game drops an object whose `archetype` does not exist, and the editor keeps its last model. Such an archetype is an error that stops the save (see "The save gate"). An archetype that the active mod adds and did not save is in the list, so it is no error. The Scene shows it after the save and the game data reload.
+The Scene shows each edit of an item or of a section of the system in the next frame. This includes a drag, an edit in the Inspector, an undo, a redo and a restore of the unsaved edits of an earlier session. A key that loads a model, for example `archetype` or `loadout`, shows after the field or the drag ends. While the game data loads again after a save, it shows after the load. A new name shows in the label, the Hierarchy, the window title and the system list before the save. The unsaved edits stay in the Scene when you open another system and then open the system again. When the Scene cannot show the state of a section, it keeps the last valid state of the item. The Inspector and the Console tell why. For example, the game drops an object whose `archetype` does not exist, and the editor keeps its last model. Such an archetype is an error that stops the save (see "The save gate"). An archetype that the active mod adds and did not save is in the list, so it is no error. The Scene shows it after the save and the game data reload. After the reload, the editor opens the system again when a section of it waited for the reload. The camera and the selection stay.
 
 In these cases a section is read-only. The gizmo does not show, and the lock of each row tells why.
 
@@ -511,11 +575,13 @@ The Create menu has five object templates, a zone of each shape, and a light:
 
 An object template opens the picker of its archetypes. `Esc` makes nothing. The station then opens the picker of the bases, with the bases of the system first. The new station docks with the base that you pick (`dock_with`). `Esc` in the base picker makes the station without a base.
 
+The Create menu lists only the stations with a docking sphere, because a base needs one. The Assets panel also places a station archetype without a docking sphere, as retail places one in Ku07. Such a station gets no base step. A tile is the pick of the archetype, so a spawn from the Assets panel opens no archetype picker (see "The Assets panel").
+
 The new item goes to the orbit point of the Scene camera, as Unity puts a new object at the pivot of the Scene view. Its `pos` has whole numbers. Create on an object row of the Hierarchy puts a new object at the position of that object and gives it `parent = <that object>`. A zone and a light have no `parent` key, so they get the position only.
 
 The nickname is `<system>_<template>_<n>` in lowercase with the first free n, for example `li01_station_1`, `li01_zone_1` or `li01_light_1`. The new item is selected, and its Hierarchy row opens the rename field. A zone gets the `size` of its shape. A sphere gets `1000`, an ellipsoid `2000, 1000, 2000` and a box `2000, 2000, 2000`. A cylinder gets `1000, 2000`, and a ring gets `2000, 1000, 200` (outer radius, inner radius, height). A light gets `color = 255, 255, 255`, `range = 5000`, `type = POINT` and `attenuation = 1, 0, 0.000001`. Without the attenuation, the engine makes a point light that is almost black at 1,000 m.
 
-A new item has its full lines in the patch, with `ol.new = true`. A system file needs no `[Archetype]` line for a new object. The loaded game data does not have an unsaved archetype of the active mod. An object with such an archetype shows in the Scene after the save and the game data reload.
+A new item has its full lines in the patch, with `ol.new = true`. A system file needs no `[Archetype]` line for a new object. The loaded game data does not have an unsaved archetype of the active mod. An object with such an archetype shows in the Scene after the save and the game data reload. The editor then opens the system again, so you need not open it yourself.
 
 #### Duplicate
 
@@ -603,6 +669,58 @@ The page of an object has a "Behaviors" section. It shows the pilot, the behavio
 
 The Hierarchy marks a row whose section the active mod changes with a blue bar at its left, as Unity marks a prefab override. A row whose section the active mod adds also gets a `+`.
 
+### The Assets panel
+
+The Assets panel is the first tab of the bottom group, as the Unity Project window. It shows the assets of the edit view: the base data, the lower mods, and the active mod with its unsaved edits. So a new item of the active mod shows before a save.
+
+| Category | Rows | In the Scene |
+|---|---|---|
+| Prop groups | the groups of `props/` (see "Prop groups") | Placed as separate items |
+| Solars | the solar archetypes, in one child for each Create template, and "Jump gates, holes and lanes" | Placed with their template |
+| Ships | the `[Ship]` sections | Placed as a static prop |
+| Asteroids | the `[Asteroid]` sections of `[Data] asteroids` | Placed as a static prop |
+| Equipment | the equipment, in one child for each section type | Not placed: equipment goes on an object through its loadout |
+| Effects | the `[Effect]` sections | Not placed: an effect goes on an object through equipment in its loadout |
+| Loadouts | the `[Loadout]` sections | On an object only |
+| Factions | the `[Group]` sections of `initialworld.ini` | On an object only |
+| Models | the `.cmp`, `.3db` and `.sph` files below `DATA`, by top folder | Placed as a static prop when a solar archetype, a ship or an asteroid uses the model |
+
+The rule data gives the categories. A solar archetype whose type is in no template shows in "Other solar" with a lock: it does not spawn. Jump gates, jump holes, airlock gates and trade lane rings show with a lock until milestone M27.
+
+The toolbar has the search field (`Ctrl+F`), the path of the category, and the size slider. The smallest size shows a list. The search finds the name, the nickname, the type and the model file, without letter case. "All assets" searches each category. A tile shows a "+" when the active mod adds the item, and a blue bar when it changes it. A ship, an asteroid or a model shows a "prop" badge when a solar archetype uses its model. The hover tooltip shows a larger image, the layer, the model file, and the number of lines that name the entry.
+
+A click selects the asset when the mouse button comes up without a drag. So a drag never changes the selection, as in Unity. The Inspector shows the page of the asset. A ship gets the ship page, and equipment gets the equipment page. Another entry gets the page of its section, and a model or a prop group gets a page of its own. A double-click or `Enter` opens the asset: it selects the asset and shows the Inspector. The arrow keys move the selection. The menu of a tile has "Place at the camera pivot", "New static prop archetype", "Copy nickname" and "Copy model path". A group of the active mod also has Rename (`F2`), Delete (`Delete`) and "Show in folder".
+
+Drag a tile to one of these places:
+
+- **The Scene.** A placeable asset goes to the point on the grid plane under the cursor. The ray must meet the plane in front of the camera, within 4 times the distance to the orbit point. Else the asset goes on the ray at the distance of the orbit point. Each value is a whole number. A ghost shows the point while you drag. A loadout or a faction goes on the object under the cursor.
+- **A Hierarchy row.** A placeable asset goes to the position of the object of the row, as its child (`parent`). Another row and the empty space below the rows place the asset at the orbit point. A loadout or a faction goes on the object of the row.
+- **An Inspector list field.** A tile of an entry of the list of the field sets the value, as a pick does. For example, drag a loadout tile onto the `loadout` field of an object.
+
+A target that cannot take the asset shows the reason under the cursor, and the drop does nothing. The Hierarchy of a cutscene takes no drop. Each spawn and each drop is one entry of the edit history. A loadout or a faction drop replaces the line, with the entry "Set loadout of <object>".
+
+A solar archetype uses the template of its type. A station with a docking sphere then opens the base picker. A ship, an asteroid or a model opens the picker of the solar archetypes that use its model. Retail uses such archetypes for docking battleships, wrecks and decor ships. "New static prop archetype" adds a new `[Solar]` at the end of the first file of the solar archetypes. It also adds an object of it, in the same entry of the edit history:
+
+```ini
+[Solar]
+nickname = br_gunboat_prop
+type = NON_TARGETABLE
+DA_archetype = <the DA_archetype line of the ship>
+material_library = <each material_library line of the ship>
+envmap_material = <the envmap_material line of the ship, when it has one>
+LODranges = <the LODranges line of the ship, when it has one>
+```
+
+The lines are the model lines of the source. The nickname is `<stem>_prop`, then `_prop_2` and on. No solar archetype, ship or equipment has it, also not by FLHash. The archetype has no `hit_pts` and no `destructible` line, so the prop cannot be destroyed. The loaded game data does not have the new archetype, so the Scene shows the object after the save and the game data reload. The Console tells it.
+
+The `archetype` and the `loadout` rows of an object page have a button that shows the value in the Assets panel, as the Unity ping.
+
+#### Thumbnails
+
+The engine renders an image of the model of each tile that shows, one new image in each frame at most. It renders only while the game data is loaded and no reload runs, and not while the camera moves or a drag runs. A tile shows the glyph of its kind until its image is ready. A model that no solar archetype, ship or asteroid uses, an effect, a loadout and a faction show their glyph. "Thumbnails: Rendered" in the View menu turns the images off. Then a hover still shows the image.
+
+The editor keeps the images in `%LOCALAPPDATA%\OpenLancer\thumbnails`, one `.olthumb` file for each image. The key of an image holds the files of its model with their layers, lengths and times, so a changed model gets a new image. Over 200 MiB, the editor deletes the least recently used images until the folder uses less than 150 MiB. An image shows retail art, so it never goes into a repository or an export. `tools/content_scan.py` refuses the extension and the signature of these files.
+
 ### Data lists and pickers
 
 A key that names another section, for example the `archetype`, the `loadout` or the `reputation` of an `[Object]`, gets a picker. The picker lists the sections that the engine reads for the key: the base data, the mods that load before the active mod, and the active mod with its unsaved edits. So a loadout that the active mod adds is in the list before a save. A mod extends a list when it adds sections. Only a set that the engine fixes, for example the type of a docking sphere, comes from the editor.
@@ -635,6 +753,8 @@ The `zone` key uses the list of the zones of the system file. A zone that the sy
 The Inspector page of a nebula or a field shows the zone and the file with its picker. It also shows the area of the zone, the holes and the sections of the file. The sections of a nebula or asteroid file are read-only until a later milestone. The Scene shows another file when you open the system again after the save.
 
 The editor reads some files only for the lists, for example `solararch.ini` and `loadouts.ini`. Their sections are read-only in the Inspector until a later milestone gives them their pages.
+
+The Assets panel uses two more lists. The `asteroid` list holds the `[Asteroid]` sections of the files of `[Data] asteroids`. The `model` list holds the `.cmp`, `.3db` and `.sph` files below `DATA`. A list field also takes a tile of the Assets panel (see "The Assets panel").
 
 ### The raw INI block
 

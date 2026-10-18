@@ -2,6 +2,7 @@
   "// about": "The data lists of the editor (milestone M21). Roles tell how the engine finds its files. Lists tell which sections give the entries. Rules map one value of one key to a list. A rule is open unless it is closed with an evidence line of the engine (decision D109). Paths of roles are relative to the data folder of freelancer.ini. See docs/MOD_FORMAT.md, 'Data lists and the save gate'.",
   "roles": {
     "solar":        { "data": "solar" },
+    "asteroids":    { "data": "asteroids" },
     "stars":        { "data": "stars", "last": true, "fallback": "SOLAR\\stararch.ini" },
     "loadouts":     { "data": "loadouts" },
     "groups":       { "paths": ["initialworld.ini"] },
@@ -113,7 +114,11 @@
     { "id": "nebula_file", "label": "Nebula file", "kind": "Nebula",
       "source": { "files": ".ini", "folder": "SOLAR\\NEBULA", "fileClass": "LibreLancer.Data.Schema.Universe.Nebula" } },
     { "id": "asteroid_file", "label": "Asteroid file", "kind": "AsteroidField",
-      "source": { "files": ".ini", "folder": "SOLAR\\ASTEROIDS", "fileClass": "LibreLancer.Data.Schema.Universe.AsteroidField" } }
+      "source": { "files": ".ini", "folder": "SOLAR\\ASTEROIDS", "fileClass": "LibreLancer.Data.Schema.Universe.AsteroidField" } },
+    { "id": "asteroid", "label": "Asteroid", "kind": "Asteroid",
+      "source": { "role": "asteroids", "sections": ["Asteroid"] }, "detail": ["DA_archetype"] },
+    { "id": "model", "label": "Model", "kind": "Model",
+      "source": { "files": [".cmp", ".3db", ".sph"], "folder": "." } }
   ],
   "rules": [
     { "role": "system", "section": "Object", "key": "archetype", "list": "solar_archetype",
@@ -344,5 +349,17 @@
     { "id": "satellite", "label": "Satellite or buoy", "types": ["satellite", "waypoint"] },
     { "id": "solar", "label": "Other solar",
       "types": ["mission_satellite", "non_targetable", "weapons_platform", "destroyable_depot"] }
+  ],
+  "// assetCategories": "The top categories of the Assets panel (milestone M23, decision D267), in the order of the category tree. A category takes its rows from a list or from a kind. The split 'sceneTemplates' makes one child for each template of sceneTemplates and one for connectionTypes, so the types of a category and of its Create template cannot differ. The split 'section' makes one child for each section type, and 'folder' one for each top folder below the data folder.",
+  "assetCategories": [
+    { "id": "groups", "label": "Prop groups", "kind": "propGroups" },
+    { "id": "solars", "label": "Solars", "list": "solar_archetype", "split": "sceneTemplates" },
+    { "id": "ships", "label": "Ships", "list": "ship" },
+    { "id": "asteroids", "label": "Asteroids", "list": "asteroid" },
+    { "id": "equipment", "label": "Equipment", "list": "equipment", "split": "section" },
+    { "id": "effects", "label": "Effects", "list": "effect" },
+    { "id": "loadouts", "label": "Loadouts", "list": "loadout" },
+    { "id": "factions", "label": "Factions", "list": "faction" },
+    { "id": "models", "label": "Models", "list": "model", "split": "folder" }
   ]
 }

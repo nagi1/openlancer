@@ -7,9 +7,11 @@ using System.Numerics;
 using LibreLancer;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
+using LibreLancer.Resources;
 using LibreLancer.World.Components;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Editing.Scene;
 using OpenLancer.Data.Validation;
 using Xunit;
@@ -478,5 +480,69 @@ public sealed class SceneStructureRetailTests(ITestOutputHelper output)
         scene.Applier.Run();
         Assert.True(HasObject());
         Assert.Contains(field, scene.System.AsteroidFields);
+    }
+
+    /// <summary>
+    /// The asset browser of milestone M23: a spawn and a group placement add their world objects in one flush, and one
+    /// Undo removes them. A new static prop archetype gives no item before the reload, so the applier waits for the reload
+    /// (decisions D248 and D282). The scene of the data that loads again after the save has the object.
+    /// </summary>
+    [Fact]
+    public void ASpawnAndAPlacementAddTheirItemsAndANewPropWaitsForTheReload()
+    {
+        using var workspace = SceneRetail.Workspace("m23scene");
+        var session = workspace.Open();
+        using var scene = new HeadlessScene(session, "Bw05");
+        scene.Applier.CatchUp();
+        var objects = scene.System.Objects.Count;
+        Assert.False(scene.Applier.WaitsForReload);
+
+        var planet = session.Assets.Rows("solars/planet")[0].Nickname;
+        var spawn = ScenePlans.Create(session, "Bw05", SceneTemplate.Planet, planet, new Vector3(30_000, 0, 30_000), null);
+        session.Execute(spawn.Command!);
+        scene.Applier.Run();
+        Assert.Equal(objects + 1, scene.System.Objects.Count);
+        Assert.Equal(new Vector3(30_000, 0, 30_000), scene.Objects[scene.Object(spawn.Adds[0].Id.Key!)].Transform.Position);
+
+        var li01 = new[] { "Li01_14_large_transport_1", "Li01_large_transport_2", "Li01_large_transport_3" }
+            .Select(n => SceneRetail.Section(session, SceneRetail.Li01, "Object", n)).ToList();
+        var group = PropGroups.Write(session, PropGroups.Draft(session, li01), "trio", "Trio");
+        var place = PropGroups.Place(session, "Bw05", group, new Vector3(-30_000, 0, 30_000), null);
+        session.Execute(place.Command!);
+        scene.Applier.Run();
+        Assert.Equal(objects + 4, scene.System.Objects.Count);
+        Assert.All(place.Adds, a => Assert.Contains(scene.Object(a.Id.Key!), scene.Objects.Keys));
+        session.Undo();
+        scene.Applier.Run();
+        Assert.Equal(objects + 1, scene.System.Objects.Count);
+
+        var ship = session.Lists.List("ship")!.Find("br_gunboat")!;
+        var prop = ScenePlans.CreateProp(session, "Bw05", ModelSource.Of(session, ship.Section!)!, ship.Value,
+            new Vector3(0, 0, 40_000), null);
+        session.Execute(prop.Command!);
+        scene.Applier.Run();
+        var nickname = prop.SelectAfter!.Id.Key!;
+        Assert.DoesNotContain(scene.System.Objects, o => o.Nickname == nickname);
+        Assert.True(scene.Applier.WaitsForReload);
+        Assert.Contains(scene.Applier.Problems(prop.SelectAfter), p => p.Message.EndsWith(
+            "The Scene shows this object after the save and the game data reload.", StringComparison.Ordinal));
+
+        Assert.True(session.Save().Saved);
+        var fs = session.EditView.CreateFileSystem();
+        var resources = new ServerResourceManager(null, fs);
+        // The resource manager is not disposable, but its physics shape pool is. A Debug build fails an assert when the
+        // collector finds the pool not cleared.
+        using var shapes = resources.ConvexCollection;
+        var data = new GameDataManager(new GameItemDb(fs), resources);
+        data.LoadData(null);
+        using var reloaded = new HeadlessScene(session, "Bw05", data, resources);
+        reloaded.Applier.CatchUp();
+        Assert.Contains(reloaded.System.Objects, o => o.Nickname == nickname);
+        Assert.False(reloaded.Applier.WaitsForReload);
+        Assert.Empty(reloaded.Applier.Problems(prop.SelectAfter));
+        // An undo of the prop takes back the object and its archetype in one entry.
+        session.Undo();
+        scene.Applier.Run();
+        Assert.False(scene.Applier.WaitsForReload);
     }
 }

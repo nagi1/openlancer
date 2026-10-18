@@ -13,7 +13,8 @@ namespace OpenLancer.Editor.Dialogs;
 /// A picker of one entry of a list, as the Unity object picker: a search field with the focus, the entries sorted by
 /// name, and a footer with the selected entry. Enter and a double-click pick the selected entry. Esc and Cancel pick
 /// nothing (decision D233 of the M3 design). The Create of the Scene uses it for the archetype and the base of a new
-/// object, and "Add component" for the value of a component.
+/// object, and "Add component" for the value of a component. A spawn of a ship of the Assets panel adds a second button,
+/// "New static prop archetype" (decision D278 of the M23 design). Esc never runs the second button.
 /// </summary>
 internal sealed class PickDialog : ModalDialog
 {
@@ -30,6 +31,8 @@ internal sealed class PickDialog : ModalDialog
     private int selected = -1;
     private Action<ListEntry>? pick;
     private Action? cancel;
+    private string? secondLabel;
+    private Action? second;
 
     protected override string Title => $"{title}###pick";
 
@@ -38,8 +41,11 @@ internal sealed class PickDialog : ModalDialog
     /// <param name="pick">Gets the picked entry.</param>
     /// <param name="cancelLabel">The label of the button that picks nothing, for example "No base".</param>
     /// <param name="cancel">What Esc and the cancel button do, or null for nothing.</param>
+    /// <param name="secondLabel">The label of an optional second button, or null for no second button.</param>
+    /// <param name="second">What the second button does. Esc never runs it.</param>
     public void Show(string title, string prompt, ObjectKind kind, IReadOnlyList<(ListEntry Entry, string Name, string Detail)> entries,
-        Action<ListEntry> pick, string cancelLabel = "Cancel", Action? cancel = null)
+        Action<ListEntry> pick, string cancelLabel = "Cancel", Action? cancel = null, string? secondLabel = null,
+        Action? second = null)
     {
         this.title = title;
         this.prompt = prompt;
@@ -47,6 +53,8 @@ internal sealed class PickDialog : ModalDialog
         this.cancelLabel = cancelLabel;
         this.pick = pick;
         this.cancel = cancel;
+        this.secondLabel = secondLabel;
+        this.second = second;
         var rows = new List<(ListEntry, string)>();
         var detail = new Dictionary<ListEntry, string>(ReferenceEqualityComparer.Instance);
         foreach (var (entry, name, text) in entries)
@@ -121,6 +129,17 @@ internal sealed class PickDialog : ModalDialog
             picked = selected;
         }
 
+        if (secondLabel != null)
+        {
+            ImGui.SameLine();
+            if (Button(secondLabel))
+            {
+                Close();
+                second?.Invoke();
+                return;
+            }
+        }
+
         ImGui.SameLine();
         if (Button(cancelLabel))
         {
@@ -136,5 +155,6 @@ internal sealed class PickDialog : ModalDialog
         }
     }
 
+    /// <summary>Esc and the close button run the cancel action only, never the second button.</summary>
     protected override void Cancelled() => cancel?.Invoke();
 }

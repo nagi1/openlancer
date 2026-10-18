@@ -37,5 +37,7 @@ out/
 *.thn
 *.sur
 *.wmv
+# The thumbnails of the editor show retail art (milestone M23). The editor keeps them outside each repository.
+*.olthumb
 # A THN patch of a mod holds only keys and changed values (decision D70). tools/content_scan.py checks it.
 !**/patches/**/*.thn

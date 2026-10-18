@@ -44,9 +44,9 @@ public sealed class DataLists
     private readonly Dictionary<string, RemovedPart> removedParts = new(VfsPath.Comparer);
     private int checksRevision = int.MinValue;
 
-    // The files of the edit view of each files list source: its extension, its folder and its class. The edit view
+    // The files of the edit view of each files list source: its extensions, its folder and its class. The edit view
     // changes only with a save.
-    private readonly Dictionary<(string Extension, string? Folder, string? FileClass), (ModOverlay View, List<string> Paths)>
+    private readonly Dictionary<(string Extensions, string? Folder, string? FileClass), (ModOverlay View, List<string> Paths)>
         editViewFiles = [];
 
     // The file system of the edit view, for the file test of a rule with the flag exists.
@@ -474,16 +474,16 @@ public sealed class DataLists
     /// </summary>
     private IReadOnlyList<ListEntry> FileEntries(ListSource source)
     {
-        var extension = source.Files!;
+        var extensions = source.Files!;
         var view = session.EditView;
-        var key = (extension.ToLowerInvariant(), source.Folder?.ToLowerInvariant(), source.FileClass);
+        var key = (string.Join("|", extensions).ToLowerInvariant(), source.Folder?.ToLowerInvariant(), source.FileClass);
         if (!editViewFiles.TryGetValue(key, out var known) || !ReferenceEquals(known.View, view))
         {
             known = (view, FindFiles(view.CreateFileSystem(), source).ToList());
             editViewFiles[key] = known;
         }
 
-        var cutscenes = extension.Equals(".thn", StringComparison.OrdinalIgnoreCase);
+        var cutscenes = extensions.Contains(".thn", StringComparer.OrdinalIgnoreCase);
         var absent = cutscenes
             ? session.NewCutsceneDocuments.Where(d => !d.State.Exists).Select(d => d.Path).ToHashSet(VfsPath.Comparer)
             : [];
@@ -510,10 +510,10 @@ public sealed class DataLists
     }
 
     /// <summary>
-    /// The install paths of the files of a files list source in a view. These are the files with the extension below the
-    /// folder of the source, or below the install root without a folder. With a file class, only the files that have a
-    /// section and whose section types are all sections of the class. So the texture files of <c>SOLAR\NEBULA</c> are not
-    /// nebula files.
+    /// The install paths of the files of a files list source in a view. These are the files with an extension of the
+    /// source below the folder of the source, or below the install root without a folder. With a file class, only the
+    /// files that have a section and whose section types are all sections of the class. So the texture files of
+    /// <c>SOLAR\NEBULA</c> are not nebula files.
     /// </summary>
     private IEnumerable<string> FindFiles(FileSystem view, ListSource source)
     {

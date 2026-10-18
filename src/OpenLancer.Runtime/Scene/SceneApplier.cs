@@ -150,6 +150,20 @@ public sealed class SceneApplier
         problems.TryGetValue(section, out var steps) ? steps.Values.ToList() : [];
 
     /// <summary>
+    /// True when a section of W of the system waits for the reload of the game data (decisions D248 and D282 of the M23
+    /// design): the loaded game data does not have something that the section names, for example a new archetype of the
+    /// active mod, so the scene has no item for it. The editor then opens the system again after the reload, so the
+    /// scene shows the item.
+    /// </summary>
+    public bool WaitsForReload =>
+        problems.Any(p => p.Value.TryGetValue(Step.Build, out var problem) &&
+                          problem.Message.EndsWith(AfterReload, StringComparison.Ordinal) && session.Get(p.Key) != null);
+
+    /// <summary>The end of the message of a section that the scene shows only after the reload of the game
+    /// data.</summary>
+    private const string AfterReload = "after the save and the game data reload.";
+
+    /// <summary>
     /// Builds each section of the system in W with the engine code, compares the item with the scene item, and applies
     /// the differences. So the scene shows the unsaved edits after a system opens, after a change that lists no section,
     /// and after a structural change of the system. The deferred effects run when they can. The first <see cref="Run"/> of a new applier does this too.
@@ -614,8 +628,7 @@ public sealed class SceneApplier
         var zone = section.Id.Key is { } name ? system.ZoneDict.GetValueOrDefault(name) : null;
         if (keptAt < 0 || zone == null)
         {
-            SetProblem(section, Step.Build, Problem(section,
-                "The Scene shows this item after the save and the game data reload.", null));
+            SetProblem(section, Step.Build, Problem(section, $"The Scene shows this item {AfterReload}", null));
             return false;
         }
         var item = kept[keptAt].Item;
@@ -1010,7 +1023,7 @@ public sealed class SceneApplier
             // save (decision D248 of the M3 design).
             if (SceneBuild.Object(items, system.Nickname, ini, out var dropped) == null)
                 (message, key) = ini.Archetype != null && session.Lists.List("solar_archetype")?.Find(ini.Archetype) != null
-                    ? ("The Scene shows this object after the save and the game data reload.", "archetype")
+                    ? ($"The Scene shows this object {AfterReload}", "archetype")
                     : (dropped!, "archetype");
         }
         SetProblem(section, Step.Build, Problem(section, message, key));
