@@ -1,0 +1,4 @@
+# Exceptions of tools/content_scan.py. One entry on each line: <path or glob><TAB><rule><TAB><reason>
+# Rules: binary, native-source, auto-label, auto-variable, decompiler-helper, retail-address, ida-comment, tool-marker.
+# The owner approves each new entry. The scan fails on an entry that allows nothing.
+# Paths of the engine fork start with external/Librelancer/ and apply to python tools/content_scan.py --fork.

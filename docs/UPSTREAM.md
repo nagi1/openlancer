@@ -110,4 +110,4 @@ Merge, do not rebase. A rebase changes the commit IDs that the OpenLancer histor
 5. Build the submodule again.
 6. Run `dotnet test OpenLancer.slnx`.
 7. If a test fails, fix OpenLancer or the fork, or return to the commit before the merge.
-8. Update "Base commit" above to the merged upstream commit.
+8. Update "Base commit" above to the merged upstream commit. `python tools/content_scan.py --fork` checks only the fork changes after this commit. Without this step, the scan also checks the upstream changes of the merge.

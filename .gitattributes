@@ -1,0 +1,6 @@
+# The index holds text files with LF line ends. Each clone also checks them out with LF, on Windows too, so that the
+# tests see the same text on each machine and in CI.
+* text=auto eol=lf
+# cmd.exe reads batch files best with CRLF line ends.
+*.bat text eol=crlf
+*.cmd text eol=crlf
