@@ -103,7 +103,8 @@ internal static partial class AtomicFile
             OpenReparsePoint, IntPtr.Zero);
         if (handle.IsInvalid)
             throw Failure(Marshal.GetLastPInvokeError(), source, target);
-        if (SetFileInformationByHandle(handle, FileRenameInfoEx, RenameInfo(Long(target), out var size), size))
+        if (SetFileInformationByHandle(handle, FileRenameInfoEx,
+                RenameInfo(Long(target), RenameReplaceIfExists | RenamePosixSemantics, out var size), size))
             return true;
         var error = Marshal.GetLastPInvokeError();
         return error is ErrorNotSupported or ErrorInvalidParameter ? false : throw Failure(error, source, target);
@@ -111,9 +112,10 @@ internal static partial class AtomicFile
 
     /// <summary>
     /// The <c>FILE_RENAME_INFO</c> structure for the target: the flags, a null root folder handle, the length of the
-    /// name in bytes, and the name with a null at its end.
+    /// name in bytes, and the name with a null at its end. The play copies use it too (see
+    /// <see cref="PlayCopies.HardLinks"/>).
     /// </summary>
-    private static byte[] RenameInfo(string target, out int size)
+    internal static byte[] RenameInfo(string target, uint flags, out int size)
     {
         var name = Encoding.Unicode.GetBytes(target);
         // The flags are a 32-bit field. The handle that follows has the alignment of a pointer.
@@ -121,7 +123,7 @@ internal static partial class AtomicFile
         var nameOffset = lengthOffset + sizeof(uint);
         size = nameOffset + name.Length + sizeof(char);
         var info = new byte[size];
-        BinaryPrimitives.WriteUInt32LittleEndian(info, RenameReplaceIfExists | RenamePosixSemantics);
+        BinaryPrimitives.WriteUInt32LittleEndian(info, flags);
         BinaryPrimitives.WriteUInt32LittleEndian(info.AsSpan(lengthOffset), (uint)name.Length);
         name.CopyTo(info, nameOffset);
         return info;
@@ -129,7 +131,7 @@ internal static partial class AtomicFile
 
     /// <summary>A full path with the prefix that a Windows call needs for a long path, as .NET adds it to its own
     /// calls. A shorter path stays as it is.</summary>
-    private static string Long(string fullPath)
+    internal static string Long(string fullPath)
     {
         if (fullPath.Length < MaxShortPath || fullPath.StartsWith(LongPrefix, StringComparison.Ordinal) ||
             fullPath.StartsWith(DevicePrefix, StringComparison.Ordinal))

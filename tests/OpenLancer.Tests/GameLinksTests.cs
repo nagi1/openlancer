@@ -9,6 +9,7 @@ using OpenLancer.Editor;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Play;
 using Xunit;
 
 namespace OpenLancer.Tests;
@@ -127,6 +128,7 @@ public sealed class GameLinksTests : IDisposable
     public void RelinkWithTheSameBuildRewritesEachProfileOfTheOldRoot()
     {
         LinkNow(game.Root);
+        host.Settings.Games[0] = host.Settings.Games[0] with { PlayCopy = Path.Combine(game.Folder, "play") };
         var first = Profile("first", game.Root);
         var second = Profile("second", game.Root);
         var other = Profile("other", game.Folder);
@@ -143,6 +145,36 @@ public sealed class GameLinksTests : IDisposable
         Assert.Equal([first], host.Opened);
         Assert.Contains(Console, c => c.StartsWith($"Relink changed the base folder of the profile {first}"));
         Assert.Null(host.Asked);
+        // The play copy of the old folder copies the old folder, so the new folder gets the default play copy.
+        Assert.Null(links.Games[0].PlayCopy);
+    }
+
+    [Fact]
+    public void RelinkToASourceBuildIsRefused()
+    {
+        LinkNow(game.Root);
+        var profile = Profile("p", game.Root);
+        using var source = new SourceBuildGame();
+
+        links.Relink(game.Root, source.Root);
+        host.Ui.RunUntil(() => links.ErrorOf(game.Root) != null, "the error");
+
+        Assert.Equal(GameTexts.SourceBuildNoBase, links.ErrorOf(game.Root));
+        Assert.Equal(game.Root, ModProfile.BaseFolderOf(profile));
+        Assert.Equal(game.Root, Assert.Single(links.Games).Path);
+    }
+
+    [Fact]
+    public void ASourceBuildLinksAsAPlayTarget()
+    {
+        using var source = new SourceBuildGame();
+
+        var report = LinkNow(source.Root);
+
+        Assert.Equal(GameKind.SourceBuild, report.Kind);
+        Assert.False(report.CanBeBase);
+        Assert.Equal(source.Root, Assert.Single(links.Games).Path);
+        Assert.Equal("source build", Assert.Single(PlayTarget.Of([report])).Name);
     }
 
     [Fact]

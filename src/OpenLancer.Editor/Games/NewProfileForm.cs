@@ -34,11 +34,11 @@ internal sealed class NewProfileForm(EditorWindow window)
     /// <summary>The game of the new profile.</summary>
     public GameReport? Game => selected < games.Count ? games[selected] : null;
 
-    /// <summary>Starts a new form for one of the games. Each game must be a game that the editor can use as a
-    /// base.</summary>
+    /// <summary>Starts a new form for one of the games. The form leaves out each game that the editor cannot use as a
+    /// base, for example a source build (section 8.5 of the M11 design).</summary>
     public void Reset(IReadOnlyList<GameReport> choices)
     {
-        games = choices.Where(g => g.IsGame).ToList();
+        games = choices.Where(g => g.CanBeBase).ToList();
         selected = 0;
         error = null;
         name = Game == null ? "" : ModWorkspace.FreeProfileName(window.Settings.WorkspaceOrDefault, Game.ProfileName);

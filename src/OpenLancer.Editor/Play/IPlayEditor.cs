@@ -9,11 +9,13 @@ using OpenLancer.Editor.Logs;
 namespace OpenLancer.Editor.Play;
 
 /// <summary>
-/// What Play needs from the editor (section 9.12 of the M4 design, decision D50). <see cref="EditorWindow"/> implements
-/// it. The tests give a fake, because an editor window needs a GPU and reads and writes the real settings file.
+/// What each kind of Play needs from the editor: the Console, the open profile, the save of the active mod and its
+/// validation. Play in OpenLancer (<see cref="IPlayEditor"/>) and Play in the game (<see cref="IGamePlayHost"/>) use it.
+/// <see cref="EditorWindow"/> implements it. The tests give a fake, because an editor window needs a GPU and reads and
+/// writes the real settings file.
 /// </summary>
 /// <remarks>Each member runs on the UI thread.</remarks>
-internal interface IPlayEditor : IUIThread
+internal interface IPlayHost : IUIThread
 {
     ConsoleLog Log { get; }
 
@@ -32,7 +34,15 @@ internal interface IPlayEditor : IUIThread
     /// <summary>Validates the saved files as they are now, with the number of <see cref="PlaySession.Saves"/>. Play does
     /// not call it for a save that is not complete (decision D59).</summary>
     void ValidateNow();
+}
 
+/// <summary>
+/// What Play in OpenLancer needs from the editor (section 9.12 of the M4 design, decision D50). It adds the names and
+/// the shapes of the open data to the host of each Play.
+/// </summary>
+/// <remarks>Each member runs on the UI thread.</remarks>
+internal interface IPlayEditor : IPlayHost
+{
     /// <summary>The name of a system, or an empty text when the game data has no name for it.</summary>
     string SystemName(string nickname);
 

@@ -377,8 +377,8 @@ internal sealed partial class EditorWindow : IClosePromptHost
                                SceneEdits.IsOpen || closeDialog.IsOpen || exportDialog?.IsOpen == true;
 
     /// <summary>
-    /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5 and Shift+F5. They
-    /// wait while a text field or a dialog takes the keys.
+    /// The keys of the Edit menu: Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, and Ctrl+S. The keys of Play: F5, Ctrl+F5 (Play in the
+    /// game) and Shift+F5. They wait while a text field or a dialog takes the keys.
     /// </summary>
     private void Shortcuts()
     {
@@ -400,6 +400,10 @@ internal sealed partial class EditorWindow : IClosePromptHost
         else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.S), global))
         {
             Edits.Save();
+        }
+        else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Ctrl | ImGuiKey.F5), global))
+        {
+            GamePlay.PlayLast();
         }
         else if (ImGui.Shortcut((int)ImGuiKey.F5, global))
         {

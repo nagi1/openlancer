@@ -67,8 +67,25 @@ internal sealed class PlayMenu(EditorWindow window)
         Request(new PlayStart.InSpace(scene.System!.Nickname, scene.CameraPosition, scene.CameraOrientation));
     }
 
-    /// <summary>Stops the game, or ends it at once when Stop is Force stop: the Stop button, Shift+F5 and Stop.</summary>
-    public void Stop() => window.Play.Stop();
+    /// <summary>Stops the game, or ends it at once when Stop is Force stop: the Stop button, Shift+F5 and Stop. The game
+    /// of Play in OpenLancer stops first. Else the game of the play copy stops (milestone M11).</summary>
+    public void Stop()
+    {
+        if (window.Play.Status != PlayStatus.Idle)
+        {
+            window.Play.Stop();
+        }
+        else
+        {
+            window.GamePlay.StopGame();
+        }
+    }
+
+    /// <summary>True while a game runs that Stop stops.</summary>
+    private bool CanStop => window.Play.Status != PlayStatus.Idle || window.GamePlay.GameRuns;
+
+    /// <summary>True when Stop ends the game that it stops at once.</summary>
+    private bool ForceStop => window.Play.Status != PlayStatus.Idle ? window.Play.ForceStop : window.GamePlay.ForceStop;
 
     /// <summary>The items of the Play menu, in the menu bar and in the popup of the arrow button.</summary>
     public void Menu()
@@ -85,6 +102,8 @@ internal sealed class PlayMenu(EditorWindow window)
         ImGui.Separator();
         ShipItems();
         ImGui.Separator();
+        GameItems();
+        ImGui.Separator();
         if (Theme.IconMenuItem(EditorIcons.SyncAlt, "Reload game", play.CanReload))
         {
             play.Reload();
@@ -94,8 +113,7 @@ internal sealed class PlayMenu(EditorWindow window)
                              "The running game loads the mod files again and continues at the same place. Use it " +
                              "after a change outside the editor. A save reloads the game itself when its validation " +
                              "passes.");
-        if (ImGui.MenuItem($"{EditorIcons.Stop}   {(play.ForceStop ? "Force stop" : "Stop")}", "Shift+F5", false,
-                play.Status != PlayStatus.Idle))
+        if (ImGui.MenuItem($"{EditorIcons.Stop}   {(ForceStop ? "Force stop" : "Stop")}", "Shift+F5", false, CanStop))
         {
             Stop();
         }
@@ -139,7 +157,7 @@ internal sealed class PlayMenu(EditorWindow window)
         }
 
         ImGui.SameLine();
-        if (ToolbarItems.Button("stop", EditorIcons.Stop, StopTooltip(), running))
+        if (ToolbarItems.Button("stop", EditorIcons.Stop, StopTooltip(), CanStop))
         {
             Stop();
         }
@@ -159,9 +177,87 @@ internal sealed class PlayMenu(EditorWindow window)
             ? "Close the game and play again at the camera (F5)"
             : "Play from camera (F5): save the active mod, then fly where the Scene camera is");
 
-    private string StopTooltip() => window.Play.ForceStop
+    private string StopTooltip() => ForceStop
         ? "Force stop (Shift+F5): the game does not respond, so this ends its process"
         : "Stop the game (Shift+F5)";
+
+    /// <summary>
+    /// The items of Play in the game (section 8.8 of the M11 design, decision D324). Each play target has an item. Host
+    /// test server has an item for each play target with FLServer.exe. Join test server and Stop test server follow.
+    /// </summary>
+    private void GameItems()
+    {
+        var games = window.GamePlay;
+        var targets = games.Targets;
+        var last = games.LastTarget;
+        var block = window.Session == null ? "No profile is open."
+            : games.Busy ? "A game or the test server of a play copy runs, or Play in the game prepares one."
+            : null;
+        if (targets.Count == 0)
+        {
+            ImGui.MenuItem($"{EditorIcons.Rocket}   Play in the game", "Ctrl+F5", false, false);
+            Tooltip(GamePlay.NoTarget);
+        }
+
+        foreach (var target in targets)
+        {
+            if (ImGui.MenuItem($"{EditorIcons.Rocket}   Play in {target.Name}##{target.Root}",
+                    target == last ? "Ctrl+F5" : "", false, block == null))
+            {
+                games.Play(target);
+            }
+
+            Tooltip(block ?? $"Save the active mod, install the mods of the profile into the play copy of " +
+                             $"{target.Root}, and start its game. Your game folder does not change.");
+        }
+
+        var servers = targets.Where(t => t.HasServer).ToList();
+        if (ImGui.BeginMenu($"{EditorIcons.SatelliteDish}   Host test server", servers.Count > 0 && block == null))
+        {
+            foreach (var target in servers)
+            {
+                if (ImGui.MenuItem($"{target.Name}##{target.Root}"))
+                {
+                    games.HostServer(target);
+                }
+
+                ImGui.SetItemTooltip($"Install the mods into the play copy of {target.Root}, and start its FLServer.");
+            }
+
+            ImGui.EndMenu();
+        }
+        else
+        {
+            Tooltip(servers.Count == 0 ? "Link a game folder with its FLServer.exe in File > Game link." : block ??
+                "Start FLServer of a play copy with the mods of the profile. Then join it from the game.");
+        }
+
+        if (ImGui.MenuItem($"{EditorIcons.SatelliteDish}   Join test server", "", false, games.JoinBlock == null))
+        {
+            games.JoinServer();
+        }
+
+        Tooltip(games.JoinBlock ?? "Start the game of the play copy of the test server. Join the server in its " +
+                                   "multiplayer menu.");
+        if (ImGui.MenuItem($"{EditorIcons.Stop}   {(games.ServerForceStop ? "Force stop test server" : "Stop test server")}",
+                "", false, games.ServerRuns))
+        {
+            games.StopServer();
+        }
+
+        Tooltip(games.ServerForceStop
+            ? "FLServer saves its characters, which can take up to 60 seconds. Force stop ends it at once."
+            : "Close FLServer. It saves its characters first.");
+    }
+
+    /// <summary>The tooltip of the last item, also when it is disabled.</summary>
+    private static void Tooltip(string text)
+    {
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(text);
+        }
+    }
 
     /// <summary>The Play at base list: the bases of the open system first, then the other bases by system (section
     /// 9.7).</summary>

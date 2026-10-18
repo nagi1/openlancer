@@ -20,7 +20,8 @@ namespace OpenLancer.Editor.Export;
 /// <summary>
 /// Mod &gt; Export mod (milestone M11): the targets with their bases, the package forms and the output folder, as the
 /// Build Settings window of Unity shows them. The export runs on a worker thread. The result replaces the buttons, and
-/// the Console gets each problem.
+/// the Console gets each problem. Export and play installs the export of the first checked retail target into the play
+/// copy of its base. Then it starts the game, as Build And Run of Unity does (decision D326).
 /// </summary>
 internal sealed class ExportDialog(EditorWindow window) : ModalDialog
 {
@@ -37,6 +38,9 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     private ExportResult? result;
     private string? error;
 
+    // The retail target whose export the game plays after the export, or null for Export alone.
+    private ExportTarget? playTarget;
+
     protected override string Title => mod == null
         ? "Export mod###export"
         : $"Export mod: {mod.Manifest.Name} ({mod.Id}), version {mod.Manifest.Version}###export";
@@ -51,6 +55,7 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         result = null;
         error = null;
         running = null;
+        playTarget = null;
         var saved = window.Settings.ExportOf(exported.Folder);
         targets.Clear();
         foreach (var target in ExportTarget.All.Where(t => Available(t) && t.Refusal(exported.Manifest) == null))
@@ -113,11 +118,26 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         var retail = targets.Any(id => ExportTarget.Find(id)!.IsRetail);
         var ready = targets.Count > 0 && (!retail || dropIn || flmm);
         if (Button("Export", primary: true, enabled: ready))
-            Start(mod);
+            Start(mod, play: null);
+        // Export and play needs a checked retail target whose base has a game program.
+        if (PlayTargetOf() is { } play)
+        {
+            ImGui.SameLine();
+            if (Button("Export and play", enabled: ready && !window.GamePlay.Busy))
+                Start(mod, play);
+            ImGui.SetItemTooltip(window.GamePlay.Busy
+                ? "A game or the test server of a play copy runs. Stop it first."
+                : $"Export, then install the export for {play.Name} into the play copy of {BaseOf(play, bases)!.Root} " +
+                  "and start the game. The play copy then holds this mod alone.");
+        }
         ImGui.SameLine();
         if (Button("Cancel"))
             Close();
     }
+
+    /// <summary>The first checked retail target whose base has a game program, or null.</summary>
+    private ExportTarget? PlayTargetOf() =>
+        ExportTarget.All.FirstOrDefault(t => t.IsRetail && targets.Contains(t.Id) && BaseOf(t, bases) is { ExePath: not null });
 
     /// <summary>The check box of each target, with its base or the reason why it has none.</summary>
     private void Targets(Mod exported)
@@ -154,9 +174,10 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     private static string BaseText(GameReport report) =>
         report.Kind == GameKind.Vanilla ? $"{report.Root} ({report.Name})" : report.Root!;
 
-    private void Start(Mod exported)
+    private void Start(Mod exported, ExportTarget? play)
     {
         error = null;
+        playTarget = play;
         var chosen = ExportTarget.All.Where(t => targets.Contains(t.Id)).ToList();
         window.Settings.SetExport(exported.Folder, new ExportChoices([.. chosen.Select(t => t.Id)], dropIn, flmm, folder));
         window.Settings.Save();
@@ -190,6 +211,14 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         window.Log.Add(result.Succeeded ? ConsoleSeverity.Info : ConsoleSeverity.Error, Source, result.Succeeded
             ? $"The export wrote {written} packages to {result.OutputFolder}."
             : ModExport.Stopped);
+        if (playTarget is { } play && mod != null)
+        {
+            if (result.Builds.TryGetValue(play, out var files) && result.Packages.Where(p => p.Target == play).All(p => p.Path != null) &&
+                BaseOf(play, bases) is { } game)
+                window.GamePlay.PlayExport(game, files, mod.Id);
+            else
+                window.Log.Add(ConsoleSeverity.Error, Source, $"Play did not start. The export for {play.Name} did not complete.");
+        }
     }
 
     /// <summary>The result in place of the buttons: a line for each package, the number of warnings and Open

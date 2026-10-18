@@ -6,16 +6,19 @@ using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Games;
+using OpenLancer.Data.PlayCopies;
 using OpenLancer.Editor.Dialogs;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Games;
 
 /// <summary>
 /// The Game link window (section 8 of the M11a design, decision D202): a floating window with one card for each linked
-/// game. A card shows the game, its state, its folder, its export target, its game program and its profiles, and has
-/// New profile, Check again, Relink and Remove link. It follows the Installs page of the Unity Hub: the primary button
-/// that links a game is at the top right.
+/// game. A card shows the game, its state, its folder, its export target, its game program, its profiles and its play
+/// copy (milestone M11). It has New profile, Check again, Relink and Remove link. A game with a play copy also has Open
+/// play copy, Check play copy, Uninstall mods and Remove play copy. It follows the Installs page of the Unity Hub: the
+/// primary button that links a game is at the top right.
 /// </summary>
 internal sealed class GameLinkWindow(EditorWindow window)
 {
@@ -48,6 +51,10 @@ internal sealed class GameLinkWindow(EditorWindow window)
         {
             window.Links.CheckOlderThan(RecheckAge);
             window.Links.RefreshUsedBy();
+            foreach (var game in window.Links.Games)
+            {
+                window.GamePlay.RefreshCopy(game.Path);
+            }
         }
 
         open = true;
@@ -195,6 +202,11 @@ internal sealed class GameLinkWindow(EditorWindow window)
         var report = links.ReportOf(game.Path);
         var checking = links.IsChecking(game.Path);
         GameReportView.Status(report, GameLook.Name(report, game), GameLook.State(report, checking));
+        if (report is { Kind: GameKind.SourceBuild })
+        {
+            ImGui.SetItemTooltip(GameTexts.SourceBuildTooltip);
+        }
+
         CardLayout.SmallSpace();
         if (CardLayout.FolderWithOpenLink(game.Path, report is not { FolderMissing: true }))
         {
@@ -210,6 +222,13 @@ internal sealed class GameLinkWindow(EditorWindow window)
 
             CardLayout.FactLabel("Used by");
             UsedBy(links.UsedBy(game.Path));
+            if (report is { Root: not null } && PlayTarget.Of([report]).Count > 0)
+            {
+                CardLayout.Fact("Play copy", CopyText(game.Path));
+                ImGui.SetItemTooltip("Play in the game installs the mods into this folder, not into your game folder. " +
+                                     "Many files in it are hard links to the files of your game.");
+            }
+
             ImGui.EndTable();
         }
 
@@ -226,6 +245,79 @@ internal sealed class GameLinkWindow(EditorWindow window)
 
         CardLayout.Gap();
         Buttons(game, report, checking);
+        CopyButtons(game, report);
+    }
+
+    /// <summary>The folder of the play copy of a game and its size on disk, or why it has none.</summary>
+    private string CopyText(string root)
+    {
+        var info = window.GamePlay.CopyInfo(root);
+        return info switch
+        {
+            null => window.GamePlay.CopyFolder(root),
+            { Record: null } => $"{info.Folder} (not made yet)",
+            { Record: var record } => $"{info.Folder} ({PlayCopyTexts.Size(info.Size)} on disk, {record.LinkCount} links" +
+                                      (record.State == PlayCopyState.Complete ? ")" : ", not complete)"),
+        };
+    }
+
+    /// <summary>The buttons of the play copy of a game: Open folder, Check play copy, Uninstall mods and Remove play
+    /// copy. Remove asks first.</summary>
+    private void CopyButtons(LinkedGame game, GameReport? report)
+    {
+        if (window.GamePlay.CopyInfo(game.Path) is not { Record: not null } info)
+        {
+            return;
+        }
+
+        var plays = window.GamePlay;
+        var block = plays.CopyBlock(game.Path);
+        CardLayout.SmallSpace();
+        if (ImGui.Button("Open play copy"))
+        {
+            FolderActions.Open(window, info.Folder);
+        }
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(block != null);
+        if (ImGui.Button("Check play copy"))
+        {
+            plays.CheckCopy(game.Path);
+        }
+
+        Tooltip(block ?? "Check the links of the play copy and the installed files. The Console lists each difference.");
+        ImGui.SameLine();
+        if (ImGui.Button("Uninstall mods"))
+        {
+            plays.UninstallCopy(game.Path);
+        }
+
+        Tooltip(block ?? "Give each file that Play in the game installed its version of the game again.");
+        ImGui.SameLine();
+        if (ImGui.Button("Remove play copy"))
+        {
+            window.Choice.Show("Remove play copy", PlayCopyRemoveQuestion(info.Folder),
+            [
+                new Choice("Remove", () => plays.RemoveCopy(game.Path)),
+                new Choice("Cancel", () => { }),
+            ]);
+        }
+
+        Tooltip(block ?? "Delete the play copy and the saves in it. Your game folder does not change.");
+        ImGui.EndDisabled();
+    }
+
+    /// <summary>The question of Remove play copy.</summary>
+    internal static string PlayCopyRemoveQuestion(string folder) =>
+        $"Remove the play copy {folder}? Your game folder does not change.";
+
+    /// <summary>The tooltip of the last item, also when it is disabled.</summary>
+    private static void Tooltip(string text)
+    {
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(text);
+        }
     }
 
     private void UsedBy(IReadOnlyList<string> profiles)
@@ -247,13 +339,18 @@ internal sealed class GameLinkWindow(EditorWindow window)
     private void Buttons(LinkedGame game, GameReport? report, bool checking)
     {
         var links = window.Links;
-        ImGui.BeginDisabled(report is not { IsGame: true });
+        ImGui.BeginDisabled(report is not { CanBeBase: true });
         if (ImGui.Button("New profile...") && report != null)
         {
             window.ShowNewProfile([report]);
         }
 
         ImGui.EndDisabled();
+        if (report is { IsGame: true, CanBeBase: false })
+        {
+            Tooltip(GameTexts.SourceBuildNoBase);
+        }
+
         ImGui.SameLine();
         ImGui.BeginDisabled(checking);
         if (ImGui.Button("Check again"))

@@ -4,6 +4,8 @@ Play starts the game from the editor with the edits of the active mod. The game 
 
 The game is a second program, `OpenLancer.Play.exe`, next to the editor. The build of the editor builds it too.
 
+Play in the game plays the mods in your own copy of the retail game, and the test server hosts them on FLServer. See "Play in the game" and "The test server" at the end of this page.
+
 ## The Play controls
 
 The main menu bar has a Play menu after the Mod menu. Three buttons in the middle of the bar do the same as the menu: Play, an arrow that opens the Play menu, and Stop.
@@ -14,10 +16,14 @@ The main menu bar has a Play menu after the Mod menu. Three buttons in the middl
 | Play > Play at base | | Plays docked at the base that you click. |
 | Play > Ship: ... | | Shows the ship of the profile. It is not a command. |
 | Play > Use the default ship | | Sets the ship of the profile back to the default. |
+| Play > Play in HD Edition 0.7.1, and one item for each other linked game with its game program | Ctrl+F5 | Plays the profile in the play copy of that game (see "Play in the game"). Ctrl+F5 plays in the game of the last Play in the game, or in the first game. |
+| Play > Host test server | | Starts FLServer of the play copy of a game with the mods (see "The test server"). |
+| Play > Join test server | | Starts the game of the play copy of the test server. |
+| Play > Stop test server | | Stops FLServer. It becomes Force stop test server after the first click. |
 | Play > Reload game | | Reloads the running game without a save. |
 | Stop button, or Play > Stop | Shift+F5 | Stops the game. Stop becomes Force stop when the game does not close. |
 
-F5 and Shift+F5 do not work while a text field or a dialog is open. A click on the Play button works also while a field of the Inspector is open: the click ends the field, and the save of Play has its edit. The tooltip of a control that is not available tells why.
+F5, Ctrl+F5 and Shift+F5 do not work while a text field or a dialog is open. A click on the Play button works also while a field of the Inspector is open: the click ends the field, and the save of Play has its edit. The tooltip of a control that is not available tells why.
 
 ## Play from camera
 
@@ -202,3 +208,78 @@ For an exit code other than 0 or 3, the Console gives the cause and the path of 
 When the validation finds errors and the game closes during its load, the Console names the validation errors as the cause.
 
 The warnings and errors of the game log also go to the Console with the source "Play". The Console adds each line only once.
+
+## Play in the game
+
+Play in the game plays the profile in your own copy of the retail game. The game can be Freelancer: HD Edition 0.7.1, Freelancer 1.0 or 1.1, or a source build (see [GAME_LINK.md](GAME_LINK.md)). The editor installs the mods into a play copy of the game, and starts the game program of the play copy. Your game folder does not change.
+
+1. Link the game folder in File > Game link. The folder must contain the game program.
+2. Click Play > Play in HD Edition 0.7.1, or the item of another game. Or press Ctrl+F5.
+
+Play in the game then does these steps:
+
+1. It checks each mod of the profile. A tier-2 mod, or a mod whose `mod.json` does not name the target of the game, stops Play.
+2. It saves the active mod and waits for the validation of the save. Validation errors stop Play. When the validation cannot run, Play goes on with a warning.
+3. It merges all mods of the profile on the files of the game, with the rules of the retail game. The format checks of the export run on the result (see "Export" in [MOD_FORMAT.md](MOD_FORMAT.md)). Errors stop Play, and the Console lists them.
+4. It makes the play copy of the game when it does not exist. The first make takes some seconds. Then it installs the merged files into the play copy. An install writes only the files that changed.
+5. It starts the game program of the play copy, with the program folder of the play copy as its working folder.
+
+The Console then says, for example, "Play in HD Edition 0.7.1: OpenLancer installed 12 files. The game starts." Start a new game or load a save in the main menu of the game.
+
+Play in the game differs from Play in OpenLancer:
+
+- It installs all mods of the profile, also the mods after the active mod.
+- The retail game reads its files only at its start. A save while the game runs gives the note "The game does not load changes while it runs. Stop the game and play again."
+- The game starts at its main menu. It has no start at the camera and no admin commands.
+
+### Saves
+
+| Game | Where the saves go |
+|---|---|
+| HD Edition | Into the folder `SAVE` of the play copy. The play copy sets `save_in_directory = true` in its own copy of `EXE\flplusplus.ini`. |
+| Freelancer 1.0 or 1.1, and a source build | Into `Documents\My Games\Freelancer`, the folder of your normal saves. The Console tells it once. Load such a save only with the mod. |
+
+### Stop the game
+
+Press Shift+F5, or click the Stop button. The editor closes the main window of the game, as its close button does. When the game does not close in 5 s, Stop becomes Force stop. Force stop ends the game process at once. When you close the editor, the game ends too.
+
+After the game closes, the editor checks the links of the play copy through handles. When a linked file changed, the Console tells which file of your game changed (see "Play copies" in [GAME_LINK.md](GAME_LINK.md)).
+
+### Export and play
+
+Mod > Export mod has the button Export and play. It exports the mod first. Then it installs the export of the first checked retail target into the play copy of its base, and starts the game. The play copy then holds this mod alone, with the text DLL of the export. The status bar shows "Playing the export of ol-sample in HD Edition 0.7.1 (play copy)", for example. The next Play in the game installs the mods of the profile again.
+
+### The status of the game of the play copy
+
+| Text | Meaning |
+|---|---|
+| Play in HD Edition 0.7.1: validating save 2... | Play waits for the validation of the save. |
+| Play in HD Edition 0.7.1: installing the mods... | Play merges the mods, and makes or updates the play copy. |
+| Playing in HD Edition 0.7.1 (play copy) | The game of the play copy runs. |
+| Stopping the game of the play copy | The editor closed the main window of the game, and the game did not end yet. |
+
+## The test server
+
+The test server is FLServer of a play copy, with the mods of the profile. Use it to test a mod in multiplayer on your own computer.
+
+1. Click Play > Host test server, then the game.
+2. Play in the game does its steps 1 to 4. Then FLServer of the play copy starts with `/c` in the program folder of the play copy. With `/c`, FLServer uses its saved settings.
+3. At the first start, FLServer shows its dialog. Type a server name and click OK.
+4. Click Play > Join test server. The game of the same play copy starts.
+5. In the game, open Multiplayer, and join the server.
+
+The status bar shows "Test server: HD Edition 0.7.1", for example. While the test server runs, Play in the game does not start, because an install would change the files of the server.
+
+FLServer keeps `FLServer.cfg` and the multiplayer characters in `Documents\My Games\Freelancer`. The characters go to `Accts\MultiPlayer`, the folder of your normal server. Delete the test characters after the test, because a normal server cannot load a character with items of the mod.
+
+Notes:
+
+- HD Edition loads FLHook and FLSharp in the server. FLHook writes its files into `EXE` of the play copy.
+- Windows can ask for the DirectPlay feature or for a firewall rule at the first start. You answer it. OpenLancer does not change Windows settings.
+- The FLServer of a source build needs the Visual C++ runtime with MFC on the computer.
+
+### Stop the test server
+
+Click Play > Stop test server. The editor closes the main window of FLServer. FLServer saves its characters and stops its server thread, which can take up to 60 s. The status bar shows "Stopping the test server". The item is then Force stop test server, which ends FLServer at once. After 60 s, the editor ends FLServer itself.
+
+When you close the editor while the test server runs, the editor asks: "The test server runs. Stop it and close OpenLancer?" Stop and close stops FLServer as above, and closes the editor when FLServer ended.

@@ -1021,6 +1021,8 @@ Each package has `<mod id> README.txt`: the requirements, the install and remove
 
 The output folder is `exports\<mod id>` next to the profiles folder. The packages hold merged game files, so do not commit them. The export warns when the output folder is in a git repository. The export never writes into a game folder or into the mod folder.
 
+**Export and play** in the Export dialog exports first. Then it installs the export of the first checked retail target into the play copy of its base, and starts the game. A source build is never the base of an export. See "Play in the game" in [PLAY.md](PLAY.md).
+
 ## What the validator checks
 
 Some broken references stop the engine load. Many others make the engine drop data and log nothing. The validator reports both. It compares the merged data with vanilla, so it reports only the problems that the mods add.

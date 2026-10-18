@@ -212,7 +212,7 @@ internal sealed class WelcomeScreen(EditorWindow window)
 
         ImGui.SetItemTooltip("Shows the linked game folders, their versions and their profiles.");
         ImGui.SameLine(0, MathF.Truncate(ColumnGap * ImGuiHelper.Scale));
-        var games = window.LinkedGameReports();
+        var games = window.LinkedGameReports().Where(g => g.CanBeBase).ToList();
         ImGui.BeginDisabled(games.Count == 0);
         if (ImGui.TextLink("New profile..."))
         {

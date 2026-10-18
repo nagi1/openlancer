@@ -113,7 +113,8 @@ public sealed class ModExportTests
 /// design). The tests run the oltool of the test folder.</summary>
 public sealed class OltoolExportTests
 {
-    private static (int Exit, string Output, string Errors) Run(params string[] arguments)
+    /// <summary>Runs the oltool of the test folder. The play copy tests use it too.</summary>
+    internal static (int Exit, string Output, string Errors) Run(params string[] arguments)
     {
         var tool = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "oltool.exe" : "oltool");
         Assert.True(File.Exists(tool), $"{tool} is not in the test folder.");

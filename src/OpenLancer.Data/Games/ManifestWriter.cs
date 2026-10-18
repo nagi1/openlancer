@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using OpenLancer.Data.IO;
+using OpenLancer.Data.PlayCopies;
 
 namespace OpenLancer.Data.Games;
 
@@ -19,9 +20,6 @@ namespace OpenLancer.Data.Games;
 /// </remarks>
 public static class ManifestWriter
 {
-    /// <summary>The file that marks an OpenLancer play copy of a game.</summary>
-    public const string PlayCopyRecord = ".openlancer-playcopy.json";
-
     /// <summary>The manifest lines of each file of the game root, in ordinal order.</summary>
     /// <exception cref="InvalidOperationException">The root is a play copy.</exception>
     /// <exception cref="IOException">A file cannot be read.</exception>
@@ -29,7 +27,7 @@ public static class ManifestWriter
     public static IReadOnlyList<string> Lines(string root)
     {
         root = Path.GetFullPath(root);
-        if (File.Exists(Path.Combine(root, PlayCopyRecord)))
+        if (PlayCopyRecord.Exists(root))
             throw new InvalidOperationException(
                 $"{root} is an OpenLancer play copy. Write the file list of the game folder that the play copy comes from.");
         return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)

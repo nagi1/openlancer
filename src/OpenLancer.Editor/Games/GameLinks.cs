@@ -285,6 +285,13 @@ internal sealed class GameLinks(IGameLinkHost host, bool enabled, KnownBuilds? b
                 return;
             }
 
+            // A source build cannot be the base of the profiles of the old folder (section 8.5 of the M11 design).
+            if (!report.CanBeBase && ProfilesOf(oldRoot).Count > 0)
+            {
+                errors[oldRoot] = GameTexts.SourceBuildNoBase;
+                return;
+            }
+
             var entry = Find(oldRoot);
             if (entry == null || entry.LastBuild == report.Build)
             {
@@ -339,7 +346,8 @@ internal sealed class GameLinks(IGameLinkHost host, bool enabled, KnownBuilds? b
         }
         else if (index >= 0)
         {
-            host.Settings.Games[index] = host.Settings.Games[index] with { Path = newRoot };
+            // The play copy of the old folder copies the old folder, so the new folder gets the default folder again.
+            host.Settings.Games[index] = host.Settings.Games[index] with { Path = newRoot, PlayCopy = null };
         }
 
         Add(report);

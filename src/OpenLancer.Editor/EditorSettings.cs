@@ -22,7 +22,10 @@ internal sealed record RecentProfile(string Path, DateTime LastOpenedUtc);
 /// <param name="LastName">The name of the game at the last check, for example "Freelancer 1.1 with JFLP". The editor
 /// shows it until the check of this start ends.</param>
 /// <param name="LastBuild">The build id of the game at the last check, or null.</param>
-internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastName, string? LastBuild);
+/// <param name="PlayCopy">The folder of the play copy of the game that the user picked (decision D309), or null for the
+/// default folder next to the game.</param>
+internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastName, string? LastBuild,
+    string? PlayCopy = null);
 
 /// <summary>The choices of the Export dialog for one mod (milestone M11).</summary>
 /// <param name="Targets">The ids of the checked targets.</param>
@@ -156,6 +159,10 @@ internal sealed class EditorSettings
 
     /// <summary>The choices of the Export dialog of each mod, by the full path of the mod folder.</summary>
     public Dictionary<string, ExportChoices> Exports { get; set; } = new(PathComparer);
+
+    /// <summary>The root of the linked game of the last Play in the game, or null. Ctrl+F5 plays in it (decision
+    /// D324).</summary>
+    public string? LastGameTarget { get; set; }
 
     public bool ShowMarkers { get; set; } = true;
     public bool ShowLabels { get; set; } = true;

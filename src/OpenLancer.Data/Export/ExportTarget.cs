@@ -37,24 +37,37 @@ public sealed record ExportTarget(string Id, string Name, string Game)
     /// </summary>
     public string? Refusal(ModManifest mod)
     {
-        if (IsRetail && mod.Tier == ModManifest.RuntimeTier)
-            return $"Mod '{mod.Id}' is a tier-{ModManifest.RuntimeTier} mod. A tier-{ModManifest.RuntimeTier} mod runs " +
-                   "only in OpenLancer. Pick the target OpenLancer.";
-        if (!mod.Targets.Contains(Id, StringComparer.Ordinal))
-            return $"Mod '{mod.Id}' does not name the target '{Id}'. Add the target to mod.json, or pick another target.";
+        if (PlayRefusal(mod) is { } refusal)
+            return refusal;
         if (mod.DependsOn.Count > 0)
             return $"Mod '{mod.Id}' needs other mods. The export of a mod that needs other mods is not available yet.";
         return null;
     }
 
+    /// <summary>
+    /// The reason why a mod cannot run in a game of this target, or null. A retail target refuses a tier-2 mod. Each
+    /// target refuses a mod whose <c>mod.json</c> does not name it. Play in the game checks each mod of the profile with
+    /// it (section 8.6 of the M11 design).
+    /// </summary>
+    public string? PlayRefusal(ModManifest mod)
+    {
+        if (IsRetail && mod.Tier == ModManifest.RuntimeTier)
+            return $"Mod '{mod.Id}' is a tier-{ModManifest.RuntimeTier} mod. A tier-{ModManifest.RuntimeTier} mod runs " +
+                   "only in OpenLancer. Pick the target OpenLancer.";
+        if (!mod.Targets.Contains(Id, StringComparer.Ordinal))
+            return $"Mod '{mod.Id}' does not name the target '{Id}'. Add the target to mod.json, or pick another target.";
+        return null;
+    }
+
     /// <summary>The reason why a game cannot be the base of this target, or null when it can. The report must give
-    /// the target, and a retail target needs a base.</summary>
+    /// the target, and a retail target needs a base. A source build is never the base of an export, because its
+    /// <c>freelancer.ini</c> is a development copy with other lines than the retail file.</summary>
     /// <param name="report">The check of the linked game, or null when no game is linked.</param>
     public string? BaseRefusal(GameReport? report)
     {
         if (!IsRetail)
             return null;
-        return report is { IsGame: true, Root: not null } && report.Target == Id
+        return report is { CanBeBase: true, Root: not null } && report.Target == Id
             ? null
             : $"No linked game gives the target '{Id}'. Link a game folder of {Game} in File > Game link.";
     }

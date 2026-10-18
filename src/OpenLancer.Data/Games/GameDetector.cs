@@ -6,8 +6,10 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using LibreLancer.Data.Dll;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Export;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.PlayCopies;
 
 namespace OpenLancer.Data.Games;
 
@@ -32,6 +34,9 @@ public static partial class GameDetector
     internal const string HdeBuild = "hde";
     private const string VanillaPrefix = "vanilla-";
     private const string HdePrefix = "hde-";
+
+    /// <summary>The prefix of the build id of a source build, before the build of its data (milestone M11).</summary>
+    internal const string SourcePrefix = "source-";
 
     /// <summary>The five code files that patch 1.1 replaces. Their hashes and versions tell the build.</summary>
     internal static readonly string[] CodeFiles =
@@ -64,9 +69,11 @@ public static partial class GameDetector
     {
         cancel.ThrowIfCancellationRequested();
         var found = GameRoot.Find(folder);
-        return found.Root == null
-            ? NotAGame(folder, found.Error!, found.Missing)
-            : new Run(folder, found.Root, builds ?? KnownBuilds.Embedded, cancel).Check();
+        if (found.Root == null)
+            return NotAGame(folder, found.Error!, found.Missing);
+        return PlayCopyError(found.Root) is { } copy
+            ? NotAGame(folder, copy)
+            : new Run(folder, found.Root, found.Layout, builds ?? KnownBuilds.Embedded, cancel).Check();
     }
 
     /// <summary>Checks a known game root, for example a linked game, without a search for the root.</summary>
@@ -74,20 +81,31 @@ public static partial class GameDetector
     public static GameReport CheckRoot(string root, KnownBuilds? builds = null, CancellationToken cancel = default)
     {
         cancel.ThrowIfCancellationRequested();
+        GameLayout layout;
         try
         {
             if (!Directory.Exists(root))
                 return NotAGame(root, GameTexts.FolderMissing, missing: true);
-            if (!GameRoot.IsRoot(root))
+            if (GameRoot.LayoutOf(root) is not { } found)
                 return NotAGame(root, GameTexts.NotAGameFolder);
+            if (PlayCopyError(root) is { } copy)
+                return NotAGame(root, copy);
+            layout = found;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return NotAGame(root, GameTexts.FolderNotReadable(GameRoot.Sentence(e.Message)));
         }
 
-        return new Run(root, GameFolders.Normal(root), builds ?? KnownBuilds.Embedded, cancel).Check();
+        return new Run(root, GameFolders.Normal(root), layout, builds ?? KnownBuilds.Embedded, cancel).Check();
     }
+
+    /// <summary>The error of a game root that is an OpenLancer play copy (decision D325), or null. A play copy names the
+    /// game that it copies, and the user links that game.</summary>
+    private static string? PlayCopyError(string root) =>
+        PlayCopyRecord.Exists(root)
+            ? PlayCopyRecord.SourceOf(root) is { } source ? GameTexts.PlayCopy(source) : GameTexts.PlayCopyUnknownSource
+            : null;
 
     /// <summary>The fast check before a profile opens: the root and <c>EXE\freelancer.ini</c> exist.</summary>
     public static bool LooksLikeGame(string root)
@@ -134,8 +152,11 @@ public static partial class GameDetector
         new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
     /// <summary>One check of a game root.</summary>
-    private sealed class Run(string folder, string root, KnownBuilds builds, CancellationToken cancel)
+    private sealed class Run(string folder, string root, GameLayout layout, KnownBuilds builds, CancellationToken cancel)
     {
+        // The hash of each file that the check read, by its full path. A source build compares its files with more
+        // than one file list.
+        private readonly Dictionary<string, string> hashes = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> evidence = [];
         private readonly List<GameFinding> findings = [];
         private readonly List<string> dataFiles = [];
@@ -158,6 +179,8 @@ public static partial class GameDetector
 
         public GameReport Check()
         {
+            if (layout == GameLayout.SourceBuild)
+                return SourceBuild();
             if (CheckRoot() is { } error)
                 return NotAGame(folder, error);
             libraries = ReadLibraries();
@@ -172,8 +195,101 @@ public static partial class GameDetector
             Plugins();
             VirtualStore();
             Target();
-            return new GameReport(folder, root, kind, version, proof, jflp, jflpVersion, product, exePath, build, target,
-                data, reference, comparedFiles, changedFiles, dataFiles, evidence, findings);
+            return Report();
+        }
+
+        private GameReport Report() =>
+            new(folder, root, kind, version, proof, jflp, jflpVersion, product, exePath, build, target, data, reference,
+                comparedFiles, changedFiles, dataFiles, evidence, findings) { Layout = layout };
+
+        /// <summary>
+        /// The checks of a source build (section 8.5 of the M11 design). They read <c>bin\freelancer.ini</c> with the
+        /// data path <c>..\DATA</c>, the universe file and <c>bin\resources.dll</c>. Then they find the game program and
+        /// compare the INI files of <c>DATA</c>. The program and its DLLs come from the source code, so the check does
+        /// not compare them.
+        /// </summary>
+        private GameReport SourceBuild()
+        {
+            var iniPath = Find(GameRoot.SourceBuildIni)!;
+            List<Section> sections;
+            try
+            {
+                using var stream = OpenRead(iniPath);
+                sections = IniFile.ParseFile(iniPath, stream).ToList();
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                return NotAGame(folder, GameTexts.SourceBuildIniNotReadable(GameRoot.Sentence(e.Message)));
+            }
+
+            var dataPath = Value(sections, "Freelancer", "data path");
+            if (string.IsNullOrWhiteSpace(dataPath))
+                return NotAGame(folder, GameTexts.SourceBuildIniNotReadable(GameTexts.NoDataPath));
+            var dataFolder = GameRoot.Resolve(root, "DATA");
+            if (!IsSourceDataPath(dataPath) || dataFolder == null || !Directory.Exists(dataFolder))
+                return NotAGame(folder, GameTexts.SourceBuildDataPath(dataPath));
+            var universe = Value(sections, "Data", "universe") is { Length: > 0 } named ? named : @"universe\universe.ini";
+            if (GameRoot.Resolve(dataFolder, universe) is not { } universePath || !File.Exists(universePath))
+                return NotAGame(folder, GameTexts.NotComplete(Path.Combine("DATA", universe)));
+            if (Find(@"bin\resources.dll") == null)
+                return NotAGame(folder, GameTexts.NotComplete(@"bin\resources.dll"));
+            evidence.Add($"bin\\freelancer.ini: data path {dataPath}, universe {universe}. bin\\resources.dll exists.");
+
+            SetKind(GameKind.SourceBuild, null, null, VersionProof.None);
+            exePath = Find(GameRoot.SourceBuildProgram);
+            evidence.Add(@"bin\freelancer.exe: found. A source build is a play target, not the base of a profile.");
+            SourceData();
+            return Report();
+        }
+
+        /// <summary>True for the data path <c>..\DATA</c>, in any letter case and with either separator.</summary>
+        private static bool IsSourceDataPath(string path) =>
+            path.Trim().Replace('/', '\\').TrimEnd('\\').Equals(@"..\DATA", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// The INI files of <c>DATA</c> of a source build, compared with the file list of each known build. The build
+        /// with the fewest changes gives the build id <c>source-&lt;build&gt;</c>. Vanilla data gives the target
+        /// <c>vanilla-1.1</c>, because the export form of a vanilla game is 1.1 (decision D329).
+        /// </summary>
+        private void SourceData()
+        {
+            var actual = RootIniFiles("DATA");
+            (string Id, string Reference, List<string> Changes, int Compared)? best = null;
+            foreach (var id in builds.Ids)
+            {
+                if (builds.Reference(id) is not { } known)
+                    continue;
+                var expected = known.Rows.Values
+                    .Where(r => r.Path.StartsWith("data/", StringComparison.Ordinal) && IsDataIni(r.Path)).ToList();
+                if (expected.Count == 0)
+                    continue;
+                var changes = Changes(expected, actual);
+                if (best == null || changes.Count < best.Value.Changes.Count)
+                    best = (id, known.Reference, changes, expected.Count);
+            }
+
+            if (best is not { } match)
+            {
+                build = SourcePrefix + UnknownBuild;
+                evidence.Add("INI files of DATA: not compared. OpenLancer has no file list of a build.");
+                Warning(GameTexts.SourceBuildUnknownData);
+                return;
+            }
+
+            build = SourcePrefix + match.Id;
+            Compared(match.Reference, match.Compared, match.Changes);
+            if (match.Id.StartsWith(VanillaPrefix, StringComparison.Ordinal))
+            {
+                target = ModTargets.Vanilla;
+                Info(GameTexts.SourceBuildData(BuildName(match.Id)));
+            }
+            else
+            {
+                Warning(GameTexts.SourceBuildUnknownData);
+            }
+
+            if (data == DataState.Changed)
+                Warning(GameTexts.ChangedData(changedFiles, BuildName(match.Reference)));
         }
 
         private void Info(string text) => findings.Add(new GameFinding(GameSeverity.Info, text));
@@ -509,39 +625,8 @@ public static partial class GameDetector
                 return;
             }
 
-            reference = known.Reference;
             var expected = known.Rows.Values.Where(r => IsDataIni(r.Path)).ToList();
-            comparedFiles = expected.Count;
-            var actual = RootIniFiles();
-            var changes = new List<string>();
-            foreach (var row in expected)
-            {
-                cancel.ThrowIfCancellationRequested();
-                if (!actual.Remove(row.Path, out var path))
-                {
-                    changes.Add($"{row.Path} (missing)");
-                    continue;
-                }
-
-                try
-                {
-                    if (new FileInfo(path).Length != row.Size || DataDigest.HashFile(path) != row.Sha256)
-                        changes.Add($"{row.Path} (changed)");
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                {
-                    Warning(GameTexts.FileNotReadable(Path.GetRelativePath(root, path), GameRoot.Sentence(e.Message)));
-                }
-            }
-
-            changes.AddRange(actual.Keys.Select(p => $"{p} (extra)"));
-            changes.Sort(StringComparer.Ordinal);
-            changedFiles = changes.Count;
-            dataFiles.AddRange(changes.Take(MaxDataFiles));
-            data = changes.Count == 0 ? DataState.NotChanged : DataState.Changed;
-            int Count(string change) => changes.Count(c => c.EndsWith(change, StringComparison.Ordinal));
-            evidence.Add($"INI files: {comparedFiles} compared with {reference}: {Count("(changed)")} changed, " +
-                         $"{Count("(missing)")} missing, {Count("(extra)")} extra.");
+            Compared(known.Reference, expected.Count, Changes(expected, RootIniFiles("DATA", "EXE")));
             if (known.FromParent && build == KnownBuilds.VanillaOnePointOne)
                 Info(GameTexts.OnePointOneData);
             if (data == DataState.Changed)
@@ -554,8 +639,60 @@ public static partial class GameDetector
             (path.StartsWith("data/", StringComparison.Ordinal) || path.StartsWith("exe/", StringComparison.Ordinal)) &&
             path.EndsWith(".ini", StringComparison.Ordinal);
 
-        /// <summary>The INI files under DATA and EXE of the root, by manifest path.</summary>
-        private Dictionary<string, string> RootIniFiles()
+        /// <summary>The changed, missing and extra INI files of the root, compared with the rows of a file list, in
+        /// ordinal order. Each one has the change in brackets.</summary>
+        /// <param name="actual">The INI files of the root, by manifest path.</param>
+        private List<string> Changes(IReadOnlyList<ManifestRow> expected, IReadOnlyDictionary<string, string> actual)
+        {
+            var extra = new Dictionary<string, string>(actual, StringComparer.Ordinal);
+            var changes = new List<string>();
+            foreach (var row in expected)
+            {
+                cancel.ThrowIfCancellationRequested();
+                if (!extra.Remove(row.Path, out var path))
+                {
+                    changes.Add($"{row.Path} (missing)");
+                    continue;
+                }
+
+                try
+                {
+                    if (new FileInfo(path).Length != row.Size || Hash(path) != row.Sha256)
+                        changes.Add($"{row.Path} (changed)");
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    Warning(GameTexts.FileNotReadable(Path.GetRelativePath(root, path), GameRoot.Sentence(e.Message)));
+                }
+            }
+
+            changes.AddRange(extra.Keys.Select(p => $"{p} (extra)"));
+            changes.Sort(StringComparer.Ordinal);
+            return changes;
+        }
+
+        /// <summary>Keeps the result of the compare with the file list of a build in the report.</summary>
+        private void Compared(string build, int compared, List<string> changes)
+        {
+            reference = build;
+            comparedFiles = compared;
+            changedFiles = changes.Count;
+            dataFiles.AddRange(changes.Take(MaxDataFiles));
+            data = changes.Count == 0 ? DataState.NotChanged : DataState.Changed;
+            int Count(string change) => changes.Count(c => c.EndsWith(change, StringComparison.Ordinal));
+            evidence.Add($"INI files: {comparedFiles} compared with {reference}: {Count("(changed)")} changed, " +
+                         $"{Count("(missing)")} missing, {Count("(extra)")} extra.");
+        }
+
+        private string Hash(string path)
+        {
+            if (!hashes.TryGetValue(path, out var hash))
+                hashes[path] = hash = DataDigest.HashFile(path);
+            return hash;
+        }
+
+        /// <summary>The INI files under the folders of the root, by manifest path.</summary>
+        private Dictionary<string, string> RootIniFiles(params string[] tops)
         {
             var files = new Dictionary<string, string>(StringComparer.Ordinal);
             var options = new EnumerationOptions
@@ -564,7 +701,7 @@ public static partial class GameDetector
                 MatchCasing = MatchCasing.CaseInsensitive,
                 IgnoreInaccessible = true,
             };
-            foreach (var top in new[] { "DATA", "EXE" })
+            foreach (var top in tops)
             {
                 if (GameRoot.Resolve(root, top) is not { } dir || !Directory.Exists(dir))
                     continue;

@@ -4,6 +4,7 @@ using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
+using OpenLancer.Data.PlayCopies;
 using OpenLancer.Data.Thn;
 using Xunit;
 using static OpenLancer.Tests.ExportGame;
@@ -158,7 +159,7 @@ public sealed class HdeManifestTests
     public void WriteManifestRefusesAPlayCopy()
     {
         using var game = new FakeGame();
-        game.Write(ManifestWriter.PlayCopyRecord, "{}");
+        game.Write(PlayCopyRecord.FileName, "{}");
 
         var error = Assert.Throws<System.InvalidOperationException>(() =>
             ManifestWriter.Write(game.Root, Path.Combine(game.Folder, "list.tsv")));

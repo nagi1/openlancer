@@ -53,8 +53,9 @@ internal sealed class FirstRunCard(EditorWindow window)
             }
 
             report = found;
-            screen = found.IsGame ? Screen.Found : Screen.NoGame;
-            if (found.IsGame)
+            // A source build is a play target, not the base of a profile (section 8.5 of the M11 design).
+            screen = found.CanBeBase ? Screen.Found : Screen.NoGame;
+            if (found.CanBeBase)
             {
                 form.Reset([found]);
             }
@@ -192,10 +193,10 @@ internal sealed class FirstRunCard(EditorWindow window)
     /// <summary>Screen D: no game in the folder. The status row tells why.</summary>
     private void NoGameScreen(GameReport found)
     {
-        CardLayout.Title("No game in this folder",
+        CardLayout.Title(found.IsGame ? "No profile for this game" : "No game in this folder",
             "Select the folder that contains the EXE and DATA folders of the game.");
         CardLayout.Divider();
-        GameReportView.Status(found, found.Name, found.Error ?? "");
+        GameReportView.Status(found, found.Name, found.Error ?? GameTexts.SourceBuildNoBase);
         CardLayout.SmallSpace();
         if (CardLayout.FolderWithOpenLink(found.Folder, !found.FolderMissing))
         {

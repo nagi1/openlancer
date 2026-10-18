@@ -87,6 +87,30 @@ public static class GameTexts
 
     public static string Plugins(string names) => $"Plugins in dacom.ini: {names}.";
 
+    // The source build and the play copies (milestone M11).
+    public static string SourceBuildIniNotReadable(string reason) => $"OpenLancer cannot read bin\\freelancer.ini: {reason}";
+
+    public static string SourceBuildDataPath(string path) =>
+        $"The source build reads its data from {path}. OpenLancer can play a source build only with data path = ..\\DATA.";
+
+    public const string SourceBuildNoBase = "A source build is a play target. OpenLancer cannot use it as the base of a " +
+                                            "profile. Link your game folder for the profile.";
+
+    public const string SourceBuildTooltip = "A game that you built from source code, for example Freelancer-Decomp, " +
+                                             "with bin\\freelancer.exe and its DATA folder.";
+
+    public static string SourceBuildData(string build) =>
+        $"The DATA folder of the source build has the INI files of {build}. OpenLancer plays it as a game of that build.";
+
+    public const string SourceBuildUnknownData = "OpenLancer does not know the INI files of the DATA folder of this " +
+                                                 "source build. Play in the game needs the INI files of Freelancer 1.0.";
+
+    public static string PlayCopy(string source) =>
+        $"This folder is an OpenLancer play copy of {source}. Link the game folder {source}.";
+
+    public const string PlayCopyUnknownSource =
+        "This folder is an OpenLancer play copy. Link the game folder that the play copy comes from.";
+
     public static string VirtualStore(int count, string path) =>
         $"Windows keeps changed copies of {count} game files in {path}. The game uses these copies. OpenLancer uses the " +
         "files in the game folder.";

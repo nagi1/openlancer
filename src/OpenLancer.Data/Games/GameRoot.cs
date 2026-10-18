@@ -3,20 +3,29 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using LibreLancer.Data.IO;
+using OpenLancer.Data.Export;
 
 namespace OpenLancer.Data.Games;
 
 /// <summary>
-/// Finds the game root from a folder that the user selected or dropped: the folder with <c>EXE\freelancer.ini</c>
-/// (section 6.1 of the M11a design). The search reads folder names only.
+/// Finds the game root from a folder that the user selected or dropped. The game root is the folder with
+/// <c>EXE\freelancer.ini</c> (section 6.1 of the M11a design). A source build has <c>bin\freelancer.exe</c> in its root
+/// (section 8.5 of the M11 design). The search reads folder names only.
 /// </summary>
 internal static class GameRoot
 {
     /// <summary>The file that marks a game root, relative to the root.</summary>
     public const string MarkerFile = @"EXE\freelancer.ini";
 
-    /// <summary>The root, or the error text when the folder holds no game root.</summary>
-    internal sealed record Result(string? Root, string? Error, bool Missing = false);
+    /// <summary>The program of a source build, relative to its root.</summary>
+    public const string SourceBuildProgram = @"bin\freelancer.exe";
+
+    /// <summary>The <c>freelancer.ini</c> of a source build, relative to its root.</summary>
+    public const string SourceBuildIni = @"bin\freelancer.ini";
+
+    /// <summary>The root and its layout, or the error text when the folder holds no game root.</summary>
+    internal sealed record Result(string? Root, string? Error, bool Missing = false,
+        GameLayout Layout = GameLayout.Standard);
 
     /// <summary>Finds the root. A file counts as its folder.</summary>
     public static Result Find(string folder)
@@ -59,6 +68,12 @@ internal static class GameRoot
                 return new Result(children[0], null);
             if (children.Count > 1)
                 return new Result(null, GameTexts.TwoGames(string.Join(", ", children.Select(Path.GetFileName))));
+            // 5. A source build (milestone M11): the folder itself, or a folder in it, for example bin or DATA.
+            for (var source = full; source != null && Depth(full, source) <= 2; source = Path.GetDirectoryName(source))
+            {
+                if (IsSourceBuildRoot(source))
+                    return new Result(source, null, Layout: GameLayout.SourceBuild);
+            }
             return new Result(null, HasFile(full, "librelancer.ini") ? GameTexts.LibrelancerData : GameTexts.NotAGameFolder);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -70,10 +85,19 @@ internal static class GameRoot
     /// <summary>True when the folder has <c>EXE\freelancer.ini</c>, in any letter case.</summary>
     public static bool IsRoot(string folder) => Directory.Exists(folder) && HasFile(folder, MarkerFile);
 
+    /// <summary>True when the folder is the root of a source build: it has <c>bin\freelancer.exe</c> and
+    /// <c>bin\freelancer.ini</c>, in any letter case.</summary>
+    public static bool IsSourceBuildRoot(string folder) =>
+        Directory.Exists(folder) && HasFile(folder, SourceBuildProgram) && HasFile(folder, SourceBuildIni);
+
+    /// <summary>The layout of a game root, or null when the folder is no game root.</summary>
+    public static GameLayout? LayoutOf(string folder) =>
+        IsRoot(folder) ? GameLayout.Standard : IsSourceBuildRoot(folder) ? GameLayout.SourceBuild : null;
+
     /// <summary>
-    /// The game root that holds a path: the path itself, or the nearest folder above it that is a game root. Null when
-    /// no such folder exists. OpenLancer uses it to refuse each write into a game folder (milestone M11). The path does
-    /// not have to exist.
+    /// The game root that holds a path: the path itself, or the nearest game root above it. A game root can also be the
+    /// root of a source build. Null when no such folder exists. OpenLancer uses it to refuse each write into a game
+    /// folder (milestone M11). The path does not have to exist.
     /// </summary>
     public static string? Containing(string path)
     {
@@ -81,7 +105,7 @@ internal static class GameRoot
         {
             try
             {
-                if (IsRoot(folder))
+                if (LayoutOf(folder) != null)
                     return folder;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)

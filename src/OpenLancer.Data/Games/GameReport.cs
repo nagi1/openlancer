@@ -1,6 +1,8 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json.Serialization;
+using OpenLancer.Data.Export;
 
 namespace OpenLancer.Data.Games;
 
@@ -21,6 +23,10 @@ public enum GameKind
 
     /// <summary>Code files that OpenLancer does not know.</summary>
     Unknown,
+
+    /// <summary>A game that the user built from source code, with <c>bin\freelancer.exe</c> and its <c>DATA</c> folder
+    /// (milestone M11). It is a play target only, never the base of a profile or of an export.</summary>
+    SourceBuild,
 }
 
 /// <summary>How the detector found the version.</summary>
@@ -71,9 +77,11 @@ public sealed record GameFinding(GameSeverity Severity, string Text);
 /// <param name="Version">For example "1.1" or "0.7.1", or null when the version is not known.</param>
 /// <param name="JflpVersion">The binary file version of <c>jflp.dll</c>, or null.</param>
 /// <param name="Product">The name of a game that OpenLancer does not support, for example "Discovery".</param>
-/// <param name="ExePath">The full path of <c>EXE\Freelancer.exe</c>, or null when the folder has no game program.</param>
+/// <param name="ExePath">The full path of <c>EXE\Freelancer.exe</c> (<c>bin\freelancer.exe</c> for a source build), or
+/// null when the folder has no game program.</param>
 /// <param name="Build">The build id: <c>vanilla-1.0</c>, <c>vanilla-1.1</c>, <c>hde-&lt;version&gt;</c>, <c>hde</c>,
-/// <c>discovery</c> or <c>unknown</c>. Null for <see cref="GameKind.NotAGame"/>.</param>
+/// <c>discovery</c>, <c>unknown</c>, or <c>source-&lt;data build&gt;</c> for a source build. Null for
+/// <see cref="GameKind.NotAGame"/>.</param>
 /// <param name="Target">The export target of mods for this game (see <c>ModTargets</c>), or null.</param>
 /// <param name="Reference">The build whose file list the check used, or null.</param>
 /// <param name="ComparedFiles">The number of INI files of the reference that the check compared.</param>
@@ -90,9 +98,21 @@ public sealed record GameReport(
     /// <summary>True when the folder does not exist, for example because the game moved.</summary>
     public bool FolderMissing { get; init; }
 
-    /// <summary>True when the folder holds a game that the editor can use as a base.</summary>
+    /// <summary>How the files of the game map to install paths (milestone M11).</summary>
+    public GameLayout Layout { get; init; }
+
+    /// <summary>True when the folder holds a game that the editor can link.</summary>
     [JsonIgnore]
     public bool IsGame => Kind != GameKind.NotAGame;
+
+    /// <summary>True when the editor can use the game as the base of a profile. A source build is a play target
+    /// only.</summary>
+    [JsonIgnore]
+    public bool CanBeBase => IsGame && Kind != GameKind.SourceBuild;
+
+    /// <summary>The files of the game for a merge.</summary>
+    [JsonIgnore]
+    public GameBase? Base => Root == null ? null : new GameBase(Root, Layout);
 
     /// <summary>The name of the game for the user, for example "Freelancer 1.1 with JFLP".</summary>
     public string Name => Kind switch
@@ -103,6 +123,7 @@ public sealed record GameReport(
             ? "Freelancer: HD Edition (version unknown)"
             : $"Freelancer: HD Edition {Version}",
         GameKind.NotSupported => $"{Product} (not supported)",
+        GameKind.SourceBuild => $"Source build ({Path.GetFileName(Root ?? Folder)})",
         _ => "Unknown Freelancer version",
     };
 
@@ -113,6 +134,7 @@ public sealed record GameReport(
         GameKind.Vanilla => (Version == null ? "Freelancer" : $"Freelancer {Version}") + JflpSuffix,
         GameKind.HdEdition => Version == null ? "HD Edition" : $"HD Edition {Version}",
         GameKind.NotSupported => Product ?? "Not supported",
+        GameKind.SourceBuild => "Source build",
         _ => "Unknown version",
     };
 

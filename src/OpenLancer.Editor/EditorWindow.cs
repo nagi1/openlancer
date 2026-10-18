@@ -101,6 +101,8 @@ internal sealed partial class EditorWindow : Game
         AssetDrag = new AssetDrag(this);
         closePrompt = new ClosePrompt(this);
         Play = new PlayController(this, PlayProcess.Command, () => playClock.Elapsed);
+        GamePlay = new GamePlay(this, GameProcess.Starter(this), DllStringResourceWriter.Instance, ThornEvaluator.Instance,
+            () => playClock.Elapsed);
         playMenu = new PlayMenu(this);
         // The window gets this title when it is made. The shaders compile before the first frame, and the window
         // must not show the engine name during that time.
@@ -279,6 +281,8 @@ internal sealed partial class EditorWindow : Game
         // The game shows the data of this window, so it ends with the window (decision D48).
         Play.SessionEnding(windowClose: true);
         Play.Dispose();
+        // The game and the test server of the play copy end with the editor, through their jobs (decision D313).
+        GamePlay.Dispose();
         // After a crash in Load, the ImGui context can be missing.
         if (gui != null)
         {
@@ -308,7 +312,15 @@ internal sealed partial class EditorWindow : Game
 
     /// <summary>The user closes the window: the close button, Alt+F4 or the taskbar. With unsaved edits, the window
     /// stays open and the close prompt asks first (OL-0027, see <see cref="ClosePrompt"/>).</summary>
-    protected override bool OnCloseRequested() => closePrompt.Request();
+    /// <remarks>A running test server asks first, so that FLServer can save its characters (decision D336).</remarks>
+    protected override bool OnCloseRequested() =>
+        GamePlay.CloseRequested(() =>
+        {
+            if (closePrompt.Request())
+            {
+                Exit();
+            }
+        }) && closePrompt.Request();
 
     /// <summary>Ends an open field edit or drag and keeps its change, before the window closes.</summary>
     private void EndOpenEdits()
@@ -639,6 +651,7 @@ internal sealed partial class EditorWindow : Game
         Edits.Update(IsEditing);
         // After the layout, so that a click on Play gets the edit of a field that the click ended (section 9.1).
         Play.Update(IsEditing, DialogOpen);
+        GamePlay.Update(IsEditing, DialogOpen);
         bench?.Update();
 
         ImGui.PopFont();

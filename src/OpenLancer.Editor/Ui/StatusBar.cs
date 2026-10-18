@@ -17,8 +17,9 @@ namespace OpenLancer.Editor.Ui;
 
 /// <summary>
 /// The status bar at the bottom of the window. Segments at the right show the load task, the profile, the linked game,
-/// the system, the game of Play, the selection, the camera and the frame rate. A thin line separates them, and each one has a tooltip with the full
-/// text. The left part shows the newest warning or error of the Console.
+/// the system and the game of Play. Then they show the game and the test server of a play copy, the selection, the
+/// camera and the frame rate. A thin line separates them, and each one has a tooltip with the full text. The left part
+/// shows the newest warning or error of the Console.
 /// </summary>
 /// <remarks>
 /// Each segment is made again only when the thing that it shows changes, so a frame without changes makes no text.
@@ -60,6 +61,8 @@ internal sealed class StatusBar(EditorWindow window)
     private (EditorSession? Session, GameReport? Report, LinkedGame? Entry, bool Checking, Segment? Segment) gameSegment;
     private (StarSystem? System, Segment? Segment) systemSegment;
     private (string? Text, Segment? Segment) playSegment;
+    private (string? Text, Segment? Segment) gameCopySegment;
+    private (string? Text, Segment? Segment) serverSegment;
     private (object? Item, SystemIndex? Index, Segment? Segment) selectionSegment;
     private ((long X, long Y, long Z, long Speed) Values, Segment? Segment) cameraSegment;
     private Segment frameRateSegment = new(EditorIcons.TachometerAlt, "", "", MinWidthText: FrameRateWidthText);
@@ -150,6 +153,31 @@ internal sealed class StatusBar(EditorWindow window)
         if (playSegment.Segment != null)
         {
             segments.Add(playSegment.Segment);
+        }
+
+        // The game and the test server of a play copy (section 8.8 of the M11 design).
+        var games = window.GamePlay;
+        var gameText = games.GameStatus;
+        if (gameText != gameCopySegment.Text)
+        {
+            gameCopySegment = (gameText, gameText == null ? null : new Segment(EditorIcons.Rocket, gameText,
+                $"{gameText}\nStop or Shift+F5 closes the game. Your game folder does not change.",
+                games.GameRuns ? EditorTheme.Success : null));
+        }
+
+        var serverText = games.ServerStatus;
+        if (serverText != serverSegment.Text)
+        {
+            serverSegment = (serverText, serverText == null ? null : new Segment(EditorIcons.SatelliteDish, serverText,
+                $"{serverText}\nPlay > Stop test server closes FLServer.", games.ServerRuns ? EditorTheme.Success : null));
+        }
+
+        foreach (var segment in new[] { gameCopySegment.Segment, serverSegment.Segment })
+        {
+            if (segment != null)
+            {
+                segments.Add(segment);
+            }
         }
 
         var selection = window.Selection;

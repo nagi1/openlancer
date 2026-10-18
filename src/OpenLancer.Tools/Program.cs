@@ -15,6 +15,7 @@ using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Data.PlayCopies;
 using OpenLancer.Data.Thn;
 using OpenLancer.Data.Validation;
 using OpenLancer.Runtime.Strings;
@@ -64,6 +65,17 @@ internal static class Program
                                             folder, <profile folder>\..\exports\<mod id> by default. --checklist:
                                             print the checklist for testers, and write nothing. --flmm-probe: write
                                             the probe of the FLMM check, which is not for players.
+          install <profile.json> --game <folder> [--into <play copy>] [--full-copy]
+                                            Merge all mods of the profile on the files of the game, check the result,
+                                            make or update the play copy of the game, and install the files into it.
+                                            The game folder does not change. It starts no program. --into: the play
+                                            copy folder, "<game folder> - OpenLancer play" next to the game by default.
+                                            It must not overlap the profile folder, a mod folder or the OpenLancer repo.
+                                            --full-copy: real copies of all files, also for FLMM and drop-in tests.
+          uninstall <play copy>             Give each installed file of the play copy its kind of the make again.
+          playcopy check <play copy>        Check the links and the installed files of a play copy, and change
+                                            nothing. Exit 1 on a difference.
+          playcopy remove <play copy>       Delete a play copy. The game folder does not change.
           ini <profile.json|folder> <path>  Print a merged INI file (binary or text) as text.
           dump <profile.json|folder> <out>  Write a canonical JSON dump of the resolved game data.
           thn <profile.json|folder> <path>  Print a cutscene script (.thn) as canonical Lua text. The script comes from
@@ -96,6 +108,10 @@ internal static class Program
                 ["validate", var profile, .. var options] => Validate(profile, options),
                 ["deploy", var profile] => Deploy(profile),
                 ["export", var profile, .. var options] => Export(profile, options),
+                ["install", var profile, .. var options] => Install(profile, options),
+                ["uninstall", var folder] => Uninstall(folder),
+                ["playcopy", "check", var folder] => CheckPlayCopy(folder),
+                ["playcopy", "remove", var folder] => RemovePlayCopy(folder),
                 ["ini", var source, var path] => PrintIni(source, path),
                 ["dump", var source, var output] => Dump(source, output),
                 ["thn", "roundtrip", var source] => ThnRoundTrip(source, null),
@@ -104,7 +120,7 @@ internal static class Program
                 _ => Fail(Usage),
             };
         }
-        catch (Exception e) when (e is ModLoadException or DeployException or EngineLoadException
+        catch (Exception e) when (e is ModLoadException or DeployException or EngineLoadException or PlayCopyException
                                       or IOException or UnauthorizedAccessException)
         {
             return Fail(e.Message);
@@ -429,6 +445,105 @@ internal static class Program
         foreach (var package in result.Packages)
             Out.WriteLine(package.Path != null ? $"Wrote {package.Path}" : $"Refused {package.FileName}");
         return result.Succeeded ? ExitOk : ExitProblems;
+    }
+
+    /// <summary>Installs the mods of a profile into the play copy of a game (section 8.9 of the M11 design). It starts no
+    /// program.</summary>
+    private static int Install(string profilePath, string[] options)
+    {
+        string? game = null, into = null;
+        var full = false;
+        for (var i = 0; i < options.Length; i++)
+        {
+            var hasValue = i + 1 < options.Length;
+            switch (options[i])
+            {
+                case "--game" when game == null && hasValue:
+                    game = options[++i];
+                    break;
+                case "--into" when into == null && hasValue:
+                    into = options[++i];
+                    break;
+                case "--full-copy" when !full:
+                    full = true;
+                    break;
+                default:
+                    return Fail(Usage);
+            }
+        }
+        if (game == null)
+            return Fail(Usage);
+        if (!Directory.Exists(game))
+            return Fail($"The folder {game} does not exist.");
+        var report = GameDetector.Detect(game);
+        if (!report.IsGame || report.Base is not { } source)
+            return Fail(report.Error ?? $"The folder {game} holds no game.");
+
+        var profile = ModProfile.Load(profilePath);
+        if (PlayBuild.Refusal(report, profile.Mods) is { } refusal)
+        {
+            Err.WriteLine(refusal);
+            return ExitProblems;
+        }
+        var build = PlayBuild.Run(report, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
+        foreach (var problem in build.Problems)
+            Err.WriteLine(problem);
+        if (build.HasErrors)
+        {
+            Out.WriteLine("The install stopped. Fix the errors, then install again.");
+            return ExitProblems;
+        }
+
+        var folder = Path.GetFullPath(into ?? PlayCopy.DefaultFolder(source.Root));
+        // The folder of the profile file is the workspace of oltool.
+        var protectedFolders = PlayCopy.ProtectedFolders(Path.GetDirectoryName(profile.FilePath)!, profile);
+        if (PlayCopy.ProtectedProblem(folder, protectedFolders) is { } overlap)
+            return Fail(overlap);
+        var mode = full ? PlayCopyMode.Full : PlayCopyMode.Links;
+        if (mode == PlayCopyMode.Links && !PlayCopyRecord.Exists(folder) && PlayCopy.Probe(source, folder) is { } reason)
+            return Fail($"{PlayCopyTexts.ProbeFailed(Path.GetPathRoot(source.Root) ?? source.Root, reason)} Use " +
+                        "--into with a folder on that drive, or --full-copy.");
+        if (!PlayCopyRecord.Exists(folder))
+            Out.WriteLine(PlayCopyTexts.Make(report.Name, folder));
+        using var copy = PlayCopy.Make(source, folder, mode, report.Build);
+        var result = copy.Install(build.Files, profile.FilePath);
+        foreach (var problem in result.Problems)
+            Err.WriteLine(problem);
+        Out.WriteLine($"Play copy: {copy.Root}");
+        Out.WriteLine($"Program: {copy.ProgramPath ?? "none"}");
+        Out.WriteLine($"Installed {build.Files.Files.Count} files: {result.Written} written, {result.Restored} restored. " +
+                      $"The play copy has {result.Links} links and {result.Copies} real files.");
+        return ExitOk;
+    }
+
+    /// <summary>Gives each installed file of a play copy its kind of the make again.</summary>
+    private static int Uninstall(string folder)
+    {
+        using var copy = PlayCopy.Open(folder);
+        var result = copy.Uninstall();
+        foreach (var problem in result.Problems)
+            Err.WriteLine(problem);
+        Out.WriteLine($"Uninstalled the mods of {copy.Root}: {result.Restored} files restored.");
+        return ExitOk;
+    }
+
+    /// <summary>Prints each difference of a play copy and the counts of its links and real files.</summary>
+    private static int CheckPlayCopy(string folder)
+    {
+        using var copy = PlayCopy.Open(folder);
+        var result = copy.Check();
+        foreach (var problem in result.Problems)
+            Err.WriteLine(problem);
+        Out.WriteLine($"{copy.Root}: {result.Links} links, {result.Copies} real files, {result.Problems.Count} " +
+                      "differences.");
+        return result.Problems.Count == 0 ? ExitOk : ExitProblems;
+    }
+
+    private static int RemovePlayCopy(string folder)
+    {
+        PlayCopy.Remove(folder);
+        Out.WriteLine($"Removed the play copy {Path.GetFullPath(folder)}. The game folder did not change.");
+        return ExitOk;
     }
 
     private static int PrintIni(string source, string path)
