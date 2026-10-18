@@ -41,7 +41,7 @@ internal sealed record DocumentState(
 /// <item>The loaded patch has an error. Then some of its lines are not in W, and a save would lose them.</item>
 /// <item>The active mod replaces the file with its own file. The merge then applies the patch of the mod to that
 /// file, not to B. W is then B, and the document only shows it.</item>
-/// <item>The file is <c>EXE\freelancer.ini</c>, which format version 1 cannot patch.</item>
+/// <item>The file is <c>EXE\freelancer.ini</c>, which a patch cannot change.</item>
 /// </list>
 /// <para>Edits never change a section or an entry in place. They put new sections into the list, so an old
 /// <see cref="DocumentState"/> stays valid.</para>

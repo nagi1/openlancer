@@ -114,8 +114,8 @@ public sealed partial class EditSession
         return false;
     }
 
-    /// <summary>The sections of the <c>freelancer.ini</c> of the edit view, read at the first use. Format version 1
-    /// cannot patch the file, so it does not change in a session.</summary>
+    /// <summary>The sections of the <c>freelancer.ini</c> of the edit view, read at the first use. A patch cannot
+    /// change the file, so it does not change in a session.</summary>
     private IReadOnlyList<Section> FreelancerIni => freelancerIni ??= ReadFreelancerIni();
 
     /// <summary>The sections of the <c>freelancer.ini</c> of the edit view, or none when it has no such file.</summary>

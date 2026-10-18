@@ -14,7 +14,8 @@ namespace OpenLancer.Data.Editing;
 /// <list type="bullet">
 /// <item>A section with a key (see <see cref="SectionKeys"/>) is (type, key), for example <c>[Good] le_hull</c>.
 /// The section must have exactly one key entry with one value.</item>
-/// <item>A section of a singleton type is (type).</item>
+/// <item>A section of a singleton type is (type). So is a section without a line of an optional key (see
+/// <see cref="SectionMatch.KeyOptional"/>), for example <c>[LootableZone] without zone</c>.</item>
 /// <item>Any other section without a key is (type, ordinal), for example the n-th <c>[BaseGood]</c> of a file.</item>
 /// <item>A child section also has its parent: (parent, type, key), or (parent, type, ordinal) without a key.</item>
 /// </list>
@@ -54,6 +55,8 @@ public sealed record SectionIdentity(string Type, string? Key, SectionIdentity? 
             return $"[{Type}] {match.KeyEntry} = {Key}" + (Ordinal > 0 ? $" (#{Ordinal + 1})" : "") + parent;
         if (match.Kind == SectionMatchKind.Singleton && Parent == null)
             return $"[{Type}]" + (Ordinal > 0 ? $" #{Ordinal + 1}" : "");
+        if (match.KeyOptional && Parent == null)
+            return $"[{Type}] without {match.KeyEntry}" + (Ordinal > 0 ? $" #{Ordinal + 1}" : "");
         return $"[{Type}] #{Ordinal + 1}" + parent;
     }
 

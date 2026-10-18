@@ -134,15 +134,21 @@ internal static class IniPatcher
         }
 
         string? keyValue = null;
+        // A patch section without a line of an optional key finds the section without that line.
+        var keyless = false;
         if (match.Kind == SectionMatchKind.Keyed)
         {
             var keyEntries = p.Content.Where(e => Is(e, match.KeyEntry!)).ToList();
-            if (keyEntries.Count != 1 || keyEntries[0].Count != 1)
+            if (keyEntries.Count == 0 && match.KeyOptional)
+                keyless = true;
+            else if (keyEntries.Count != 1 || keyEntries[0].Count != 1)
             {
-                context.Error($"[{patch.Name}] needs exactly one '{match.KeyEntry}' entry with one value to find its target.");
+                context.Error($"[{patch.Name}] needs exactly one '{match.KeyEntry}' entry with one value to find its target" +
+                              (match.KeyOptional ? $", or no '{match.KeyEntry}' entry for the section without one." : "."));
                 return null;
             }
-            keyValue = keyEntries[0][0].ToString();
+            else
+                keyValue = keyEntries[0][0].ToString();
         }
 
         var identity = new SectionIdentity(patch.Name, keyValue);
@@ -150,7 +156,8 @@ internal static class IniPatcher
         var candidates = target.Sections
             .Select((section, index) => (section, index))
             .Where(c => c.section.Name.Equals(patch.Name, StringComparison.OrdinalIgnoreCase) &&
-                        (keyValue == null || KeyEquals(c.section, match.KeyEntry!, keyValue)))
+                        (keyless ? !SectionKeys.HasKeyLine(c.section, match)
+                            : keyValue == null || KeyEquals(c.section, match.KeyEntry!, keyValue)))
             .ToList();
 
         if (p.IsNew)

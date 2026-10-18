@@ -91,7 +91,7 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     /// </summary>
     private static readonly SortedDictionary<string, string> SavedHashes = new(StringComparer.Ordinal)
     {
-        ["mod.json"] = "e45eccd148073c0e5d8e24e6bd1b0ae2cf270e5cac46568cb5b3a7bfb3394f91",
+        ["mod.json"] = "0b7108ae94001cdca144b79298c7bef92b1f1787809439c43e53a05c744a1f1a",
         [@"patches\DATA\Equipment\Goods.ini"] = "1119c441220d28459ce54631cb366df8f4a50fe318dcb1910ee135a0b06fc859",
         [@"patches\DATA\Equipment\market_misc.ini"] = "15947051489c948a88a17174931eb7d21d584d9ac2eb7513aca66bc5a322856b",
         [@"patches\DATA\Equipment\market_ships.ini"] = "62538c8df22024131f5fbfd1c529bcbfcf0dc9eae31eb2428741a53bd3710e98",
@@ -344,7 +344,7 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
             .ToList();
         session.Execute(EditCommand.SetLines(package, "addon", addons));
 
-        // Format version 1 cannot change a retail market line, so each item gets a new [BaseGood] for Manhattan.
+        // A patch cannot change a retail market line, so each item gets a new [BaseGood] for Manhattan.
         var retailGunLine = session.MarketLines("li_gun01_mark01")
             .Single(l => l.Base.Equals(RetailChecks.Manhattan, StringComparison.OrdinalIgnoreCase));
         session.Execute(EditCommand.AddSection(retailGunLine.Section.Path, "BaseGood",

@@ -10,7 +10,8 @@ public static class ModWorkspace
     private const string NewModVersion = "1.0.0";
 
     /// <summary>
-    /// Makes the folder <c>&lt;modsFolder&gt;\&lt;id&gt;</c> with a <c>mod.json</c>, and returns the folder.
+    /// Makes the folder <c>&lt;modsFolder&gt;\&lt;id&gt;</c> with a <c>mod.json</c> of the current format version for a
+    /// tier-1 mod, and returns the folder.
     /// </summary>
     /// <param name="name">The display name. An empty name gives the id.</param>
     /// <exception cref="ArgumentException">The id is not valid.</exception>
@@ -28,6 +29,8 @@ public static class ModWorkspace
         manifest.Root["name"] = string.IsNullOrWhiteSpace(name) ? id : name.Trim();
         manifest.Root["version"] = NewModVersion;
         manifest.Root["formatVersion"] = ModManifest.CurrentFormatVersion;
+        // A new mod is a data mod. Without a targets field, it is for each target of its tier.
+        manifest.Root["tier"] = ModManifest.DataTier;
         Directory.CreateDirectory(folder);
         try
         {

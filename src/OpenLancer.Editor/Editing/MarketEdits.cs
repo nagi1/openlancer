@@ -7,7 +7,7 @@ using OpenLancer.Data.Editing;
 namespace OpenLancer.Editor.Editing;
 
 /// <summary>
-/// The edits of the <c>marketgood</c> lines that sell a good. Format version 1 cannot change a line of a lower layer,
+/// The edits of the <c>marketgood</c> lines that sell a good. A patch cannot change a line of a lower layer,
 /// so the edits change only the <c>[BaseGood]</c> sections that the active mod adds (see <c>docs/MOD_FORMAT.md</c>,
 /// "Markets").
 /// </summary>
@@ -72,7 +72,7 @@ internal static class MarketEdits
         var view = session.Get(line.Section);
         if (view is not { IsNew: true, ReadOnlyReason: null })
             throw new InvalidOperationException(
-                "Format version 1 cannot change a market line of a lower layer. Use a whole-file override for that.");
+                "A patch cannot change a market line of a lower layer. Use a whole-file override for that.");
         var lines = Lines(view);
         if (values == null)
             lines.RemoveAt(line.Line);

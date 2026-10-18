@@ -18,7 +18,10 @@ internal enum SectionMatchKind
     Append,
 }
 
-internal readonly record struct SectionMatch(SectionMatchKind Kind, string? KeyEntry);
+/// <param name="KeyOptional">True for a keyed type whose sections can also have no line of the key. The engine then
+/// reads the section without the key as the default of the file, for example the <c>[LootableZone]</c> of the whole
+/// field. A patch section without a line of the key finds that section. A file has at most one such section.</param>
+internal readonly record struct SectionMatch(SectionMatchKind Kind, string? KeyEntry, bool KeyOptional = false);
 
 /// <summary>
 /// How a patch section of each type finds the section that it changes, and which section types belong to a parent.
@@ -53,6 +56,30 @@ internal static class SectionKeys
         ["Room_Info"] = new(SectionMatchKind.Singleton, null),
         ["CharacterPlacement"] = new(SectionMatchKind.Singleton, null),
         ["PlayerShipPlacement"] = new(SectionMatchKind.Singleton, null),
+        // Nebula files (upstream Nebula.cs) and asteroid field files (AsteroidField.cs), milestone M25. The engine keeps
+        // one section of each of these types: the last one, or the first one for [NebulaLight] and [Clouds]. Each
+        // type occurs at most once in each retail file, except [NebulaLight] (two in two files). A patch cannot find
+        // one of two sections, so those two files keep their [NebulaLight] read-only. The ring and black hole files
+        // reuse [Fog], [Exterior] and [Clouds], at most once in each file.
+        ["Fog"] = new(SectionMatchKind.Singleton, null),
+        ["Exterior"] = new(SectionMatchKind.Singleton, null),
+        ["NebulaLight"] = new(SectionMatchKind.Singleton, null),
+        ["Clouds"] = new(SectionMatchKind.Singleton, null),
+        ["BackgroundLightning"] = new(SectionMatchKind.Singleton, null),
+        ["DynamicLightning"] = new(SectionMatchKind.Singleton, null),
+        ["Cube"] = new(SectionMatchKind.Singleton, null),
+        ["Field"] = new(SectionMatchKind.Singleton, null),
+        ["Band"] = new(SectionMatchKind.Singleton, null),
+        ["ExclusionBand"] = new(SectionMatchKind.Singleton, null),
+        ["AsteroidBillboards"] = new(SectionMatchKind.Singleton, null),
+        ["properties"] = new(SectionMatchKind.Singleton, null),
+        // The engine reads each [Exclusion Zones] section, but each retail file has one at most. The lines of each
+        // excluded zone belong together (see LinkedEntries).
+        ["Exclusion Zones"] = new(SectionMatchKind.Singleton, null),
+        // The engine keeps each of these sections. Each retail file names an asteroid or a zone one time at most. One
+        // [LootableZone] without a zone line gives the loot of the whole field.
+        ["DynamicAsteroids"] = new(SectionMatchKind.Keyed, "asteroid"),
+        ["LootableZone"] = new(SectionMatchKind.Keyed, "zone", KeyOptional: true),
     };
 
     /// <summary>
@@ -79,10 +106,33 @@ internal static class SectionKeys
         ["Zone"] = [["encounter", "faction", "faction_weight"]],
         ["GF_NPC"] = [["know", "knowdb"], ["rumor", "rumor_type2", "rumorknowdb"]],
         ["EncounterFormation"] = [["ship_by_class", "ship_by_npc_arch", "pilot_job", "make_class"]],
+        // The exclusion line group (milestone M25). The engine starts a new excluded zone at each exclusion or exclude
+        // line, and gives it the lines after it (upstream ParseHelpers.Chunk). The other names are the keys of the
+        // nebula and the asteroid exclusions (NebulaExclusion.cs, AsteroidExclusion.cs). Thus a patch keeps each line
+        // with its zone, and a delete of a zone can remove the lines of its exclusion (decision D81, milestone M3).
+        ["Exclusion Zones"] =
+        [[
+            "exclusion", "exclude", "fog_far", "fog_near", "zone_shell", "shell_scalar", "max_alpha", "color",
+            "exclusion_tint", "exclude_billboards", "exclude_dynamic_asteroids", "empty_cube_frequency", "billboard_count",
+        ]],
     };
 
     public static SectionMatch For(string sectionName) =>
         Exceptions.TryGetValue(sectionName, out var match) ? match : new(SectionMatchKind.Keyed, DefaultKey);
+
+    /// <summary>
+    /// True when a patch section finds the section without a key: a section of a singleton type, or a section without
+    /// a line of the key of a type whose key is optional (see <see cref="SectionMatch.KeyOptional"/>).
+    /// </summary>
+    public static bool FindsWithoutKey(Section section)
+    {
+        var match = For(section.Name);
+        return match.Kind == SectionMatchKind.Singleton || match.KeyOptional && !HasKeyLine(section, match);
+    }
+
+    /// <summary>True when the section has a line of the key entry of its type.</summary>
+    public static bool HasKeyLine(Section section, SectionMatch match) =>
+        match.KeyEntry != null && section.Any(e => e.Name.Equals(match.KeyEntry, StringComparison.OrdinalIgnoreCase));
 
     public static bool IsChild(string sectionName) => ChildTypes.Contains(sectionName);
 

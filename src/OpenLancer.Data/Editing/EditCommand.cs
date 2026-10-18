@@ -92,8 +92,9 @@ public abstract class EditCommand
     public static EditCommand DeleteSection(SectionRef target) => new DeleteSectionCommand($"Delete {target.Id}", target);
 
     /// <summary>
-    /// Gives a section a new key. In format version 1, only a section that the active mod adds can get a new key. The
-    /// new key must differ from the old key in more than letter case, and no other section of the type can have it.
+    /// Gives a section a new key. A patch cannot rename a section, so only a section that the active mod adds can get a
+    /// new key. The new key must differ from the old key in more than letter case, and no other section of the type can
+    /// have it.
     /// </summary>
     public static EditCommand Rename(SectionRef target, string newKey)
     {
@@ -257,7 +258,7 @@ public abstract class EditCommand
                           throw new InvalidOperationException($"A [{section.Name}] section has no key to change.");
             if (document.InBase(document.IdentityAt(index)))
                 throw new InvalidOperationException(
-                    $"{target.Id}: in format version 1, the editor can change the key only of a section that the active mod adds.");
+                    $"{target.Id}: the editor can change the key only of a section that the active mod adds.");
             if (string.Equals(SectionIdentity.KeyOf(section), newKey, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
                     $"{target.Id}: the new key must differ from the old key in more than letter case.");

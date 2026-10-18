@@ -27,9 +27,10 @@ public sealed class PatchRoundTripTests(ITestOutputHelper output)
 
     /// <summary>
     /// The sections that a patch can find by their key: one key entry with one value, which no other section of the
-    /// type in the file has. Of these, this many are child sections.
+    /// type in the file has. Of these, this many are child sections. The key rules of milestone M25 added 163 of them:
+    /// the 145 <c>[DynamicAsteroids]</c> sections and the 18 <c>[LootableZone]</c> sections with a <c>zone</c> line.
     /// </summary>
-    private const int RetailUniqueKeySections = 31_374;
+    private const int RetailUniqueKeySections = 31_537;
     private const int RetailUniqueKeyChildren = 1_643;
 
     /// <summary>Proof 1(d) writes back this many sections of a file at a time.</summary>

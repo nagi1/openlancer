@@ -13,7 +13,7 @@ namespace OpenLancer.Data.Editing;
 /// <c>fx\explosions.ini</c>.
 /// </summary>
 /// <remarks>
-/// <para>The roles come from <c>freelancer.ini</c> of the edit view, which format version 1 cannot patch. So they do not
+/// <para>The roles come from <c>freelancer.ini</c> of the edit view, which a patch cannot change. So they do not
 /// change in a session, except the <c>system</c> and <c>room</c> roles: the system files are the files that the
 /// <c>[system]</c> sections of W of <c>universe.ini</c> name, and the room files are the files that the <c>[Room]</c>
 /// sections of the base files name (see <see cref="RoomFiles"/>).</para>

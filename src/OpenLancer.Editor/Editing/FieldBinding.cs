@@ -103,7 +103,7 @@ internal sealed class FieldBinding
     internal static string? KeyLock(EditSession session, SectionRef section, SectionView view, KeySchema? key, string name)
     {
         if (key?.IsKeyEntry == true)
-            return $"'{name}' is the key that finds the section. The editor does not change it in format version 1.";
+            return $"'{name}' is the key that finds the section. The editor cannot change it.";
         // For example, a change of the encounter lines of a zone gives its faction lines to another encounter.
         if (view.IsLinked(name))
             return "This key belongs to a group of lines that belong together. A later milestone edits the group.";

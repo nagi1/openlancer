@@ -52,7 +52,7 @@ public sealed class TemplatePlan
 /// <para>A ship copies the <c>[Ship]</c>, the hull good that the engine uses (the last one), and the packages of
 /// that hull. Equipment copies its section, its good, and the munition that <c>projectile_archetype</c> names, with
 /// the good of the munition. Each section gets its child sections too, for example the <c>[CollisionGroup]</c>
-/// sections of a ship (decision D1: format version 1 has no template directive).</para>
+/// sections of a ship (decision D1: the patch format has no template directive).</para>
 /// <para>Each copy goes into the file of the section that it copies, because a patch cannot change the file list of
 /// <c>freelancer.ini</c>. The copies get these nicknames: the ship or the equipment and its good get the new
 /// nickname. The hull good gets <c>&lt;new&gt;_hull</c>, a package <c>&lt;new&gt;_package</c> (then

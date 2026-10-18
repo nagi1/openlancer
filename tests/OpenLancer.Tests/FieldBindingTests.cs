@@ -367,7 +367,7 @@ public sealed class FieldBindingTests
             Assert.Equal(group, Bind(session, SceneSections[SceneSection.Zone], key).ReadOnlyReason);
         Assert.Equal("Changing the file of a system moves all its contents. A later milestone does this.",
             Bind(session, SystemWorkspace.System("Li01"), "file").ReadOnlyReason);
-        Assert.Equal("'nickname' is the key that finds the section. The editor does not change it in format version 1.",
+        Assert.Equal("'nickname' is the key that finds the section. The editor cannot change it.",
             Bind(session, SceneSections[SceneSection.Object], "nickname").ReadOnlyReason);
         // A patch finds neither a section without a key entry nor a section whose key another section has too.
         Assert.Equal("it has no single 'nickname' entry with one value.",

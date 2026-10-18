@@ -11,13 +11,13 @@ namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
 /// The "Sold at" section of a good: each <c>marketgood</c> line of all market files that sells it, by base. A line of
-/// a <c>[BaseGood]</c> that the active mod adds can change or go. Format version 1 cannot change a line of a lower
+/// a <c>[BaseGood]</c> that the active mod adds can change or go. A patch cannot change a line of a lower
 /// layer, so such a line is read-only. "Add to base" makes one more base sell the good (see <see cref="MarketEdits"/>).
 /// </summary>
 internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
 {
     private const string LowerLineReason =
-        "A market line of a lower layer. Format version 1 cannot change or remove it. Use a whole-file override for that.";
+        "A market line of a lower layer. A patch cannot change or remove it. Use a whole-file override for that.";
 
     private readonly FilterList<string> bases = new();
     private ListView? basesList;

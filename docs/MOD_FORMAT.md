@@ -1,6 +1,8 @@
-# OpenLancer mod format (version 1)
+# OpenLancer mod format (version 2)
 
 An OpenLancer mod changes the game data without a change to the base files. A profile lists the mods. OpenLancer merges them over the extracted vanilla data in load order. The result is a merged view of the data. The base folder never changes.
+
+Format version 2 adds the tier and the targets of a mod to `mod.json`. The patch rules are the same for both versions. OpenLancer also reads mods of format version 1.
 
 ## Mod folder
 
@@ -23,7 +25,9 @@ An install path is relative to the game root, for example `DATA/EQUIPMENT/goods.
   "id": "my-mod",
   "name": "My mod",
   "version": "1.0.0",
-  "formatVersion": 1,
+  "formatVersion": 2,
+  "tier": 1,
+  "targets": [ "hde-0.7.1", "vanilla-1.1", "openlancer" ],
   "dependsOn": [ "other-mod" ],
   "loadAfter": [ "optional-mod" ]
 }
@@ -32,9 +36,15 @@ An install path is relative to the game root, for example `DATA/EQUIPMENT/goods.
 | Field | Rule |
 |---|---|
 | `id` | Lowercase letters, digits, `-` and `_`. It starts with a letter. |
-| `formatVersion` | Must be `1`. |
+| `formatVersion` | `2`, or `1` for a mod without `tier` and `targets`. |
+| `tier` | Optional. `1` for a data mod: INI changes, text and cutscenes, which the retail game and OpenLancer run. `2` for a runtime mod, which only OpenLancer runs. Without `tier`, the mod is a tier-1 mod. |
+| `targets` | Optional. The games that the mod is for, from this list: `hde-0.7.1` (HD Edition 0.7.1), `vanilla-1.1` (the retail game with patch 1.1, with or without JFLP) and `openlancer`. Without `targets`, a tier-1 mod is for all three, and a tier-2 mod is for `openlancer`. A tier-2 mod can have only the target `openlancer`. |
 | `dependsOn` | Mods that must be in the profile. They load before this mod. |
 | `loadAfter` | Mods that load before this mod when they are in the profile. |
+
+A mod of format version 1 is a tier-1 mod for all three targets. It cannot have `tier` or `targets`. New mod in the editor writes format version 2 with `"tier": 1` and no `targets`.
+
+OpenLancer does not load a mod with an unknown format version, tier or target, and the error tells why. For example: "OpenLancer cannot read formatVersion 3. It reads formatVersion 1 and 2." or "OpenLancer cannot read tier 3. Use tier 1 for a data mod, or tier 2 for a mod that only OpenLancer runs." An older OpenLancer refuses a mod of format version 2: "formatVersion must be 1." Thus it does not load a tier-2 mod as a data mod.
 
 ## Patches
 
@@ -60,8 +70,27 @@ Some section types use another key:
 | `[Nebula]`, `[Asteroids]` | `zone` |
 | `[SystemInfo]`, `[Music]`, `[Dust]`, `[Ambient]`, `[Background]`, `[TexturePanels]` | none: the file has one of each |
 | `[BaseGood]` | none: patch sections are always added (see below) |
+| Nebula files: `[Fog]`, `[Exterior]`, `[NebulaLight]`, `[Clouds]`, `[BackgroundLightning]`, `[DynamicLightning]`, `[properties]`, `[Exclusion Zones]` | none: the file has one of each |
+| Asteroid field files: `[Field]`, `[Cube]`, `[Band]`, `[ExclusionBand]`, `[AsteroidBillboards]`, `[properties]`, `[Exclusion Zones]` | none: the file has one of each |
+| `[DynamicAsteroids]` | `asteroid` |
+| `[LootableZone]` | `zone`, or none for the section without a `zone` line (see below) |
 
 If the key matches no section, or more than one section, the merge fails with an error.
+
+#### Nebula and asteroid field files
+
+A `[Nebula]` or an `[Asteroids]` section of a system file names a nebula file or an asteroid field file with its `file` key, for example `solar\nebula\Bw05_Crow_nebula.ini`. The engine keeps one section of most types in these files: the last one, or the first one for `[NebulaLight]` and `[Clouds]`. So a patch section of such a type finds the one section of its type. The ring and black hole files of `DATA\SOLAR` use `[Fog]`, `[Exterior]` and `[Clouds]` in the same way.
+
+Two retail nebula files have two `[NebulaLight]` sections: `Bw06_Kunashir_edge_nebula.ini` and `Hi01_Siniestre_edge_nebula.ini`. A patch cannot find one of them, so the merge fails with an error. Use a whole-file override for these two sections.
+
+The engine keeps each `[DynamicAsteroids]` and each `[LootableZone]` section. A `[LootableZone]` with a `zone` line gives the loot of that zone. The `[LootableZone]` without a `zone` line gives the loot of the whole field, and a file has one such section at most. A patch section without a `zone` line finds it:
+
+```ini
+[LootableZone]
+dynamic_loot_count = 2, 4
+```
+
+The `[Exclusion Zones]` section lists the holes of the nebula or the field. Its lines belong together (see "Lines that belong together").
 
 ### What a patch section does
 
@@ -79,6 +108,21 @@ The engine attaches some lines to the line before them. For example, each `facti
 | `[GF_NPC]` | `know`, `knowdb` |
 | `[GF_NPC]` | `rumor`, `rumor_type2`, `rumorknowdb` |
 | `[EncounterFormation]` | `ship_by_class`, `ship_by_npc_arch`, `pilot_job`, `make_class` |
+| `[Exclusion Zones]` | `exclusion`, `exclude`, `fog_far`, `fog_near`, `zone_shell`, `shell_scalar`, `max_alpha`, `color`, `exclusion_tint`, `exclude_billboards`, `exclude_dynamic_asteroids`, `empty_cube_frequency`, `billboard_count` |
+
+Each `exclusion` or `exclude` line of an `[Exclusion Zones]` section starts a hole: the zone that it names. The lines after it belong to that hole, up to the next `exclusion` or `exclude` line. So a patch that changes one hole lists all lines of the section, in order. To remove a hole, leave out its `exclusion` line and the lines after it. This patch of `DATA/SOLAR/NEBULA/Bw05_Crow_nebula.ini` gives the first hole of the Crow nebula a fog distance of 7500, and the nebula keeps only its first two holes:
+
+```ini
+[Exclusion Zones]
+exclusion = Zone_Bw05_01_exclusion
+fog_far = 7500
+zone_shell = solar\nebula\crow_exclusion.3db
+shell_scalar = 1
+max_alpha = 0.5
+exclusion_tint = 255, 255, 255
+exclusion = Zone_Bw05_yanagi_debris_field
+fog_far = 2000
+```
 
 ### Value types in binary files
 
@@ -144,7 +188,7 @@ base = li01_01_base
 marketgood = my_package, 0, -1, 1, 1, 0, 1, 1
 ```
 
-The values of `marketgood` are: good, rank, reputation, min, max, preserve, price multiplier. The engine sells a ship only when min or max is not 0. Version 1 cannot change or remove a vanilla market line. Use a whole-file override for that.
+The values of `marketgood` are: good, rank, reputation, min, max, preserve, price multiplier. The engine sells a ship only when min or max is not 0. A patch cannot change or remove a vanilla market line. Use a whole-file override for that.
 
 ### Two mods that change the same entry
 
@@ -152,7 +196,7 @@ The mod that loads later wins. The merge reports a warning that names both mods.
 
 ### freelancer.ini
 
-In format version 1, `EXE/freelancer.ini` cannot be patched. A mod can replace it only as a whole file in `files/`, and it cannot use text placeholders. OpenLancer adds its text DLL to `[Resources]` of the file that results.
+A patch cannot change `EXE/freelancer.ini`. A mod can replace it only as a whole file in `files/`, and it cannot use text placeholders. OpenLancer adds its text DLL to `[Resources]` of the file that results.
 
 ## Text: strings.json
 
@@ -346,11 +390,11 @@ The swatch is disabled, and its tooltip tells why, when the line has fewer than 
 
 Each change of the text shows at once. While a field is active, it stays in its place, also when its text adds or removes the key. After the field ends, the key moves to its list, for example from "Unset keys" to "Keys". Two kinds of field change the data only when the field ends: the text of a key that holds a text id, for example a name, and a market line.
 
-A blue label marks a value that the active mod sets. The tooltip of the label names the layer that sets the value: the base data, a mod that loads before the active mod, or the active mod. A lock tells why a row cannot change, for example the key of a section, or a section that format version 1 cannot patch.
+A blue label marks a value that the active mod sets. The tooltip of the label names the layer that sets the value: the base data, a mod that loads before the active mod, or the active mod. A lock tells why a row cannot change, for example the key of a section, or a section that a patch cannot change.
 
 Revert, in the menu of a row or in the item menu, puts back the lines of the lower layer: the base data with the mods that load before the active mod. The next save then writes no line for them. A section that the active mod adds has no lower lines, so it has no Revert. A key of a group of lines that belong together (see "Lines that belong together") reverts only with its whole section. When the active mod sets the `file` of a `[system]` of `universe.ini`, the Revert of the whole item is not available, because the revert would move the contents of the system to another file.
 
-"Sold at" lists the market lines that sell a good. The lines of a lower layer are read-only, because format version 1 cannot change them. "Add to base" adds a line to a `[BaseGood]` of that base that the active mod adds. Without one, a new `[BaseGood]` goes into the market file in which the base sells goods of the same category, else into the first market file of the base. The editor refuses a base that already sells the good in a market file.
+"Sold at" lists the market lines that sell a good. The lines of a lower layer are read-only, because a patch cannot change them. "Add to base" adds a line to a `[BaseGood]` of that base that the active mod adds. Without one, a new `[BaseGood]` goes into the market file in which the base sells goods of the same category, else into the first market file of the base. The editor refuses a base that already sells the good in a market file.
 
 ### Edits in the Scene
 

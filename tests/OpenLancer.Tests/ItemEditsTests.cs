@@ -71,7 +71,7 @@ public sealed class ItemEditsTests
         // eng1 is equipment in another file of the kind.
         Assert.Throws<InvalidOperationException>(() => ItemEdits.Rename(session, Gun("gun2"), "eng1"));
         Assert.Throws<ArgumentException>(() => ItemEdits.Rename(session, Gun("nothing"), "x"));
-        // The edit fails as a whole when it runs: in format version 1, only a new section gets a new key.
+        // The edit fails as a whole when it runs: only a new section gets a new key.
         var rename = ItemEdits.Rename(session, Gun("gun1"), "gun9");
         Assert.Throws<InvalidOperationException>(() => session.Execute(rename));
         Assert.NotNull(session.Get(Good(WeaponGoodsPath, "gun1")));

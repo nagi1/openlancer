@@ -216,9 +216,10 @@ internal sealed class PatchSource
         new($"{path}: the editor cannot split the lines of this patch as the engine reads them ({detail}).");
 
     /// <summary>
-    /// Groups the loaded sections by the section that they change. A section that adds a section with a key, or a
-    /// singleton section, starts a group. The later sections with the same type and key join the group, up to a
-    /// section that deletes it. A section without a key that is not a singleton only adds a section.
+    /// Groups the loaded sections by the section that they change. A section that adds a section with a key, a
+    /// singleton section, or a section without a line of an optional key, starts a group. The later sections with the
+    /// same type and key join the group, up to a section that deletes it. Another section without a key only adds a
+    /// section.
     /// </summary>
     private void Group(IReadOnlyList<SourceSection> texts)
     {
@@ -229,7 +230,7 @@ internal sealed class PatchSource
         {
             var key = SectionIdentity.KeyOf(Sections[i]);
             var id = new SectionIdentity(Sections[i].Name, key);
-            if (key == null && SectionKeys.For(Sections[i].Name).Kind != SectionMatchKind.Singleton)
+            if (key == null && !SectionKeys.FindsWithoutKey(Sections[i]))
             {
                 if (actions[i] == PatchAction.Add)
                     AddTo(id, texts[i]);

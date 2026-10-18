@@ -145,6 +145,12 @@ internal static class PatchWriter
                     : $"the file has more than one [{section.Name}] section.";
             default:
                 var key = SectionIdentity.KeyOf(section);
+                if (key == null && match.KeyOptional && !SectionKeys.HasKeyLine(section, match))
+                {
+                    return bCounts.Keyless(section.Name) == 1 && (!kept || wCounts.Keyless(section.Name) == 1)
+                        ? null
+                        : $"the file has more than one [{section.Name}] section without a '{match.KeyEntry}' entry.";
+                }
                 if (key == null)
                     return $"it has no single '{match.KeyEntry}' entry with one value.";
                 return bCounts.Keys(section.Name, key) == 1 && (!kept || wCounts.Keys(section.Name, key) == 1)
@@ -341,8 +347,9 @@ internal static class PatchWriter
             var lines = Lines(loadedSection, inB: true, keepText: !rewritten);
             if (lines.Header(edited.Name) is { } headerError)
                 return Problem(id, headerError);
-            // The merge finds the section by its key line and does not change it.
-            if (keyName != null && lines.Key(original.First(e => IsKey(e.Name))) is { } keyError)
+            // The merge finds the section by its key line and does not change it. A section without a line of an
+            // optional key has no key line.
+            if (original.FirstOrDefault(e => IsKey(e.Name)) is { } keyLine && lines.Key(keyLine) is { } keyError)
                 return Problem(id, keyError);
 
             // Each line replaces the line of the same name at the same position in B, which keeps its value type.
@@ -381,10 +388,11 @@ internal static class PatchWriter
             }
             var lines = Lines(source?.Existing(original.Name, id.Key), inB: true, keepText: true);
             var match = SectionKeys.For(original.Name);
+            var keyLine = match.Kind == SectionMatchKind.Keyed
+                ? original.FirstOrDefault(e => e.Name.Equals(match.KeyEntry, StringComparison.OrdinalIgnoreCase))
+                : null;
             var error = lines.Header(original.Name) ??
-                        (match.Kind == SectionMatchKind.Keyed
-                            ? lines.Key(original.First(e => e.Name.Equals(match.KeyEntry, StringComparison.OrdinalIgnoreCase)))
-                            : null) ??
+                        (keyLine != null ? lines.Key(keyLine) : null) ??
                         lines.Directive(IniPatcher.DirectiveDelete, TrueValue);
             return error != null ? Problem(id, error) : Built(id, lines);
         }
@@ -422,9 +430,15 @@ internal static class PatchWriter
             else if (match.Kind == SectionMatchKind.Keyed)
             {
                 var key = SectionIdentity.KeyOf(section);
-                if (key == null)
+                if (key == null && match.KeyOptional && !SectionKeys.HasKeyLine(section, match))
+                {
+                    if (wCounts.Value.Keyless(section.Name) != 1)
+                        return Problem(id, $"the file can have only one [{section.Name}] section without a " +
+                                           $"'{match.KeyEntry}' entry.");
+                }
+                else if (key == null)
                     return Problem(id, $"a new section needs exactly one '{match.KeyEntry}' entry with one value.");
-                if (wCounts.Value.Keys(section.Name, key) != 1)
+                else if (wCounts.Value.Keys(section.Name, key) != 1)
                     return Problem(id, $"another [{section.Name}] section has {match.KeyEntry} = {key}.");
                 error = lines.Directive(IniPatcher.DirectiveNew, TrueValue);
             }
@@ -542,12 +556,14 @@ internal static class PatchWriter
 }
 
 /// <summary>
-/// How many sections of a file the merge finds for a type, for a type and key, and for an <c>ol.parent</c> key.
+/// How many sections of a file the merge finds for a type, for a type and key, for a type without its optional key,
+/// and for an <c>ol.parent</c> key.
 /// </summary>
 internal sealed class KeyCounts
 {
     private readonly Dictionary<string, int> types = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Dictionary<string, int>> keys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> keyless = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> parents = new(StringComparer.OrdinalIgnoreCase);
 
     public KeyCounts(IReadOnlyList<Section> sections)
@@ -556,6 +572,8 @@ internal sealed class KeyCounts
         {
             Increment(types, section.Name);
             var match = SectionKeys.For(section.Name);
+            if (match.KeyOptional && !SectionKeys.HasKeyLine(section, match))
+                Increment(keyless, section.Name);
             if (match.Kind == SectionMatchKind.Keyed)
             {
                 if (!keys.TryGetValue(section.Name, out var ofType))
@@ -576,6 +594,9 @@ internal sealed class KeyCounts
     public int Types(string type) => types.GetValueOrDefault(type);
 
     public int Keys(string type, string key) => keys.TryGetValue(type, out var ofType) ? ofType.GetValueOrDefault(key) : 0;
+
+    /// <summary>The number of sections of a type with an optional key that have no line of the key.</summary>
+    public int Keyless(string type) => keyless.GetValueOrDefault(type);
 
     public int Parents(string key) => parents.GetValueOrDefault(key);
 

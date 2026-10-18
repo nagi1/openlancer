@@ -19,10 +19,13 @@ public sealed class ModWorkspaceTests
         var folder = ModWorkspace.CreateMod(mods, "proof", "Proof \"mod\" <1>");
 
         Assert.Equal(Path.Combine(mods, "proof"), folder);
-        Assert.Equal("{\n  \"id\": \"proof\",\n  \"name\": \"Proof \\\"mod\\\" <1>\",\n  \"version\": \"1.0.0\",\n  \"formatVersion\": 1\n}\n",
+        Assert.Equal("{\n  \"id\": \"proof\",\n  \"name\": \"Proof \\\"mod\\\" <1>\",\n  \"version\": \"1.0.0\",\n" +
+                     "  \"formatVersion\": 2,\n  \"tier\": 1\n}\n",
             File.ReadAllText(Path.Combine(folder, ModManifest.FileName)));
         var manifest = ModManifest.Load(folder);
         Assert.Equal(("proof", "Proof \"mod\" <1>"), (manifest.Id, manifest.Name));
+        Assert.Equal(ModManifest.DataTier, manifest.Tier);
+        Assert.Equal(ModTargets.All, manifest.Targets);
         Assert.Throws<IOException>(() => ModWorkspace.CreateMod(mods, "proof", "Again"));
         Assert.Throws<ArgumentException>(() => ModWorkspace.CreateMod(mods, "9proof", "Digit"));
         Assert.False(Directory.Exists(Path.Combine(mods, "9proof")));

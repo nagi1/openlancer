@@ -525,7 +525,7 @@ public sealed class RemovedEntriesTests
         Assert.Equal(ValueOrigin.ActiveMod, whole.Origin);
     }
 
-    /// <summary>Format version 1 renames only a section that the active mod adds. Its old name was never in the lower
+    /// <summary>The editor renames only a section that the active mod adds. Its old name was never in the lower
     /// layer, so it is not a removed entry. A line that names the old name is outside the list, as Unity shows a
     /// missing reference.</summary>
     [Fact]

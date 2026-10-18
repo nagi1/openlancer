@@ -309,7 +309,7 @@ internal sealed class InspectorPanel
             reason ??= item is SystemObject or Zone or LightSource or StarSystem
                 ? "The edit view has no section for this item, so the editor cannot change it."
                 : "The editor edits ships, equipment, goods, markets, and the objects, zones, lights and settings of " +
-                  "star systems in format version 1.";
+                  "star systems.";
         }
         else if (reason == null)
         {
