@@ -33,6 +33,11 @@ These rules apply to each AI agent that works in this repository. [CONTRIBUTING.
 5. Show the higher-level item first, for example a battle beat or an event. Show the raw trigger, condition and action lines only on request.
 6. Make linked items easy to follow. When the user selects an item in one view, highlight the items that it uses in the other views.
 7. Make each repeated pattern a prefab. A prefab instance can override a field. Show the override in bold with a violet mark, and give "Revert" and "Apply to prefab". Blue means an unsaved edit, so an unsaved override shows both marks. Never change the base prefab until the user applies the override.
+8. Model retail data as components, and show components as high-level UI parts. Do not show loose keys when a component can show them.
+9. Never leave a field ambiguous. Each field has a clear name and says what it does. Give a hover tooltip for each field that is hard to understand.
+10. Give each high-level item (a component, a beat, an event, a prefab) an always-visible info icon that explains what it is and what it writes to the game files.
+11. Always give access to the raw INI. The raw editor highlights the syntax and marks errors and warnings with the same checks as the fields, with the reason for each.
+12. For a system that links many parts (a mission, a cutscene, a trade lane, an encounter, a prefab), show a completeness panel at the top of the Inspector, for example "4 of 5 steps complete". Each missing step shows what is missing, why it is necessary, and a button that goes to it or fixes it.
 
 ## Writing style: Simplified Technical English (STE)
 
