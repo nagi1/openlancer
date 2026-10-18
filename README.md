@@ -4,7 +4,7 @@ OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a
 
 > **No game files are in this repository.** It holds only OpenLancer's own code and documentation. There is no game data, no game executable and no game DLL. To use OpenLancer, you link your own copy of Freelancer (2003).
 
-Contributions are welcome. Fork the repository and open a pull request. The owner reviews each pull request before it goes into `master`.
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Fork the repository and open a pull request. The owner reviews each pull request before it goes into `master`. [ROADMAP.md](ROADMAP.md) shows the milestones.
 
 ## Legal
 

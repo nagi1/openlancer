@@ -14,6 +14,9 @@ out/
 # The save folder that the editor makes in a mod: staged files, the save journal and the recovery file.
 .olsave/
 
+# Local notes of each contributor. Git never commits them. Private plans stay outside the repo.
+/notes/
+
 # Retail Freelancer content must never enter this repo.
 # The game data lives outside the repo, in ..\GameData\.
 *.iso
