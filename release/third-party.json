@@ -6,7 +6,7 @@
     "file": "openal-soft-1.25.2.tar.gz",
     "url": "https://github.com/kcat/openal-soft/archive/refs/tags/1.25.2.tar.gz",
     "sha256": null,
-    "note": "R1-D8 and R1-D19: check the archive against x64/soft_oal.dll, then write its SHA-256 here. tools/release.ps1 refuses a release while the value is null."
+    "note": "R1-D8 and R1-D19: x64/soft_oal.dll holds the commit b2c48f771 of the tag 1.25.2, so this archive is its source. Download the archive once, write its SHA-256 here, and make sure that it holds the files of the tag. tools/release.ps1 refuses a release while the value is null."
   },
   "native_sources": [
     "external/Librelancer/src/cimgui_ext",
@@ -42,7 +42,7 @@
       "files": ["LibreLancer.ImUI.dll"],
       "texts": ["repo:external/Librelancer/LICENSE"],
       "status": "check",
-      "note": "R1-D20: no file states the origin of the two icons. Compare them with the Tango icon set before the release. A match with an icon theme under GPL or CC BY-SA needs a fork commit that replaces both images."
+      "note": "R1-D20: no file states the origin of the two icons. The fork commit OL-0037 replaces them with new images. The submodule pointer moves to OL-0037 when the owner approves the content scan entries of the two images. Then remove this component."
     },
     {
       "id": "sdl2-cs", "name": "SDL2# (C# bindings by Ethan Lee)", "version": "in LibreLancer.Base", "license": "Zlib",
@@ -192,26 +192,53 @@
       "id": "openal-soft", "name": "OpenAL Soft", "version": "1.25.2", "license": "LGPL-2.0-or-later",
       "files": ["x64/soft_oal.dll"],
       "copyright": ["x64/soft_oal.dll is OpenAL Soft. OpenLancer uses it as a library that it loads at run time. You can replace the file with your own build of OpenAL Soft.", "The source code is the file openal-soft-1.25.2.tar.gz on the release page of this release."],
-      "texts": ["repo:external/Librelancer/deps/openal-soft-sourceurl.txt", "repo:external/Librelancer/deps/openal-soft-license.txt"]
+      "texts": ["repo:external/Librelancer/deps/openal-soft-sourceurl.txt", "repo:external/Librelancer/deps/openal-soft-license.txt"],
+      "note": "The DLL holds the version 1.25.2 and the commit b2c48f771 of the tag 1.25.2, so the tag is its source. Its version resource says 1.25.1, from an older object of an incremental build (R1-D19). The other components with 'OpenAL Soft' in their name are the parts under other licenses. Its bundled fmt 11.2.0 (MIT with an exception for object code) and its public-domain AL headers need no notice in the DLL. The ghc filesystem code (MIT) is not compiled, because GCC 15 has std::filesystem."
     },
     {
-      "id": "openal-soft-parts", "name": "Parts of OpenAL Soft under other licenses (for example pffft)", "version": "1.25.2", "license": "not checked",
+      "id": "openal-soft-pffft", "name": "PFFFT (in OpenAL Soft)", "version": "in OpenAL Soft 1.25.2", "license": "BSD-style (FFTPACK)",
       "files": ["x64/soft_oal.dll"],
+      "texts": ["repo:release/licenses/OpenAL-Soft-pffft.txt"],
+      "note": "The file LICENSE-pffft of OpenAL Soft 1.25.2. common/pffft.cpp."
+    },
+    {
+      "id": "openal-soft-bsd", "name": "Parts of OpenAL Soft under the BSD 3-Clause license", "version": "in OpenAL Soft 1.25.2", "license": "BSD-3-Clause",
+      "files": ["x64/soft_oal.dll"],
+      "texts": ["repo:release/licenses/OpenAL-Soft-BSD-3-Clause.txt"],
+      "note": "The file BSD-3Clause of OpenAL Soft 1.25.2. The ambisonic rotation code of alc/alu.cpp (from Spherical-Harmonic-Transform), and the compressor and vocal morpher effects."
+    },
+    {
+      "id": "bs2b", "name": "bs2b crossfeed (in OpenAL Soft)", "version": "in OpenAL Soft 1.25.2", "license": "MIT",
+      "files": ["x64/soft_oal.dll"],
+      "copyright": ["Copyright (c) 2005 Boris Mikhaylov"],
+      "texts": ["repo:release/licenses/MIT.txt"],
+      "note": "core/bs2b.cpp of OpenAL Soft 1.25.2."
+    },
+    {
+      "id": "gsl", "name": "GSL: Guidelines Support Library (in OpenAL Soft)", "version": "in OpenAL Soft 1.25.2", "license": "MIT",
+      "files": ["x64/soft_oal.dll"],
+      "copyright": ["Copyright (c) 2015 Microsoft Corporation. All rights reserved."],
+      "texts": ["repo:release/licenses/MIT.txt"],
+      "note": "The header-only library in the folder gsl of OpenAL Soft 1.25.2."
+    },
+    {
+      "id": "mit-kemar", "name": "MIT KEMAR HRTF data (in OpenAL Soft)", "version": "in OpenAL Soft 1.25.2", "license": "Free use with credit to the authors",
+      "files": ["x64/soft_oal.dll"],
+      "copyright": ["The built-in HRTF data set of OpenAL Soft is based on the KEMAR HRTF data of the MIT Media Laboratory, by Bill Gardner and Keith Martin.", "This data is Copyright 1994 by the MIT Media Laboratory. It is provided free with no restrictions on use, provided the authors are cited when the data is used in any research or commercial application.", "Source: http://sound.media.mit.edu/resources/KEMAR.html"],
       "texts": [],
-      "status": "pending",
-      "note": "R1-D19 and V5: read the OpenAL Soft 1.25.2 archive. Add the notice of each part under another license that the DLL contains."
+      "note": "hrtf/Default HRTF.mhr of OpenAL Soft 1.25.2, built into the DLL. docs/hrtf.txt of OpenAL Soft names its origin."
     },
     {
       "id": "mingw-w64-runtime", "name": "MinGW-w64 runtime (linked into soft_oal.dll)", "version": "of the GCC 15 MinGW build", "license": "ZPL-2.1 and others",
       "files": ["x64/soft_oal.dll"],
       "texts": ["repo:release/licenses/MinGW-w64-runtime.txt"],
-      "status": "check",
-      "note": "The text comes from COPYING.MinGW-w64-runtime.txt of the mingw-w64 repository. Compare it with that file of the mingw-w64 source before the release."
+      "note": "COPYING.MinGW-w64-runtime.txt of the mingw-w64 source. A compare with the file of mingw-w64 commit 96f1cb7d on 2026-10-18 found the same words. Only spaces at line ends were different."
     },
     {
       "id": "winpthreads", "name": "winpthreads (linked into soft_oal.dll)", "version": "of the GCC 15 MinGW build", "license": "MIT and BSD-style",
       "files": ["x64/soft_oal.dll"],
-      "texts": ["repo:release/licenses/winpthreads.txt"]
+      "texts": ["repo:release/licenses/winpthreads.txt"],
+      "note": "The COPYING file of winpthreads. A compare with the COPYING file of a MinGW-w64 libwinpthread package on 2026-10-18 found the same text."
     },
     {
       "id": "libstdcxx", "name": "GNU libstdc++ (linked into soft_oal.dll)", "version": "GCC 15", "license": "GPL-3.0-or-later WITH GCC-exception-3.1",

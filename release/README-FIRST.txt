@@ -69,9 +69,6 @@ WHAT WORKS IN THIS PREVIEW
   pickers and drags on the X, Y and Z labels help.
 - Move and rotate objects, and change the size of zones, with snap and
   undo.
-- Select nebulas and asteroid fields in the Scene.               [if built]
-- Create, delete and rename objects.                             [if built]
-- Add objects from an asset browser.                             [if built]
 - Save your work as a mod. The editor writes only your changes. Before a
   save, the editor checks the mod. When it finds a value that stops or
   crashes the game, it stops the save and tells you why. It does not find
@@ -121,7 +118,8 @@ REPORT A PROBLEM
 ----------------
 Open an issue at https://github.com/spool1/openlancer/issues
 Tell us:
-- the OpenLancer version (Help > About),                             [W4]
+- the OpenLancer version (right-click OpenLancer.Editor.exe, click
+  Properties, then Details, and copy the "Product version"),
 - the game and the version that the editor shows,
 - what you did, what you expected, and what happened.
 Attach the log files from the logs folder. The log files show the paths
