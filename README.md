@@ -2,7 +2,9 @@
 
 OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a load order, and an editor for the game content. The editor has data editors, a 3D scene editor for star systems, and a cutscene editor. OpenLancer runs on its own fork of the [Librelancer](https://codeberg.org/Librelancer/Librelancer) engine. The fork is a git submodule at `external/Librelancer` (see docs/UPSTREAM.md).
 
-OpenLancer contains no Microsoft game files. You supply the game data from your own copy of Freelancer.
+> **No game files are in this repository.** It holds only OpenLancer's own code and documentation. There is no game data, no game executable and no game DLL. To use OpenLancer, you link your own copy of Freelancer (2003).
+
+Contributions are welcome. Fork the repository and open a pull request. The owner reviews each pull request before it goes into `master`.
 
 ## Legal
 
