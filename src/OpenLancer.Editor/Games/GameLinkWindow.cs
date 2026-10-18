@@ -311,6 +311,11 @@ internal sealed class GameLinkWindow(EditorWindow window)
     internal static string PlayCopyRemoveQuestion(string folder) =>
         $"Remove the play copy {folder}? Your game folder does not change.";
 
+    /// <summary>The tooltip of the disabled New profile of a game that cannot be the base of a profile, or null. A
+    /// source build is a play target only. A card without a game tells why in its state line.</summary>
+    internal static string? NewProfileBlock(GameReport? report) =>
+        report is { IsGame: true, CanBeBase: false } ? GameTexts.SourceBuildNoBase : null;
+
     /// <summary>The tooltip of the last item, also when it is disabled.</summary>
     private static void Tooltip(string text)
     {
@@ -346,9 +351,9 @@ internal sealed class GameLinkWindow(EditorWindow window)
         }
 
         ImGui.EndDisabled();
-        if (report is { IsGame: true, CanBeBase: false })
+        if (NewProfileBlock(report) is { } block)
         {
-            Tooltip(GameTexts.SourceBuildNoBase);
+            Tooltip(block);
         }
 
         ImGui.SameLine();

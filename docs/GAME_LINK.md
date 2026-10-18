@@ -26,11 +26,11 @@ When you select a folder inside the game, for example `EXE` or `DATA`, the edito
 | Freelancer: HD Edition | `EXE\freelancer.ini` names `Controls.dll` (0.7.1) or `HDEResources.dll` (after 0.7.1) as a resource DLL. The version comes from a text of that DLL. | `hde-0.7.1` for 0.7.1 only |
 | Discovery | The game folder contains `DSLauncher.exe`. OpenLancer does not support it. | none |
 | Unknown version | The code files have no known hash and no known version. You can use the folder. Some checks can be wrong. | none |
-| Source build | The folder contains `bin\freelancer.exe` and `bin\freelancer.ini` (see "Source builds"). It is a play target only. | `vanilla-1.1` when its `DATA` has the INI files of Freelancer 1.0 |
+| Source build | The folder contains `bin\freelancer.exe` and `bin\freelancer.ini` (see "Source builds"). It is a play target only. | `vanilla-1.1` when its `DATA` has the retail INI files |
 
-The editor also compares the INI files of the game with the file list of its version. The Game link window shows "INI files: not changed" or the number of changed files. OpenLancer uses the files in the game folder, also when they are changed.
+The editor also compares the INI files of the game with the file list of its version. The Game link window shows "INI files: same as retail", "INI files: same as HD Edition 0.7.1" or the number of changed files. OpenLancer uses the files in the game folder, also when they are changed.
 
-OpenLancer has the file lists of the English retail 1.0 disc, of the English patch 1.1 and of HD Edition 0.7.1. Patch 1.1 changes code files only, so the editor compares the INI files of Freelancer 1.1 with the file list of 1.0. The options of the HD Edition installer change some files, for example `EXE\freelancer.ini` and `EXE\dacom.ini`. So an HD Edition install with other options shows changed files. The export of mods warns when the base of a target has changed files (see "Export" in [MOD_FORMAT.md](MOD_FORMAT.md)).
+OpenLancer has the file lists of the English retail 1.0 disc, of the English patch 1.1 and of HD Edition 0.7.1. Patch 1.1 changes only code files. So 1.0 and 1.1 have the same INI files, and the editor compares the INI files of both with the retail file list. The card of a 1.1 game tells this in a note. The options of the HD Edition installer change some files, for example `EXE\freelancer.ini` and `EXE\dacom.ini`. So an HD Edition install with other options shows changed files. The export of mods warns when the base of a target has changed files (see "Export" in [MOD_FORMAT.md](MOD_FORMAT.md)).
 
 A folder without `Freelancer.exe` contains game data only. You can make mods with it.
 
@@ -61,7 +61,7 @@ A developer who keeps the `GameData` layout can set the workspace folder to `Gam
 
 The buttons of a card:
 
-- **New profile...** makes one more profile with an empty mod for the game, and opens it. A source build has no New profile.
+- **New profile...** makes one more profile with an empty mod for the game, and opens it. On the card of a source build, New profile is not available. Its tooltip tells why (see "Source builds").
 - **Check again** reads the game folder again.
 - **Relink...** selects the new folder of the game, for example after you moved it.
 - **Remove link** removes the game from the list. It deletes no file. A profile that uses the folder links it again when it opens.
@@ -115,8 +115,8 @@ A source build is a game that you built from source code, for example Freelancer
 The editor links such a folder as a play target. Select the folder, `bin` or a folder in `DATA`. The editor finds the root. The card shows "Source build (<folder name>)".
 
 - `bin\freelancer.ini` must have `data path = ..\DATA`, in any letter case, and the `DATA` folder must exist. Else the editor says "The source build reads its data from <path>. OpenLancer can play a source build only with data path = ..\DATA."
-- The editor compares the INI files of `DATA` with the file lists of the known builds. With the INI files of Freelancer 1.0, the build is `source-vanilla-1.0`, and the export target is `vanilla-1.1`. Then Play > Play in source build installs the mods into a play copy of the build.
-- A source build is a play target only. Its `bin\freelancer.ini` is a development copy with other lines than the retail file. So a source build is never the base of a profile or of an export. New profile, the first-run screen and Relink of a profile refuse it: "A source build is a play target. OpenLancer cannot use it as the base of a profile. Link your game folder for the profile."
+- The editor compares the INI files of `DATA` with the file lists of the known builds. A source build is a rebuild of the 1.1 client, and patch 1.1 changes only code files. So with the retail INI files, the build is `source-vanilla-1.1`, and the export target is `vanilla-1.1`. The card shows "INI files: same as retail" and the note "The DATA folder has the retail INI files without changes. OpenLancer plays this source build as Freelancer 1.1." Then Play > Play in source build installs the mods into a play copy of the build.
+- A source build is a play target only. Its `bin\freelancer.ini` is a development copy with other lines than the retail file. So a source build is never the base of a profile or of an export. New profile (as its tooltip), the first-run screen and Relink of a profile refuse it: "A source build is a play target only. It cannot be the base of a profile. Use a retail game folder as the base of the profile. Then play the profile in this build with Play > Play in source build."
 - Play merges the mods on the files of the build itself: an install path under `EXE` goes to `bin`.
 
 ## Play copies

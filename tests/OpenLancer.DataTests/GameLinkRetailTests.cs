@@ -119,7 +119,7 @@ public sealed class GameLinkRetailTests(ITestOutputHelper output)
 
             Assert.Equal(DataState.Changed, changed.Data);
             Assert.Equal(["data/equipment/goods.ini (changed)"], changed.DataFiles);
-            Assert.Contains(new GameFinding(GameSeverity.Warning, GameTexts.ChangedData(1, "Freelancer 1.0")), changed.Findings);
+            Assert.Contains(new GameFinding(GameSeverity.Warning, GameTexts.ChangedData(1, "retail")), changed.Findings);
         }
         finally
         {
@@ -182,7 +182,7 @@ public sealed class GameLinkRetailTests(ITestOutputHelper output)
                 "Build: vanilla-1.0 (proof: hash)",
                 "Export target: vanilla-1.1",
                 "Game program: not found (game data only)",
-                "INI files: not changed (1255 INI files compared with vanilla-1.0)",
+                "INI files: same as retail (1255 INI files compared with vanilla-1.0)",
                 $"Info: {GameTexts.GameDataOnly}",
                 $"Info: {GameTexts.OnePointZeroTarget}",
             ], text.ReplaceLineEndings("\n").TrimEnd().Split('\n'));
@@ -198,6 +198,51 @@ public sealed class GameLinkRetailTests(ITestOutputHelper output)
         finally
         {
             Directory.Delete(empty, true);
+        }
+    }
+
+    /// <summary>
+    /// A source build with the retail INI files of the base is a 1.1 game with retail data (section 8.5 of the M11
+    /// design): a source build is a rebuild of the 1.1 client, and patch 1.1 changes only code files. The test uses the
+    /// embedded file lists, so the file lists of 1.0 and 1.1 both match. The program files of the build are text files of
+    /// the test.
+    /// </summary>
+    [Fact]
+    public void ASourceBuildWithTheRetailIniFilesIsFreelancer11()
+    {
+        var baseFolder = GameDataPaths.RequireBase();
+        var root = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"), "Build");
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(Path.Combine(baseFolder, "DATA"), "*.ini", SearchOption.AllDirectories))
+            {
+                var target = Path.Combine(root, Path.GetRelativePath(baseFolder, file));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target);
+            }
+            Directory.CreateDirectory(Path.Combine(root, "bin"));
+            File.WriteAllText(Path.Combine(root, @"bin\freelancer.exe"), "not a real program");
+            File.WriteAllText(Path.Combine(root, @"bin\resources.dll"), "not a real dll");
+            File.WriteAllText(Path.Combine(root, @"bin\freelancer.ini"), "[Freelancer]\r\ndata path = ..\\DATA\r\n");
+
+            var report = Detect(root);
+
+            foreach (var line in report.Evidence)
+                output.WriteLine(line);
+            Assert.Equal(GameKind.SourceBuild, report.Kind);
+            Assert.Equal("source-vanilla-1.1", report.Build);
+            Assert.Equal("vanilla-1.1", report.Reference);
+            Assert.Equal(ModTargets.Vanilla, report.Target);
+            Assert.Equal(DataState.NotChanged, report.Data);
+            Assert.Equal("INI files: same as retail", report.DataText);
+            Assert.Equal([new GameFinding(GameSeverity.Info, GameTexts.SourceBuildData("Freelancer 1.1", changed: false))],
+                report.Findings);
+            Assert.Null(GameLinkWindow.NewProfileBlock(Detect(baseFolder)));
+            Assert.Equal(GameTexts.SourceBuildNoBase, GameLinkWindow.NewProfileBlock(report));
+        }
+        finally
+        {
+            Delete(Path.GetDirectoryName(root)!);
         }
     }
 

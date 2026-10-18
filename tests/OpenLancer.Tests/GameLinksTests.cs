@@ -178,6 +178,25 @@ public sealed class GameLinksTests : IDisposable
     }
 
     [Fact]
+    public void NewProfileOfASourceBuildTellsWhyAndNamesThePlayItem()
+    {
+        using var source = new SourceBuildGame();
+        var sourceReport = source.Detect();
+        var retail = game.Detect(builds);
+
+        var block = GameLinkWindow.NewProfileBlock(sourceReport);
+
+        Assert.Equal(GameTexts.SourceBuildNoBase, block);
+        // The tooltip names the real item of the Play menu, "Play in <target>".
+        Assert.Contains($"Play > Play in {Assert.Single(PlayTarget.Of([sourceReport])).Name}.", block);
+        Assert.Null(GameLinkWindow.NewProfileBlock(retail));
+        // A card without a game tells why in its state line.
+        Assert.Null(GameLinkWindow.NewProfileBlock(null));
+        Assert.Null(GameLinkWindow.NewProfileBlock(GameDetector.CheckRoot(Path.Combine(source.Folder, "missing"),
+            cancel: TestContext.Current.CancellationToken)));
+    }
+
+    [Fact]
     public void RelinkWithAnotherBuildAsksFirst()
     {
         LinkNow(game.Root);

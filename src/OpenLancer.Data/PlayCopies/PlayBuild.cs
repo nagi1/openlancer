@@ -31,7 +31,7 @@ public static class PlayBuild
     {
         if (ExportTarget.Find(game.Target ?? "") is not { IsRetail: true } target)
             return $"{game.Name} gives no export target, so OpenLancer cannot install mods into it. Play in the game " +
-                   "needs HD Edition 0.7.1, Freelancer 1.0 or 1.1, or a source build with the data of Freelancer 1.0.";
+                   "needs HD Edition 0.7.1, Freelancer 1.0 or 1.1, or a source build with the retail INI files.";
         return mods.Select(m => target.PlayRefusal(m.Manifest)).FirstOrDefault(r => r != null);
     }
 

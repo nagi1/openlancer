@@ -63,10 +63,13 @@ internal sealed class SourceBuildGame : IDisposable
 
     public string CopyFolder => PlayCopy.DefaultFolder(Root);
 
-    /// <summary>A file list of retail 1.0 with the INI files of <c>DATA</c> as they are now.</summary>
-    public KnownBuilds Builds => FakeGame.Builds(("vanilla-1.0", string.Concat(
+    /// <summary>The text of a file list of retail 1.0 with the INI files of <c>DATA</c> as they are now.</summary>
+    public string Manifest => string.Concat(
         Directory.EnumerateFiles(Path.Combine(Root, "DATA"), "*.ini", SearchOption.AllDirectories)
-            .Select(f => DataDigest.Line(Path.GetRelativePath(Root, f), new FileInfo(f).Length, DataDigest.HashFile(f)) + "\n"))));
+            .Select(f => DataDigest.Line(Path.GetRelativePath(Root, f), new FileInfo(f).Length, DataDigest.HashFile(f)) + "\n"));
+
+    /// <summary>The file list <see cref="Manifest"/> as the only known build, <c>vanilla-1.0</c>.</summary>
+    public KnownBuilds Builds => FakeGame.Builds(("vanilla-1.0", Manifest));
 
     public string PathOf(string relative) => Path.Combine(Root, relative);
 
@@ -113,13 +116,18 @@ public sealed class SourceBuildTests : IDisposable
         Assert.Equal(GameKind.SourceBuild, report.Kind);
         Assert.Equal(GameLayout.SourceBuild, report.Layout);
         Assert.Equal(build.Root, report.Root);
-        Assert.Equal("source-vanilla-1.0", report.Build);
+        // A source build is a rebuild of the 1.1 client, and the retail INI files of 1.0 are also those of 1.1.
+        Assert.Equal("source-vanilla-1.1", report.Build);
         Assert.Equal(ModTargets.Vanilla, report.Target);
         Assert.Equal(build.PathOf(@"bin\freelancer.exe"), report.ExePath);
         Assert.Equal("Source build (Freelancer-Build)", report.Name);
         Assert.Equal("Source build", report.ShortName);
         Assert.Equal(DataState.NotChanged, report.Data);
-        Assert.Contains(report.Findings, f => f.Text == GameTexts.SourceBuildData("Freelancer 1.0"));
+        Assert.Equal("INI files: same as retail", report.DataText);
+        Assert.Equal(new GameFinding(GameSeverity.Info, GameTexts.SourceBuildData("Freelancer 1.1", changed: false)),
+            Assert.Single(report.Findings));
+        Assert.Equal("The DATA folder has the retail INI files without changes. OpenLancer plays this source build as " +
+                     "Freelancer 1.1.", GameTexts.SourceBuildData("Freelancer 1.1", changed: false));
         // A folder two levels inside the build finds it too.
         Assert.Equal(build.Root, build.Detect(build.PathOf(@"DATA\EQUIPMENT")).Root);
         Assert.Equal(GameKind.SourceBuild,
@@ -138,16 +146,45 @@ public sealed class SourceBuildTests : IDisposable
 
         Assert.Equal(DataState.Changed, changed.Data);
         Assert.Equal(ModTargets.Vanilla, changed.Target);
+        Assert.Equal("source-vanilla-1.1", changed.Build);
+        Assert.Equal("INI files: 1 changed", changed.DataText);
+        Assert.Equal(
+        [
+            new GameFinding(GameSeverity.Info, "OpenLancer plays this source build as Freelancer 1.1."),
+            new GameFinding(GameSeverity.Warning, GameTexts.ChangedData(1, "retail")),
+        ], changed.Findings);
+        Assert.Equal(GameTexts.SourceBuildData("Freelancer 1.1", changed: true), changed.Findings[0].Text);
         Assert.Equal("source-hde-0.7.1", other.Build);
         Assert.Null(other.Target);
         Assert.Contains(other.Findings, f => f.Text == GameTexts.SourceBuildUnknownData);
     }
 
     [Fact]
+    public void RetailDataGivesBuild11WithAndWithoutTheFileListOf11()
+    {
+        // The file list of 1.1 has the code files only, and takes its INI files from the file list of 1.0. So both
+        // lists give the same changes, and the source build is 1.1. Only the reference changes.
+        var oneOne = $"exe/common.dll\t1\t{new string('1', 64)}\n";
+        var tenOnly = build.Builds;
+        var both = FakeGame.Builds(("vanilla-1.0", build.Manifest), ("vanilla-1.1", oneOne));
+
+        var withTen = build.Detect(builds: tenOnly);
+        var withBoth = build.Detect(builds: both);
+
+        Assert.Equal("source-vanilla-1.1", withTen.Build);
+        Assert.Equal("vanilla-1.0", withTen.Reference);
+        Assert.Equal("source-vanilla-1.1", withBoth.Build);
+        Assert.Equal("vanilla-1.1", withBoth.Reference);
+        Assert.Equal(withTen.ComparedFiles, withBoth.ComparedFiles);
+        Assert.Equal(withTen.Findings, withBoth.Findings);
+        Assert.Equal("INI files: same as retail", withBoth.DataText);
+    }
+
+    [Fact]
     public void TheLayoutMapsExeToBin()
     {
         var mod = Mod.Load(WriteMod());
-        using var copy = PlayCopy.Make(build.Base, build.CopyFolder, PlayCopyMode.Links, "source-vanilla-1.0");
+        using var copy = PlayCopy.Make(build.Base, build.CopyFolder, PlayCopyMode.Links, "source-vanilla-1.1");
 
         var files = TargetBuild.Run(build.Base, [mod], ModOverlay.StringsDllName, TestWorkspace.FakeDllWriter.Instance,
             ThnScripts.Evaluator);

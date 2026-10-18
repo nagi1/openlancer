@@ -76,7 +76,8 @@ public sealed record ExportTarget(string Id, string Name, string Game)
     public IEnumerable<string> BaseWarnings(GameReport report)
     {
         if (report.Data == DataState.Changed)
-            yield return $"The INI files of {report.Name} differ from {GameDetector.BuildName(report.Reference ?? report.Build ?? Id)}. " +
+            yield return $"The INI files of {report.Name} differ from the " +
+                         $"{GameDetector.DataName(report.Reference ?? report.Build ?? Id)} files. " +
                          "Players with a clean install can see other results.";
         if (report.Jflp)
             yield return "The base has JFLP. The drop-in zip carries the JFLP version of each changed file to each player.";

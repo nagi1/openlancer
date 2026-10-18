@@ -8,8 +8,8 @@ namespace OpenLancer.Editor.Play;
 
 /// <summary>
 /// A linked game that Play in the game can start (section 8.6 of the M11 design). It has a game program, and its report
-/// gives a retail target. HD Edition 0.7.1, Freelancer 1.0 and 1.1, and a source build with the data of Freelancer 1.0
-/// are play targets.
+/// gives a retail target. HD Edition 0.7.1, Freelancer 1.0 and 1.1, and a source build with the retail INI files are
+/// play targets.
 /// </summary>
 internal sealed record PlayTarget(GameReport Game)
 {

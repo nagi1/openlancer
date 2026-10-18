@@ -80,8 +80,8 @@ public sealed record GameFinding(GameSeverity Severity, string Text);
 /// <param name="ExePath">The full path of <c>EXE\Freelancer.exe</c> (<c>bin\freelancer.exe</c> for a source build), or
 /// null when the folder has no game program.</param>
 /// <param name="Build">The build id: <c>vanilla-1.0</c>, <c>vanilla-1.1</c>, <c>hde-&lt;version&gt;</c>, <c>hde</c>,
-/// <c>discovery</c>, <c>unknown</c>, or <c>source-&lt;data build&gt;</c> for a source build. Null for
-/// <see cref="GameKind.NotAGame"/>.</param>
+/// <c>discovery</c>, <c>unknown</c>, or <c>source-&lt;build&gt;</c> for a source build, for example
+/// <c>source-vanilla-1.1</c> for a source build with retail INI files. Null for <see cref="GameKind.NotAGame"/>.</param>
 /// <param name="Target">The export target of mods for this game (see <c>ModTargets</c>), or null.</param>
 /// <param name="Reference">The build whose file list the check used, or null.</param>
 /// <param name="ComparedFiles">The number of INI files of the reference that the check compared.</param>
@@ -151,11 +151,14 @@ public sealed record GameReport(
         ? Findings.FirstOrDefault(f => f.Severity == GameSeverity.Error)?.Text
         : null;
 
-    /// <summary>The state of the INI files for the user, for example "INI files: 3 changed".</summary>
+    /// <summary>The state of the INI files for the user, for example "INI files: same as retail" or "INI files: 3
+    /// changed".</summary>
     [JsonIgnore]
     public string DataText => Data switch
     {
-        DataState.NotChanged => "INI files: not changed",
+        DataState.NotChanged => Reference == null
+            ? "INI files: not changed"
+            : $"INI files: same as {GameDetector.DataName(Reference)}",
         DataState.Changed => $"INI files: {ChangedFiles} changed",
         _ => "INI files: not compared",
     };

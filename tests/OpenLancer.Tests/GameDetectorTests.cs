@@ -90,6 +90,7 @@ public sealed class GameDetectorTests
         Assert.Equal(ModTargets.Vanilla, report.Target);
         Assert.Equal(DataState.NotChanged, report.Data);
         Assert.Equal("Freelancer 1.0", report.Name);
+        Assert.Equal("INI files: same as retail", report.DataText);
         Assert.True(Has(report, GameSeverity.Info, GameTexts.OnePointZeroTarget));
         Assert.Equal(GameSeverity.Ok, report.Severity);
         Assert.Contains(report.Evidence, e => e.StartsWith(@"EXE\Common.dll: ") && e.EndsWith("the hash of vanilla-1.0."));
@@ -114,7 +115,7 @@ public sealed class GameDetectorTests
     }
 
     [Fact]
-    public void OnePointOneDataIsComparedWithOnePointZero()
+    public void OnePointOneDataIsComparedWithTheRetailFiles()
     {
         using var game = new FakeGame();
         var oneZero = game.Manifest();
@@ -126,7 +127,22 @@ public sealed class GameDetectorTests
         // The 1.1 manifest lists no INI file, so the INI files come from the manifest of 1.0 (open question Q2).
         Assert.Equal(DataState.NotChanged, report.Data);
         Assert.Equal(5, report.ComparedFiles);
-        Assert.True(Has(report, GameSeverity.Info, GameTexts.OnePointOneData));
+        Assert.Equal("vanilla-1.1", report.Reference);
+        Assert.Equal("INI files: same as retail", report.DataText);
+        Assert.True(Has(report, GameSeverity.Info, GameTexts.OnePointOneData(changed: false)));
+        Assert.Equal("Patch 1.1 changes only code files. So 1.0 and 1.1 have the same INI files. All INI files of " +
+                     "this game are the same as the retail files.", GameTexts.OnePointOneData(changed: false));
+        Assert.DoesNotContain(report.Findings, f => f.Text.Contains("Freelancer 1.0", StringComparison.Ordinal));
+
+        game.Write(@"DATA\EQUIPMENT\goods.ini", "[Good]\nnickname = g1\nprice = 200\n");
+        var changed = game.Detect(builds);
+
+        // The note does not tell that all files are the same, and the warning names the retail files.
+        Assert.True(Has(changed, GameSeverity.Info, GameTexts.OnePointOneData(changed: true)));
+        Assert.Equal("Patch 1.1 changes only code files. So 1.0 and 1.1 have the same INI files.",
+            GameTexts.OnePointOneData(changed: true));
+        Assert.True(Has(changed, GameSeverity.Warning, GameTexts.ChangedData(1, "retail")));
+        Assert.DoesNotContain(changed.Findings, f => f.Text.Contains("Freelancer 1.0", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -142,6 +158,7 @@ public sealed class GameDetectorTests
         Assert.Equal(VersionProof.Hash, report.Proof);
         Assert.Equal(ModTargets.HdEdition, report.Target);
         Assert.Equal(DataState.NotChanged, report.Data);
+        Assert.Equal("INI files: same as HD Edition 0.7.1", report.DataText);
     }
 
     [Fact]
@@ -175,8 +192,9 @@ public sealed class GameDetectorTests
         Assert.Equal("1.1", report.Version);
         Assert.Equal(VersionProof.FileVersion, report.Proof);
         Assert.True(Has(report, GameSeverity.Info, GameTexts.OnePointOneByFileVersion("1.0.1224.0")));
-        Assert.True(Has(report, GameSeverity.Info, GameTexts.OnePointOneData));
+        Assert.True(Has(report, GameSeverity.Info, GameTexts.OnePointOneData(changed: false)));
         Assert.Equal("vanilla-1.0", report.Reference);
+        Assert.Equal("INI files: same as retail", report.DataText);
         Assert.Equal(GameSeverity.Ok, report.Severity);
     }
 
@@ -281,7 +299,7 @@ public sealed class GameDetectorTests
         var report = game.Detect(builds);
 
         Assert.True(Has(report, GameSeverity.Warning,
-            GameTexts.ChangedData(1, "Freelancer 1.0") + " " + GameTexts.JflpChangesFiles));
+            GameTexts.ChangedData(1, "retail") + " " + GameTexts.JflpChangesFiles));
     }
 
     [Fact]
@@ -475,7 +493,8 @@ public sealed class GameDetectorTests
         Assert.Equal(DataState.Changed, report.Data);
         Assert.Equal(1, report.ChangedFiles);
         Assert.Equal(["data/equipment/goods.ini (changed)"], report.DataFiles);
-        Assert.True(Has(report, GameSeverity.Warning, GameTexts.ChangedData(1, "Freelancer 1.0")));
+        Assert.True(Has(report, GameSeverity.Warning, GameTexts.ChangedData(1, "retail")));
+        Assert.StartsWith("1 INI file is different from the retail files. ", GameTexts.ChangedData(1, "retail"));
         Assert.Equal("INI files: 1 changed", report.DataText);
     }
 
@@ -491,6 +510,8 @@ public sealed class GameDetectorTests
 
         Assert.Equal(2, report.ChangedFiles);
         Assert.Equal(["data/equipment/new_goods.ini (extra)", "data/ships/shiparch.ini (missing)"], report.DataFiles);
+        Assert.True(Has(report, GameSeverity.Warning, GameTexts.ChangedData(2, "retail")));
+        Assert.StartsWith("2 INI files are different from the retail files. ", GameTexts.ChangedData(2, "retail"));
     }
 
     // Rules G8 and G10.

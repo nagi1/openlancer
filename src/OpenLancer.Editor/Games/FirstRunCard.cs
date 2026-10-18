@@ -164,7 +164,7 @@ internal sealed class FirstRunCard(EditorWindow window)
         if (found is { Data: DataState.NotChanged, Findings.Count: 0, Reference: { } reference })
         {
             CardLayout.Note(EditorIcons.CheckCircle, EditorTheme.Success,
-                $"The INI files are the same as the files of {GameDetector.BuildName(reference)}.");
+                $"The INI files are the same as the {GameDetector.DataName(reference)} files.");
         }
 
         if (window.Links.Find(found.Root!) != null)

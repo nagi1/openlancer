@@ -140,6 +140,16 @@ public static partial class GameDetector
         : build.StartsWith(HdePrefix, StringComparison.Ordinal) ? $"Freelancer: HD Edition {build[HdePrefix.Length..]}"
         : build;
 
+    /// <summary>
+    /// The name of the INI files of a file list for the user: "retail" for Freelancer 1.0 and 1.1, else the short name
+    /// of the build, for example "HD Edition 0.7.1". Patch 1.1 changes only code files, so 1.0 and 1.1 have the same
+    /// INI files. So a text about the INI files of a 1.1 game does not name 1.0 as if it were the version of the game.
+    /// </summary>
+    public static string DataName(string build) =>
+        build == VanillaBuild || build.StartsWith(VanillaPrefix, StringComparison.Ordinal) ? "retail"
+        : build.StartsWith(HdePrefix, StringComparison.Ordinal) ? $"HD Edition {build[HdePrefix.Length..]}"
+        : BuildName(build);
+
     private static GameReport NotAGame(string folder, string error, bool missing = false) =>
         new(folder, null, GameKind.NotAGame, null, VersionProof.None, false, null, null, null, null, null,
             DataState.NotCompared, null, 0, 0, [], [], [new GameFinding(GameSeverity.Error, error)])
@@ -248,14 +258,15 @@ public static partial class GameDetector
 
         /// <summary>
         /// The INI files of <c>DATA</c> of a source build, compared with the file list of each known build. The build
-        /// with the fewest changes gives the build id <c>source-&lt;build&gt;</c>. Vanilla data gives the target
-        /// <c>vanilla-1.1</c>, because the export form of a vanilla game is 1.1 (decision D329).
+        /// with the fewest changes gives the build id <c>source-&lt;build&gt;</c>. Retail data gives
+        /// <c>source-vanilla-1.1</c> (see <see cref="SourceBuildOf"/>) and the target <c>vanilla-1.1</c>, because the
+        /// export form of a vanilla game is 1.1 (decision D329).
         /// </summary>
         private void SourceData()
         {
             var actual = RootIniFiles("DATA");
             (string Id, string Reference, List<string> Changes, int Compared)? best = null;
-            foreach (var id in builds.Ids)
+            foreach (var id in builds.Ids.Select(SourceBuildOf).Distinct())
             {
                 if (builds.Reference(id) is not { } known)
                     continue;
@@ -281,7 +292,7 @@ public static partial class GameDetector
             if (match.Id.StartsWith(VanillaPrefix, StringComparison.Ordinal))
             {
                 target = ModTargets.Vanilla;
-                Info(GameTexts.SourceBuildData(BuildName(match.Id)));
+                Info(GameTexts.SourceBuildData(BuildName(match.Id), data == DataState.Changed));
             }
             else
             {
@@ -289,8 +300,17 @@ public static partial class GameDetector
             }
 
             if (data == DataState.Changed)
-                Warning(GameTexts.ChangedData(changedFiles, BuildName(match.Reference)));
+                Warning(GameTexts.ChangedData(changedFiles, DataName(match.Reference)));
         }
+
+        /// <summary>
+        /// The build of a source build whose INI files are the INI files of a build. A source build is a rebuild of the
+        /// 1.1 client. Patch 1.1 changes only code files, so the INI files of 1.0 are also the INI files of 1.1. So the
+        /// INI files of 1.0 give 1.1. When the detector has no file list of 1.1, <see cref="KnownBuilds.Reference"/>
+        /// gives the file list of 1.0 for it.
+        /// </summary>
+        private static string SourceBuildOf(string build) =>
+            build == KnownBuilds.VanillaOnePointZero ? KnownBuilds.VanillaOnePointOne : build;
 
         private void Info(string text) => findings.Add(new GameFinding(GameSeverity.Info, text));
 
@@ -628,9 +648,9 @@ public static partial class GameDetector
             var expected = known.Rows.Values.Where(r => IsDataIni(r.Path)).ToList();
             Compared(known.Reference, expected.Count, Changes(expected, RootIniFiles("DATA", "EXE")));
             if (known.FromParent && build == KnownBuilds.VanillaOnePointOne)
-                Info(GameTexts.OnePointOneData);
+                Info(GameTexts.OnePointOneData(data == DataState.Changed));
             if (data == DataState.Changed)
-                Warning(GameTexts.ChangedData(changedFiles, BuildName(known.Reference)) +
+                Warning(GameTexts.ChangedData(changedFiles, DataName(known.Reference)) +
                         (jflp ? " " + GameTexts.JflpChangesFiles : "") +
                         (kind == GameKind.HdEdition ? " " + GameTexts.HdeInstallerOptions : ""));
         }

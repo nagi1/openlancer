@@ -76,7 +76,7 @@ public sealed class ExportTargetTests
         var report = game.Game.Detect(builds);
 
         Assert.Equal(DataState.Changed, report.Data);
-        Assert.Equal(["The INI files of Freelancer 1.0 differ from Freelancer 1.0. Players with a clean install can see " +
+        Assert.Equal(["The INI files of Freelancer 1.0 differ from the retail files. Players with a clean install can see " +
                       "other results."], ExportTarget.Vanilla.BaseWarnings(report));
     }
 

@@ -33,9 +33,12 @@ public static class GameTexts
     public static string NotComplete(string path) => $"The game data is not complete. The file {path} is missing.";
 
     // The findings (section 7.5).
+
+    /// <param name="reference">The name of the INI files of the file list (<see cref="GameDetector.DataName"/>), for
+    /// example "retail".</param>
     public static string ChangedData(int count, string reference) =>
-        $"{count} INI files are different from the files of {reference}. OpenLancer uses the files in the game folder. " +
-        "Your mods can depend on these changes.";
+        (count == 1 ? "1 INI file is" : $"{count} INI files are") + $" different from the {reference} files. " +
+        "OpenLancer uses the files in the game folder. Your mods can depend on these changes.";
 
     public const string JflpChangesFiles = "JFLP changes EXE\\dacom.ini and can change more files.";
 
@@ -52,8 +55,12 @@ public static class GameTexts
         $"The file version of Common.dll is {version}. This version is after 1.0, so OpenLancer shows 1.1. The code " +
         "files do not have the hashes of the English patch 1.1.";
 
-    public const string OnePointOneData = "OpenLancer compared the data with Freelancer 1.0, because patch 1.1 changes " +
-                                          "code files only. OpenLancer has the hashes of the code files of patch 1.1.";
+    /// <summary>The note of Freelancer 1.1. It tells why the check compares the INI files with the retail files, and
+    /// does not name 1.0 as the version of the game.</summary>
+    /// <param name="changed">True when INI files are changed. <see cref="ChangedData"/> then tells how many.</param>
+    public static string OnePointOneData(bool changed) =>
+        "Patch 1.1 changes only code files. So 1.0 and 1.1 have the same INI files." +
+        (changed ? "" : " All INI files of this game are the same as the retail files.");
 
     public const string OnePointZeroTarget = "OpenLancer exports mods for this game as Freelancer 1.1 mods. Players on " +
                                              "1.0 cannot join servers that run 1.1.";
@@ -93,17 +100,24 @@ public static class GameTexts
     public static string SourceBuildDataPath(string path) =>
         $"The source build reads its data from {path}. OpenLancer can play a source build only with data path = ..\\DATA.";
 
-    public const string SourceBuildNoBase = "A source build is a play target. OpenLancer cannot use it as the base of a " +
-                                            "profile. Link your game folder for the profile.";
+    /// <summary>Why a source build is not the base of a profile, and what to do. New profile shows it as its tooltip,
+    /// and the first-run screen and Relink show it as the error.</summary>
+    public const string SourceBuildNoBase = "A source build is a play target only. It cannot be the base of a profile. " +
+                                            "Use a retail game folder as the base of the profile. Then play the profile " +
+                                            "in this build with Play > Play in source build.";
 
     public const string SourceBuildTooltip = "A game that you built from source code, for example Freelancer-Decomp, " +
                                              "with bin\\freelancer.exe and its DATA folder.";
 
-    public static string SourceBuildData(string build) =>
-        $"The DATA folder of the source build has the INI files of {build}. OpenLancer plays it as a game of that build.";
+    /// <summary>The note of a source build with retail INI files.</summary>
+    /// <param name="build">The name of the build of the source build, for example "Freelancer 1.1".</param>
+    /// <param name="changed">True when INI files are changed. <see cref="ChangedData"/> then tells how many.</param>
+    public static string SourceBuildData(string build, bool changed) =>
+        (changed ? "" : "The DATA folder has the retail INI files without changes. ") +
+        $"OpenLancer plays this source build as {build}.";
 
     public const string SourceBuildUnknownData = "OpenLancer does not know the INI files of the DATA folder of this " +
-                                                 "source build. Play in the game needs the INI files of Freelancer 1.0.";
+                                                 "source build. Play in source build needs the retail INI files.";
 
     public static string PlayCopy(string source) =>
         $"This folder is an OpenLancer play copy of {source}. Link the game folder {source}.";
