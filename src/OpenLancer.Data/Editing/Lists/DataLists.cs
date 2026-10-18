@@ -136,8 +136,9 @@ public sealed class DataLists
     /// <summary>
     /// Why the engine cannot use an entry, or null when it can (decision D82, as the user decided it on 2026-10-18).
     /// An entry is unusable when its list says so (<see cref="ListEntry.Usable"/>), or when the list checks of its
-    /// section give an error whose effect drops the item, crashes the game or stops the load. An error of a list check
-    /// is always a change of the active mod, so the active mod made such an entry unusable.
+    /// section give an error whose effect drops the item or stops the load (<see cref="ListRule.MakesUnusable"/>). An
+    /// error with the effect crash stays on its own line. An error of a list check is always a change of the active
+    /// mod, so the active mod made such an entry unusable.
     /// </summary>
     internal Unusability? Unusable(ListEntry entry)
     {

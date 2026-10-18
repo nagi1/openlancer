@@ -137,7 +137,7 @@ public sealed class GizmoTargetTests
         // A fast value is the engine value only for a line without a check error, and the scene keeps the last state
         // of such a section.
         AssertNoTarget(session, GizmoSystem.Section("Object", "Li01_bad"), null,
-            "[Object] nickname = Li01_bad: the engine cannot read 'abc' in a 'pos' line as a number. Correct it, then " +
+            "[Object] nickname = Li01_bad: 'abc' in a 'pos' line is not a number. The game reads 0 in its place. Correct it, then " +
             "use the gizmo.");
 
         using var withoutMod = SystemWorkspace.Create(GizmoSystem.Li01, binary: true);
@@ -173,12 +173,12 @@ public sealed class GizmoTargetTests
         Assert.Contains(session.Check(light), p => p.Severity == DiagnosticSeverity.Error && p.Key == "rotate");
         GizmoSystem.Target(session, light);
         AssertNoTarget(session, gate, null,
-            "[Object] nickname = Li01_gate: the engine cannot read 'abc' in a 'rotate' line as a number. Correct it, " +
+            "[Object] nickname = Li01_gate: 'abc' in a 'rotate' line is not a number. The game reads 0 in its place. Correct it, " +
             "then use the gizmo.");
         Assert.Null(GizmoTarget.Of(session, sphere, null, out var shapeReason));
-        Assert.StartsWith("[Zone] nickname = Zone_sphere: the engine cannot read 'CUBE' in a 'shape' line", shapeReason);
+        Assert.StartsWith("[Zone] nickname = Zone_sphere: 'CUBE' in a 'shape' line is not one of", shapeReason);
         AssertNoTarget(session, cylinder, null,
-            "[Zone] nickname = Zone_cylinder: the engine cannot read 'abc' in a 'size' line as a number. Correct it, " +
+            "[Zone] nickname = Zone_cylinder: 'abc' in a 'size' line is not a number. The game reads 0 in its place. Correct it, " +
             "then use the gizmo.");
     }
 

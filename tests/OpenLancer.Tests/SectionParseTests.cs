@@ -220,7 +220,7 @@ public sealed class SectionParseTests
     {
         var problem = Assert.Single(session.Check(lane));
         Assert.Equal(DiagnosticSeverity.Warning, problem.Severity);
-        Assert.EndsWith($"the engine reads '{text}' in a 'lane_id' line as the integer {engine}.", problem.Message);
+        Assert.EndsWith($"the game reads '{text}' in a 'lane_id' line as the integer {engine}.", problem.Message);
         Assert.Equal(engine, Parse<Zone>(session, lane, Zone.TryParse)!.LaneId);
     }
 

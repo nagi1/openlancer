@@ -74,9 +74,9 @@ public sealed class SystemSchemaTests
         Assert.Empty(session.Check(session.SystemSection("li01")!));
         Assert.Equal(
         [
-            "Error: the engine cannot read 'BOAT' in a 'type' line as one of Point, Directional.",
-            "Warning: the engine does not know the key 'colour'. It ignores the line.",
-            "Error: a 'pos' line needs 3 values or more, not 2. The engine ignores the line.",
+            "Error: 'BOAT' in a 'type' line is not one of Point, Directional. The game ignores the line.",
+            "Warning: the section type has no key 'colour'. The game ignores the line.",
+            "Error: a 'pos' line needs 3 values or more, not 2. The game ignores the line.",
         ], session.Check(SystemWorkspace.Li01Section("LightSource", "Light_bad"))
             .Select(p => $"{p.Severity}: {p.Message[(p.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}"));
     }

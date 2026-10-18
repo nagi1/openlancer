@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using LibreLancer;
 using LibreLancer.Data;
 using LibreLancer.Data.Ini;
@@ -27,8 +28,16 @@ namespace OpenLancer.Data.Editing;
 /// <para>W keeps the text placeholders of the active mod, for example <c>ids_name = $str:li_gun01</c>. The merge puts
 /// the id of the text in place of a placeholder, so the engine reads a placeholder in a key that holds a text id. A
 /// placeholder of the other kind of text is a warning, because then the engine can show no text.</para>
+/// <para>Each message tells what is wrong, then what the game does with the line, in the words of the list messages
+/// ("The game ..."). The generated parsers of upstream show what the game does: a line with too few values, an enum
+/// name or a GUID that does not parse gives a log line, and the field keeps its default
+/// (<c>ParseHelpers.ComponentCheck</c>, <c>IniDiagnostic.InvalidEnum</c>, <c>IniDiagnostic.InvalidGuid</c>). A float
+/// that does not parse is 0
+/// (<c>StringValue.TryToSingle</c>), or the digits at the start of the text of a text file
+/// (<c>LancerStringValue.TryToSingle</c>). A section without a required key makes <c>TryParse</c> return false, and
+/// the caller does not keep the section.</para>
 /// </remarks>
-internal static class SectionChecks
+internal static partial class SectionChecks
 {
     /// <param name="binary">True when the file of the section is binary (BINI).</param>
     public static List<Diagnostic> Check(SectionSchema schema, Section section, SectionRef target, bool binary)
@@ -44,13 +53,13 @@ internal static class SectionChecks
             {
                 if (!schema.ReadsAllLines)
                     Report(DiagnosticSeverity.Warning, lines.Key,
-                        $"the engine does not know the key '{lines.Key}'. It ignores the line.");
+                        $"the section type has no key '{lines.Key}'. The game ignores the line.");
                 continue;
             }
             var count = lines.Count();
             if (!key.Multiline && count > 1)
                 Report(DiagnosticSeverity.Warning, key.Name,
-                    $"'{key.Name}' has {count} lines. The engine reads only the last line.");
+                    $"'{key.Name}' has {count} lines. The game reads only the last line.");
             foreach (var line in lines)
             {
                 if (Placeholder(key, line) is { } placeholder)
@@ -58,7 +67,7 @@ internal static class SectionChecks
                     if (placeholder.Kind != key.TextKind)
                         Report(DiagnosticSeverity.Warning, key.Name,
                             $"'{key.Name}' holds the id of {Describe(key.TextKind!.Value)}, but '{placeholder}' is " +
-                            $"{Describe(placeholder.Kind)}. The engine can show no text for it.");
+                            $"{Describe(placeholder.Kind)}. The game can show no text for it.");
                 }
                 else if (Problem(key, line, binary) is { } problem)
                     Report(problem.Severity, key.Name, problem.Message);
@@ -68,7 +77,7 @@ internal static class SectionChecks
         {
             if (!section.Any(e => e.Name.Equals(key.Name, StringComparison.OrdinalIgnoreCase)))
                 Report(DiagnosticSeverity.Error, key.Name,
-                    $"the key '{key.Name}' is missing. The engine does not load the section without it.");
+                    $"the key '{key.Name}' is missing. The game drops this section.");
         }
         return problems;
     }
@@ -151,58 +160,77 @@ internal static class SectionChecks
             return null;
         if (line.Count < key.MinComponents)
             return (DiagnosticSeverity.Error, $"a '{key.Name}' line needs {key.MinComponents} values or more, " +
-                                              $"not {line.Count}. The engine ignores the line.");
+                                              $"not {line.Count}. The game ignores the line.");
         if (key.ClrType == null)
             return null;
-        var (reads, components, kind, integer) = Rule(key.ClrType);
-        for (var i = 0; i < Math.Min(line.Count, components); i++)
+        var rule = Rule(key.ClrType);
+        for (var i = 0; i < Math.Min(line.Count, rule.Components); i++)
         {
-            if (reads(line[i]))
+            if (rule.Reads(line[i]))
                 continue;
-            return integer != null
-                ? (DiagnosticSeverity.Warning, $"the engine reads '{line[i]}' in a '{key.Name}' line as the integer " +
-                                               $"{integer(EngineValue(line[i], binary, line))}.")
-                : (DiagnosticSeverity.Error, $"the engine cannot read '{line[i]}' in a '{key.Name}' line as {kind}.");
+            if (rule.Integer != null)
+                return (DiagnosticSeverity.Warning, $"the game reads '{line[i]}' in a '{key.Name}' line as the " +
+                                                    $"integer {rule.Integer(EngineValue(line[i], binary, line))}.");
+            var consequence = rule.IsFloat
+                ? $"The game reads {EngineSingle(line[i], binary).ToString(CultureInfo.InvariantCulture)} in its place."
+                : "The game ignores the line.";
+            return (DiagnosticSeverity.Error, $"'{line[i]}' in a '{key.Name}' line is not {rule.Kind}. {consequence}");
         }
         return null;
     }
 
     /// <summary>
+    /// The float that the engine reads from a value that <see cref="IsSingle"/> refuses: the digits at the start of
+    /// the text in a text file (upstream <c>LancerStringValue.TryToSingle</c>), else 0 (<c>StringValue.TryToSingle</c>).
+    /// The checks do not call these methods, because they log the failure through FLLog.
+    /// </summary>
+    private static float EngineSingle(ValueBase value, bool binary) =>
+        !binary && LeadingDigits().Match(value.ToString()) is { Success: true } digits &&
+        float.TryParse(digits.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number)
+            ? number
+            : 0;
+
+    [GeneratedRegex(@"^\d+")]
+    private static partial Regex LeadingDigits();
+
+    /// <summary>
     /// How the engine reads the values of a line of a type: the test for one value, the number of values that it
     /// reads, and a description for messages. For an integer type, the rule also gives the integer that the engine
     /// reads from a value that the test refuses, as <see cref="EngineValue"/> gives it. The engine logs nothing for
-    /// such a value.
+    /// such a value. <see cref="ReadRule.IsFloat"/> is true when the engine reads a refused value as a float (see
+    /// <see cref="EngineSingle"/>). The engine ignores a line with another refused value.
     /// </summary>
-    private static (Func<ValueBase, bool> Reads, int Components, string Kind, Func<ValueBase, long>? Integer) Rule(Type type) =>
-        Rules.GetOrAdd(type, MakeRule);
+    private static ReadRule Rule(Type type) => Rules.GetOrAdd(type, MakeRule);
+
+    private readonly record struct ReadRule(Func<ValueBase, bool> Reads, int Components, string Kind,
+        Func<ValueBase, long>? Integer, bool IsFloat = false);
 
     /// <summary>The rule of each type, made at its first use. The checks run after each edit and for each section of a
     /// system at its catch-up, so the rule of a line is not made again.</summary>
-    private static readonly ConcurrentDictionary<Type, (Func<ValueBase, bool> Reads, int Components, string Kind,
-        Func<ValueBase, long>? Integer)> Rules = new();
+    private static readonly ConcurrentDictionary<Type, ReadRule> Rules = new();
 
-    private static (Func<ValueBase, bool> Reads, int Components, string Kind, Func<ValueBase, long>? Integer) MakeRule(Type type)
+    private static ReadRule MakeRule(Type type)
     {
         if (type.IsArray)
             return Rule(type.GetElementType()!) with { Components = int.MaxValue };
         if (type.IsEnum)
-            return (v => Enum.TryParse(type, v.ToString(), true, out _), 1,
+            return new(v => Enum.TryParse(type, v.ToString(), true, out _), 1,
                 $"one of {string.Join(", ", Enum.GetNames(type))}", null);
         if (type == typeof(int))
-            return (IsInt32, 1, "an integer", v => v.ToInt32());
+            return new(IsInt32, 1, "an integer", v => v.ToInt32());
         if (type == typeof(long))
-            return (IsInt64, 1, "an integer", v => v.ToInt64());
+            return new(IsInt64, 1, "an integer", v => v.ToInt64());
         if (type == typeof(ValueRange<int>))
-            return (IsInt32, 2, "an integer", v => v.ToInt32());
+            return new(IsInt32, 2, "an integer", v => v.ToInt32());
         if (type == typeof(Guid))
-            return (v => Guid.TryParse(v.ToString(), out _), 1, "a GUID", null);
+            return new(v => Guid.TryParse(v.ToString(), out _), 1, "a GUID", null);
         var floats = type == typeof(float) ? 1
             : type == typeof(Vector2) || type == typeof(ValueRange<float>) ? 2
             : type == typeof(Vector3) || type == typeof(Color3f) ? 3
             : type == typeof(Vector4) || type == typeof(Quaternion) || type == typeof(Color4) ? 4
             : 0;
         // A string, a bool and a hash read one value of any form.
-        return floats > 0 ? (IsSingle, floats, "a number", null) : (_ => true, 1, "", null);
+        return floats > 0 ? new(IsSingle, floats, "a number", null, IsFloat: true) : new(_ => true, 1, "", null);
     }
 
     /// <summary>

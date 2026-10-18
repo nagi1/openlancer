@@ -134,14 +134,14 @@ public sealed class SchemaCatalogTests
         Assert.All(problems, p => Assert.Equal(ItemWorkspace.Ship("s1"), p.Target));
         Assert.Equal(
         [
-            "Warning: 'mass' has 2 lines. The engine reads only the last line.",
-            "Error: the engine cannot read 'BOAT' in a 'type' line as one of " +
-            string.Join(", ", Enum.GetNames(Key(typeof(ShiparchIni), "ship", "type").ClrType!)) + ".",
-            "Error: a 'steering_torque' line needs 3 values or more, not 2. The engine ignores the line.",
-            "Error: the engine cannot read 'heavy' in a 'linear_drag' line as a number.",
-            "Warning: the engine does not know the key 'colour'. It ignores the line.",
-            "Error: a 'hp_type' line needs 2 values or more, not 1. The engine ignores the line.",
-            "Error: the key 'da_archetype' is missing. The engine does not load the section without it.",
+            "Warning: 'mass' has 2 lines. The game reads only the last line.",
+            "Error: 'BOAT' in a 'type' line is not one of " +
+            string.Join(", ", Enum.GetNames(Key(typeof(ShiparchIni), "ship", "type").ClrType!)) + ". The game ignores the line.",
+            "Error: a 'steering_torque' line needs 3 values or more, not 2. The game ignores the line.",
+            "Error: 'heavy' in a 'linear_drag' line is not a number. The game reads 0 in its place.",
+            "Warning: the section type has no key 'colour'. The game ignores the line.",
+            "Error: a 'hp_type' line needs 2 values or more, not 1. The game ignores the line.",
+            "Error: the key 'da_archetype' is missing. The game drops this section.",
         ], problems.Select(p => $"{p.Severity}: {p.Message[(p.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}"));
         // Each problem names the key of its lines, so a caller can find the problems of one key.
         Assert.Equal(["mass", "type", "steering_torque", "linear_drag", "colour", "hp_type", "da_archetype"],
@@ -166,7 +166,7 @@ public sealed class SchemaCatalogTests
         var problem = Assert.Single(session.Check(ItemWorkspace.Good(ItemWorkspace.GoodsPath, "g1")));
 
         Assert.Equal(DiagnosticSeverity.Warning, problem.Severity);
-        Assert.EndsWith("the engine reads '5x' in a 'price' line as the integer 5.", problem.Message);
+        Assert.EndsWith("the game reads '5x' in a 'price' line as the integer 5.", problem.Message);
     }
 
     /// <summary>
@@ -189,7 +189,7 @@ public sealed class SchemaCatalogTests
         session.Execute(EditCommand.SetLines(gun, "ids_name", [[new StringValue("$str:nothing")]]));
         Assert.Equal(
         [
-            "Warning: 'ids_info' holds the id of an infocard, but '$str:gun1' is a string. The engine can show no text for it.",
+            "Warning: 'ids_info' holds the id of an infocard, but '$str:gun1' is a string. The game can show no text for it.",
             "Error: '$str:nothing' is not in the strings.json of mod 'act'. Add the text, or change the value.",
         ], session.Check(gun).Select(p => $"{p.Severity}: {p.Message[(p.Message.IndexOf(": ", StringComparison.Ordinal) + 2)..]}"));
         Assert.Equal(["ids_info", "ids_name"], session.Check(gun).Select(p => p.Key));

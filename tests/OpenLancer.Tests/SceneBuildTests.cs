@@ -425,7 +425,7 @@ public sealed class SceneBuildTests
         Assert.Equal(100, Assert.IsType<LancerStringValue>(pos[0]).ToSingle());
         Assert.Equal(new Vector3(0, 0, -27705), SceneBuild.Position(pos));
         Assert.Contains(session.Check(depot), d => d.Severity == DiagnosticSeverity.Error &&
-                                                   d.Message.EndsWith("the engine cannot read '100x' in a 'pos' line as a number."));
+                                                   d.Message.EndsWith("'100x' in a 'pos' line is not a number. The game reads 100 in its place."));
     }
 
     /// <summary>A game data object with no data, a float graph for each curve case, and the archetype

@@ -219,7 +219,7 @@ public sealed class ListChecksTests
         session.Execute(EditCommand.SetLinesFromText(Li01("Li01_01"), "pos", ["1, two, 3"]));
 
         var problem = Assert.Single(session.SaveProblems());
-        Assert.Contains("cannot read 'two'", problem.Message);
+        Assert.Contains("'two' in a 'pos' line is not a number. The game reads 0 in its place.", problem.Message);
         Assert.Empty(session.Lists.Problems(Li01("Li01_01")));
     }
 }

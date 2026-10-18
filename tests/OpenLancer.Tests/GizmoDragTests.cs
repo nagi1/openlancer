@@ -212,7 +212,7 @@ public sealed class GizmoDragTests
             "The size has two values, so the engine gives Z the size 0. Give it three values first.");
         session.Execute(EditCommand.SetLinesFromText(Depot, "pos", ["abc, 0, 0"]));
         AssertBeginThrows(session, depot, GizmoTool.Move, null,
-            "[Object] nickname = Li01_depot: the engine cannot read 'abc' in a 'pos' line as a number. Correct it, " +
+            "[Object] nickname = Li01_depot: 'abc' in a 'pos' line is not a number. The game reads 0 in its place. Correct it, " +
             "then use the gizmo.");
         Assert.Equal(["abc, 0, 0"], Lines(session, Depot, "pos"));
         Assert.Equal("Set pos", session.UndoLabel);

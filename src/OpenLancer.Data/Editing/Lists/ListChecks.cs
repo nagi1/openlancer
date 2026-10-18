@@ -64,7 +64,8 @@ public sealed record ListProblem(Diagnostic Diagnostic, ListProblemKind Kind, Li
 /// <item>A required key without a valid line, in a section that the active mod adds or changes, is an error (D82).</item>
 /// <item>A value of the active mod that names an entry that the engine cannot use is an error (D34, D82). A value of
 /// any layer under a closed rule is an error too when the active mod made the entry unusable (D82, decided on
-/// 2026-10-18; see <see cref="DataLists.Unusable"/>).</item>
+/// 2026-10-18; see <see cref="DataLists.Unusable"/>). Only the effects drop and load-break make an entry unusable. A
+/// crash error stays an error of its own line only.</item>
 /// <item>The name of a section of the active mod with the FLHash of another name of a hash list is an error (D82).</item>
 /// <item>A value of a lower layer outside a list is a warning (D108).</item>
 /// </list>

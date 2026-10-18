@@ -443,14 +443,23 @@ Each save runs the save gate first, also a save with nothing to write, and also 
 - A value of any layer that names an entry that the active mod removes, for example a retail object whose loadout the active mod deletes with `ol.delete`.
 - A value of any layer that names an entry that the active mod makes unusable, also without a delete. For example, the active mod removes the `point` lines of a curve, and a retail light names the curve. The game stops loading with such a light.
 - A light of the active mod that names a curve that the engine cannot load, or a name of the active mod with the FLHash of another name of its list. The engine load stops.
-- A problem of the field checks in a section that the active mod adds or changes, for example a number that the engine cannot read.
+- An error of the field checks in a section that the active mod adds or changes. Each such error tells what the game does with the line:
+
+  | Error | What the game does |
+  |---|---|
+  | A line with too few values | The game ignores the line. |
+  | A value that is not a number, in a key of numbers | The game reads 0 in its place. In a text file, the game reads the digits at the start of the value, for example 100 for `100x`. |
+  | A name that is not in the list of names of the key, for example `type = BOAT`, or a value that is not a GUID | The game ignores the line. |
+  | A required key without a line, for example `da_archetype` of a `[Ship]` | The game drops this section. |
 - An error of the checks of a cutscene that the active mod changes, when the lower cutscene does not have the error. For example, a LIGHT has no `spatialprops.pos`. A whole cutscene file of the active mod that the engine cannot read is an error too. The game crashes when it plays such a cutscene, so the message starts with "The game crashes when it plays this cutscene." These checks run without the game data, so they do not check templates and costumes.
 
-An entry is unusable when the engine cannot use it. A curve without points is unusable, and so is a name that two curves have. An entry is also unusable when its own checks give an error that makes the game drop it, crash, or stop loading. Some examples:
+An entry is unusable when the engine cannot use it. A curve without points is unusable, and so is a name that two curves have. An entry is also unusable when its own checks give an error that makes the game drop it or stop loading. Some examples:
 
 - A `[Munition]` with a `motor` and no `explosion_arch`. The game stops loading.
 - A `[Gun]` without a valid `projectile_archetype`. The game drops the gun.
-- An `[Object]` without a valid `archetype`, or with a `dock_with` that names no base. The game drops the object, or crashes when the player docks there.
+- An `[Object]` without a valid `archetype`. The game drops the object.
+
+An error that makes the game crash does not make its entry unusable, because the game loads the entry. The game crashes only when it uses the bad value. For example, a jump gate with a `dock_with` that names no base is an error on its `dock_with` line, and the error blocks Save. The `goto` line of the partner gate names a gate that the game loads, so that line is no error.
 
 A line that names an unusable entry can make its own section unusable. The gate follows such lines. For example, a missile without its explosion makes each gun that fires it an error. The game drops such a gun, so each loadout line that names the gun is an error too. When a lower mod or the base data made the entry unusable, the line gives a warning only.
 

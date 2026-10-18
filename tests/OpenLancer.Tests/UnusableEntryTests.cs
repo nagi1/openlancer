@@ -221,10 +221,12 @@ public sealed class UnusableEntryTests
         Assert.Empty(session.SaveProblems());
     }
 
-    /// <summary>The game crashes when the player docks at an object whose <c>dock_with</c> names no base. The object
-    /// is unusable, so the partner jump gate in another system file, which names it as its exit, is an error.</summary>
+    /// <summary>The game crashes when the player docks at an object whose <c>dock_with</c> names no base. The error
+    /// stays on the <c>dock_with</c> line, and it blocks Save. The game loads the gate, so the gate is still a valid
+    /// exit: the <c>goto</c> line of the partner gate in another system file is no error (decision D82, as decided in the
+    /// M8b verify on 2026-10-18).</summary>
     [Fact]
-    public void ADockWithThatNamesNoBaseSaysThatTheGameCrashes()
+    public void ADockWithThatNamesNoBaseIsAnErrorOfItsOwnLineOnly()
     {
         using var ws = Create();
         var session = ws.Session("act");
@@ -237,15 +239,24 @@ public sealed class UnusableEntryTests
         Assert.Equal((ListProblemKind.Missing, true, RuleEffect.Crash), (own.Kind, own.IsError, own.Effect));
         Assert.Equal("[Object] nickname = Li01_to_Li02: 'dock_with = no_such_base': no base has the name " +
                      "'no_such_base'. The game crashes when the player docks here.", own.Diagnostic.Message);
-        var exit = Assert.Single(session.Lists.Problems(partner));
-        Assert.Equal((ListProblemKind.Unusable, true), (exit.Kind, exit.IsError));
-        Assert.Equal("[Object] nickname = Li02_to_Li01: 'goto = Li01, Li01_to_Li02, gate_tunnel_bretonia': Object " +
-                     "'Li01_to_Li02' is not usable: 'dock_with = no_such_base': no base has the name 'no_such_base'. " +
-                     "The game crashes when the player docks here. Fix 'Li01_to_Li02', or pick another value.",
-            exit.Diagnostic.Message);
-        Assert.Equal(2, session.SaveProblems().Count);
+        Assert.Empty(session.Lists.Problems(partner));
+        Assert.Equal([own.Diagnostic], session.SaveProblems());
+        Assert.NotNull(EditController.Gate(session));
+        Assert.False(session.Save().Saved);
 
         session.Undo();
         Assert.Empty(session.SaveProblems());
+    }
+
+    /// <summary>Only the effects drop and load-break make an entry unusable for the lines that name it. The game loads
+    /// an item with a crash error, and crashes only when it uses the bad value.</summary>
+    [Fact]
+    public void ACrashRuleDoesNotMakeAnEntryUnusable()
+    {
+        Assert.False(ListRule.MakesUnusable(RuleEffect.Crash));
+        Assert.True(ListRule.MakesUnusable(RuleEffect.Drop));
+        Assert.True(ListRule.MakesUnusable(RuleEffect.LoadBreak));
+        Assert.False(ListRule.MakesUnusable(RuleEffect.Degrade));
+        Assert.False(ListRule.MakesUnusable(RuleEffect.None));
     }
 }

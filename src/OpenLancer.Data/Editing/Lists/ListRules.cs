@@ -21,7 +21,8 @@ public enum RuleEffect
     Drop,
 
     /// <summary>The game crashes when it uses the item, for example when the player docks. The rule gives the
-    /// consequence that tells when.</summary>
+    /// consequence that tells when. The game loads the item, so the item stays usable for the lines that name it
+    /// (decision D82, as decided on 2026-10-18 in the M8b verify).</summary>
     Crash,
 
     /// <summary>The load of the game data stops.</summary>
@@ -109,11 +110,14 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
         _ => ConsequenceText,
     };
 
-    /// <summary>True for an effect that makes the item unusable: the engine drops it, the game crashes with it, or
-    /// the load stops. A line that names such an item is then an error (decision D82, as decided on
-    /// 2026-10-18).</summary>
-    internal static bool MakesUnusable(RuleEffect effect) =>
-        effect is RuleEffect.Drop or RuleEffect.Crash or RuleEffect.LoadBreak;
+    /// <summary>
+    /// True for an effect that makes the item unusable: the engine drops it, or the load stops. A line that names such
+    /// an item is then an error (decision D82, as decided on 2026-10-18). A crash is not such an effect: the game loads
+    /// the item and crashes only when it uses the bad value, for example when the player docks. So a crash error stays
+    /// on its own line, and it still blocks Save. A jump gate whose <c>dock_with</c> names no base is still a valid exit
+    /// for the <c>goto</c> line of its partner gate.
+    /// </summary>
+    internal static bool MakesUnusable(RuleEffect effect) => effect is RuleEffect.Drop or RuleEffect.LoadBreak;
 
     internal const string SystemOfPrefix = "systemOf:";
 }

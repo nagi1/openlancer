@@ -74,7 +74,7 @@ internal static class FieldEdit
             .Select(l => string.Join(", ", Values(l)))
             .ToList();
         if (key is { Multiline: false } && lines.Count > 1)
-            return new FieldParse(null, $"'{key.Name}' takes one line. The engine reads only the last line.");
+            return new FieldParse(null, $"'{key.Name}' takes one line. The game reads only the last line.");
         foreach (var line in lines)
         {
             if (key != null && LineError(key, Values(line)) is { } error)

@@ -22,13 +22,13 @@ public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
     /// </summary>
     private static readonly Dictionary<string, int> KnownItemWarnings = new(StringComparer.Ordinal)
     {
-        ["[collisiongroup] the engine does not know the key '------------------------------------------'. It ignores the line."] = 1,
-        ["[countermeasure] 'force_gun_ori' has 2 lines. The engine reads only the last line."] = 3,
-        ["[ship] the engine does not know the key 'camera_angular_slerp_multiplier'. It ignores the line."] = 1,
-        ["[ship] the engine does not know the key 'distance_render'. It ignores the line."] = 2,
-        ["[ship] the engine does not know the key 'docking_camera'. It ignores the line."] = 2,
-        ["[ship] the engine does not know the key 'docking_sphere'. It ignores the line."] = 2,
-        ["[simple] the engine does not know the key 'MinSpecLOD'. It ignores the line."] = 1,
+        ["[collisiongroup] the section type has no key '------------------------------------------'. The game ignores the line."] = 1,
+        ["[countermeasure] 'force_gun_ori' has 2 lines. The game reads only the last line."] = 3,
+        ["[ship] the section type has no key 'camera_angular_slerp_multiplier'. The game ignores the line."] = 1,
+        ["[ship] the section type has no key 'distance_render'. The game ignores the line."] = 2,
+        ["[ship] the section type has no key 'docking_camera'. The game ignores the line."] = 2,
+        ["[ship] the section type has no key 'docking_sphere'. The game ignores the line."] = 2,
+        ["[simple] the section type has no key 'MinSpecLOD'. The game ignores the line."] = 1,
     };
 
     /// <summary>
@@ -38,26 +38,26 @@ public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
     /// </summary>
     private static readonly Dictionary<string, int> KnownSystemWarnings = new(StringComparer.Ordinal)
     {
-        ["[background] 'nebulae' has 2 lines. The engine reads only the last line."] = 1,
-        ["[lightsource] the engine does not know the key 'behavior'. It ignores the line."] = 1,
-        ["[lightsource] the engine does not know the key 'color_curve'. It ignores the line."] = 2,
-        ["[object] 'behavior' has 2 lines. The engine reads only the last line."] = 3,
-        ["[object] 'ids_info' has 2 lines. The engine reads only the last line."] = 11,
-        ["[object] 'pilot' has 2 lines. The engine reads only the last line."] = 1,
-        ["[object] 'tradelane_space_name' has 2 lines. The engine reads only the last line."] = 2,
-        ["[object] the engine does not know the key '260800'. It ignores the line."] = 6,
-        ["[object] the engine does not know the key 'info_card'. It ignores the line."] = 1,
-        ["[object] the engine does not know the key 'info_card_ids'. It ignores the line."] = 1,
-        ["[object] the engine does not know the key 'info_ids'. It ignores the line."] = 4,
-        ["[systeminfo] the engine does not know the key 'name'. It ignores the line."] = 31,
-        ["[zone] 'ids_info' has 2 lines. The engine reads only the last line."] = 2,
-        ["[zone] 'mission_type' has 2 lines. The engine reads only the last line."] = 1,
-        ["[zone] the engine does not know the key 'pacedust'. It ignores the line."] = 3,
-        ["[zone] the engine does not know the key 'spacedusr_maxparticles'. It ignores the line."] = 1,
-        ["[zone] the engine does not know the key 'spacedust _maxparticles'. It ignores the line."] = 5,
-        ["[zone] the engine does not know the key 'spacedust_masparticles'. It ignores the line."] = 2,
-        ["[zone] the engine does not know the key 'spacedust_maxdust'. It ignores the line."] = 3,
-        ["[zone] the engine reads '<text>' in a 'lane_id' line as the integer -1."] = 91,
+        ["[background] 'nebulae' has 2 lines. The game reads only the last line."] = 1,
+        ["[lightsource] the section type has no key 'behavior'. The game ignores the line."] = 1,
+        ["[lightsource] the section type has no key 'color_curve'. The game ignores the line."] = 2,
+        ["[object] 'behavior' has 2 lines. The game reads only the last line."] = 3,
+        ["[object] 'ids_info' has 2 lines. The game reads only the last line."] = 11,
+        ["[object] 'pilot' has 2 lines. The game reads only the last line."] = 1,
+        ["[object] 'tradelane_space_name' has 2 lines. The game reads only the last line."] = 2,
+        ["[object] the section type has no key '260800'. The game ignores the line."] = 6,
+        ["[object] the section type has no key 'info_card'. The game ignores the line."] = 1,
+        ["[object] the section type has no key 'info_card_ids'. The game ignores the line."] = 1,
+        ["[object] the section type has no key 'info_ids'. The game ignores the line."] = 4,
+        ["[systeminfo] the section type has no key 'name'. The game ignores the line."] = 31,
+        ["[zone] 'ids_info' has 2 lines. The game reads only the last line."] = 2,
+        ["[zone] 'mission_type' has 2 lines. The game reads only the last line."] = 1,
+        ["[zone] the section type has no key 'pacedust'. The game ignores the line."] = 3,
+        ["[zone] the section type has no key 'spacedusr_maxparticles'. The game ignores the line."] = 1,
+        ["[zone] the section type has no key 'spacedust _maxparticles'. The game ignores the line."] = 5,
+        ["[zone] the section type has no key 'spacedust_masparticles'. The game ignores the line."] = 2,
+        ["[zone] the section type has no key 'spacedust_maxdust'. The game ignores the line."] = 3,
+        ["[zone] the game reads '<text>' in a 'lane_id' line as the integer -1."] = 91,
     };
 
     [Fact]
@@ -132,6 +132,6 @@ public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
     }
 
     /// <summary>The string in the message of a string that the engine reads as an integer.</summary>
-    [GeneratedRegex("(?<start>^the engine reads ')[^']*")]
+    [GeneratedRegex("(?<start>^the game reads ')[^']*")]
     private static partial Regex EngineString();
 }
