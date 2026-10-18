@@ -30,15 +30,16 @@ START THE EDITOR
 ----------------
 1. Extract the zip file to a folder, for example C:\Games.
 2. Open the folder OpenLancer-v@VERSION@.
-3. Double-click OpenLancer.Editor.exe.
+3. Double-click OpenLancer.Editor.exe. Its icon is a ship and a ring on a
+   dark blue square.
 4. If Windows shows "Windows protected your PC", click "More info". Then
    click "Run anyway". The preview has no digital signature.
 5. The editor shows "Link your Freelancer game". Click
    "Select game folder...".
 6. Select the folder of your game. This folder contains the EXE and DATA
    folders. You can also drag the folder to the editor window.
-7. Make sure that the editor shows your game and its version, for example
-   "Freelancer 1.0".
+7. Make sure that the editor shows "Game found" and the name of your game,
+   for example "Freelancer 1.0".
 8. Click "Create profile and open". The editor makes a profile and an
    empty mod, my-mod, in Documents\OpenLancer. Then the Scene shows a star
    system in 3D.
@@ -62,6 +63,8 @@ WHAT WORKS IN THIS PREVIEW
 - Link your game folder. The editor shows the game and its version. It
   identifies Freelancer 1.0 and 1.1, with or without JFLP, and
   Freelancer: HD Edition.
+- The Game link window (File > Game link...) shows each linked game and
+  the result of its check. It also makes one more profile for a game.
 - Look at the star systems in a 3D Scene, with a Hierarchy and an
   Inspector.
 - Look at ships, equipment, bases, factions and more in the Database.
@@ -78,6 +81,16 @@ WHAT WORKS IN THIS PREVIEW
   a cutscene in your mod.
 - oltool checks your game folder, and checks, merges and shows mods from
   the command line.
+
+
+IF YOU MOVE THE GAME FOLDER
+---------------------------
+When the editor cannot find the game folder, your profile does not open.
+1. On the File menu, click "Game link...".
+2. On the card of the game, click "Relink...".
+3. Select the new folder of the game.
+The editor changes each profile of the game to the new folder. When the
+new folder has another version of the game, the editor asks you first.
 
 
 WHAT DOES NOT WORK YET

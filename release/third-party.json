@@ -5,8 +5,8 @@
   "openal_source": {
     "file": "openal-soft-1.25.2.tar.gz",
     "url": "https://github.com/kcat/openal-soft/archive/refs/tags/1.25.2.tar.gz",
-    "sha256": null,
-    "note": "R1-D8 and R1-D19: x64/soft_oal.dll holds the commit b2c48f771 of the tag 1.25.2, so this archive is its source. Download the archive once, write its SHA-256 here, and make sure that it holds the files of the tag. tools/release.ps1 refuses a release while the value is null."
+    "sha256": "fb27e5839aa11f0e5b9d33756965291fad5d6909ab928ea1f796f4a1a6877894",
+    "note": "R1-D8 and R1-D19: x64/soft_oal.dll holds the commit b2c48f771 of the tag 1.25.2, so this archive is its source. The archive of 2026-10-18 has 1,407,972 bytes. Its 461 files have the git blob hashes of the tree of the tag, and its pax comment is the commit b2c48f7718ef3fcf67921a8b6534c4914e328970. tools/release.ps1 downloads the archive and refuses it when its SHA-256 is not this value."
   },
   "native_sources": [
     "external/Librelancer/src/cimgui_ext",
@@ -186,19 +186,19 @@
       "files": ["x64/soft_oal.dll"],
       "copyright": ["x64/soft_oal.dll is OpenAL Soft. OpenLancer uses it as a library that it loads at run time. You can replace the file with your own build of OpenAL Soft.", "The source code is the file openal-soft-1.25.2.tar.gz on the release page of this release."],
       "texts": ["repo:external/Librelancer/deps/openal-soft-sourceurl.txt", "repo:external/Librelancer/deps/openal-soft-license.txt"],
-      "note": "The DLL holds the version 1.25.2 and the commit b2c48f771 of the tag 1.25.2, so the tag is its source. Its version resource says 1.25.1, from an older object of an incremental build (R1-D19). The other components with 'OpenAL Soft' in their name are the parts under other licenses. Its bundled fmt 11.2.0 (MIT with an exception for object code) and its public-domain AL headers need no notice in the DLL. The ghc filesystem code (MIT) is not compiled, because GCC 15 has std::filesystem."
+      "note": "The DLL holds the version 1.25.2 and the commit b2c48f771 of the tag 1.25.2, so the tag is its source. Its version resource says 1.25.1, from an older object of an incremental build (R1-D19). The other components with 'OpenAL Soft' in their name are the parts under other licenses. Its bundled fmt 11.2.0 (MIT with an exception for object code) and its public-domain AL headers need no notice in the DLL. The ghc filesystem code (MIT) is not compiled, because GCC 15 has std::filesystem. The LGPL text in this file comes from the engine fork. It has the old address of the Free Software Foundation and the appendix of the license. COPYING of the 1.25.2 archive has the new address and no appendix. The terms are the same."
     },
     {
       "id": "openal-soft-pffft", "name": "PFFFT (in OpenAL Soft)", "version": "in OpenAL Soft 1.25.2", "license": "BSD-style (FFTPACK)",
       "files": ["x64/soft_oal.dll"],
       "texts": ["repo:release/licenses/OpenAL-Soft-pffft.txt"],
-      "note": "The file LICENSE-pffft of OpenAL Soft 1.25.2. common/pffft.cpp."
+      "note": "The file LICENSE-pffft of OpenAL Soft 1.25.2. common/pffft.cpp. It has the same text as LICENSE-pffft of the 1.25.2 archive."
     },
     {
       "id": "openal-soft-bsd", "name": "Parts of OpenAL Soft under the BSD 3-Clause license", "version": "in OpenAL Soft 1.25.2", "license": "BSD-3-Clause",
       "files": ["x64/soft_oal.dll"],
       "texts": ["repo:release/licenses/OpenAL-Soft-BSD-3-Clause.txt"],
-      "note": "The file BSD-3Clause of OpenAL Soft 1.25.2. The ambisonic rotation code of alc/alu.cpp (from Spherical-Harmonic-Transform), and the compressor and vocal morpher effects."
+      "note": "The file BSD-3Clause of OpenAL Soft 1.25.2. The ambisonic rotation code of alc/alu.cpp (from Spherical-Harmonic-Transform), and the compressor and vocal morpher effects. It has the same text as BSD-3Clause of the 1.25.2 archive."
     },
     {
       "id": "bs2b", "name": "bs2b crossfeed (in OpenAL Soft)", "version": "in OpenAL Soft 1.25.2", "license": "MIT",
