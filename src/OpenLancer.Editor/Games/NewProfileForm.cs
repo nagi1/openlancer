@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ImGuiNET;
-using LibreLancer.Dialogs;
+using LibreLancer.ImUI;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Editor.Logs;
@@ -18,6 +18,10 @@ namespace OpenLancer.Editor.Games;
 /// </summary>
 internal sealed class NewProfileForm(EditorWindow window)
 {
+    // Sizes in unscaled points.
+    private const float LabelWidth = 110;
+    private const float FieldWidth = 300;
+
     private IReadOnlyList<GameReport> games = [];
     private int selected;
     private string name = "";
@@ -43,13 +47,18 @@ internal sealed class NewProfileForm(EditorWindow window)
     /// <summary>True when the fields are valid.</summary>
     public bool CanCreate => Game != null && name.Length > 0 && Problem() == null;
 
-    /// <summary>Draws the fields.</summary>
+    /// <summary>Draws the fields, with the labels in a column on the left, as the Inspector does.</summary>
     public void Draw()
     {
+        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Label);
+        ImGui.TextWrapped("OpenLancer makes a profile for this game. A profile names the game folder and your mods.");
+        ImGui.PopStyleColor();
+        ImGui.Spacing();
         if (games.Count > 1)
         {
-            ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.6f);
-            if (ImGui.BeginCombo("Game", Game?.Name ?? ""))
+            Field("Game");
+            ImGui.SetNextItemWidth(InputWidth());
+            if (ImGui.BeginCombo("##game", Game?.Name ?? ""))
             {
                 for (var i = 0; i < games.Count; i++)
                 {
@@ -66,30 +75,51 @@ internal sealed class NewProfileForm(EditorWindow window)
             }
         }
 
-        ImGui.TextWrapped("OpenLancer makes a profile for this game. A profile names the game folder and your mods.");
-        ImGui.Spacing();
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X * 0.6f);
-        if (ImGui.InputText("Profile name", ref name, 64))
+        Field("Profile name");
+        ImGui.SetNextItemWidth(InputWidth());
+        if (ImGui.InputText("##name", ref name, 64))
         {
             error = null;
         }
 
         ImGui.SetItemTooltip(GameTexts.ProfileNameRule);
-        var workspace = window.Settings.WorkspaceOrDefault;
-        ImGui.TextWrapped($"OpenLancer puts your mods in {Path.Combine(workspace, ModWorkspace.ModsFolder)}.");
-        ImGui.SameLine();
-        if (ImGui.TextLink("Change..."))
+        Field("Mods folder");
+        const string change = "Change...";
+        var gap = ImGui.GetStyle().ItemSpacing.X;
+        var mods = Path.Combine(window.Settings.WorkspaceOrDefault, ModWorkspace.ModsFolder);
+        var width = Math.Max(1, ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(change).X - gap);
+        ImGui.TextDisabled(TextFit.CutLeft(mods, width, t => ImGui.CalcTextSize(t).X));
+        ImGui.SetItemTooltip($"OpenLancer puts your mods in {mods}.");
+        ImGui.SameLine(0, gap);
+        if (ImGui.TextLink(change))
         {
             ChangeWorkspace();
         }
 
         ImGui.SetItemTooltip("Select the folder for new profiles and mods. The profiles that exist stay where they are.");
-        ImGui.TextWrapped($"OpenLancer also makes an empty mod, {ModWorkspace.StarterModId}, for your changes.");
+        ImGui.Spacing();
+        CardLayout.Dim($"OpenLancer also makes an empty mod, {ModWorkspace.StarterModId}, for your changes.");
         if ((Problem() ?? error) is { } problem)
         {
             ImGui.TextColored(EditorTheme.Error, $"{EditorIcons.TimesCircle}  {problem}");
         }
     }
+
+    /// <summary>The label of a field in the left column. The field goes right of it, on the same line.</summary>
+    private static void Field(string label)
+    {
+        var x = ImGui.GetCursorPosX();
+        ImGui.AlignTextToFramePadding();
+        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Label);
+        ImGui.Text(label);
+        ImGui.PopStyleColor();
+        ImGui.SameLine();
+        ImGui.SetCursorPosX(x + MathF.Truncate(LabelWidth * ImGuiHelper.Scale));
+    }
+
+    /// <summary>The width of an input field: the free width of the line, up to a limit.</summary>
+    private static float InputWidth() =>
+        Math.Min(ImGui.GetContentRegionAvail().X, MathF.Truncate(FieldWidth * ImGuiHelper.Scale));
 
     /// <summary>
     /// Makes the profile and its empty mod, links the game when it is not linked, sets the mod as the active mod and
@@ -150,44 +180,28 @@ internal sealed class NewProfileForm(EditorWindow window)
 
     /// <summary>Asks for a new workspace folder. A folder whose profiles or mods folder is in a game folder is refused
     /// (decision D204). The new folder applies to new profiles only (decision D216).</summary>
-    private void ChangeWorkspace()
+    private void ChangeWorkspace() => FolderActions.Choose(window, folder =>
     {
         try
         {
-            FileDialog.ChooseFolder(folder => window.QueueUIThread(() =>
+            var roots = window.Links.Games.Select(g => g.Path).ToList();
+            if (Game?.Root is { } root)
             {
-                if (folder == null)
-                {
-                    return;
-                }
+                roots.Add(root);
+            }
 
-                try
-                {
-                    var roots = window.Links.Games.Select(g => g.Path).ToList();
-                    if (Game?.Root is { } root)
-                    {
-                        roots.Add(root);
-                    }
-
-                    ModWorkspace.CheckWorkspace(folder, roots);
-                    window.Settings.WorkspaceFolder = Path.GetFullPath(folder);
-                    window.Settings.Save();
-                    error = null;
-                    if (Game != null)
-                    {
-                        name = ModWorkspace.FreeProfileName(window.Settings.WorkspaceOrDefault, Game.ProfileName);
-                    }
-                }
-                catch (IOException e)
-                {
-                    error = e.Message;
-                }
-            }));
+            ModWorkspace.CheckWorkspace(folder, roots);
+            window.Settings.WorkspaceFolder = Path.GetFullPath(folder);
+            window.Settings.Save();
+            error = null;
+            if (Game != null)
+            {
+                name = ModWorkspace.FreeProfileName(window.Settings.WorkspaceOrDefault, Game.ProfileName);
+            }
         }
-        catch (Exception e)
+        catch (IOException e)
         {
-            // The folder picker of the system can fail, for example without a desktop portal.
-            window.Log.Add(ConsoleSeverity.Error, GameLinks.Source, $"The folder picker did not open: {e.Message}");
+            error = e.Message;
         }
-    }
+    });
 }

@@ -79,6 +79,7 @@ internal static class EditorIcons
     public const char Tag = '\uf02b';
     public const char CompressArrowsAlt = '\uf78c';
     public const char Folder = '\uf07b';
+    public const char FolderOpen = '\uf07c';
     public const char ShieldAlt = '\uf3ed';
     public const char Rocket = '\uf135';
     public const char SatelliteDish = '\uf7c0';

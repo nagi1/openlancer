@@ -7,7 +7,7 @@ OpenLancer does not include game files. Each user links their own copy of Freela
 At the first start, the Welcome page shows "Link your Freelancer game".
 
 1. Click **Select game folder...**. Select the folder that contains the `EXE` and `DATA` folders of the game, for example `C:\Program Files (x86)\Microsoft Games\Freelancer`. You can also drag the folder to the editor window.
-2. The editor checks the folder and shows the game that it found. **Details** shows each line of the check.
+2. The editor checks the folder and shows the game that it found, with its notes. **Details** shows a table with each line of the check. Point to a short SHA-256 value to see all of it, or click the copy button after it.
 3. Make sure that the profile name is correct. Click **Create profile and open**.
 
 The editor makes a profile for the game and an empty mod, `my-mod`, for your changes. Then it opens the profile. Your first edit goes into `my-mod`.
@@ -50,20 +50,20 @@ A developer who keeps the `GameData` layout can set the workspace folder to `Gam
 
 **File > Game link...**, the game segment of the status bar and the Welcome page open the Game link window. It shows one card for each linked game:
 
-- the game, its folder and the state of its INI files,
-- the export target of its mods and the game program,
-- the profiles that use the game,
-- **Details** with each line of the check.
+- the game and the state of its INI files,
+- its folder, with the link **Open folder**, which opens the folder in the file manager,
+- the export target of its mods, the game program and the profiles that use the game,
+- the notes of the check,
+- **Details** with a table of the check: the file or the rule in the column Check, and what the check found in the column Result.
 
 The buttons of a card:
 
+- **New profile...** makes one more profile with an empty mod for the game, and opens it.
 - **Check again** reads the game folder again.
 - **Relink...** selects the new folder of the game, for example after you moved it.
-- **Open folder** opens the game folder in the file manager.
-- **New profile...** makes one more profile with an empty mod for the game, and opens it.
 - **Remove link** removes the game from the list. It deletes no file. A profile that uses the folder links it again when it opens.
 
-**Link a game folder...** links one more game. You can also drag a game folder to the editor window.
+**Link a game folder...** at the top right of the window links one more game. You can also drag a game folder to the editor window.
 
 ## A game folder that moved
 

@@ -117,6 +117,20 @@ internal static class EditorTheme
 
     public static void PopFlatButtonColors() => ImGui.PopStyleColor(2);
 
+    /// <summary>
+    /// Pushes the colors of the primary button: the accent fill and white text. A page or a dialog has at most one
+    /// primary button, for the action that the user does most. Call <see cref="PopPrimaryButtonColors"/> after it.
+    /// </summary>
+    public static void PushPrimaryButtonColors()
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, AccentStrong);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Accent);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, Pressed);
+        ImGui.PushStyleColor(ImGuiCol.Text, TextBright);
+    }
+
+    public static void PopPrimaryButtonColors() => ImGui.PopStyleColor(4);
+
     private static void Apply(ImGuiStylePtr style, float scale)
     {
         Vector2 Size(float x, float y) => new(MathF.Truncate(x * scale), MathF.Truncate(y * scale));

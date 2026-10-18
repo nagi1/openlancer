@@ -8,12 +8,13 @@ namespace OpenLancer.Editor.Games;
 /// the Welcome page use the same look.</summary>
 internal static class GameLook
 {
-    /// <summary>The glyph and the color of a severity: a green check, a yellow triangle or a red cross.</summary>
+    /// <summary>The glyph and the color of a severity: a green check, a blue info circle, a yellow triangle or a red
+    /// cross.</summary>
     public static (char Glyph, Vector4 Color) Of(GameSeverity severity) => severity switch
     {
         GameSeverity.Error => (EditorIcons.TimesCircle, EditorTheme.Error),
         GameSeverity.Warning => (EditorIcons.ExclamationTriangle, EditorTheme.Warning),
-        GameSeverity.Info => (EditorIcons.InfoCircle, EditorTheme.Label),
+        GameSeverity.Info => (EditorIcons.InfoCircle, EditorTheme.AccentText),
         _ => (EditorIcons.CheckCircle, EditorTheme.Success),
     };
 

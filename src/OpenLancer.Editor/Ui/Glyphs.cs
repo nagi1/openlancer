@@ -30,16 +30,19 @@ internal static class Glyphs
         return center;
     }
 
+    /// <summary>Draws a glyph with its shape centered on a point.</summary>
+    /// <param name="color">The ABGR color of the glyph.</param>
+    public static void Draw(ImDrawListPtr drawList, char glyph, float pixelSize, Vector2 center, uint color) =>
+        ImGuiHelper.Roboto.RenderChar(drawList, pixelSize, center - Center(glyph, pixelSize), color, glyph);
+
     /// <summary>Draws a glyph with its shape centered on a point, over a drop shadow.</summary>
     /// <param name="color">The ABGR color of the glyph.</param>
     /// <param name="alpha">The opacity of the glyph and of its shadow.</param>
     public static void DrawShadowed(ImDrawListPtr drawList, char glyph, float pixelSize, Vector2 center, uint color,
         float alpha)
     {
-        var position = center - Center(glyph, pixelSize);
-        var font = ImGuiHelper.Roboto;
-        font.RenderChar(drawList, pixelSize, position + ShadowOffset * ImGuiHelper.Scale,
-            ImGui.GetColorU32(ShadowColor, alpha), glyph);
-        font.RenderChar(drawList, pixelSize, position, ImGui.GetColorU32(color, alpha), glyph);
+        Draw(drawList, glyph, pixelSize, center + ShadowOffset * ImGuiHelper.Scale,
+            ImGui.GetColorU32(ShadowColor, alpha));
+        Draw(drawList, glyph, pixelSize, center, ImGui.GetColorU32(color, alpha));
     }
 }

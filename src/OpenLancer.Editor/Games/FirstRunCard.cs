@@ -1,12 +1,9 @@
 using System;
-using System.Linq;
 using System.Numerics;
 using System.Threading;
 using ImGuiNET;
-using LibreLancer.Dialogs;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Games;
-using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Games;
@@ -14,12 +11,14 @@ namespace OpenLancer.Editor.Games;
 /// <summary>
 /// The first-run screen on the Welcome page (section 7 of the M11a design): link the game folder, check it, and make a
 /// profile with an empty mod that opens ready to edit. Screen A asks for the folder, B checks it, C shows the game and
-/// the new profile, and D tells why a folder holds no game.
+/// the new profile, and D tells why a folder holds no game. Each screen has a title, a subtitle, a body and a footer
+/// with one primary action (<see cref="CardLayout"/>).
 /// </summary>
 internal sealed class FirstRunCard(EditorWindow window)
 {
-    private const float ButtonHeight = 32;
-    private const int MaxFindings = 5;
+    // Sizes in unscaled points.
+    private const float LinkGap = 16;
+    private const float AreaGlyphSize = 28;
 
     private readonly NewProfileForm form = new(window);
     private Screen screen = Screen.Link;
@@ -82,45 +81,62 @@ internal sealed class FirstRunCard(EditorWindow window)
         }
     }
 
-    /// <summary>Screen A: link the game.</summary>
+    /// <summary>Screen A: link the game. The area in the middle has the primary button.</summary>
     private void LinkScreen()
     {
-        Title("Link your Freelancer game");
-        Lines(
-            "OpenLancer needs the files of your own copy of Freelancer (2003).",
-            "OpenLancer does not include game files.",
+        CardLayout.Title("Link your Freelancer game",
+            "OpenLancer needs the files of your own copy of Freelancer (2003).");
+        CardLayout.Divider();
+        CardLayout.Note(EditorIcons.InfoCircle, EditorTheme.AccentText, "OpenLancer does not include game files.");
+        CardLayout.Note(EditorIcons.Folder, EditorTheme.AccentText,
             "Select the folder of your game. This folder contains the EXE and DATA folders.",
-            @"Example: C:\Program Files (x86)\Microsoft Games\Freelancer",
+            @"Example: C:\Program Files (x86)\Microsoft Games\Freelancer");
+        CardLayout.Note(EditorIcons.ShieldAlt, EditorTheme.AccentText,
             "OpenLancer reads the files in this folder. It does not change them.");
-        Gap();
-        if (PrimaryButton($"{EditorIcons.Folder}  Select game folder..."))
+        CardLayout.Gap();
+        if (CardLayout.BeginArea("##folder"))
         {
-            ChooseFolder();
+            CardLayout.CenteredGlyph(EditorIcons.FolderOpen, EditorTheme.TextDim, AreaGlyphSize);
+            CardLayout.Gap();
+            var select = new CardButton($"{EditorIcons.Folder}  Select game folder...", Primary: true);
+            CardLayout.Center(CardLayout.ButtonWidth(select.Label));
+            if (CardLayout.Button(select))
+            {
+                ChooseFolder();
+            }
+
+            const string hint = "You can also drag the game folder to this window.";
+            ImGui.PushFont(null, EditorTheme.CaptionSize);
+            CardLayout.Center(ImGui.CalcTextSize(hint).X);
+            ImGui.TextDisabled(hint);
+            ImGui.PopFont();
         }
 
-        Caption("You can also drag the game folder to this window.");
-        Gap();
-        Lines("OpenLancer can identify Freelancer 1.0 and 1.1, with or without JFLP, and Freelancer: HD Edition.");
-        Gap();
+        CardLayout.EndArea();
+        CardLayout.SmallSpace();
+        CardLayout.Caption(
+            "OpenLancer can identify Freelancer 1.0 and 1.1, with or without JFLP, and Freelancer: HD Edition.");
+        CardLayout.Divider();
         if (ImGui.TextLink("Open a profile file..."))
         {
             window.OpenProfileDialog();
         }
 
-        ImGui.SameLine(0, MathF.Truncate(16 * ImGuiHelper.Scale));
+        ImGui.SameLine(0, MathF.Truncate(LinkGap * ImGuiHelper.Scale));
         SkipLink();
     }
 
     /// <summary>Screen B: the check runs.</summary>
     private void CheckScreen()
     {
-        Title("Game folder check");
-        Lines($"OpenLancer reads the files in {folder}. This can take some seconds.");
-        Gap();
-        ImGui.ProgressBar(-(float)ImGui.GetTime(), new Vector2(MathF.Truncate(240 * ImGuiHelper.Scale), 0), "");
+        CardLayout.Title("Game folder check", "OpenLancer reads the files in this folder. This can take some seconds.");
+        CardLayout.Divider();
+        CardLayout.Folder(folder);
+        CardLayout.SmallSpace();
+        ImGui.ProgressBar(-(float)ImGui.GetTime(), new Vector2(ImGui.GetContentRegionAvail().X, 0), "");
         ImGuiHelper.AnimatingElement();
-        Gap();
-        if (ImGui.Button("Cancel"))
+        CardLayout.Divider();
+        if (CardLayout.Buttons(false, new CardButton("Cancel")) == 0)
         {
             cancel?.Cancel();
             cancel = null;
@@ -128,68 +144,72 @@ internal sealed class FirstRunCard(EditorWindow window)
         }
     }
 
-    /// <summary>Screen C: the game, its findings and the new profile.</summary>
+    /// <summary>Screen C: the game, its notes and the new profile.</summary>
     private void FoundScreen(GameReport found)
     {
-        Title(found.Severity == GameSeverity.Ok ? "Game found" : "Game found, with warnings");
-        var (glyph, color) = GameLook.Of(found.Severity);
-        ImGui.TextColored(color, glyph.ToString());
-        ImGui.SameLine();
-        ImGui.Text(found.Name);
-        Lines($"Folder: {found.Root}");
-        foreach (var finding in found.Findings.Take(MaxFindings))
+        CardLayout.Title(found.Severity == GameSeverity.Ok ? "Game found" : "Game found, with warnings",
+            "OpenLancer found a game in this folder. Make a profile for it.");
+        CardLayout.Divider();
+        GameReportView.Status(found, found.Name, found.DataText);
+        CardLayout.SmallSpace();
+        // The check read the folder right now, so it exists.
+        if (CardLayout.FolderWithOpenLink(found.Root!, true))
         {
-            Finding(finding);
+            FolderActions.Open(window, found.Root!);
         }
 
-        if (found.Findings.Count > MaxFindings)
-        {
-            Lines($"Details shows {found.Findings.Count - MaxFindings} more lines.");
-        }
-
+        CardLayout.Gap();
+        var more = GameReportView.Notes(found);
         if (found is { Data: DataState.NotChanged, Findings.Count: 0, Reference: { } reference })
         {
-            Lines($"The INI files are the same as the files of {GameDetector.BuildName(reference)}.");
+            CardLayout.Note(EditorIcons.CheckCircle, EditorTheme.Success,
+                $"The INI files are the same as the files of {GameDetector.BuildName(reference)}.");
         }
 
-        Details(found);
         if (window.Links.Find(found.Root!) != null)
         {
-            Lines("OpenLancer has a link to this game already. You can make one more profile for it.");
+            CardLayout.Note(EditorIcons.Link, EditorTheme.AccentText,
+                "OpenLancer has a link to this game already. You can make one more profile for it.");
         }
 
-        Gap();
-        Heading("New profile");
+        GameReportView.Details(found, more);
+        CardLayout.Gap();
+        CardLayout.Heading("New profile");
         form.Draw();
-        Gap();
-        if (PrimaryButton("Create profile and open", form.CanCreate))
+        CardLayout.Divider();
+        var create = new CardButton("Create profile and open", Primary: true, Enabled: form.CanCreate);
+        switch (CardLayout.Buttons(false, create, new CardButton("Select another folder")))
         {
-            form.Create();
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Select another folder", new Vector2(0, MathF.Truncate(ButtonHeight * ImGuiHelper.Scale))))
-        {
-            ChooseFolder();
+            case 0:
+                form.Create();
+                break;
+            case 1:
+                ChooseFolder();
+                break;
         }
     }
 
-    /// <summary>Screen D: no game in the folder.</summary>
+    /// <summary>Screen D: no game in the folder. The status row tells why.</summary>
     private void NoGameScreen(GameReport found)
     {
-        Title("No game in this folder");
-        ImGui.PushTextWrapPos(0);
-        ImGui.TextColored(EditorTheme.Error, $"{EditorIcons.TimesCircle}  {found.Error}");
-        ImGui.PopTextWrapPos();
-        Lines("Select the folder that contains the EXE and DATA folders of the game.");
-        Gap();
-        if (PrimaryButton($"{EditorIcons.Folder}  Select another folder"))
+        CardLayout.Title("No game in this folder",
+            "Select the folder that contains the EXE and DATA folders of the game.");
+        CardLayout.Divider();
+        GameReportView.Status(found, found.Name, found.Error ?? "");
+        CardLayout.SmallSpace();
+        if (CardLayout.FolderWithOpenLink(found.Folder, !found.FolderMissing))
+        {
+            FolderActions.Open(window, found.Folder);
+        }
+
+        GameReportView.Details(found, GameReportView.Notes(found));
+        CardLayout.Divider();
+        SkipLink();
+        var select = new CardButton($"{EditorIcons.Folder}  Select another folder", Primary: true);
+        if (CardLayout.Buttons(true, select) == 0)
         {
             ChooseFolder();
         }
-
-        Gap();
-        SkipLink();
     }
 
     private void SkipLink()
@@ -203,118 +223,5 @@ internal sealed class FirstRunCard(EditorWindow window)
         ImGui.SetItemTooltip("Shows the normal Welcome page for this start.");
     }
 
-    /// <summary>
-    /// Opens the folder picker of the system. On Windows it gives the folder before it returns, and on other systems
-    /// later. So the folder goes to the UI thread in both cases.
-    /// </summary>
-    private void ChooseFolder()
-    {
-        try
-        {
-            FileDialog.ChooseFolder(path => window.QueueUIThread(() =>
-            {
-                if (path != null)
-                {
-                    Check(path);
-                }
-            }));
-        }
-        catch (Exception e)
-        {
-            window.Log.Add(ConsoleSeverity.Error, GameLinks.Source, $"The folder picker did not open: {e.Message}");
-        }
-    }
-
-    /// <summary>The collapsed Details section: the findings and the evidence of the check.</summary>
-    internal static void Details(GameReport found)
-    {
-        if (!ImGui.TreeNodeEx("Details", ImGuiTreeNodeFlags.NoTreePushOnOpen))
-        {
-            return;
-        }
-
-        ImGui.Indent();
-        foreach (var finding in found.Findings)
-        {
-            Finding(finding);
-        }
-
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
-        ImGui.PushTextWrapPos(0);
-        foreach (var line in found.Evidence)
-        {
-            ImGui.TextWrapped(line);
-        }
-
-        foreach (var file in found.DataFiles)
-        {
-            ImGui.TextWrapped(file);
-        }
-
-        ImGui.PopTextWrapPos();
-        ImGui.PopStyleColor();
-        ImGui.Unindent();
-    }
-
-    /// <summary>One finding with the glyph of its severity.</summary>
-    internal static void Finding(GameFinding finding)
-    {
-        var (glyph, color) = GameLook.Of(finding.Severity);
-        ImGui.TextColored(color, glyph.ToString());
-        ImGui.SameLine();
-        ImGui.PushTextWrapPos(0);
-        ImGui.TextWrapped(finding.Text);
-        ImGui.PopTextWrapPos();
-    }
-
-    private static void Title(string text)
-    {
-        ImGui.PushFont(null, EditorTheme.HeroSize);
-        ImGui.Text(text);
-        ImGui.PopFont();
-        Gap();
-    }
-
-    private static void Heading(string text)
-    {
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Label);
-        ImGui.SeparatorText(text);
-        ImGui.PopStyleColor();
-    }
-
-    private static void Lines(params string[] lines)
-    {
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Label);
-        ImGui.PushTextWrapPos(0);
-        foreach (var line in lines)
-        {
-            ImGui.TextWrapped(line);
-        }
-
-        ImGui.PopTextWrapPos();
-        ImGui.PopStyleColor();
-    }
-
-    private static void Caption(string text)
-    {
-        ImGui.PushFont(null, EditorTheme.CaptionSize);
-        ImGui.TextDisabled(text);
-        ImGui.PopFont();
-    }
-
-    private static void Gap() => ImGui.Dummy(new Vector2(0, MathF.Truncate(8 * ImGuiHelper.Scale)));
-
-    /// <summary>The primary button of a screen.</summary>
-    private static bool PrimaryButton(string label, bool enabled = true)
-    {
-        ImGui.BeginDisabled(!enabled);
-        ImGui.PushStyleColor(ImGuiCol.Button, EditorTheme.AccentStrong);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, EditorTheme.Accent);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, EditorTheme.Pressed);
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextBright);
-        var clicked = ImGui.Button(label, new Vector2(0, MathF.Truncate(ButtonHeight * ImGuiHelper.Scale)));
-        ImGui.PopStyleColor(4);
-        ImGui.EndDisabled();
-        return clicked;
-    }
+    private void ChooseFolder() => FolderActions.Choose(window, Check);
 }

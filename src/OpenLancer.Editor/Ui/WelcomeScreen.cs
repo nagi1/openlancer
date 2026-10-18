@@ -30,7 +30,6 @@ internal sealed class WelcomeScreen(EditorWindow window)
     private const float CardRounding = 4;
     private const float CardMargin = 16;
     private const float ButtonColumnWidth = 220;
-    private const float ButtonHeight = 32;
     private const float ColumnGap = 24;
     private const float SectionGap = 16;
     private const float BannerPadding = 8;
@@ -232,19 +231,16 @@ internal sealed class WelcomeScreen(EditorWindow window)
     /// <summary>The primary button that opens a profile file, and a hint below it.</summary>
     private void OpenButton(float width)
     {
-        ImGui.PushStyleColor(ImGuiCol.Button, EditorTheme.AccentStrong);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, EditorTheme.Accent);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive, EditorTheme.Pressed);
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextBright);
+        EditorTheme.PushPrimaryButtonColors();
         ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize, 0);
         if (ImGui.Button($"{EditorIcons.Open}  Open profile...",
-                new Vector2(width, MathF.Truncate(ButtonHeight * ImGuiHelper.Scale))))
+                new Vector2(width, MathF.Truncate(CardLayout.ButtonHeight * ImGuiHelper.Scale))))
         {
             window.OpenProfileDialog();
         }
 
         ImGui.PopStyleVar();
-        ImGui.PopStyleColor(4);
+        EditorTheme.PopPrimaryButtonColors();
         ImGui.PushFont(null, EditorTheme.CaptionSize);
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
         ImGui.TextDisabled("Select a profile .json file. Your profiles are in " +
@@ -259,7 +255,7 @@ internal sealed class WelcomeScreen(EditorWindow window)
     /// </summary>
     private void RecentProfiles()
     {
-        Heading("Recent profiles");
+        CardLayout.Heading("Recent profiles");
         var recent = window.Settings.RecentProfiles;
         if (recent.Count == 0)
         {
@@ -416,37 +412,13 @@ internal sealed class WelcomeScreen(EditorWindow window)
         }
 
         ImGui.Dummy(new Vector2(0, MathF.Truncate(SectionGap * ImGuiHelper.Scale)));
-        Heading("Profiles in this workspace");
-        var right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
-        for (var i = 0; i < others.Count; i++)
+        CardLayout.Heading("Profiles in this workspace");
+        // The links flow from left to right and wrap at the edge of the column.
+        var clicked = CardLayout.LinkFlow(others.Select(p => Path.GetFileNameWithoutExtension(p)).ToList(), others);
+        if (clicked >= 0)
         {
-            var name = Path.GetFileNameWithoutExtension(others[i]);
-            // The links flow from left to right and wrap at the edge of the column.
-            if (i > 0)
-            {
-                ImGui.SameLine();
-                if (ImGui.GetCursorScreenPos().X + ImGui.CalcTextSize(name).X > right)
-                {
-                    ImGui.NewLine();
-                }
-            }
-
-            ImGui.PushID(i);
-            if (ImGui.TextLink(name))
-            {
-                window.OpenProfile(others[i]);
-            }
-
-            ImGui.PopID();
-            ImGui.SetItemTooltip(others[i]);
+            window.OpenProfile(others[clicked]);
         }
-    }
-
-    private static void Heading(string text)
-    {
-        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Label);
-        ImGui.SeparatorText(text);
-        ImGui.PopStyleColor();
     }
 
     /// <summary>

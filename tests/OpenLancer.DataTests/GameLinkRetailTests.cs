@@ -9,6 +9,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
+using OpenLancer.Editor.Games;
 using OpenLancer.Runtime.Strings;
 using OpenLancer.Runtime.Thn;
 using Xunit;
@@ -50,6 +51,28 @@ public sealed class GameLinkRetailTests(ITestOutputHelper output)
         Assert.Contains(@"EXE\Common.dll: file version 1.0.1223.11.", report.Evidence);
         Assert.Contains(report.Evidence, e => e.StartsWith(@"EXE\Common.dll: 1769984 bytes") && e.EndsWith("the hash of vanilla-1.0."));
         Assert.Contains(report.Evidence, e => e.StartsWith("EXE\\dacom.ini [Libraries]: 14 active lines"));
+    }
+
+    [Fact]
+    public void TheRetailReportShowsEachNoteOnceAndADetailRowWithACheckForEachLine()
+    {
+        var report = Detect(GameDataPaths.RequireBase());
+
+        var (shown, more) = GameDetails.Split(GameDetails.Notes(report));
+        var rows = GameDetails.Rows(report);
+
+        foreach (var row in rows)
+            output.WriteLine($"{row.Check} | {row.Result}");
+        // The two notes of the base showed above Details and again in Details. Now each one shows once.
+        Assert.Contains(shown, f => f.Text == GameTexts.GameDataOnly);
+        Assert.Contains(shown, f => f.Text == GameTexts.OnePointZeroTarget);
+        Assert.Equal(report.Findings.Distinct().Count(), shown.Count);
+        Assert.Empty(more);
+        Assert.Equal(report.Evidence.Count, rows.Count);
+        Assert.All(rows, r => Assert.NotEqual("", r.Check));
+        Assert.Equal(GameDetector.CodeFiles.Length, rows.Count(r => r.Hash != null));
+        Assert.Contains(rows, r => r.Check == @"EXE\Common.dll" && r.Result.StartsWith("1769984 bytes, SHA-256 ") &&
+                                   r.Result.EndsWith("..." + r.Hash![^4..] + ", the hash of vanilla-1.0."));
     }
 
     [Fact]

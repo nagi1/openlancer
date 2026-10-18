@@ -90,9 +90,7 @@ internal abstract class ModalDialog
         ImGui.BeginDisabled(!enabled);
         if (primary)
         {
-            ImGui.PushStyleColor(ImGuiCol.Button, EditorTheme.AccentStrong);
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, EditorTheme.Accent);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, EditorTheme.Pressed);
+            EditorTheme.PushPrimaryButtonColors();
         }
 
         // A long label, for example "Rename in this file", makes the button wider than the usual width.
@@ -103,7 +101,7 @@ internal abstract class ModalDialog
                       !ImGui.IsAnyItemActive();
         if (primary)
         {
-            ImGui.PopStyleColor(3);
+            EditorTheme.PopPrimaryButtonColors();
         }
 
         ImGui.EndDisabled();
