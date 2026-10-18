@@ -24,6 +24,16 @@ These rules apply to each AI agent that works in this repository. [CONTRIBUTING.
 6. Put each engine change in a separate commit in `external/Librelancer`, with the subject `OL-NNNN: <the change>`. Add its row to `docs/UPSTREAM.md`.
 7. When a comment cites a decision (such as `D81`) or a design that you cannot read, ask. Do not guess the rule.
 
+## Editor UI rules
+
+1. Give each field a plain name that says what it does, for example "Enemy ships" or "Spawn when". Do not show a raw INI key name as the label.
+2. Use a picker or a dropdown with values from the loaded data for each field that names other data. Check each value, and give the reason for each error.
+3. Never use a comma-separated text field for a list of ships, enemies, factions, loadouts or waypoints. Use a list widget with Add, Remove and reorder, one row for each entry, with named sub-fields. Write the retail line format only when the editor saves.
+4. Do not show a field that has no effect in the current setup. Put raw and advanced keys in a closed "Advanced" section and in the raw INI block.
+5. Show the higher-level item first, for example a battle beat or an event. Show the raw trigger, condition and action lines only on request.
+6. Make linked items easy to follow. When the user selects an item in one view, highlight the items that it uses in the other views.
+7. Make each repeated pattern a prefab. A prefab instance can override a field. Show the override in bold with a blue mark, and give "Revert" and "Apply to prefab". Never change the base prefab until the user applies the override.
+
 ## Writing style: Simplified Technical English (STE)
 
 All prose in this repository uses ASD-STE100 Simplified Technical English: docs, code comments, UI text, error messages, commit messages, pull request text and release notes. It does not apply to code, identifiers or command syntax.
