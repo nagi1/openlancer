@@ -797,6 +797,7 @@ Each save runs the save gate first, also a save with nothing to write, and also 
   | A name that is not in the list of names of the key, for example `type = BOAT`, or a value that is not a GUID | The game ignores the line. |
   | A required key without a line, for example `da_archetype` of a `[Ship]` | The game drops this section. |
 - A zone of the active mod with the nickname or the FLHash of another zone of any system. The game drops one of the two zones.
+- An error of the format checks of the export or of the content checks of the retail game, when the active mod adds it. See "Format checks" and "Content checks of the retail game". These checks run only for a tier-1 mod that names a retail target. They compare the data with the active mod with the data of the mods that load before it. They do not merge on the files of each target game. Play in the game and the export do that. For example, a good with the price 0 blocks the save, because the retail game can crash when a player buys or sells it.
 - An error of the checks of a cutscene that the active mod changes, when the lower cutscene does not have the error. For example, a LIGHT has no `spatialprops.pos`. A whole cutscene file of the active mod that the engine cannot read is an error too. The game crashes when it plays such a cutscene, so the message starts with "The game crashes when it plays this cutscene." These checks run without the game data, so they do not check templates and costumes.
 
 An entry is unusable when the engine cannot use it. A curve without points is unusable, and so is a name that two curves have. An entry is also unusable when its own checks give an error that makes the game drop it or stop loading. Some examples:
@@ -921,6 +922,7 @@ A boolean line without a value, for example `separable =` of a `[CollisionGroup]
 | `oltool dump <profile.json\|folder> <out.json>` | Write a sorted JSON dump of the data that the engine resolves. |
 | `oltool thn <profile.json\|folder> <install path>` | Print a cutscene script (`.thn`) as canonical Lua text. The script comes from the merged view, so the text shows the changes of the mods. |
 | `oltool thn roundtrip <profile.json\|folder> [<install path>]` | Check the canonical text of each `.thn` file of the source, or of one file. The text must give the same tables, with exact numbers and the same key order, and the text of the result must be the same text. Each problem names the first value that differs. |
+| `oltool validate <profile.json> --target <hde-0.7.1\|vanilla-1.1> [--game <folder>] [--json]` | Merge all mods of the profile on the files of the target game. Report the problems of the format checks and of the content checks of the retail game (see "Content checks of the retail game"). `--game` names the game folder of the target. Without it, the base of the profile must give the target. For HD Edition 0.7.1, the command also lists the changed lines of HD Edition that the mods replace. This needs a profile on Freelancer 1.0 or 1.1. A mod that changes data under `DATA` gets the note "Single player, or a server with the same mod." The command only reads the game folder. |
 | `oltool export <profile.json> --mod <id> --target <target> [--game <folder>] [--format dropin\|flmm\|all] [--out <folder>] [--checklist] [--flmm-probe]` | Make the packages of one mod for one target (see "Export"). `--game` names the game folder of a retail target. Without it, the base of the profile must give the target. `--format` picks the package forms of a retail target, all by default. `--out` names the output folder, `exports\<mod id>` next to the profiles folder by default. `--checklist` prints the checklist and writes no file. `--flmm-probe` writes the probe of the FLMM check, which is not for players. |
 | `oltool verify-base <folder>` | Check that a folder is the unchanged, read-only retail data. |
 
@@ -995,6 +997,8 @@ The format checks look at each line that the export writes. These are the lines 
 | An infocard with a single `%` | Warning | It can show wrong text. Write `%%` for one `%`. |
 | A THN name that only Librelancer defines | Warning | The export writes its number. Check the cutscene in the game. |
 
+The content checks of the retail game also run on each export (see "Content checks of the retail game"). An error of the format checks or of the content checks stops the export.
+
 ### Drop-in zip
 
 `<mod id>-<version>-<target>.zip` has the folders `DATA` and `EXE` at its top, with the letter case of the folders of the game, and the README. The player copies the files of the list to a backup folder, then extracts the zip into the game folder. A drop-in zip replaces whole files, so it does not combine with other mods that change the same files.
@@ -1045,3 +1049,24 @@ When the INI checks find errors, the validator stops there. It then also reports
 - A load that throws, and ship packages that the engine did not resolve.
 - Every new warning or error line of the engine, for example `Unknown entry` for a misspelled key. An engine error line is an error.
 - For every ship package: an addon hardpoint that the ship model does not have, a model that does not load, and a gun or shield that does not fit its hardpoint by the server's rule, also on `internal` (the server rejects the purchase).
+
+### Content checks of the retail game
+
+Librelancer loads some data that the retail game does not accept or does not read. The content checks find this data for the targets HD Edition 0.7.1 and Freelancer 1.1. They run at each save of a tier-1 mod that names a retail target. They also run before each Play in the game, at each export of a retail target and in `oltool validate --target`. Each check compares the data with the mods with the data without them, so it reports only what the mods add. An error blocks Save, Play in the game and the export.
+
+| Check | Level | What the game does |
+|---|---|---|
+| More than 10 jump holes and jump gates in one system | Error | It crashes. |
+| A `[Good]` with a `price` of 0 or less, or a price that is not a number | Error | It can crash when a player buys or sells the good. A ship package has no `price` line, and needs none. |
+| A system of `universe.ini` whose file has no `[Object]` | Error | It can crash when it loads the system. |
+| A `[Munition]` with `requires_ammo = true`, when `MISSIONS\lootprops.ini` has no `[mLootProps]` for the munition or for a `[Gun]` that fires it | Error | It can crash. |
+| A `[Trigger]` of a mission without a `Cnd_` line | Error | It crashes when it runs the trigger. Write `Cnd_True = no_params` for a trigger without a condition. |
+| An `[Asteroids]` section whose `zone` is not a `[Zone]` of its system | Error | It crashes when it loads the system. |
+| An `[NPCShipArch]` whose loadout has no engine | Error | It crashes when the ship tries to go into cruise. The check reads `MISSIONS\npcships.ini`, `MISSIONS\npcships_test.ini`, the `npcships.ini` of each mission folder and each file of a mod with an `[NPCShipArch]`. |
+| A key that only Librelancer reads: the section `[Extended]` of `freelancer.ini`, a `[Data]` key that the retail loaders do not know (for example `newplayer`, `mpnewcharacter`, `mbases`, `navmap`, `mouse` or `cameras`), and `cruise_speed` of an `[Engine]` | Error | It does not read the key. Only OpenLancer reads it. |
+| A boolean key with a value other than `true`, `false`, `1` or `0` (in any letter case) | Warning | It reads false and logs an error. For `requires_ammo` and `force_gun_ori`, the check gives an error, because the game can crash. |
+| A line of the mod that replaces a line that HD Edition changed (HD Edition 0.7.1 only) | Warning | The mod can undo a fix of HD Edition. The check compares the HD Edition file with the file of a linked Freelancer 1.0 or 1.1 game. Without such a game, the check does not run. |
+
+The crash checks follow the crash list of The Starport knowledge base. The retail data itself has two such cases, which the game uses only in scripted scenes. A cutscene missile has no `lootprops.ini` entries, and some capital ships of the story missions have no engine. These cases give no finding, because the checks report only what the mods add.
+
+The checks of models and textures need the model readers of a later milestone. Examples are collision parts with too many triangles, texture sizes and cutscene animations that a model does not have.

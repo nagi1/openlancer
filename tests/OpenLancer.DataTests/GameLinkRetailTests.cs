@@ -201,6 +201,29 @@ public sealed class GameLinkRetailTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>
+    /// The embedded file list finds HD Edition 0.7.1 with unchanged INI files in a copy of its install (section 9.5 of
+    /// the M11 design). The test needs <c>OPENLANCER_HDE</c> with the EXE and DLLS folders and the INI
+    /// files of DATA. It only reads the copy.
+    /// </summary>
+    [Fact]
+    public void AnHdCopyIsNotChanged()
+    {
+        var root = GameDataPaths.RequireHde();
+
+        var report = Detect(root);
+
+        foreach (var line in report.Evidence)
+            output.WriteLine(line);
+        Assert.Equal(GameKind.HdEdition, report.Kind);
+        Assert.Equal("hde-0.7.1", report.Build);
+        Assert.Equal(ModTargets.HdEdition, report.Target);
+        Assert.Equal("hde-0.7.1", report.Reference);
+        Assert.Equal(DataState.NotChanged, report.Data);
+        Assert.Equal(0, report.ChangedFiles);
+        Assert.True(report.ComparedFiles > 1200, $"{report.ComparedFiles} INI files compared.");
+    }
+
     /// <summary>The check with the embedded build manifests.</summary>
     private static GameReport Detect(string folder) =>
         GameDetector.Detect(folder, cancel: TestContext.Current.CancellationToken);

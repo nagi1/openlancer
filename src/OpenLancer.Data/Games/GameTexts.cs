@@ -49,11 +49,11 @@ public static class GameTexts
         "The code files are different from the files of Freelancer 1.0. Their file version is 1.0.";
 
     public static string OnePointOneByFileVersion(string version) =>
-        $"The file version of Common.dll is {version}. This version is after 1.0, so OpenLancer shows 1.1. OpenLancer " +
-        "has no 1.1 hashes to compare.";
+        $"The file version of Common.dll is {version}. This version is after 1.0, so OpenLancer shows 1.1. The code " +
+        "files do not have the hashes of the English patch 1.1.";
 
-    public const string OnePointOneData = "OpenLancer compared the data with Freelancer 1.0. Sources say that patch 1.1 " +
-                                          "changes code files only. No test confirmed this yet.";
+    public const string OnePointOneData = "OpenLancer compared the data with Freelancer 1.0, because patch 1.1 changes " +
+                                          "code files only. OpenLancer has the hashes of the code files of patch 1.1.";
 
     public const string OnePointZeroTarget = "OpenLancer exports mods for this game as Freelancer 1.1 mods. Players on " +
                                              "1.0 cannot join servers that run 1.1.";

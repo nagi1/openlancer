@@ -35,12 +35,12 @@ public static class PlayBuild
         return mods.Select(m => target.PlayRefusal(m.Manifest)).FirstOrDefault(r => r != null);
     }
 
-    /// <summary>Merges the mods on the files of the game and runs the format checks. The merge only reads the game
-    /// folder.</summary>
+    /// <summary>Merges the mods on the files of the game and runs the format checks and the content checks of its
+    /// target. The merge only reads the game folder.</summary>
     public static PlayBuildResult Run(GameReport game, IReadOnlyList<Mod> mods, IStringResourceWriter stringWriter,
         IThnEvaluator thn)
     {
         var files = TargetBuild.Run(game.Base!, mods, ModOverlay.StringsDllName, stringWriter, thn);
-        return new PlayBuildResult(files, [.. files.Diagnostics, .. FormatChecks.Run(files)]);
+        return new PlayBuildResult(files, [.. files.Diagnostics, .. FormatChecks.Run(files), .. TargetChecks.Run(files)]);
     }
 }

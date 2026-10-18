@@ -21,7 +21,7 @@ When you select a folder inside the game, for example `EXE` or `DATA`, the edito
 | Game | How the editor knows it | Export target of mods |
 |---|---|---|
 | Freelancer 1.0 | The five code files (`Common.dll`, `Server.dll`, `DALib.dll`, `FLServer.exe`, `Content.dll`) have the hashes of the English retail disc. Else the file version of `Common.dll` is 1.0.1223.11. | `vanilla-1.1` |
-| Freelancer 1.1 | The file version of `Common.dll` is after 1.0.1223.11. OpenLancer has no hashes of 1.1 yet. | `vanilla-1.1` |
+| Freelancer 1.1 | The five code files have the hashes of the English patch 1.1. Else the file version of `Common.dll` is after 1.0.1223.11. | `vanilla-1.1` |
 | With JFLP | `EXE\dacom.ini` names `jflp.dll`, and the `EXE` folder contains it. | the same as without JFLP |
 | Freelancer: HD Edition | `EXE\freelancer.ini` names `Controls.dll` (0.7.1) or `HDEResources.dll` (after 0.7.1) as a resource DLL. The version comes from a text of that DLL. | `hde-0.7.1` for 0.7.1 only |
 | Discovery | The game folder contains `DSLauncher.exe`. OpenLancer does not support it. | none |
@@ -30,7 +30,7 @@ When you select a folder inside the game, for example `EXE` or `DATA`, the edito
 
 The editor also compares the INI files of the game with the file list of its version. The Game link window shows "INI files: not changed" or the number of changed files. OpenLancer uses the files in the game folder, also when they are changed.
 
-OpenLancer has the file lists of the English retail 1.0 disc and of HD Edition 0.7.1. The options of the HD Edition installer change some files, for example `EXE\freelancer.ini` and `EXE\dacom.ini`. So an HD Edition install with other options shows changed files. The export of mods warns when the base of a target has changed files (see "Export" in [MOD_FORMAT.md](MOD_FORMAT.md)).
+OpenLancer has the file lists of the English retail 1.0 disc, of the English patch 1.1 and of HD Edition 0.7.1. Patch 1.1 changes code files only, so the editor compares the INI files of Freelancer 1.1 with the file list of 1.0. The options of the HD Edition installer change some files, for example `EXE\freelancer.ini` and `EXE\dacom.ini`. So an HD Edition install with other options shows changed files. The export of mods warns when the base of a target has changed files (see "Export" in [MOD_FORMAT.md](MOD_FORMAT.md)).
 
 A folder without `Freelancer.exe` contains game data only. You can make mods with it.
 
@@ -98,7 +98,7 @@ The command prints the same check as the editor. `--json` writes the full report
 
 The exit code is 0 for a game, 1 for a folder without a game, and 2 for a folder that does not exist or a wrong command line.
 
-If you have Freelancer 1.1, please run `oltool game "<game folder>" --hashes` and send the output. OpenLancer then gets the hashes of 1.1.
+If you have a version of Freelancer that OpenLancer does not know, please run `oltool game "<game folder>" --hashes` and send the output. OpenLancer then gets the hashes of that version.
 
 ## Source builds
 

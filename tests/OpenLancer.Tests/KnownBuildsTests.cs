@@ -23,6 +23,26 @@ public sealed class KnownBuildsTests
         Assert.All(GameDetector.CodeFiles, file => Assert.True(rows.ContainsKey(DataDigest.ManifestPath(file))));
     }
 
+    /// <summary>The rows of patch 1.1 (decision D338): the five code files and <c>RemoteClient.dll</c>, the files that
+    /// the patch changes. The other files of 1.1 come from the manifest of 1.0.</summary>
+    [Fact]
+    public void TheEmbeddedOnePointOneManifestHasTheFilesOfThePatch()
+    {
+        var builds = KnownBuilds.Embedded;
+        var patch = builds.Rows("vanilla-1.1");
+        var retail = builds.Rows("vanilla-1.0");
+
+        Assert.Equal(GameDetector.CodeFiles.Select(DataDigest.ManifestPath).Append("exe/remoteclient.dll").Order(StringComparer.Ordinal),
+            patch.Keys.Order(StringComparer.Ordinal));
+        Assert.All(patch.Values, row => Assert.NotEqual(retail[row.Path].Sha256, row.Sha256));
+        var known = builds.Reference("vanilla-1.1")!.Value;
+        Assert.Equal("vanilla-1.1", known.Reference);
+        Assert.True(known.FromParent);
+        Assert.Equal(retail.Count, known.Rows.Count);
+        Assert.Equal(patch["exe/common.dll"], known.Rows["exe/common.dll"]);
+        Assert.Equal(retail["data/equipment/goods.ini"], known.Rows["data/equipment/goods.ini"]);
+    }
+
     [Fact]
     public void TheFileNameIsTheBuildId()
     {

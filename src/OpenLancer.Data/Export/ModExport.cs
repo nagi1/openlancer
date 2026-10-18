@@ -157,6 +157,9 @@ public static class ModExport
             builds[target] = files;
             targetProblems.AddRange(files.Diagnostics);
             targetProblems.AddRange(FormatChecks.Run(files));
+            targetProblems.AddRange(TargetChecks.Run(files));
+            if (RetailReference(request, target) is { } retail)
+                targetProblems.AddRange(TargetChecks.HdEditionLines(files, retail));
             if (files.File(ModOverlay.FreelancerIniPath) != null && FreelancerIniDiffers(gameBase, report))
                 targetProblems.Add(Diagnostic.Warning(ModOverlay.FreelancerIniPath,
                     $"Your freelancer.ini differs from the file list of {GameDetector.BuildName(report.Build!)}. The " +
@@ -247,6 +250,14 @@ public static class ModExport
         checklist.Add($"Target: {target.Name}");
         checklist.AddRange(PackageTexts.Checklist(files));
     }
+
+    /// <summary>The files of a linked Freelancer 1.0 or 1.1 game for the check of the lines that HD Edition changed, or
+    /// null. Only the target HD Edition 0.7.1 uses it.</summary>
+    private static GameBase? RetailReference(ExportRequest request, ExportTarget target) =>
+        target == ExportTarget.HdEdition && request.BaseOf(ExportTarget.Vanilla) is
+            { CanBeBase: true, Target: ModTargets.Vanilla } report
+            ? report.Base
+            : null;
 
     /// <summary>True when the <c>freelancer.ini</c> of a base differs from the row of the file list of its build.</summary>
     private static bool FreelancerIniDiffers(GameBase gameBase, GameReport report)

@@ -143,6 +143,9 @@ public sealed partial class EditSession
     /// D81), or that the active mod made unusable without a delete (decision D82, as the user decided it on
     /// 2026-10-18). For example, the active mod removes the points of a curve, and a retail light names the curve.
     /// See <see cref="DataLists.ReferrerErrors"/>.</item>
+    /// <item>The errors of the format checks and of the content checks that the active mod adds (milestone M11, see
+    /// <see cref="TargetProblems"/>). They run for a tier-1 mod that names a retail target. For example, a good with the
+    /// price 0 crashes the retail game.</item>
     /// <item>Each FLHash collision of a hash list that the active mod adds a name to.</item>
     /// <item>The errors of the component checks (layer 3, milestone M3): a zone of the active mod whose nickname another
     /// zone of any system has, also by FLHash. Retail drops one of the two zones.</item>
@@ -189,6 +192,10 @@ public sealed partial class EditSession
 
         foreach (var problem in Lists.ReferrerErrors())
             Add(problem.Diagnostic);
+
+        // The format checks and the content checks of the retail targets (milestone M11).
+        foreach (var problem in TargetProblems())
+            Add(problem);
 
         // Layer 3: a zone nickname that another zone of any system has, also by FLHash (milestone M3).
         foreach (var problem in Scene.ComponentChecks.SaveErrors(this))

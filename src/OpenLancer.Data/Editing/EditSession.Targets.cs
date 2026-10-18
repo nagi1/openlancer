@@ -1,0 +1,66 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using LibreLancer.Data.Ini;
+using LibreLancer.Data.IO;
+using OpenLancer.Data.Export;
+using OpenLancer.Data.IO;
+using OpenLancer.Data.Mods;
+using OpenLancer.Data.Validation;
+
+namespace OpenLancer.Data.Editing;
+
+public sealed partial class EditSession
+{
+    /// <summary>
+    /// The problems of the format checks and of the content checks of the retail targets (section 9.2 of the M11
+    /// design), for the save gate. They run only for a tier-1 mod that names a retail target. They compare W with B, so
+    /// they report only what the active mod adds. They do not merge on the files of each target game: the export and
+    /// Play in the game do that.
+    /// </summary>
+    internal IReadOnlyList<Diagnostic> TargetProblems()
+    {
+        if (ActiveMod is not { } active || !HasRetailTarget(active.Manifest))
+            return [];
+        var view = new SessionCheckView(this, active);
+        return
+        [
+            .. FormatChecks.Run(view, path => OpenDocument(path)?.IsBinary == true, active.Files.ContainsKey,
+                text.Infocards, Path.Combine(active.Folder, Mod.StringsFile)),
+            .. TargetChecks.Run(view),
+        ];
+    }
+
+    /// <summary>True when the mod is a tier-1 mod that names a target of the retail game.</summary>
+    private static bool HasRetailTarget(ModManifest manifest) =>
+        manifest.Tier == ModManifest.DataTier && manifest.Targets.Any(t => ExportTarget.Find(t) is { IsRetail: true });
+
+    /// <summary>The view of the target checks of a session: B of each file without the active mod, and W with
+    /// it.</summary>
+    private sealed class SessionCheckView(EditSession session, Mod active) : CheckView
+    {
+        private readonly Dictionary<string, IReadOnlyList<Section>?> wholeFiles = new(VfsPath.Comparer);
+        private FileSystem? editView;
+
+        public override IReadOnlyCollection<string> ChangedPaths { get; } = session.ActiveChangedPaths();
+
+        public override IReadOnlyList<Section>? Sections(string path, bool withMods)
+        {
+            if (VfsPath.Normalize(path) is not { } normal)
+                return null;
+            // W of a whole file of the active mod has the lower data. The edit view has the content of the file.
+            if (withMods && active.Files.ContainsKey(normal))
+            {
+                if (!wholeFiles.TryGetValue(normal, out var sections))
+                    wholeFiles[normal] = sections = Read(EditView, normal);
+                return sections;
+            }
+            return session.OpenDocument(normal) is { } document ? withMods ? document.Working : document.Base : null;
+        }
+
+        public override IReadOnlyList<string> Folders(string path) => EditView.GetDirectories(path);
+
+        private FileSystem EditView => editView ??= session.EditView.CreateFileSystem();
+    }
+}

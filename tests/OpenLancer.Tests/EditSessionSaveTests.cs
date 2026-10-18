@@ -552,12 +552,12 @@ public sealed class EditSessionSaveTests
         var session = ws.Session("act");
         session.Execute(EditCommand.SetText(StringKind.String, "zeta", "Z"));
         session.Execute(EditCommand.SetText(StringKind.String, "alpha", "A"));
-        session.Execute(EditCommand.SetText(StringKind.Infocard, "info", "<RDL><TEXT>x & y</TEXT></RDL>"));
+        session.Execute(EditCommand.SetText(StringKind.Infocard, "info", "<RDL><TEXT>x &amp; y</TEXT></RDL>"));
 
         AssertSaved(session.Save());
         var path = Act(ws, "strings.json");
         Assert.Equal(
-            "{\n  \"strings\": {\n    \"alpha\": \"A\",\n    \"zeta\": \"Z\"\n  },\n  \"infocards\": {\n    \"info\": \"<RDL><TEXT>x & y</TEXT></RDL>\"\n  }\n}\n",
+            "{\n  \"strings\": {\n    \"alpha\": \"A\",\n    \"zeta\": \"Z\"\n  },\n  \"infocards\": {\n    \"info\": \"<RDL><TEXT>x &amp; y</TEXT></RDL>\"\n  }\n}\n",
             File.ReadAllText(path));
         Assert.Equal((byte)'{', File.ReadAllBytes(path)[0]);
 

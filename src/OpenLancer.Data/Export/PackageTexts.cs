@@ -9,6 +9,7 @@ using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.Strings;
 using OpenLancer.Data.Thn;
+using OpenLancer.Data.Validation;
 
 namespace OpenLancer.Data.Export;
 
@@ -111,8 +112,8 @@ public static class PackageTexts
             yield return "OpenLancer.";
         if (files == null)
             yield break;
-        if (files.Files.Any(f => f.Kind == TargetFileKind.Ini && f.Path.StartsWith(@"DATA\", StringComparison.OrdinalIgnoreCase)))
-            yield return "Single player, or a server with the same mod.";
+        if (TargetChecks.ChangesGameplay(files))
+            yield return TargetChecks.GameplayNote;
         if (ChangesStart(files))
             yield return "A new game.";
         yield return "Not compatible with total conversions.";

@@ -135,15 +135,16 @@ public sealed class ItemEditsTests
 
         session.Execute(ItemEdits.SetText(session, Gun("gun1"), "ids_name", "Ion Gun"));
         session.Execute(ItemEdits.SetText(session, good, "ids_name", "Shop Gun"));
-        session.Execute(ItemEdits.SetText(session, Gun("gun1"), "ids_info", "Gun info"));
-        session.Execute(ItemEdits.SetText(session, good, "ids_info", "Good info"));
+        // An infocard is RDL XML, as the Inspector writes it. The retail game shows no text for another text.
+        session.Execute(ItemEdits.SetText(session, Gun("gun1"), "ids_info", ItemEdits.ToInfocard("Gun info")));
+        session.Execute(ItemEdits.SetText(session, good, "ids_info", ItemEdits.ToInfocard("Good info")));
 
         Assert.Equal(["$str:gun1"], Firsts(session, Gun("gun1"), "ids_name"));
         Assert.Equal(["$str:gun1.good"], Firsts(session, good, "ids_name"));
         Assert.Equal(["$ifc:gun1.info"], Firsts(session, Gun("gun1"), "ids_info"));
         Assert.Equal(["$ifc:gun1.good.info"], Firsts(session, good, "ids_info"));
         Assert.Equal(("Ion Gun", "Shop Gun"), (Text(StringKind.String, "gun1"), Text(StringKind.String, "gun1.good")));
-        Assert.Equal(("Gun info", "Good info"),
+        Assert.Equal((ItemEdits.ToInfocard("Gun info"), ItemEdits.ToInfocard("Good info")),
             (Text(StringKind.Infocard, "gun1.info"), Text(StringKind.Infocard, "gun1.good.info")));
 
         // The offer joins the two sections in one text. A later edit of one of them alone gives it a new key. The

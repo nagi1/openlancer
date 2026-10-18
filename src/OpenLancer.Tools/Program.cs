@@ -55,6 +55,11 @@ internal static class Program
                                             {"severity", "source", "message"}, and nothing else. A problem
                                             of a cutscene also has "cutscene": the path, the element and
                                             the value.
+          validate <profile.json> --target <hde-0.7.1|vanilla-1.1> [--game <folder>] [--json]
+                                            Merge all mods of the profile on the files of the target game, and report
+                                            the problems of the format checks and the content checks of the retail
+                                            game. --game: the game folder of the target. Without it, the base of the
+                                            profile must give the target. The game folder does not change.
           deploy <profile.json>             Build and validate, then write the merged data next to the profile.
           export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer>
                  [--game <folder>] [--format dropin|flmm|all] [--out <folder>] [--checklist] [--flmm-probe]
@@ -240,23 +245,32 @@ internal static class Program
 
     private static int Validate(string profilePath, string[] options)
     {
-        string? active = null;
+        string? active = null, target = null, game = null;
         var json = false;
         for (var i = 0; i < options.Length; i++)
         {
+            var hasValue = i + 1 < options.Length;
             switch (options[i])
             {
                 case "--json" when !json:
                     json = true;
                     break;
-                case "--active" when active == null && i + 1 < options.Length:
+                case "--active" when active == null && hasValue:
                     active = options[++i];
+                    break;
+                case "--target" when target == null && hasValue:
+                    target = options[++i];
+                    break;
+                case "--game" when game == null && hasValue:
+                    game = options[++i];
                     break;
                 default:
                     return Fail(Usage);
             }
         }
 
+        if (target != null || game != null)
+            return target == null || active != null ? Fail(Usage) : ValidateTarget(profilePath, target, game, json);
         if (active == null && !json)
         {
             var (_, overlay) = BuildOverlay(profilePath);
@@ -273,6 +287,50 @@ internal static class Program
         }
         foreach (var problem in problems)
             Err.WriteLine(problem);
+        return Summary(problems);
+    }
+
+    /// <summary>
+    /// Merges all mods of a profile on the files of a retail target game (section 9.2 of the M11 design). Prints the
+    /// problems of the merge, of the format checks and of the content checks. When the target is HD Edition 0.7.1 and
+    /// the base of the profile is Freelancer 1.0 or 1.1, it also lists the changed lines of HD Edition that the mods
+    /// replace. The command only reads the game folder.
+    /// </summary>
+    private static int ValidateTarget(string profilePath, string targetId, string? game, bool json)
+    {
+        if (ExportTarget.Find(targetId) is not { } target)
+            return Fail(Usage);
+        if (!target.IsRetail)
+            return Fail($"The target {targetId} has no checks of the retail game. Run validate without --target.");
+        if (game != null && !Directory.Exists(game))
+            return Fail($"The folder {game} does not exist.");
+
+        var profile = ModProfile.Load(profilePath);
+        var profileBase = GameDetector.CheckRoot(profile.BaseFolder);
+        var report = game != null ? GameDetector.Detect(game) : profileBase;
+        var problems = new List<Diagnostic>();
+        var notes = new List<string>();
+        if ((target.BaseRefusal(report) ?? PlayBuild.Refusal(report, profile.Mods)) is { } refusal)
+            problems.Add(Diagnostic.Error(game ?? profile.BaseFolder, refusal));
+        else
+        {
+            var build = PlayBuild.Run(report, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
+            problems.AddRange(build.Problems);
+            if (target == ExportTarget.HdEdition && profileBase is { CanBeBase: true, Target: ModTargets.Vanilla, Base: { } retail })
+                problems.AddRange(TargetChecks.HdEditionLines(build.Files, retail));
+            if (TargetChecks.ChangesGameplay(build.Files))
+                notes.Add(TargetChecks.GameplayNote);
+        }
+
+        if (json)
+        {
+            Out.WriteLine(ValidationJson.Write(problems));
+            return problems.Any(p => p.Severity == DiagnosticSeverity.Error) ? ExitProblems : ExitOk;
+        }
+        foreach (var problem in problems)
+            Err.WriteLine(problem);
+        foreach (var note in notes)
+            Out.WriteLine($"Note: {note}");
         return Summary(problems);
     }
 

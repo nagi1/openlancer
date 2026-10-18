@@ -7,6 +7,7 @@ The export and `tools/content_scan.py` also read each manifest. A file with the 
 | Manifest | Source |
 |---|---|
 | `vanilla-1.0.tsv` | The English retail 1.0 disc, extracted. |
+| `vanilla-1.1.tsv` | An English retail install with patch 1.1. The file lists only the files that the patch changes: the five code files `Common.dll`, `Server.dll`, `DALib.dll`, `FLServer.exe` and `DLLS\BIN\Content.dll`, and `RemoteClient.dll`. Each other file of the install has the hash of `vanilla-1.0.tsv`. |
 | `hde-0.7.1.tsv` | An English install of HD Edition 0.7.1. The options of the HD Edition installer change some files, among them `EXE\freelancer.ini` and `EXE\dacom.ini`. So the install of another user can differ in these files. |
 
 A manifest of a patch can list only the files that the patch changes. `vanilla-1.1` takes its other files from `vanilla-1.0`. To add the hashes of a build, run `oltool game "<game folder>" --hashes` on that build, and put the lines in `<build id>.tsv`.

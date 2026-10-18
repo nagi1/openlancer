@@ -46,8 +46,9 @@ public sealed class KnownBuilds
     public IReadOnlyList<string> Ids => manifests.Keys.Order(StringComparer.Ordinal).ToList();
 
     /// <summary>
-    /// The build whose files a build changes, or null. Patch 1.1 replaces code files only, as sources say (open
-    /// question Q2). So the data files of 1.1 come from the manifest of 1.0. M11 adds the parent of HD Edition.
+    /// The build whose files a build changes, or null. Patch 1.1 replaces code files only. A compare of an English
+    /// install with patch 1.1 and the file list of 1.0 showed this (milestone M11). So the data files of 1.1 come from
+    /// the manifest of 1.0. HD Edition has no parent, because its manifest lists each file.
     /// </summary>
     internal static string? ParentOf(string build) => build == VanillaOnePointOne ? VanillaOnePointZero : null;
 

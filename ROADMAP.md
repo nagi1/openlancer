@@ -32,7 +32,7 @@ Each milestone goes through four steps: design, adversarial review, build and ve
 | M3 | Create, delete and rename | 1 | done | Create, duplicate, rename and delete objects, zones and lights in the Scene. A delete fixes or marks the references, as in Unity. A rename changes each reference. Objects show their components. |
 | M3b | Scene editing, part 2 | 1 | next | Multi-selection, move with children, the encounter group editor, new factions and a Problems panel. |
 | M23 | Asset browser and prop groups | 1 | done | Browse the assets of the game data and the mods with thumbnails, and drag them into the Scene. Ships, asteroids and models become static props. Save a group of props and place it again in any system. |
-| M11 | Export and play in the game | 1 | next | Export a mod for HD Edition 0.7.1 and vanilla 1.1, in the FLMM and Nexus formats. Install it into the linked game folder, and play it in the game that you linked. |
+| M11 | Export and play in the game | 1 | in progress | Export a mod for HD Edition 0.7.1 and vanilla 1.1, as a Nexus drop-in zip and an FLMM package. Play the mods in a play copy of the linked game, or host a test server. Checks stop data that crashes the retail game. |
 | M34 | Prop scale | 2 | later | A scale key for objects. The model, the hit test, the collision and the dock paths scale with it. |
 | M24 | Game tab | editor | later | The game window docks in a tab of the editor. The game stays a separate process. |
 | M28 | Prefab viewer | 1 | later | One page for each asset: archetype, model parts, hardpoints and loadout. |
