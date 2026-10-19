@@ -111,4 +111,21 @@ public sealed class ScreenshotRulesTests
             ScreenshotRules.CheckImport(source, []));
         Assert.Null(ScreenshotRules.CheckImport(edge, []));
     }
+
+    [Theory]
+    [InlineData(int.MinValue + 1, 100)]
+    [InlineData(100, -1)]
+    [InlineData(0, 0)]
+    [InlineData(100, 0)]
+    public void AnImageWithAZeroOrHugeSideFails(int width, int height)
+    {
+        using var workspace = new PublishWorkspace();
+        var source = Path.Combine(workspace.Root, "odd.png");
+        // A width of 2^31 or more must not become a negative number that passes the size rule.
+        PublishWorkspace.WriteBytes(source, PublishWorkspace.Png(width, height));
+
+        Assert.Null(ScreenshotRules.ImageSize(PublishWorkspace.Png(width, height)));
+        Assert.Equal(PublishMessages.ImageRefused("odd.png"), ScreenshotRules.CheckImport(source, []));
+        Assert.Null(ScreenshotRules.ImageSize(PublishWorkspace.Jpeg(0, 100)));
+    }
 }

@@ -51,9 +51,9 @@ public sealed record ApplyResult(ApplyState State, string? Message, bool ReopenP
 }
 
 /// <summary>
-/// The draft of the publish page of a mod (decision D571 and section 10.7 of the M11c design), as the import settings
-/// of Unity: the page edits a copy of the fields, a changed field shows the blue mark, and Apply writes the files.
-/// Revert drops the draft.
+/// The draft of the publish page of a mod (decision D571 and section 10.7 of the M11c design). It works as the import
+/// settings of Unity. The page edits a copy of the fields, and a changed field shows the blue mark. Apply writes the
+/// files, and Revert drops the draft.
 /// </summary>
 /// <remarks>
 /// <para>Apply runs the write guard and the repo rule first (decisions D587 and D584). Then it checks that
@@ -66,6 +66,7 @@ public sealed record ApplyResult(ApplyState State, string? Message, bool ReopenP
 public sealed class PublishDraft
 {
     private readonly Dictionary<string, string> imports = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ModManifest manifest;
     private DraftValues applied;
     private string? manifestHash;
     private string? settingsHash;
@@ -74,6 +75,7 @@ public sealed class PublishDraft
         string? manifestReadOnly)
     {
         ModFolder = folder;
+        this.manifest = manifest;
         ModId = manifest.Id;
         Tier = manifest.Tier;
         applied = values;
@@ -106,11 +108,12 @@ public sealed class PublishDraft
     /// <summary>The problems of the read of <c>publish.json</c>.</summary>
     public IReadOnlyList<string> LoadProblems { get; }
 
-    /// <summary>The screenshots that Apply copies: the path relative to the mod folder, to the source file.</summary>
-    public IReadOnlyDictionary<string, string> Imports => imports;
+    /// <summary>The screenshots that Apply copies: the path relative to the mod folder, to the source file. Only the
+    /// imports of the rows of the list count, so a removed row copies nothing.</summary>
+    public IReadOnlyDictionary<string, string> Imports => PendingImports().ToDictionary(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>True when a field or a screenshot import differs from the files.</summary>
-    public bool HasChanges => imports.Count > 0 || Enum.GetValues<PublishField>().Any(IsChanged);
+    public bool HasChanges => PendingImports().Count > 0 || Enum.GetValues<PublishField>().Any(IsChanged);
 
     /// <summary>True when the field differs from the files. The page shows the blue mark of an unsaved edit.</summary>
     public bool IsChanged(PublishField field) => !Values.SameField(applied, field);
@@ -200,7 +203,7 @@ public sealed class PublishDraft
             return [PublishMessages.ImageInRepoMod];
         var refused = new List<string>();
         var screenshots = Values.Settings.Screenshots.ToList();
-        var folder = Path.Combine(ModFolder, PublishSettings.ScreenshotsFolder.Replace('/', Path.DirectorySeparatorChar));
+        var folder = ScreenshotsPath;
         foreach (var source in sources.Select(Path.GetFullPath))
         {
             if (ScreenshotRules.CheckImport(source, gameRoots, builds) is { } reason)
@@ -208,6 +211,10 @@ public sealed class PublishDraft
                 refused.Add(reason);
                 continue;
             }
+            // A file that the list already imports gets no second row.
+            if (imports.Any(i => Games.GameFolders.Same(i.Value, source) &&
+                                 screenshots.Any(s => s.File.Equals(i.Key, StringComparison.OrdinalIgnoreCase))))
+                continue;
             string relative;
             if (PathRules.IsInside(source, folder) && Path.GetDirectoryName(source) is { } parent &&
                 Games.GameFolders.Same(parent, folder))
@@ -224,18 +231,25 @@ public sealed class PublishDraft
         return refused;
     }
 
-    /// <summary>The problems of the fields of the draft. An error stops Apply.</summary>
+    /// <summary>The error of a display name, or null: the name is empty, has more than one line, or is too long.</summary>
+    public static string? DisplayNameProblem(string name)
+    {
+        if (name.Trim().Length == 0)
+            return PublishMessages.DisplayNameEmpty;
+        if (name.Contains('\n') || name.Contains('\r'))
+            return PublishMessages.DisplayNameOneLine;
+        if (name.Length > PublishLimits.NameLength)
+            return $"The display name has {name.Length} characters. Use {PublishLimits.NameLength} characters or fewer.";
+        return null;
+    }
+
+    /// <summary>The problems of the fields of the draft. An error stops Apply. A character that FLMM cannot show gives a
+    /// warning on its field (decision D580).</summary>
     public IReadOnlyList<FieldProblem> Problems()
     {
         var problems = new List<FieldProblem>();
-        var name = Values.Name;
-        if (name.Trim().Length == 0)
-            problems.Add(new FieldProblem(PublishField.DisplayName, DiagnosticSeverity.Error, PublishMessages.DisplayNameEmpty));
-        else if (name.Contains('\n') || name.Contains('\r'))
-            problems.Add(new FieldProblem(PublishField.DisplayName, DiagnosticSeverity.Error, PublishMessages.DisplayNameOneLine));
-        else if (name.Length > PublishLimits.NameLength)
-            problems.Add(new FieldProblem(PublishField.DisplayName, DiagnosticSeverity.Error,
-                $"The display name has {name.Length} characters. Use {PublishLimits.NameLength} characters or fewer."));
+        if (DisplayNameProblem(Values.Name) is { } name)
+            problems.Add(new FieldProblem(PublishField.DisplayName, DiagnosticSeverity.Error, name));
         if (ModVersion.Problem(Values.Version) is { } version)
             problems.Add(new FieldProblem(PublishField.Version, version.Severity, version.Message));
         if (Values.Targets.Count == 0)
@@ -247,6 +261,9 @@ public sealed class PublishDraft
             problems.Add(new FieldProblem(PublishField.Targets, DiagnosticSeverity.Error,
                 $"A tier-{ModManifest.RuntimeTier} mod runs only on OpenLancer. Pick only the target OpenLancer."));
         problems.AddRange(Values.Settings.Check());
+        if (Values.Targets.Any(t => Export.ExportTarget.Find(t) is { IsRetail: true }))
+            problems.AddRange(new Export.PublishTexts(manifest with { Name = Values.Name }, Values.Settings).FlmmLost()
+                .Select(l => new FieldProblem(l.Field, DiagnosticSeverity.Warning, l.Message)));
         return problems;
     }
 
@@ -270,7 +287,8 @@ public sealed class PublishDraft
             return ApplyResult.Refused(guard);
         var manifestChanged = new[] { PublishField.DisplayName, PublishField.Version, PublishField.Targets, PublishField.FormatVersion }
             .Any(IsChanged);
-        var settingsChanged = imports.Count > 0 || Enum.GetValues<PublishField>().Where(f => f >= PublishField.Summary).Any(IsChanged);
+        var pending = PendingImports();
+        var settingsChanged = pending.Count > 0 || Enum.GetValues<PublishField>().Where(f => f >= PublishField.Summary).Any(IsChanged);
         if (manifestChanged && ManifestReadOnly != null)
             return ApplyResult.Refused(ManifestReadOnly);
         if (settingsChanged && SettingsReadOnly != null)
@@ -285,11 +303,14 @@ public sealed class PublishDraft
             if (reason != null)
                 return ApplyResult.Refused(reason);
         }
+        if (pending.Count > 0 && ScreenshotsFolderProblem() is { } outside)
+            return ApplyResult.Refused(outside);
         if (!replaceChangedFiles && ChangedFile() is { } changed)
             return new ApplyResult(ApplyState.ChangedOnDisk, PublishMessages.FileChanged(changed), false, []);
 
         string? failure = null;
-        var refusal = ModWrite.Run(ModFolder, ModId, context, sessionHolds, () => failure = Write(manifestChanged, settingsChanged, copy));
+        var refusal = ModWrite.Run(ModFolder, ModId, context, sessionHolds,
+            () => failure = Write(pending, manifestChanged, settingsChanged, copy));
         if (refusal != null || failure != null)
             return ApplyResult.Refused(refusal ?? failure!);
         var reopen = IsChanged(PublishField.Targets) || IsChanged(PublishField.FormatVersion);
@@ -300,27 +321,38 @@ public sealed class PublishDraft
         return new ApplyResult(ApplyState.Applied, null, reopen, UnusedImages());
     }
 
-    /// <summary>The files in <c>publish\screenshots</c> that no entry of the applied list uses.</summary>
+    /// <summary>
+    /// The PNG and JPEG files directly in <c>publish\screenshots</c> that no entry of the applied list uses. Apply
+    /// copies images only into that folder, so other files and subfolders are not in the list. A folder that links out
+    /// of the mod gives no file.
+    /// </summary>
     public IReadOnlyList<string> UnusedImages()
     {
-        var folder = Path.Combine(ModFolder, PublishSettings.ScreenshotsFolder.Replace('/', Path.DirectorySeparatorChar));
-        if (!Directory.Exists(folder))
+        var folder = ScreenshotsPath;
+        if (!Directory.Exists(folder) || ScreenshotsFolderProblem() != null)
             return [];
         var used = applied.Settings.Screenshots
             .Select(s => Path.GetFullPath(Path.Combine(ModFolder, s.File.Replace('/', Path.DirectorySeparatorChar))))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return [.. Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Where(f => !used.Contains(f)).Order()];
+        return
+        [
+            .. Directory.EnumerateFiles(folder)
+                .Where(f => ScreenshotRules.Extensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && !used.Contains(f))
+                .Order(),
+        ];
     }
 
-    /// <summary>Deletes unused images after the answer Delete. A failed delete gives a warning and stops nothing.</summary>
+    /// <summary>Deletes unused images after the answer Delete. It deletes only the files that
+    /// <see cref="UnusedImages"/> gives at the time of the delete. A failed delete gives a warning and stops
+    /// nothing.</summary>
     /// <returns>A warning for each file that OpenLancer did not delete.</returns>
     public IReadOnlyList<string> DeleteImages(IReadOnlyList<string> files, WriteContext context, bool sessionHolds)
     {
         var warnings = new List<string>();
-        var folder = Path.Combine(ModFolder, PublishSettings.ScreenshotsFolder.Replace('/', Path.DirectorySeparatorChar));
         var refusal = ModWrite.Run(ModFolder, ModId, context, sessionHolds, () =>
         {
-            foreach (var file in files.Where(f => PathRules.IsInside(f, folder)))
+            var unused = UnusedImages().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in files.Select(Path.GetFullPath).Where(unused.Contains))
             {
                 try
                 {
@@ -347,14 +379,39 @@ public sealed class PublishDraft
         return null;
     }
 
+    /// <summary>The folder <c>publish\screenshots</c> of the mod.</summary>
+    private string ScreenshotsPath =>
+        Path.Combine(ModFolder, PublishSettings.ScreenshotsFolder.Replace('/', Path.DirectorySeparatorChar));
+
+    /// <summary>The imports of the rows of the list. An import of a removed row does not count.</summary>
+    private List<KeyValuePair<string, string>> PendingImports() =>
+        [.. imports.Where(i => Values.Settings.Screenshots.Any(s => s.File.Equals(i.Key, StringComparison.OrdinalIgnoreCase)))];
+
+    /// <summary>The reason why the window cannot write into <c>publish\screenshots</c>, or null. A link in the path
+    /// can point out of the mod folder, also into a game folder (decision D587).</summary>
+    private string? ScreenshotsFolderProblem()
+    {
+        try
+        {
+            return PathRules.IsInside(PathRules.RealPath(ScreenshotsPath), PathRules.RealPath(ModFolder))
+                ? null
+                : PublishMessages.ScreenshotsOutsideMod;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return e.Message;
+        }
+    }
+
     /// <summary>Copies the imports, then writes the JSON files.</summary>
     /// <returns>The reason of a failure, or null.</returns>
-    private string? Write(bool manifestChanged, bool settingsChanged, Action<string, string>? copy)
+    private string? Write(IReadOnlyList<KeyValuePair<string, string>> pending, bool manifestChanged, bool settingsChanged,
+        Action<string, string>? copy)
     {
         var copied = new List<string>();
         try
         {
-            foreach (var (relative, source) in imports)
+            foreach (var (relative, source) in pending)
             {
                 var target = Path.Combine(ModFolder, relative.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);

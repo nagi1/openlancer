@@ -263,10 +263,11 @@ public static class ModExport
             prepared.Refused = true;
             return prepared;
         }
-        // A save that is not complete leaves a mix of old and new files (finding R31).
+        // A save that is not complete leaves a mix of old and new files (finding R31). The check and the export both
+        // stop, so the text names neither.
         if (mod.HasPendingSave)
         {
-            prepared.Add(Diagnostic.Error(mod.Folder, PublishMessages.CheckRefusedPendingSave));
+            prepared.Add(Diagnostic.Error(mod.Folder, PublishMessages.PendingSave));
             prepared.Refused = true;
             return prepared;
         }
@@ -279,6 +280,11 @@ public static class ModExport
         if (!request.ChecklistOnly && InGitWorkTree(output))
             prepared.Add(Diagnostic.Warning(output, "The export folder is in a git repository. The packages hold merged " +
                                                     "game files. Do not commit them."));
+        // A hand-written publish.json can break the rules of the publish page. The texts then leave out a page link
+        // that does not start with https://. The screenshot rule below gives its own errors.
+        var publishFile = Path.Combine(mod.Folder, PublishSettings.FileName);
+        prepared.AddRange(request.Publish.Check().Where(p => p.Field != PublishField.Screenshots)
+            .Select(p => Diagnostic.Warning(publishFile, p.Message)));
         var screenshotErrors = Screenshots(prepared);
         prepared.AddRange(screenshotErrors);
 
@@ -316,7 +322,9 @@ public static class ModExport
                 packages.Add(Save(output, package));
         }
         var written = packages.Where(p => p.Path != null).ToList();
-        if (written.Count > 0)
+        // The probe of the FLMM check is not for players. It writes only its package, so the texts and the images of
+        // the folder stay for the real packages.
+        if (written.Count > 0 && !prepared.Request.FlmmProbe)
         {
             var images = CopyScreenshots(output, prepared);
             var listed = earlier.Where(e => written.All(w => !w.FileName.Equals(e.FileName, StringComparison.OrdinalIgnoreCase)))
@@ -337,23 +345,33 @@ public static class ModExport
         };
     }
 
-    /// <summary>The reason why OpenLancer cannot write into a folder of a mod, or null: the folder overlaps the mod
-    /// folder or a game folder, or it is in a game folder. The export and the publish history use it.</summary>
-    public static string? FolderRefusal(string folder, string modFolder, IEnumerable<string> gameRoots)
+    /// <summary>The reason why the export cannot write into a folder, or null: the folder overlaps the mod folder or a
+    /// game folder, or it is in a game folder.</summary>
+    public static string? FolderRefusal(string folder, string modFolder, IEnumerable<string> gameRoots) =>
+        FolderOverlap(folder, modFolder, gameRoots, "The export folder", " Pick another folder.");
+
+    /// <summary>The reason why OpenLancer cannot write the publish history into a folder, or null. The rules are the
+    /// rules of the export folder.</summary>
+    public static string? HistoryFolderRefusal(string folder, string modFolder, IEnumerable<string> gameRoots) =>
+        FolderOverlap(folder, modFolder, gameRoots, "The publish history folder", "");
+
+    /// <param name="subject">The name of the folder at the start of the text, for example "The export folder".</param>
+    /// <param name="advice">The text after the reason, with its leading space, or empty.</param>
+    private static string? FolderOverlap(string folder, string modFolder, IEnumerable<string> gameRoots, string subject,
+        string advice)
     {
         folder = Path.GetFullPath(folder);
         if (PathRules.Overlaps(folder, Path.GetFullPath(modFolder)))
-            return $"The export folder {folder} overlaps the mod folder {modFolder}. Pick another folder.";
+            return $"{subject} {folder} overlaps the mod folder {modFolder}.{advice}";
         foreach (var root in gameRoots)
         {
             if (PathRules.Overlaps(folder, root))
-                return $"The export folder {folder} overlaps the game folder {root}. OpenLancer does not write into the " +
-                       "game folder. Pick another folder.";
+                return $"{subject} {folder} overlaps the game folder {root}. OpenLancer does not write into the game " +
+                       $"folder.{advice}";
         }
         // Also a game that is not a base of the export, for example the profile base or another install.
         if (GameRoot.Containing(folder) is { } game)
-            return $"The export folder {folder} is in the game folder {game}. OpenLancer does not write into a game " +
-                   "folder. Pick another folder.";
+            return $"{subject} {folder} is in the game folder {game}. OpenLancer does not write into a game folder.{advice}";
         return null;
     }
 
@@ -513,18 +531,13 @@ public static class ModExport
 
     /// <summary>
     /// Copies the screenshots that passed the screenshot rule into <c>screenshots</c> of the output folder, with the
-    /// names <c>01-&lt;name&gt;.&lt;ext&gt;</c> in list order (decision D567). It first deletes the images of an earlier
-    /// export in that folder, so the folder holds the images of the current list only.
+    /// names <c>01-&lt;name&gt;.&lt;ext&gt;</c> in list order (decision D567). The export deletes no file there. The
+    /// user can pick any output folder, and the files in it can belong to the user.
     /// </summary>
-    /// <returns>The file names and the captions, in list order.</returns>
+    /// <returns>The file names and the captions, in list order. <c>nexus-page.txt</c> lists only these files.</returns>
     private static List<(string File, string Caption)> CopyScreenshots(string output, PreparedExport prepared)
     {
         var folder = Path.Combine(output, ScreenshotsFolder);
-        if (Directory.Exists(folder))
-        {
-            foreach (var old in Directory.EnumerateFiles(folder).Where(f => IsNumberedImage(Path.GetFileName(f))))
-                File.Delete(old);
-        }
         var images = new List<(string, string)>();
         for (var i = 0; i < prepared.Screenshots.Count; i++)
         {
@@ -537,12 +550,6 @@ public static class ModExport
         }
         return images;
     }
-
-    /// <summary>True for a name that <see cref="CopyScreenshots"/> gives: two digits, a <c>-</c> and an image
-    /// extension.</summary>
-    private static bool IsNumberedImage(string name) =>
-        name.Length > 3 && char.IsAsciiDigit(name[0]) && char.IsAsciiDigit(name[1]) && name[2] == '-' &&
-        ScreenshotRules.Extensions.Contains(Path.GetExtension(name).ToLowerInvariant());
 
     /// <summary>
     /// The change list of each target of the listed packages: the list of this export, or else the block of the target

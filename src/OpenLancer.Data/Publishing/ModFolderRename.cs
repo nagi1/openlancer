@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json.Nodes;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
@@ -70,13 +71,15 @@ public static class ModFolderRename
         }
 
         var oldId = manifest.Id;
-        var others = WorkspaceMods(request.Workspace).Where(m => !GameFolders.Same(m.Folder, oldFolder)).ToList();
-        var warnings = new List<string>();
+        var others = ModWorkspace.ModsIn(Path.Combine(Path.GetFullPath(request.Workspace), ModWorkspace.ModsFolder))
+            .Where(m => !GameFolders.Same(m.Folder, oldFolder)).ToList();
+        var profilesFolder = Path.Combine(Path.GetFullPath(request.Workspace), ModWorkspace.ProfilesFolder);
+        // OpenLancer cannot find a profile outside the workspace that is not a recent profile.
+        var warnings = new List<string> { PublishMessages.RenameOtherProfiles(profilesFolder) };
         var profiles = new List<string>();
         string? refusal = Refusal(request, manifest, oldFolder, newFolder, others);
 
         var candidates = new List<string>();
-        var profilesFolder = Path.Combine(Path.GetFullPath(request.Workspace), ModWorkspace.ProfilesFolder);
         if (Directory.Exists(profilesFolder))
             candidates.AddRange(Directory.EnumerateFiles(profilesFolder, "*.json").Order(StringComparer.OrdinalIgnoreCase));
         foreach (var recent in request.RecentProfiles.Select(Path.GetFullPath))
@@ -108,12 +111,16 @@ public static class ModFolderRename
             warnings.Add(PublishMessages.RenameWarningLoadAfter(other.Manifest.Id, oldId));
         var historyFrom = PublishHistory.FolderOf(request.Workspace, oldId);
         var historyTo = PublishHistory.FolderOf(request.Workspace, request.NewId);
-        var (history, _) = PublishHistory.Load(historyFrom, oldId);
-        if (history.Published.OrderByDescending(m => m.Version, Comparer<string>.Create(ModVersion.Compare)).FirstOrDefault() is { } mark)
+        var load = PublishHistory.Load(historyFrom, oldId);
+        if (load.Problem != null)
+            warnings.Add(load.Problem);
+        if (load.History.Published.OrderByDescending(m => m.Version, Comparer<string>.Create(ModVersion.Compare)).FirstOrDefault() is { } mark)
             warnings.Add(PublishMessages.RenameAfterRelease(mark.Version, oldId));
-        var moveHistory = Directory.Exists(historyFrom) && !Path.Exists(historyTo) && historyFrom != historyTo;
-        if (Directory.Exists(historyFrom) && !moveHistory && historyFrom != historyTo)
-            warnings.Add(PublishMessages.RenameHistoryStays(historyTo));
+        var moveHistory = Directory.Exists(historyFrom) && !GameFolders.Same(historyFrom, historyTo);
+        if (moveHistory && Path.Exists(historyTo))
+            refusal ??= PublishMessages.RenameHistoryExists(historyTo);
+        else if (!moveHistory && Directory.Exists(historyTo) && !GameFolders.Same(historyFrom, historyTo))
+            warnings.Add(PublishMessages.RenameHistoryOfOtherMod(historyTo));
         return new RenamePlan(oldId, request.NewId, oldFolder, newFolder, profiles,
             moveHistory ? historyFrom : null, moveHistory ? historyTo : null, warnings, refusal);
     }
@@ -137,7 +144,7 @@ public static class ModFolderRename
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return new RenameResult(false, log, PublishMessages.RenameFailed(FolderStep, e.Message));
+            return new RenameResult(false, log, PublishMessages.RenameFailed(FolderStep, e.Message, restored: true));
         }
 
         var kept = new List<(string Path, byte[] Bytes)>();
@@ -165,12 +172,14 @@ public static class ModFolderRename
                 step = HistoryStep;
                 beforeStep?.Invoke(step);
                 var history = Path.Combine(plan.HistoryFrom, PublishHistory.FileName);
-                if (File.Exists(history))
+                // A history that does not load moves as it is. OpenLancer does not write a file of another version.
+                if (File.Exists(history) && PublishHistory.Load(plan.HistoryFrom, plan.OldId).State == HistoryLoadState.Loaded)
                 {
                     kept.Add((history, File.ReadAllBytes(history)));
                     var json = JsonFile.Read(history);
                     json.Root["modId"] = plan.NewId;
                     json.Root["modFolder"] = plan.NewFolder;
+                    MoveExportFolders(json.Root, plan.HistoryFrom, plan.HistoryTo);
                     AtomicFile.WriteAllBytes(history, json.ToBytes());
                 }
                 Directory.Move(plan.HistoryFrom, plan.HistoryTo);
@@ -182,8 +191,22 @@ public static class ModFolderRename
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or ModLoadException)
         {
             log.Add($"The step {step} failed: {e.Message}");
-            Restore(plan, kept, historyMoved, log);
-            return new RenameResult(false, log, PublishMessages.RenameFailed(step, e.Message));
+            var restored = Restore(plan, kept, historyMoved, log);
+            return new RenameResult(false, log, PublishMessages.RenameFailed(step, e.Message, restored));
+        }
+    }
+
+    /// <summary>Changes the folder of each export in the old history folder to the same folder in the new history
+    /// folder. The version folders move with the history, so the history still finds the packages.</summary>
+    private static void MoveExportFolders(JsonObject root, string historyFrom, string historyTo)
+    {
+        if (root["exports"] is not JsonArray exports)
+            return;
+        foreach (var export in exports.OfType<JsonObject>())
+        {
+            if (export["folder"] is JsonValue value && value.TryGetValue<string>(out var folder) &&
+                PathRules.IsInside(folder, historyFrom))
+                export["folder"] = Path.GetFullPath(Path.Combine(historyTo, Path.GetRelativePath(historyFrom, folder)));
         }
     }
 
@@ -203,6 +226,9 @@ public static class ModFolderRename
             return PublishMessages.ModInGameFolder(game);
         if (SaveTransaction.HasJournal(oldFolder))
             return PublishMessages.RenamePendingSave;
+        // The run writes the new id into mod.json, so a comment would stop it after the move of the folder.
+        if (Writable(Path.Combine(oldFolder, ModManifest.FileName)) != null)
+            return PublishMessages.ModJsonComment;
         if (request.Busy)
             return PublishMessages.RenameBusy;
         if (!request.SessionHolds && ModLock.HeldBy(oldFolder, manifest.Id) is { } held)
@@ -224,31 +250,12 @@ public static class ModFolderRename
         }
     }
 
-    /// <summary>The mods of <c>&lt;workspace&gt;\mods</c> whose <c>mod.json</c> loads.</summary>
-    internal static IEnumerable<(string Folder, ModManifest Manifest)> WorkspaceMods(string workspace)
-    {
-        var mods = Path.Combine(Path.GetFullPath(workspace), ModWorkspace.ModsFolder);
-        if (!Directory.Exists(mods))
-            yield break;
-        foreach (var folder in Directory.EnumerateDirectories(mods).Order(StringComparer.OrdinalIgnoreCase))
-        {
-            ModManifest manifest;
-            try
-            {
-                manifest = ModManifest.Load(folder);
-            }
-            catch (ModLoadException)
-            {
-                continue;
-            }
-            yield return (folder, manifest);
-        }
-    }
-
     /// <summary>Moves the history back, writes back each kept file in the reverse order, and moves the mod folder
     /// back. Each step that fails goes to the log, and the next step still runs.</summary>
-    private static void Restore(RenamePlan plan, List<(string Path, byte[] Bytes)> kept, bool historyMoved, List<string> log)
+    /// <returns>True when each step of the restore worked.</returns>
+    private static bool Restore(RenamePlan plan, List<(string Path, byte[] Bytes)> kept, bool historyMoved, List<string> log)
     {
+        var restored = true;
         if (historyMoved)
             Try($"Moved the publish history back to {plan.HistoryFrom}.", () => Directory.Move(plan.HistoryTo!, plan.HistoryFrom!));
         for (var i = kept.Count - 1; i >= 0; i--)
@@ -257,6 +264,7 @@ public static class ModFolderRename
             Try($"Restored {path}.", () => AtomicFile.WriteAllBytes(path, bytes));
         }
         Try($"Moved the mod folder back to {plan.OldFolder}.", () => Directory.Move(plan.NewFolder, plan.OldFolder));
+        return restored;
 
         void Try(string done, Action action)
         {
@@ -267,7 +275,8 @@ public static class ModFolderRename
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                log.Add($"OpenLancer could not undo a step: {e.Message}");
+                restored = false;
+                log.Add($"OpenLancer did not restore a step: {e.Message}");
             }
         }
     }

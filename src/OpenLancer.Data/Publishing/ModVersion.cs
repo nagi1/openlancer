@@ -86,9 +86,18 @@ public sealed class ModVersion : IComparable<ModVersion>
     /// <c>0-9</c>, <c>A-Z</c>, <c>a-z</c>, <c>.</c> and <c>-</c>. It starts with a letter or a digit, and it has no
     /// <c>..</c>. An old version such as <c>1.0</c> is safe.
     /// </summary>
+    /// <remarks>Windows also refuses a final <c>.</c>, which it removes from a folder name, and a device name such as
+    /// <c>con</c> or <c>nul.1.0</c>. These names open a device and not a folder.</remarks>
     public static bool IsSafe(string? text) =>
         !string.IsNullOrEmpty(text) && text.Length <= MaxSafeLength && char.IsAsciiLetterOrDigit(text[0]) &&
-        !text.Contains("..", StringComparison.Ordinal) && text.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-');
+        text[^1] != '.' && !text.Contains("..", StringComparison.Ordinal) &&
+        text.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-') && !IsDeviceName(text.Split('.')[0]);
+
+    /// <summary>True for a name that Windows keeps for a device, without letter case: CON, PRN, AUX, NUL, and COM or
+    /// LPT with a digit.</summary>
+    private static bool IsDeviceName(string name) =>
+        name.ToUpperInvariant() is "CON" or "PRN" or "AUX" or "NUL" ||
+        name.Length == 4 && char.IsAsciiDigit(name[3]) && name[..3].ToUpperInvariant() is "COM" or "LPT";
 
     /// <summary>The error of a version that the export cannot use, or null when the version is safe.</summary>
     public static string? SafeProblem(string? text) => IsSafe(text) ? null : PublishMessages.VersionUnsafe(text ?? "");

@@ -28,15 +28,7 @@ internal static class ProfileFile
     {
         profilePath = Path.GetFullPath(profilePath);
         modFolder = Path.GetFullPath(modFolder);
-        JsonFile file;
-        try
-        {
-            file = JsonFile.Read(profilePath);
-        }
-        catch (InvalidDataException e)
-        {
-            throw new ModLoadException(profilePath, e.Message);
-        }
+        var file = Read(profilePath);
         // The same checks as a load of the profile with the mod.
         ModProfile.ResolveOrder([.. ModProfile.Load(profilePath).Mods, Mod.Load(modFolder)], profilePath);
 
@@ -135,6 +127,8 @@ internal static class ProfileFile
         }
     }
 
+    /// <summary>Reads a profile file for a write.</summary>
+    /// <exception cref="ModLoadException">The file does not exist, is not a JSON object, or has a comment.</exception>
     private static JsonFile Read(string profilePath)
     {
         try
@@ -163,16 +157,7 @@ internal static class ProfileFile
         baseFolder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(baseFolder));
         // The same checks of the JSON as a load, without the checks of the old base folder and the mods.
         ModProfile.BaseFolderOf(profilePath);
-        JsonFile file;
-        try
-        {
-            file = JsonFile.Read(profilePath);
-        }
-        catch (InvalidDataException e)
-        {
-            throw new ModLoadException(profilePath, e.Message);
-        }
-
+        var file = Read(profilePath);
         if (!Directory.Exists(baseFolder))
             throw new ModLoadException(profilePath, $"The base folder {baseFolder} does not exist.");
         file.Root[BaseField] = baseFolder;

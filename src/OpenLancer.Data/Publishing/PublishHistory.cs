@@ -11,6 +11,7 @@ using System.Threading;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
+using OpenLancer.Data.Mods;
 
 namespace OpenLancer.Data.Publishing;
 
@@ -57,6 +58,40 @@ public sealed record HistoryLocation(string Folder, string ModId, string ModFold
 /// <summary>The result of a write of the history.</summary>
 /// <param name="Messages">The warnings for the Console: a busy lock, a bad file that moved, a refused folder.</param>
 public sealed record HistoryWrite(bool Written, IReadOnlyList<string> Messages);
+
+/// <summary>How a read of the history file ended.</summary>
+public enum HistoryLoadState
+{
+    /// <summary>The file loaded, or it does not exist and the history is empty.</summary>
+    Loaded,
+
+    /// <summary>The file does not parse, or a record in it is not complete. The next record of a play, a check or a
+    /// mark renames the file.</summary>
+    Unreadable,
+
+    /// <summary>The file has another format version. OpenLancer does not write it.</summary>
+    OtherVersion,
+}
+
+/// <summary>The result of a read of the history.</summary>
+/// <param name="History">The history. It is empty when the file does not load.</param>
+/// <param name="Problem">The problem of the read, or null.</param>
+public sealed record HistoryLoad(PublishHistory History, string? Problem)
+{
+    public HistoryLoadState State { get; init; }
+
+    /// <summary>The full path of the history file.</summary>
+    public string Path { get; init; } = "";
+
+    /// <summary>The reason why the same-version guard cannot run, or null. Without the history, the guard cannot
+    /// protect a published version, so an export stops with this reason (decision D568).</summary>
+    public string? GuardRefusal => State switch
+    {
+        HistoryLoadState.Unreadable => PublishMessages.GuardUnreadable(Path),
+        HistoryLoadState.OtherVersion => PublishMessages.GuardOtherVersion(Path, History.FormatVersion),
+        _ => null,
+    };
+}
 
 /// <summary>The case of the same-version guard (decision D568).</summary>
 public enum GuardKind
@@ -113,6 +148,11 @@ public enum RecordKind
 
     /// <summary>The user replaced the version. The old entry got <c>replacedBy</c>.</summary>
     Replaced,
+
+    /// <summary>The packages are the same as in an earlier export of the version, but the content or the page
+    /// fingerprint changed, for example a tag of the Nexus page. The history got a new entry, and the old entry got
+    /// <c>replacedBy</c>.</summary>
+    PageOnly,
 }
 
 /// <summary>The result of a record of an export.</summary>
@@ -123,7 +163,7 @@ public sealed record RecordResult(RecordKind Kind, HistoryExport? Earlier, bool 
     /// <summary>The Console lines of the result: the texts of decision D590.</summary>
     public IEnumerable<string> Messages(string version)
     {
-        if (Kind == RecordKind.Same)
+        if (Kind is RecordKind.Same or RecordKind.PageOnly)
             yield return PublishMessages.SamePackages(version, Earlier!.Time);
         if (Kind == RecordKind.TextsOnly)
         {
@@ -174,7 +214,9 @@ public static class PackageForms
 /// <remarks>
 /// <para>The file is local and never in the mod folder. Each read-change-write holds
 /// <c>publish-history.lock</c>, so that the editor and <c>oltool</c> do not lose an entry of the other (finding R25).
-/// A file that does not parse moves to <c>publish-history.bad.json</c> at the next write.</para>
+/// A file that does not load moves to <c>publish-history.bad.json</c> at the next write, or to a numbered name when
+/// that file exists. An export does not write while the file does not load, because the same-version guard needs the
+/// history.</para>
 /// <para>The history is the one place for the time of an export. No package and no text of an export holds a
 /// date.</para>
 /// </remarks>
@@ -196,6 +238,10 @@ public sealed class PublishHistory
         WriteIndented = true,
         // Keep the '+' of the OpenLancer version and the characters of the paths as they are.
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        // A record without a field, or with null in a field that must have a value, does not load. The guard then
+        // stops the export, and does not compare with a part of the history.
+        RespectNullableAnnotations = true,
+        RespectRequiredConstructorParameters = true,
     };
 
     public int FormatVersion { get; set; } = CurrentFormatVersion;
@@ -224,26 +270,31 @@ public sealed class PublishHistory
         Path.Combine(Path.GetFullPath(workspace), "exports", modId);
 
     /// <summary>Reads the history of a folder without a write. A missing file gives an empty history. A file that does
-    /// not load gives an empty history and a problem.</summary>
-    public static (PublishHistory History, string? Problem) Load(string folder, string modId)
+    /// not load gives an empty history, a problem and its state.</summary>
+    public static HistoryLoad Load(string folder, string modId)
     {
-        var path = Path.Combine(folder, FileName);
+        var path = Path.GetFullPath(Path.Combine(folder, FileName));
         if (!File.Exists(path))
-            return (new PublishHistory { ModId = modId }, null);
+            return new HistoryLoad(new PublishHistory { ModId = modId }, null) { Path = path };
         try
         {
-            var history = JsonSerializer.Deserialize<PublishHistory>(SharedFile.ReadAllBytes(path), JsonOptions);
-            if (history == null)
-                return (new PublishHistory { ModId = modId }, PublishMessages.HistoryUnreadable(path));
-            if (history.FormatVersion != CurrentFormatVersion)
-                return (new PublishHistory { ModId = modId }, PublishMessages.HistoryVersion(path, history.FormatVersion));
-            history.Normalize();
-            return (history, null);
+            var bytes = SharedFile.ReadAllBytes(path);
+            // Read the format version first: a file of another version can have other records.
+            if (FormatVersionOf(bytes) is { } version && version != CurrentFormatVersion)
+                return new HistoryLoad(new PublishHistory { ModId = modId, FormatVersion = version },
+                    PublishMessages.HistoryVersion(path, version)) { State = HistoryLoadState.OtherVersion, Path = path };
+            if (JsonSerializer.Deserialize<PublishHistory>(bytes, JsonOptions) is { } history && history.IsComplete())
+                return new HistoryLoad(history, null) { Path = path };
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            return (new PublishHistory { ModId = modId }, PublishMessages.HistoryUnreadable(path));
+            // The file does not load.
         }
+        return new HistoryLoad(new PublishHistory { ModId = modId }, PublishMessages.HistoryUnreadable(path))
+        {
+            State = HistoryLoadState.Unreadable,
+            Path = path,
+        };
     }
 
     /// <summary>
@@ -256,7 +307,7 @@ public sealed class PublishHistory
         TimeSpan? wait = null)
     {
         var folder = Path.GetFullPath(location.Folder);
-        if (ModExport.FolderRefusal(folder, location.ModFolder, location.GameRoots) is { } refusal)
+        if (ModExport.HistoryFolderRefusal(folder, location.ModFolder, location.GameRoots) is { } refusal)
             return new HistoryWrite(false, [refusal]);
         var messages = new List<string>();
         try
@@ -266,14 +317,17 @@ public sealed class PublishHistory
             if (held == null)
                 return new HistoryWrite(false, [PublishMessages.HistoryBusy(record)]);
             var path = Path.Combine(folder, FileName);
-            var (history, problem) = Load(folder, location.ModId);
-            if (problem != null)
+            var load = Load(folder, location.ModId);
+            var history = load.History;
+            // A file of another format version stays for the OpenLancer that wrote it.
+            if (load.State == HistoryLoadState.OtherVersion)
+                return new HistoryWrite(false, [load.Problem!]);
+            if (load.State == HistoryLoadState.Unreadable)
             {
-                // A file of another format version stays for the OpenLancer that wrote it.
-                if (problem != PublishMessages.HistoryUnreadable(path))
-                    return new HistoryWrite(false, [problem]);
-                var bad = Path.Combine(folder, BadName);
-                File.Move(path, bad, overwrite: true);
+                // An earlier bad file stays, so the move never replaces a file.
+                var bad = Path.Combine(folder, ModWorkspace.FreeName(Path.GetFileNameWithoutExtension(BadName),
+                    name => File.Exists(Path.Combine(folder, name + ".json"))) + ".json");
+                File.Move(path, bad);
                 messages.Add(PublishMessages.HistoryBad(path, bad));
             }
             if (history.ModId.Length == 0)
@@ -341,10 +395,14 @@ public sealed class PublishHistory
     }
 
     /// <summary>
-    /// Records an export (decisions D568 and D590). Packages that each have the SHA-256 of a package of an export of
-    /// the version give no entry. Otherwise the history gets the entry, and each earlier export of the version whose
-    /// targets and forms the new export covers gets <c>replacedBy</c>.
+    /// Records an export (decisions D568 and D590). The history gets no entry when each package has the SHA-256 of a
+    /// package of an export of the version, and that export has the same fingerprints. Otherwise the history gets the
+    /// entry. Each earlier export of the version whose targets and forms the new export covers gets
+    /// <c>replacedBy</c>.
     /// </summary>
+    /// <remarks>A change of a text that only <c>nexus-page.txt</c> holds, for example a tag, changes the page
+    /// fingerprint and not the packages. It adds an entry, so that the checklist and the chips see the current
+    /// texts.</remarks>
     /// <param name="replace">True when the user picked "Replace version".</param>
     public RecordResult RecordExport(HistoryExport entry, bool replace = false)
     {
@@ -352,7 +410,8 @@ public sealed class PublishHistory
         var published = IsPublished(entry.Version);
         var matching = entry.Packages.Select(p => earlier.FirstOrDefault(e => e.Packages.Any(old =>
             old.Target == p.Target && old.Form == p.Form && old.Sha256 == p.Sha256))).ToList();
-        if (entry.Packages.Count > 0 && matching.All(m => m != null))
+        var samePackages = entry.Packages.Count > 0 && matching.All(m => m != null);
+        if (samePackages && matching.All(m => m!.Content == entry.Content && m.Page == entry.Page))
             return new RecordResult(RecordKind.Same, matching[0], published);
 
         var textsOnly = earlier.FirstOrDefault(e => e.Packages.Any(old => entry.Packages.Any(p =>
@@ -365,6 +424,8 @@ public sealed class PublishHistory
                 Exports[i] = old with { ReplacedBy = entry.Time };
         }
         Exports.Add(entry);
+        if (samePackages)
+            return new RecordResult(RecordKind.PageOnly, matching[0], published);
         if (replace)
             return new RecordResult(RecordKind.Replaced, earlier.FirstOrDefault(), published);
         return textsOnly != null
@@ -453,15 +514,28 @@ public sealed class PublishHistory
         [.. result.Packages.Where(p => p.Path != null && p.Sha256 != null).Select(p =>
             new HistoryPackage(p.Target.Id, PackageForms.Of(p.Form), p.FileName, p.Sha256!, p.GameFiles ?? ""))]);
 
-    /// <summary>Gives each list a value after a read of a file without it.</summary>
-    private void Normalize()
+    /// <summary>True when no list holds null. The reader refuses a missing or null field itself, but not a null item of
+    /// a list.</summary>
+    private bool IsComplete() =>
+        Exports.All(e => e != null && e.Packages.All(p => p != null)) && Published.All(m => m != null) &&
+        Plays.All(p => p != null) && Checks.All(c => c != null);
+
+    /// <summary>The value of <c>formatVersion</c>, or null when the bytes do not parse or the field is not a
+    /// number.</summary>
+    private static int? FormatVersionOf(byte[] bytes)
     {
-        ModId ??= "";
-        ModFolder ??= "";
-        Exports ??= [];
-        Published ??= [];
-        Plays ??= [];
-        Checks ??= [];
+        try
+        {
+            using var document = JsonDocument.Parse(bytes);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.TryGetProperty("formatVersion", out var field) && field.TryGetInt32(out var version)
+                ? version
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Takes the lock file with no shared access, or returns null after the wait.</summary>

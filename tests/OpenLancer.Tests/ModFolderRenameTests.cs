@@ -85,7 +85,130 @@ public sealed class ModFolderRenameTests
         var plan = Plan(workspace, mod, "new-id");
 
         Assert.Null(plan.Refusal);
-        Assert.Equal([PublishMessages.RenameWarningLoadAfter("later", "old-id")], plan.Warnings);
+        Assert.Equal([PublishMessages.RenameOtherProfiles(workspace.Profiles), PublishMessages.RenameWarningLoadAfter("later", "old-id")],
+            plan.Warnings);
+    }
+
+    [Fact]
+    public void WarnsThatOtherProfilesDoNotChange()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("old-id");
+
+        var plan = Plan(workspace, mod, "new-id");
+
+        Assert.Equal($"OpenLancer changes only the profiles in {workspace.Profiles} and the recent profiles. Another " +
+                     "profile that names this mod does not load after the rename.", Assert.Single(plan.Warnings));
+    }
+
+    [Fact]
+    public void AFailureAfterTheWritesRestoresEachFile()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("old-id");
+        var profile = workspace.Profile("p", mod);
+        PublishHistory.Update(new HistoryLocation(workspace.Exports("old-id"), "old-id", mod, []), "mark",
+            h => h.Mark("1.0.0", DateTime.UtcNow, ""));
+        var package = Path.Combine(workspace.Exports("old-id"), "1.0.0", "old-id-1.0.0-openlancer.zip");
+        PublishWorkspace.Write(package, "zip");
+        var history = Path.Combine(workspace.Exports("old-id"), PublishHistory.FileName);
+        var before = new[] { Path.Combine(mod, ModManifest.FileName), profile, history }.Select(File.ReadAllBytes).ToList();
+        var plan = Plan(workspace, mod, "new-id");
+
+        RenameResult result;
+        // An open package stops the move of the history folder, after the writes of mod.json, the profile and the history.
+        using (new FileStream(package, FileMode.Open, FileAccess.Read, FileShare.Read))
+            result = ModFolderRename.Run(plan);
+
+        Assert.False(result.Done);
+        Assert.StartsWith("The rename stopped at the move of the publish history: ", result.Error);
+        Assert.EndsWith("OpenLancer restored each changed file.", result.Error);
+        Assert.Contains(result.Log, line => line.StartsWith("Wrote the new mod folder into "));
+        Assert.Equal(before, new[] { Path.Combine(mod, ModManifest.FileName), profile, history }.Select(File.ReadAllBytes));
+        Assert.False(Directory.Exists(Path.Combine(workspace.Mods, "new-id")));
+    }
+
+    [Fact]
+    public void AFailedRestoreSaysSo()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("old-id");
+        workspace.Profile("p", mod);
+        var plan = Plan(workspace, mod, "new-id");
+        FileStream? held = null;
+
+        try
+        {
+            var result = ModFolderRename.Run(plan, step =>
+            {
+                if (step != Path.Combine(workspace.Profiles, "p.json"))
+                    return;
+                // An open file in the moved folder stops the restore of mod.json and the move back.
+                held = new FileStream(Path.Combine(plan.NewFolder, ModManifest.FileName), FileMode.Open, FileAccess.Read,
+                    FileShare.None);
+                throw new IOException("The test stops this step.");
+            });
+
+            Assert.False(result.Done);
+            Assert.EndsWith("The test stops this step. OpenLancer did not restore each changed file. The Console names each " +
+                            "step and its result.", result.Error);
+            Assert.Contains(result.Log, line => line.StartsWith("OpenLancer did not restore a step: "));
+        }
+        finally
+        {
+            held?.Dispose();
+        }
+    }
+
+    [Fact]
+    public void RefusesAModJsonWithAComment()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("old-id");
+        PublishWorkspace.Write(Path.Combine(mod, ModManifest.FileName),
+            "{ // the id\n \"id\": \"old-id\", \"name\": \"Starrunner\", \"version\": \"1.0.0\", \"formatVersion\": 2 }");
+
+        var plan = Plan(workspace, mod, "new-id");
+        var result = ModFolderRename.Run(plan);
+
+        Assert.Equal(PublishMessages.ModJsonComment, plan.Refusal);
+        Assert.False(result.Done);
+        Assert.Empty(result.Log);
+        Assert.True(Directory.Exists(mod));
+    }
+
+    [Fact]
+    public void RefusesWhenTheHistoryFolderOfTheNewIdExists()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("old-id");
+        PublishHistory.Update(new HistoryLocation(workspace.Exports("old-id"), "old-id", mod, []), "mark",
+            h => h.Mark("1.0.0", DateTime.UtcNow, ""));
+        Directory.CreateDirectory(workspace.Exports("new-id"));
+        var other = workspace.Mod("other");
+
+        Assert.Equal(PublishMessages.RenameHistoryExists(workspace.Exports("new-id")), Plan(workspace, mod, "new-id").Refusal);
+        // A mod without a history uses the history of the folder, and the plan says so.
+        var adopt = Plan(workspace, other, "new-id");
+        Assert.Null(adopt.Refusal);
+        Assert.Contains(PublishMessages.RenameHistoryOfOtherMod(workspace.Exports("new-id")), adopt.Warnings);
+    }
+
+    [Fact]
+    public void AHistoryOfAnotherFormatVersionMovesUnchanged()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("old-id");
+        var text = """{ "formatVersion": 2, "modId": "old-id", "other": [ 1 ] }""";
+        PublishWorkspace.Write(Path.Combine(workspace.Exports("old-id"), PublishHistory.FileName), text);
+
+        var plan = Plan(workspace, mod, "new-id");
+        var result = ModFolderRename.Run(plan);
+
+        Assert.True(result.Done, result.Error);
+        Assert.Contains(PublishMessages.HistoryVersion(Path.Combine(workspace.Exports("old-id"), PublishHistory.FileName), 2),
+            plan.Warnings);
+        Assert.Equal(text, File.ReadAllText(Path.Combine(workspace.Exports("new-id"), PublishHistory.FileName)));
     }
 
     [Theory]
@@ -210,9 +333,16 @@ public sealed class ModFolderRenameTests
     {
         using var workspace = new PublishWorkspace();
         var mod = workspace.Mod("old-id");
-        PublishHistory.Update(new HistoryLocation(workspace.Exports("old-id"), "old-id", mod, []), "mark",
-            h => h.Mark("1.0.0", DateTime.UtcNow, ""));
-        PublishWorkspace.Write(Path.Combine(workspace.Exports("old-id"), "1.0.0", "old-id-1.0.0-openlancer.zip"), "zip");
+        var zip = Path.Combine(workspace.Exports("old-id"), "1.0.0", "old-id-1.0.0-openlancer.zip");
+        PublishWorkspace.Write(zip, "zip");
+        var outside = Path.Combine(workspace.Root, "elsewhere");
+        PublishHistory.Update(new HistoryLocation(workspace.Exports("old-id"), "old-id", mod, []), "mark", h =>
+        {
+            h.Mark("1.0.0", DateTime.UtcNow, "");
+            h.RecordExport(new HistoryExport("1.0.0", DateTime.UtcNow, "test", "c", "p", Path.GetDirectoryName(zip)!,
+                [new HistoryPackage("openlancer", PackageForms.ModFolder, Path.GetFileName(zip), Data.IO.DataDigest.HashFile(zip), "g")]));
+            h.RecordExport(new HistoryExport("1.0.1", DateTime.UtcNow, "test", "c", "p", outside, []));
+        });
 
         var plan = Plan(workspace, mod, "new-id");
         var result = ModFolderRename.Run(plan);
@@ -226,5 +356,8 @@ public sealed class ModFolderRenameTests
         Assert.Equal("new-id", history.ModId);
         Assert.Null(history.FolderWarning(Path.Combine(workspace.Mods, "new-id")));
         Assert.True(history.IsPublished("1.0.0"));
+        // The version folders moved with the history. A folder outside the history stays as it is.
+        Assert.Equal([Path.Combine(workspace.Exports("new-id"), "1.0.0"), outside], history.Exports.Select(e => e.Folder));
+        Assert.Equal(ExportFilesState.InPlace, PublishHistory.StateOf(history.Exports[0]));
     }
 }

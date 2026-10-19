@@ -83,11 +83,11 @@ OpenLancer does not load a mod with an unknown format version, tier or target, a
 | `permissions` | Free text. |
 | `category` | The Nexus category, `Miscellaneous` by default. |
 | `requirements` | Rows with `name`, `url` and `note`. The export adds the requirement of each target game itself. |
-| `pageUrl` | Empty, or a link that starts with `https://`. The README and the FLMM script use it. |
+| `pageUrl` | Empty, or a link that starts with `https://`. The README and the FLMM script use it. The texts of an export leave out a link that does not start with `https://`, and so do the requirements. |
 | `screenshots` | Rows with `file` and `caption`. Each `file` is below `publish/screenshots/` (see "Screenshots"). |
 | `changelog` | One entry for each version, newest first, with a list of changes. The texts of an export hold the entries of the exported version and the lower versions. |
 
-A file with a JSON comment loads, but OpenLancer cannot write it and keep the comment. Each text loses its control characters. Only the description, the changes and the permissions keep their line ends.
+A file with a JSON comment loads, and the export uses its texts. OpenLancer cannot write the file and keep the comment, so the publish settings are read-only. Each text loses its control characters. Only the description, the changes and the permissions keep their line ends. The export gives a warning for each field that breaks a rule of this table.
 
 The description uses a small Markdown subset:
 
@@ -107,7 +107,7 @@ A link that does not start with `http://` or `https://` stays text, and so does 
 
 A version has the form `MAJOR.MINOR.PATCH` of Semantic Versioning 2.0, with an optional pre-release such as `1.0.0-beta.1`. A pre-release has lowercase letters, digits, `-` and `.` only, because Windows uses the same file name for uppercase and lowercase letters. A version has no build metadata (`+`) and no leading zeros.
 
-The mod loader accepts any version. The export needs a version that is safe in a file name: 1 to 64 characters from `0-9`, `A-Z`, `a-z`, `.` and `-`, that starts with a letter or a digit and has no `..`. The export refuses an unsafe version before it makes a file name or a folder. An old version such as `1.0` is safe, and it gives a warning only.
+The mod loader accepts any version. The export needs a version that is safe in a file name: 1 to 64 characters from `0-9`, `A-Z`, `a-z`, `.` and `-`, that starts with a letter or a digit and has no `..`. It does not end with `.`, and its part before the first `.` is not a device name of Windows, such as `con`, `nul` or `com1`. The export refuses an unsafe version before it makes a file name or a folder. An old version such as `1.0` is safe, and it gives a warning only.
 
 ### Screenshots
 
@@ -116,7 +116,7 @@ A screenshot is a PNG or JPEG image in `publish/screenshots/` of the mod. The im
 - The path is relative, below `publish/screenshots/`, and has no `..`.
 - The real path, after links, is in the mod folder and not in a game folder.
 - The file starts with the bytes of a PNG or JPEG image.
-- The image has 8,192 pixels or fewer on each side.
+- The image has 1 to 8,192 pixels on each side.
 - The file does not have the bytes of a file of a build manifest (`data-manifest`).
 
 A screenshot that fails is an error. The export then copies no screenshot and refuses the package of the target OpenLancer. The retail packages still write, because they hold no screenshot.
@@ -1013,8 +1013,8 @@ A boolean line without a value, for example `separable =` of a `[CollisionGroup]
 | `oltool thn <profile.json\|folder> <install path>` | Print a cutscene script (`.thn`) as canonical Lua text. The script comes from the merged view, so the text shows the changes of the mods. |
 | `oltool thn roundtrip <profile.json\|folder> [<install path>]` | Check the canonical text of each `.thn` file of the source, or of one file. The text must give the same tables, with exact numbers and the same key order, and the text of the result must be the same text. Each problem names the first value that differs. |
 | `oltool validate <profile.json> --target <hde-0.7.1\|vanilla-1.1> [--game <folder>] [--json]` | Merge all mods of the profile on the files of the target game. Report the problems of the format checks and of the content checks of the retail game (see "Content checks of the retail game"). `--game` names the game folder of the target. Without it, the base of the profile must give the target. For HD Edition 0.7.1, the command also lists the changed lines of HD Edition that the mods replace. This needs a profile on Freelancer 1.0 or 1.1. A mod that changes data under `DATA` gets the note "Single player, or a server with the same mod." The command only reads the game folder. |
-| `oltool export <profile.json> --mod <id> --target <target> [--game <folder>] [--format dropin\|flmm\|all] [--out <folder>] [--checklist] [--flmm-probe] [--same-version]` | Make the packages of one mod for one target (see "Export"). `--game` names the game folder of a retail target. Without it, the base of the profile must give the target. `--format` picks the package forms of a retail target, all by default. `--out` names the exact output folder, `exports\<mod id>\<version>` next to the profiles folder by default. `--checklist` prints the checklist and writes no file. `--flmm-probe` writes the probe of the FLMM check, which is not for players. The export records its packages and its checks in the publish history. An export of a version that the history has with other game files exits 1. `--same-version` replaces that version when it does not have the mark "published". |
-| `oltool publish <profile.json> --mod <id> [--json]` | Print the publish checklist of a mod: each step with `done` or what is missing, and the recommended items. It reads the publish history, the last checks and the base of the profile, and runs no check. With `--json`, write only one JSON object. Exit 0 when all steps are complete, 1 when a step is missing. |
+| `oltool export <profile.json> --mod <id> --target <target> [--target <target>]... [--game <folder>]... [--format dropin\|flmm\|all] [--out <folder>] [--checklist] [--flmm-probe] [--same-version]` | Make the packages of one mod for its targets (see "Export"). Repeat `--target` for more targets. `--game` names the game folder of a retail target. Repeat it for each retail target: the export uses each folder for the target of its game. Without it, the base of the profile must give the target. `--format` picks the package forms of a retail target, all by default. `--out` names the exact output folder, `exports\<mod id>\<version>` next to the profiles folder by default. `--checklist` prints the checklist and writes no file. `--flmm-probe` writes only the probe of the FLMM check, which is not for players. The probe does not change `nexus-page.txt`, `CHECKLIST.txt` and the screenshots of the folder. The export records its packages and its checks in the publish history. An export of a version that the history has with other game files exits 1. `--same-version` replaces that version when it does not have the mark "published". The replace needs each target and form of the earlier exports of the version, so give all their targets in one command. A history file that does not load stops the export with exit 2. |
+| `oltool publish <profile.json> --mod <id> [--json]` | Print the publish checklist of a mod: each step with `done` or what is missing, and the recommended items. It reads the publish history, the last checks and the base of the profile, and runs no check. With `--json`, write only one JSON object. Exit 0 when all steps are complete, 1 when a step is missing, 2 when the command cannot run. |
 | `oltool verify-base <folder>` | Check that a folder is the unchanged, read-only retail data. |
 
 Exit codes: 0 = OK, 1 = the data has problems, 2 = the command could not run.
@@ -1104,7 +1104,7 @@ When the zip holds `EXE\freelancer.ini`, the README gives each line that the mod
 - A new `[BaseGood]` adds its lines to the `[BaseGood]` of the same base. A new `[Data]` line goes after the last line of its key.
 - The text of the mod becomes `GENERATESTRRES("<text>")` and `GENERATEXMLRES("<text>")`. FLMM makes its own text DLL. A text with `"` or with a character outside ASCII refuses the change, because no known FLMM rule can hold it.
 - A change that the operations cannot express puts the whole merged file into the package, with a warning. Examples are a removed line or section, and an anchor that is not unique in the file. A whole file cannot hold the text of the mod, so such a change with text refuses the package.
-- `oltool export --flmm-probe` writes the text of the mod as it is. The probe is for the FLMM check only.
+- `oltool export --flmm-probe` writes the text of the mod as it is. The probe is for the FLMM check only. It writes only its package.
 
 ### Package of the target OpenLancer
 
@@ -1116,7 +1116,7 @@ Each package has `<mod id> README.txt`: the display name, the version, the autho
 
 The output folder also gets `nexus-page.txt` and `CHECKLIST.txt`. `nexus-page.txt` has one block for each field of a Nexus page, with the name of the field: the mod name, the version, the author, the category, the summary, the description in BBCode with the install steps, the requirements, the files with a description of each, the changelog, the permissions and credits, the tags and the images. Copy each block into its field. "Files" lists each valid package of the version in the folder, also of an earlier export, so two exports for two targets give one page. The checklist has the changes of the version and one line for each entry that the mod adds, changes or removes, for testers. For example: "Good 'lf_hull': price 6600 -> 5600." No text of an export has a date.
 
-The listed screenshots go into `screenshots\` of the output folder for the Nexus upload, with the names `01-<name>.<ext>` in list order. They do not go into the drop-in zip or the FLMM package, because a player extracts these into the game folder.
+The listed screenshots go into `screenshots\` of the output folder for the Nexus upload, with the names `01-<name>.<ext>` in list order. They do not go into the drop-in zip or the FLMM package, because a player extracts these into the game folder. The export deletes no file in `screenshots\`. An image of an earlier list stays there, and the "Images" block of `nexus-page.txt` names only the images of the current list.
 
 The packages hold merged game files, so do not commit them. The export warns when the output folder is in a git repository. The export never writes into a game folder or into the mod folder.
 
@@ -1139,7 +1139,8 @@ exports/<mod id>/
 `publish-history.json` records each export: the version, the time, the OpenLancer version, the content and page fingerprints, the output folder, and the target, the form, the file name, the SHA-256 and the guard digest of each package. It also records the last check of each target, the last 50 test plays, and the versions with the mark "published". The file is local and holds the full paths of your machine. It is never in the mod folder.
 
 - Each write of the history holds `publish-history.lock`. A write waits up to 5 seconds for another program, then gives a warning and records nothing.
-- A history file that does not load moves to `publish-history.bad.json`, and a new history starts.
+- A history file that does not load stops each export, because the guard needs the history. Correct the file, or move it out of its folder. The next record of a play, a check or a mark moves such a file to `publish-history.bad.json`, or to a numbered name when that file exists, and a new history starts.
+- OpenLancer does not write a history file of another format version, and does not move it.
 - The flat packages of an export before the history stay where they are.
 
 ### The same-version guard
@@ -1148,11 +1149,11 @@ Two different packages with the same version confuse players. The guard compares
 
 - An export of the same target and form with other game files is a conflict. An export of other content with a package of another target is a conflict too.
 - A change of the texts only is no conflict. The guard digest of a package leaves out the README, the header of the FLMM script and the `mod.json` of the OpenLancer zip. The export keeps the version, and the history gets a new entry.
-- Packages with the same bytes as an earlier export of the version add no history entry.
+- Packages with the same bytes as an earlier export of the version add no history entry, when the content and the page fingerprints are also the same. A change of a text that only `nexus-page.txt` has, for example a tag, adds an entry, so that the publish checklist sees the current texts.
 - A version with the mark "published" never gets other game files. Export as a new version.
 - A replace of a version without the mark needs each target and form of the old export. The old entry stays in the history with the time of the new export as `replacedBy`.
 
-`oltool export` prints the text of a conflict and exits 1. `--same-version` replaces a version without the mark.
+`oltool export` prints the text of a conflict and exits 1. `--same-version` replaces a version without the mark. To replace a version with packages of two targets, give both targets in one `oltool export`.
 
 **Export and play** in the Export dialog exports first. Then it installs the export of the first checked retail target into the play copy of its base, and starts the game. A source build is never the base of an export. See "Play in the game" in [PLAY.md](PLAY.md).
 

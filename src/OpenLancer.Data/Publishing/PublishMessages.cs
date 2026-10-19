@@ -44,8 +44,8 @@ public static class PublishMessages
     public const string PendingSave =
         "The last save of this mod is not complete. Open the profile once, so that the editor completes the save.";
 
-    public const string CheckRefusedPendingSave =
-        "The last save of this mod is not complete. Open the profile once. Then check the mod.";
+    public const string DuplicatePendingSave =
+        "The last save of this mod is not complete. Open the profile once. Then duplicate the mod.";
 
     public const string RenamePendingSave =
         "The last save of this mod is not complete. Open the profile once. Then rename the mod.";
@@ -82,8 +82,13 @@ public static class PublishMessages
     public static string ImageMissing(string path) =>
         $"publish.json names {path} as a screenshot, but the file does not exist. Add the image again, or remove the entry.";
 
-    public static string DeleteImages(int count) =>
-        $"Delete {count} images from publish\\screenshots? No entry of the list uses them.";
+    public static string DeleteImages(int count) => count == 1
+        ? "Delete 1 image from publish\\screenshots? No entry of the list uses it."
+        : $"Delete {count} images from publish\\screenshots? No entry of the list uses them.";
+
+    public const string ScreenshotsOutsideMod =
+        "The folder publish\\screenshots of this mod links to a folder outside the mod. OpenLancer does not write " +
+        "or delete images there. Remove the link.";
 
     public static string FlmmCharacter(string character, string field) =>
         $"The FLMM package cannot show the character '{character}' in {field}. FLMM shows '?'.";
@@ -153,13 +158,24 @@ public static class PublishMessages
         "with the new id does not remove these files. Rename the mod only before the first release.";
 
     public static string RenameProfileNotFound(string path) =>
-        $"OpenLancer cannot find the profile {path}. When it names this mod, it does not load after the rename.";
+        $"OpenLancer cannot find the profile {path}. When that profile names this mod, that profile does not load " +
+        "after the rename.";
 
-    public static string RenameHistoryStays(string folder) =>
-        $"{folder} exists. The publish history of this mod stays in its old folder.";
+    public static string RenameOtherProfiles(string profilesFolder) =>
+        $"OpenLancer changes only the profiles in {profilesFolder} and the recent profiles. Another profile that names " +
+        "this mod does not load after the rename.";
 
-    public static string RenameFailed(string step, string reason) =>
-        $"The rename stopped at {step}: {Games.GameRoot.Sentence(reason)} OpenLancer restored each changed file.";
+    public static string RenameHistoryExists(string folder) =>
+        $"{folder} exists. OpenLancer cannot move the publish history of this mod into it. Use another id.";
+
+    public static string RenameHistoryOfOtherMod(string folder) =>
+        $"{folder} exists. After the rename, this mod uses the publish history in that folder.";
+
+    /// <param name="restored">True when OpenLancer restored each changed file.</param>
+    public static string RenameFailed(string step, string reason, bool restored) =>
+        $"The rename stopped at {step}: {Games.GameRoot.Sentence(reason)} " + (restored
+            ? "OpenLancer restored each changed file."
+            : "OpenLancer did not restore each changed file. The Console names each step and its result.");
 
     public static string IdInUse(string id) => $"A mod with the id {id} exists. Use another id.";
 
@@ -167,7 +183,16 @@ public static class PublishMessages
         $"{file} did not load. OpenLancer moved it to {badFile} and started a new history.";
 
     public static string HistoryUnreadable(string file) =>
-        $"{file} did not load. The next record moves it to {PublishHistory.BadName} and starts a new history.";
+        $"{file} did not load. The next record of a play, a check or a mark renames the file and starts a new " +
+        "history.";
+
+    public static string GuardUnreadable(string file) =>
+        $"{file} did not load. The export stops, because the same-version guard needs the publish history. Correct " +
+        "the file, or move it out of its folder to start a new history.";
+
+    public static string GuardOtherVersion(string file, int version) =>
+        $"OpenLancer cannot read {file} version {version}. The export stops, because the same-version guard needs the " +
+        "publish history. Use the OpenLancer version that wrote the file.";
 
     public static string HistoryVersion(string file, int version) =>
         $"OpenLancer cannot read {file} version {version}. It reads version 1. OpenLancer does not write the file.";

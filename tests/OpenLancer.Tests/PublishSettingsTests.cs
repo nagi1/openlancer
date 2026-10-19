@@ -59,8 +59,11 @@ public sealed class PublishSettingsTests
 
         var load = PublishSettings.Load(mod);
 
-        Assert.Contains("comment", load.ReadOnly);
+        Assert.Equal("publish.json: The file has a comment. Remove the comments, then try again.", load.ReadOnly);
         Assert.NotNull(load.Hash);
+        // The read skips the comment, as the read of mod.json does, so the export keeps the texts.
+        Assert.Equal("x", load.Settings.Summary);
+        Assert.Empty(load.Problems);
         Assert.Throws<InvalidDataException>(() => PublishSettings.Write(mod, PublishSettings.Empty));
     }
 

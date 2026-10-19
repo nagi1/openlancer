@@ -45,11 +45,12 @@ public sealed class PublishChecklistTests
     }
 
     private static PublishChecklist Of(ModManifest? manifest = null, PublishSettings? settings = null,
-        PublishHistory? history = null, Func<ExportTarget, string?>? baseOf = null, string content = Content)
+        PublishHistory? history = null, Func<ExportTarget, string?>? baseOf = null, string content = Content,
+        string page = Page)
     {
         manifest ??= Manifest();
         return PublishChecklist.Of(new ChecklistInput(manifest, settings ?? Settings, history ?? History(manifest), content,
-            Page, baseOf ?? (_ => Base), [ExportTarget.Vanilla]));
+            page, baseOf ?? (_ => Base), [ExportTarget.Vanilla]));
     }
 
     private static ChecklistStep Step(PublishChecklist checklist, string name) => checklist.Steps.Single(s => s.Name == name);
@@ -260,19 +261,40 @@ public sealed class PublishChecklistTests
             Packages = [.. history.Exports[0].Packages, new HistoryPackage(ModTargets.Vanilla, PackageForms.Flmm, "f.zip", "s", "g")],
         };
 
-        var checklist = Of(manifest, PublishSettings.Empty with { Summary = "A summary." }, history);
+        var checklist = Of(manifest, PublishSettings.Empty with { Summary = $"A summary {(char)0x263A}." }, history);
 
         Assert.True(checklist.AllComplete);
         Assert.Equal(
         [
             "Write a description.", "Name the authors.", "Write the changes of version 1.0.0.",
-            "Add one screenshot or more for the Nexus page.", $"The FLMM package cannot show '{(char)0x263A}'. FLMM shows '?'.",
+            "Add one screenshot or more for the Nexus page.",
+            $"The FLMM package cannot show the character '{(char)0x263A}' in the display name. FLMM shows '?'.",
+            $"The FLMM package cannot show the character '{(char)0x263A}' in the summary. FLMM shows '?'.",
             "Add the page link after the upload.",
             "The FLMM package is a preview. Check it with FLMM before you publish it.",
         ], checklist.Recommended.Select(r => r.Text));
         Assert.Equal(ChecklistAction.AddImages, checklist.Recommended[3].Button!.Action);
+        // Go to selects the field that holds the character.
+        Assert.Equal([PublishField.DisplayName, PublishField.Summary], checklist.Recommended.Skip(4).Take(2).Select(r => r.Button!.Field));
         Assert.Null(checklist.Recommended[^1].Button);
         Assert.Empty(Of().Recommended);
+    }
+
+    [Fact]
+    public void AnExportAfterAChangeOfThePageOnlyCompletesStepSix()
+    {
+        var manifest = Manifest();
+        var history = History(manifest);
+        var packages = history.Exports[0].Packages;
+
+        var before = Step(Of(manifest, history: history, page: "new page"), "Export made");
+        // The tags changed. The packages have the same bytes, and only nexus-page.txt changed.
+        var record = history.RecordExport(new HistoryExport("1.0.0", Monday.AddHours(1), "test", Content, "new page", @"C:\out", packages));
+
+        Assert.False(before.Complete);
+        Assert.Equal(RecordKind.PageOnly, record.Kind);
+        Assert.True(Step(Of(manifest, history: history, page: "new page"), "Export made").Complete);
+        Assert.Equal([PublishMessages.SamePackages("1.0.0", Monday)], record.Messages("1.0.0"));
     }
 
     [Fact]

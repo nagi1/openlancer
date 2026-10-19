@@ -61,8 +61,8 @@ public sealed record ChecklistInput(
     IReadOnlyList<ExportTarget> PlayTargets);
 
 /// <summary>
-/// The publish checklist of a mod (section 11 of the M11c design, AGENTS.md UI rule 12): six steps, or five for a mod
-/// with only the target OpenLancer, and recommended items that do not count. It is pure: it reads only its input.
+/// The publish checklist of a mod (section 11 of the M11c design, AGENTS.md UI rule 12). It has six steps, or five for
+/// a mod with only the target OpenLancer. The recommended items do not count. It is pure: it reads only its input.
 /// </summary>
 public sealed record PublishChecklist(IReadOnlyList<ChecklistStep> Steps, IReadOnlyList<ChecklistItem> Recommended)
 {
@@ -211,11 +211,11 @@ public sealed record PublishChecklist(IReadOnlyList<ChecklistStep> Steps, IReadO
         if (settings.Screenshots.Count == 0)
             items.Add(new ChecklistItem("Add one screenshot or more for the Nexus page.",
                 new ChecklistButton(ChecklistAction.AddImages, "Add images...")));
+        // The item names the field, and Go to selects it (decision D580).
         if (targets.Any(t => t.IsRetail))
         {
-            foreach (var character in new PublishTexts(input.Manifest, settings).FlmmLost().Select(l => l.Character).Distinct())
-                items.Add(new ChecklistItem($"The FLMM package cannot show '{character}'. FLMM shows '?'.",
-                    GoTo(PublishField.DisplayName)));
+            foreach (var lost in new PublishTexts(input.Manifest, settings).FlmmLost())
+                items.Add(new ChecklistItem(lost.Message, GoTo(lost.Field)));
         }
         if (input.History.Published.Count > 0 && settings.PageUrl.Length == 0)
             items.Add(new ChecklistItem("Add the page link after the upload.", GoTo(PublishField.PageUrl)));

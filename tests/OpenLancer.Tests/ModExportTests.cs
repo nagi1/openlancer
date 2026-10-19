@@ -284,6 +284,52 @@ public sealed class ModExportTests
     }
 
     [Fact]
+    public void TheExportDeletesNoFileOfTheScreenshotsFolder()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var a = PublishWorkspace.Screenshot(mod.Folder, "a.png", 1);
+        var output = Path.Combine(game.Game.Folder, "picked");
+        // The user can pick any output folder. A numbered image of the user stays.
+        PublishWorkspace.Write(Path.Combine(output, ModExport.ScreenshotsFolder, "05-mine.png"), "mine");
+
+        var result = ModExport.Run(game.Request(mod) with
+        {
+            OutputFolder = output,
+            Publish = PublishSettings.Empty with { Screenshots = [new PublishScreenshot(a, "")] },
+        });
+
+        var shots = Path.Combine(result.OutputFolder, ModExport.ScreenshotsFolder);
+        Assert.Equal(["01-a.png", "05-mine.png"], Directory.EnumerateFiles(shots).Select(Path.GetFileName).Order());
+        Assert.Equal("mine", File.ReadAllText(Path.Combine(shots, "05-mine.png")));
+        Assert.EndsWith("== Images ==\r\nscreenshots\\01-a.png\r\n",
+            File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile)));
+    }
+
+    [Fact]
+    public void AHandWrittenLinkThatIsNotHttpsStaysOutOfTheTexts()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var texts = Texts with
+        {
+            PageUrl = "javascript:alert(1)",
+            Requirements = [new PublishRequirement("JFLP", "file:///c/x", "Optional")],
+        };
+
+        var result = ModExport.Run(game.Request(mod) with { Publish = texts });
+        var dropIn = result.Packages.Single(p => p.Form == PackageForm.DropIn).Path!;
+
+        Assert.DoesNotContain("javascript", Entry(dropIn, "m README.txt"));
+        Assert.Contains("- JFLP: Optional\r\n", Entry(dropIn, "m README.txt"));
+        Assert.DoesNotContain("<modurl>", Script(result.Packages.Single(p => p.Form == PackageForm.Flmm).Path!, "m"));
+        Assert.DoesNotContain("file:///", File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile)));
+        // The rules of the publish page give warnings, so the export still writes the packages.
+        Assert.True(result.Succeeded, string.Join("\n", result.Problems));
+        Assert.Equal(2, result.Problems.Count(p => p.Severity == DiagnosticSeverity.Warning && p.Message == PublishMessages.PageLink));
+    }
+
+    [Fact]
     public void TheOpenLancerZipHoldsPublishJsonAndTheAcceptedScreenshots()
     {
         using var game = new ExportGame();
@@ -353,7 +399,7 @@ public sealed class ModExportTests
     }
 
     [Fact]
-    public void APendingSaveRefusesTheCheck()
+    public void APendingSaveRefusesTheCheckAndTheExport()
     {
         using var game = new ExportGame();
         var mod = game.GoodsMod(Patch);
@@ -362,7 +408,9 @@ public sealed class ModExportTests
         var prepared = ModExport.Prepare(game.Request(mod));
 
         Assert.True(prepared.Refused);
-        Assert.Equal(PublishMessages.CheckRefusedPendingSave, Assert.Single(prepared.Problems).Message);
+        // The check and the export use one text, so it names neither of them.
+        Assert.Equal("The last save of this mod is not complete. Open the profile once, so that the editor completes the save.",
+            Assert.Single(prepared.Problems).Message);
         Assert.Empty(ModExport.Write(prepared, []).Packages);
     }
 
@@ -460,8 +508,9 @@ public sealed class OltoolExportTests
         var (exit, _, errors) = Run("export");
 
         Assert.Equal(2, exit);
-        Assert.Contains("export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer>", errors);
+        Assert.Contains("export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer> [--target ...]", errors);
         Assert.Equal(2, Run("export", "x.json", "--mod", "m", "--target", "other").Exit);
+        Assert.Equal(2, Run("export", "x.json", "--mod", "m", "--target", "openlancer", "--target", "openlancer").Exit);
     }
 
     [Fact]
@@ -602,6 +651,76 @@ public sealed class OltoolExportTests
         Assert.Equal(1, plain.Exit);
         Assert.Contains(PublishMessages.GuardPublished("1.2.0"), plain.Errors);
         Assert.Single(PublishHistory.Load(root, "ol-test").History.Exports);
+    }
+
+    [Fact]
+    public void OltoolSameVersionReplacesAVersionOfTwoTargets()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var root = Path.Combine(game.Game.Folder, "exports", "ol-test");
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin").Exit);
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "openlancer").Exit);
+        ChangePrice(game);
+
+        var one = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin", "--same-version");
+        var (exit, output, errors) = Run("export", profile, "--mod", "ol-test", "--target", "openlancer", "--target",
+            "vanilla-1.1", "--format", "dropin", "--same-version");
+
+        // A replace of one target would leave the old content in the package of the other target.
+        Assert.Equal(1, one.Exit);
+        Assert.Contains("also has packages for OpenLancer (mod folder zip).", one.Errors);
+        Assert.True(exit == 0, errors);
+        Assert.Contains("ol-test-1.2.0-vanilla-1.1.zip", output);
+        Assert.Contains("ol-test-1.2.0-openlancer.zip", output);
+        var history = PublishHistory.Load(root, "ol-test").History;
+        Assert.Equal(3, history.Exports.Count);
+        Assert.Equal([history.Exports[2].Time, history.Exports[2].Time], history.Exports.Take(2).Select(e => e.ReplacedBy));
+        Assert.Equal(["openlancer", "vanilla-1.1"], history.Exports[2].Packages.Select(p => p.Target).Order());
+    }
+
+    [Theory]
+    [InlineData("{ not json")]
+    [InlineData("""{ "formatVersion": 2 }""")]
+    public void OltoolAHistoryThatDoesNotLoadStopsTheExport(string text)
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var root = Path.Combine(game.Game.Folder, "exports", "ol-test");
+        var package = Path.Combine(root, "1.2.0", "ol-test-1.2.0-vanilla-1.1.zip");
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin").Exit);
+        var before = File.ReadAllBytes(package);
+        File.WriteAllText(Path.Combine(root, PublishHistory.FileName), text);
+        ChangePrice(game);
+
+        var (exit, _, errors) = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin");
+
+        // Without the history, the guard cannot protect the package, so the export writes nothing.
+        Assert.Equal(2, exit);
+        Assert.Contains("The export stops, because the same-version guard needs the publish history.", errors);
+        Assert.Equal(before, File.ReadAllBytes(package));
+        Assert.Equal(text, File.ReadAllText(Path.Combine(root, PublishHistory.FileName)));
+        Assert.False(File.Exists(Path.Combine(root, PublishHistory.BadName)));
+    }
+
+    [Fact]
+    public void OltoolTheProbeKeepsTheTextsOfTheVersionFolder()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var folder = Path.Combine(game.Game.Folder, "exports", "ol-test", "1.2.0");
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin").Exit);
+        var nexus = File.ReadAllText(Path.Combine(folder, ModExport.NexusPageFile));
+        var checklist = File.ReadAllText(Path.Combine(folder, ModExport.ChecklistFile));
+
+        var (exit, _, errors) = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "flmm",
+            "--flmm-probe");
+
+        Assert.True(exit == 0, errors);
+        Assert.True(File.Exists(Path.Combine(folder, "ol-test-1.2.0-vanilla-1.1-flmm-probe.zip")));
+        Assert.Equal(nexus, File.ReadAllText(Path.Combine(folder, ModExport.NexusPageFile)));
+        Assert.Equal(checklist, File.ReadAllText(Path.Combine(folder, ModExport.ChecklistFile)));
+        Assert.DoesNotContain("probe", nexus);
     }
 
     [Fact]

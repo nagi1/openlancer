@@ -60,7 +60,8 @@ public sealed class PublishHistoryTests
         var inExports = PublishHistory.Update(Location(workspace, mod), "export", _ => { });
 
         Assert.False(inMod.Written);
-        Assert.Contains("overlaps the mod folder", Assert.Single(inMod.Messages));
+        Assert.Equal($"The publish history folder {Path.Combine(mod, "exports")} overlaps the mod folder {mod}.",
+            Assert.Single(inMod.Messages));
         Assert.False(Directory.Exists(Path.Combine(mod, "exports")));
         Assert.True(inExports.Written);
         Assert.True(File.Exists(Path.Combine(workspace.Root, "exports", "m", PublishHistory.FileName)));
@@ -241,6 +242,84 @@ public sealed class PublishHistoryTests
             Path.Combine(folder, PublishHistory.BadName)), Assert.Single(write.Messages));
         Assert.Equal("{ not json", File.ReadAllText(Path.Combine(folder, PublishHistory.BadName)));
         Assert.Single(PublishHistory.Load(folder, "m").History.Published);
+    }
+
+    [Fact]
+    public void AnEarlierBadFileStays()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("m");
+        var folder = workspace.Exports("m");
+        PublishWorkspace.Write(Path.Combine(folder, PublishHistory.BadName), "first");
+        PublishWorkspace.Write(Path.Combine(folder, PublishHistory.FileName), "second");
+
+        var write = PublishHistory.Update(Location(workspace, mod), "play", h => h.Mark("1.0.0", Monday, ""));
+
+        Assert.True(write.Written);
+        Assert.Equal("first", File.ReadAllText(Path.Combine(folder, PublishHistory.BadName)));
+        Assert.Equal("second", File.ReadAllText(Path.Combine(folder, "publish-history.bad-2.json")));
+        Assert.Equal(PublishMessages.HistoryBad(Path.Combine(folder, PublishHistory.FileName),
+            Path.Combine(folder, "publish-history.bad-2.json")), Assert.Single(write.Messages));
+    }
+
+    [Fact]
+    public void AHistoryOfAnotherFormatVersionStopsTheGuardAndStays()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("m");
+        var folder = workspace.Exports("m");
+        var path = Path.Combine(folder, PublishHistory.FileName);
+        // A later version can have other records. A write must not rename such a file.
+        const string Text = """{ "formatVersion": 2, "exports": [ { "version": 3 } ] }""";
+        PublishWorkspace.Write(path, Text);
+
+        var load = PublishHistory.Load(folder, "m");
+        var write = PublishHistory.Update(Location(workspace, mod), "play", h => h.Mark("1.0.0", Monday, ""));
+
+        Assert.Equal(HistoryLoadState.OtherVersion, load.State);
+        Assert.Equal(PublishMessages.HistoryVersion(path, 2), load.Problem);
+        Assert.Equal($"OpenLancer cannot read {path} version 2. The export stops, because the same-version guard needs the " +
+                     "publish history. Use the OpenLancer version that wrote the file.", load.GuardRefusal);
+        Assert.False(write.Written);
+        Assert.Equal(Text, File.ReadAllText(path));
+    }
+
+    [Theory]
+    [InlineData("""{ "formatVersion": 1, "exports": [ { "version": "1.0.0", "time": "2026-10-19T11:30:00Z", "openLancer": "x", "content": "c", "page": "p", "folder": "f" } ] }""")]
+    [InlineData("""{ "formatVersion": 1, "exports": [ { "version": "1.0.0", "time": "2026-10-19T11:30:00Z", "openLancer": "x", "content": "c", "page": "p", "folder": "f", "packages": [ null ] } ] }""")]
+    [InlineData("""{ "formatVersion": 1, "exports": [ null ] }""")]
+    [InlineData("""{ "formatVersion": 1, "exports": null }""")]
+    [InlineData("""{ "formatVersion": 1, "published": [ { "time": "2026-10-19T11:30:00Z", "page": "" } ] }""")]
+    public void ARecordThatIsNotCompleteDoesNotLoad(string text)
+    {
+        using var workspace = new PublishWorkspace();
+        var folder = workspace.Exports("m");
+        var path = Path.Combine(folder, PublishHistory.FileName);
+        PublishWorkspace.Write(path, text);
+
+        var load = PublishHistory.Load(folder, "m");
+
+        Assert.Equal(HistoryLoadState.Unreadable, load.State);
+        Assert.Equal(PublishMessages.HistoryUnreadable(path), load.Problem);
+        Assert.Equal(PublishMessages.GuardUnreadable(path), load.GuardRefusal);
+        Assert.Empty(load.History.Exports);
+        Assert.Equal(GuardKind.None, load.History.Conflict("1.0.0", "c2", [("vanilla-1.1", "dropin", "g2")]).Kind);
+    }
+
+    [Fact]
+    public void TheSameBytesWithOtherFingerprintsAddAnEntry()
+    {
+        var history = new PublishHistory();
+        history.RecordExport(Entry("1.0.0", Monday, "c", Package("vanilla-1.1", "dropin", "s1", "g1")));
+
+        // A loadAfter entry changes the content fingerprint, and the drop-in zip stays the same.
+        var record = history.RecordExport(Entry("1.0.0", Monday.AddHours(2), "c2", Package("vanilla-1.1", "dropin", "s1", "g1")));
+
+        Assert.Equal(RecordKind.PageOnly, record.Kind);
+        Assert.Equal(2, history.Exports.Count);
+        Assert.Equal(Monday.AddHours(2), history.Exports[0].ReplacedBy);
+        Assert.Equal("c2", Assert.Single(history.ValidExports("1.0.0")).Content);
+        Assert.Equal([PublishMessages.SamePackages("1.0.0", Monday)], record.Messages("1.0.0"));
     }
 
     [Fact]

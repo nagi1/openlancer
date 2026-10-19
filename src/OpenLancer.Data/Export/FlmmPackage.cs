@@ -45,7 +45,7 @@ public static class FlmmPackage
         if (problems.Any(p => p.Severity == DiagnosticSeverity.Error))
             return new PackagePlan(name, null, problems, null);
         problems.AddRange(texts.FlmmLost().Select(lost =>
-            Diagnostic.Warning(mod.Folder, PublishMessages.FlmmCharacter(lost.Character, lost.Field))));
+            Diagnostic.Warning(mod.Folder, lost.Message)));
 
         var tree = script.Files.Select(f => (f.Path, f.Bytes)).ToList();
         var digest = PackageDigest.Of([.. tree, (FlmmScript.FileName, Encoding.ASCII.GetBytes(script.OperationsXml))]);

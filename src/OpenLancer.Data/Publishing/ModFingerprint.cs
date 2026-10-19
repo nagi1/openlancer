@@ -31,9 +31,10 @@ public sealed class ModFingerprint
     public int FilesHashed => filesHashed;
 
     /// <summary>
-    /// The content fingerprint: the id, the format version, the tier, the targets, <c>dependsOn</c>,
-    /// <c>loadAfter</c>, the bytes of <c>strings.json</c>, and the path and the hash of each file of <c>patches</c>
-    /// and <c>files</c> that a package does not skip. Not the display name, the version and the publish files.
+    /// The content fingerprint. Its inputs are the id, the format version, the tier, the targets, <c>dependsOn</c>,
+    /// <c>loadAfter</c> and the bytes of <c>strings.json</c>. It also has the path and the hash of each file of
+    /// <c>patches</c> and <c>files</c> that a package does not skip. The display name, the version and the publish
+    /// files are not inputs.
     /// </summary>
     public string Content(ModManifest manifest, string modFolder)
     {
@@ -79,14 +80,6 @@ public sealed class ModFingerprint
             text.Append($"screenshot\t{screenshot.File}\t{(path == null ? "-" : HashOrNone(path))}\n");
         }
         return ContentHash.Of(Encoding.UTF8.GetBytes(text.ToString()));
-    }
-
-    /// <summary>Both fingerprints of a mod folder, from its saved files.</summary>
-    /// <exception cref="ModLoadException">mod.json does not load.</exception>
-    public (string Content, string Page) Of(string modFolder)
-    {
-        var manifest = ModManifest.Load(modFolder);
-        return (Content(manifest, modFolder), Page(manifest, modFolder, PublishSettings.Load(modFolder).Settings));
     }
 
     private string HashOrNone(string path) => File.Exists(path) ? Hash(path) : "-";

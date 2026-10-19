@@ -127,10 +127,12 @@ public sealed record PublishSettings
             return new PublishLoad(Empty, [message], message, null);
         }
         var hash = ContentHash.Of(bytes);
-        JsonFile file;
+        JsonObject root;
+        bool hasComment;
         try
         {
-            file = JsonFile.Parse(bytes);
+            // The read skips comments, as the read of mod.json does. So the export keeps the texts of such a file.
+            root = JsonFile.Fields(bytes, out hasComment);
         }
         catch (InvalidDataException e)
         {
@@ -139,7 +141,6 @@ public sealed record PublishSettings
         }
 
         var problems = new List<string>();
-        var root = file.Root;
         // A file without the field is version 1.
         var version = root["formatVersion"] switch
         {
@@ -152,7 +153,9 @@ public sealed record PublishSettings
             var message = PublishMessages.PublishJsonVersion(version);
             return new PublishLoad(Read(root, problems), [message], message, hash);
         }
-        return new PublishLoad(Read(root, problems), problems, null, hash);
+        // OpenLancer cannot write the file and keep its comments, so the window shows the settings read-only.
+        var readOnly = hasComment ? $"{FileName}: {JsonFile.CommentMessage}" : null;
+        return new PublishLoad(Read(root, problems), problems, readOnly, hash);
     }
 
     /// <summary>
@@ -242,7 +245,7 @@ public sealed record PublishSettings
     /// <summary>True when the link starts with <c>https://</c>.</summary>
     public static bool IsHttps(string url) => url.StartsWith("https://", StringComparison.OrdinalIgnoreCase) && url.Length > 8;
 
-    /// <summary>The settings with each list and text compared field by field.</summary>
+    /// <summary>True when the field has the same value in both settings. Lists compare item by item.</summary>
     public bool SameField(PublishSettings other, PublishField field) => field switch
     {
         PublishField.Summary => Summary == other.Summary,

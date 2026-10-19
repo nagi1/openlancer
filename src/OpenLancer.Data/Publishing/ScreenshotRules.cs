@@ -55,18 +55,16 @@ public static class ScreenshotRules
             return PublishMessages.ImageOutsideFolder(file);
         if (!File.Exists(path))
             return PublishMessages.ImageMissing(file);
-        string real;
         try
         {
-            real = PathRules.RealPath(path);
-            if (!PathRules.IsInside(real, PathRules.RealPath(modFolder)))
+            if (!PathRules.IsInside(PathRules.RealPath(path), PathRules.RealPath(modFolder)))
                 return PublishMessages.ImageOutsideFolder(file);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return $"{file}: {e.Message}";
         }
-        return FileProblem(file, path, real, gameRoots, builds);
+        return FileProblem(file, path, gameRoots, builds);
     }
 
     /// <summary>The reason why Add images refuses a file, or null when the import can copy it.</summary>
@@ -81,7 +79,7 @@ public static class ScreenshotRules
             return $"{name} does not exist.";
         try
         {
-            return FileProblem(name, path, PathRules.RealPath(path), gameRoots, builds);
+            return FileProblem(name, path, gameRoots, builds);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -90,15 +88,17 @@ public static class ScreenshotRules
     }
 
     /// <summary>The width and the height of a PNG or JPEG image from its header, or null when the bytes are not a
-    /// PNG or JPEG image.</summary>
+    /// PNG or JPEG image. An image with a width or a height of zero is not an image.</summary>
     public static (int Width, int Height)? ImageSize(ReadOnlySpan<byte> bytes)
     {
         if (bytes.StartsWith(PngSignature))
         {
-            // The first chunk is IHDR: its length, its name, then the width and the height.
+            // The first chunk is IHDR: its length, its name, then the width and the height. PNG allows 1 to 2^31 - 1.
             if (bytes.Length < 24 || !bytes[12..16].SequenceEqual("IHDR"u8))
                 return null;
-            return ((int)BinaryPrimitives.ReadUInt32BigEndian(bytes[16..]), (int)BinaryPrimitives.ReadUInt32BigEndian(bytes[20..]));
+            var width = BinaryPrimitives.ReadUInt32BigEndian(bytes[16..]);
+            var height = BinaryPrimitives.ReadUInt32BigEndian(bytes[20..]);
+            return width is 0 or > int.MaxValue || height is 0 or > int.MaxValue ? null : ((int)width, (int)height);
         }
         if (bytes.Length < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8)
             return null;
@@ -124,7 +124,9 @@ public static class ScreenshotRules
             {
                 if (i + 9 > bytes.Length)
                     return null;
-                return (BinaryPrimitives.ReadUInt16BigEndian(bytes[(i + 7)..]), BinaryPrimitives.ReadUInt16BigEndian(bytes[(i + 5)..]));
+                var width = BinaryPrimitives.ReadUInt16BigEndian(bytes[(i + 7)..]);
+                var height = BinaryPrimitives.ReadUInt16BigEndian(bytes[(i + 5)..]);
+                return width == 0 || height == 0 ? null : (width, height);
             }
             if (marker == 0xDA || length < 2)
                 return null;
@@ -135,12 +137,9 @@ public static class ScreenshotRules
 
     /// <summary>The checks of the bytes of an image: not in a game folder, a PNG or JPEG image, not too large, and not
     /// a game file.</summary>
-    private static string? FileProblem(string file, string path, string real, IReadOnlyCollection<string> gameRoots,
-        KnownBuilds? builds)
+    private static string? FileProblem(string file, string path, IReadOnlyCollection<string> gameRoots, KnownBuilds? builds)
     {
-        var game = GameRoot.Containing(real) ?? GameRoot.Containing(path) ??
-                   gameRoots.FirstOrDefault(root => GameFolders.Overlaps(path, root));
-        if (game != null)
+        if (ModWrite.GameFolderOf(path, gameRoots) is { } game)
             return PublishMessages.ImageInGameFolder(file, game);
         var bytes = File.ReadAllBytes(path);
         if (ImageSize(bytes) is not { } size)

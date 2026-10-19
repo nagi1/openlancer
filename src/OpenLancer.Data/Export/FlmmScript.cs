@@ -457,6 +457,6 @@ internal sealed record FlmmHeader(string Name, string Author, string Description
             description += "\n" + texts.Settings.Summary;
         if (texts.DescriptionText.Count > 0)
             description += "\n\n" + string.Join("\n", texts.DescriptionText);
-        return new FlmmHeader(texts.Manifest.Name, texts.Authors, description, texts.Settings.PageUrl);
+        return new FlmmHeader(texts.Manifest.Name, texts.Authors, description, texts.PageUrl);
     }
 }

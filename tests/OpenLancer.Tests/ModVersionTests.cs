@@ -96,6 +96,14 @@ public sealed class ModVersionTests
     [InlineData("1 0")]
     [InlineData("")]
     [InlineData("1.0.0+build")]
+    [InlineData("1.0.0.")]
+    [InlineData("con")]
+    [InlineData("CON.1.0")]
+    [InlineData("nul")]
+    [InlineData("aux.1.2")]
+    [InlineData("Com1")]
+    [InlineData("lpt9.0")]
+    [InlineData("prn")]
     public void IsSafeRefusesRootedPathsDotsAndSeparators(string text)
     {
         Assert.False(ModVersion.IsSafe(text));
@@ -110,6 +118,10 @@ public sealed class ModVersionTests
         Assert.True(ModVersion.IsSafe("1.0"));
         Assert.True(ModVersion.IsSafe("1.0.0-beta.1"));
         Assert.True(ModVersion.IsSafe("v2-Final"));
+        // A device name is only a device name as the whole first part.
+        Assert.True(ModVersion.IsSafe("console.1"));
+        Assert.True(ModVersion.IsSafe("com10"));
+        Assert.True(ModVersion.IsSafe("1.0.0-con"));
         Assert.Equal((DiagnosticSeverity.Warning, PublishMessages.VersionRule), ModVersion.Problem("1.0"));
         Assert.Equal((DiagnosticSeverity.Warning, PublishMessages.VersionLetterCase), ModVersion.Problem("1.0.0-Beta"));
         Assert.Null(ModVersion.Problem("1.0.0"));

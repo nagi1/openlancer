@@ -81,4 +81,65 @@ public sealed class ModDuplicateTests
         Assert.Throws<IOException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship", "Copy", []));
         Assert.Throws<ArgumentException>(() => ModDuplicate.Run(mod, workspace.Mods, "Bad Id", "Copy", []));
     }
+
+    [Fact]
+    public void RefusesTheIdOfAModInAnotherFolder()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("ship");
+        PublishWorkspace.Write(Path.Combine(workspace.Mods, "folder-name", ModManifest.FileName),
+            """{ "id": "ship-copy", "formatVersion": 1 }""");
+
+        var refused = Assert.Throws<IOException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship-copy", "Copy", []));
+
+        Assert.Equal(PublishMessages.IdInUse("ship-copy"), refused.Message);
+        Assert.False(Directory.Exists(Path.Combine(workspace.Mods, "ship-copy")));
+        Assert.Equal("ship-copy-2", ModDuplicate.FreeId(workspace.Mods, "ship"));
+    }
+
+    [Fact]
+    public void RefusesAPendingSave()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("ship");
+        PublishWorkspace.Write(Path.Combine(mod, SaveTransaction.FolderName, "journal"), "olsave journal 1\n");
+
+        var refused = Assert.Throws<IOException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship-copy", "Copy", []));
+
+        Assert.Equal(PublishMessages.DuplicatePendingSave, refused.Message);
+        Assert.False(Directory.Exists(Path.Combine(workspace.Mods, "ship-copy")));
+    }
+
+    [Fact]
+    public void ANameOfTwoLinesOrTooLongGivesItsOwnText()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("ship");
+
+        Assert.StartsWith(PublishMessages.DisplayNameOneLine,
+            Assert.Throws<ArgumentException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship-copy", "A\nB", [])).Message);
+        Assert.StartsWith("The display name has 129 characters.",
+            Assert.Throws<ArgumentException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship-copy", new string('x', 129), [])).Message);
+        Assert.StartsWith(PublishMessages.DisplayNameEmpty,
+            Assert.Throws<ArgumentException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship-copy", " ", [])).Message);
+    }
+
+    [Fact]
+    public void APublishJsonWithACommentKeepsItsCommentOrRefusesItsLink()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("ship");
+        var publish = Path.Combine(mod, PublishSettings.FileName);
+        PublishWorkspace.Write(publish, "{ // texts\n \"formatVersion\": 1, \"summary\": \"Kept.\" }");
+
+        var copy = ModDuplicate.Run(mod, workspace.Mods, "ship-copy", "Copy", []);
+        PublishWorkspace.Write(publish, "{ // texts\n \"formatVersion\": 1, \"pageUrl\": \"https://example.org/mods/1\" }");
+        var refused = Assert.Throws<InvalidDataException>(() => ModDuplicate.Run(mod, workspace.Mods, "ship-copy-2", "Copy", []));
+
+        // Without a page link, the copy keeps the file as it is, also its comment.
+        Assert.Equal("{ // texts\n \"formatVersion\": 1, \"summary\": \"Kept.\" }",
+            File.ReadAllText(Path.Combine(copy, PublishSettings.FileName)));
+        Assert.Equal($"{publish}: The file has a comment. Remove the comments, then try again.", refused.Message);
+        Assert.False(Directory.Exists(Path.Combine(workspace.Mods, "ship-copy-2")));
+    }
 }

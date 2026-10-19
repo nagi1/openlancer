@@ -182,24 +182,34 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         var chosen = ExportTarget.All.Where(t => targets.Contains(t.Id)).ToList();
         window.Settings.SetExport(exported.Folder, new ExportChoices([.. chosen.Select(t => t.Id)], dropIn, flmm, folder));
         window.Settings.Save();
-        var request = RequestOf(exported, chosen, bases, folder, (dropIn ? ExportForms.DropIn : 0) | (flmm ? ExportForms.Flmm : 0));
+        var request = RequestOf(exported, chosen, bases, folder, (dropIn ? ExportForms.DropIn : 0) | (flmm ? ExportForms.Flmm : 0),
+            out var publishProblems);
+        foreach (var problem in publishProblems)
+            window.Log.Add(ConsoleSeverity.Warning, Source, $"{exported.Folder}: {problem}");
         running = Task.Run(() => ModExport.Run(request));
     }
 
     /// <summary>The request of an export. The texts of the packages come from the publish.json of the mod (milestone
     /// M11c).</summary>
+    /// <param name="publishProblems">The problems of the read of publish.json. The texts leave out a field with a
+    /// problem, so the Console shows them.</param>
     internal static ExportRequest RequestOf(Mod exported, IReadOnlyList<ExportTarget> chosen, IReadOnlyList<GameReport> reports,
-        string folder, ExportForms forms) => new()
+        string folder, ExportForms forms, out IReadOnlyList<string> publishProblems)
     {
-        Mod = exported,
-        Targets = chosen,
-        BaseOf = target => BaseOf(target, reports),
-        OutputFolder = folder,
-        Forms = forms,
-        Publish = PublishSettings.Load(exported.Folder).Settings,
-        StringWriter = DllStringResourceWriter.Instance,
-        Thn = ThornEvaluator.Instance,
-    };
+        var publish = PublishSettings.Load(exported.Folder);
+        publishProblems = publish.Problems;
+        return new ExportRequest
+        {
+            Mod = exported,
+            Targets = chosen,
+            BaseOf = target => BaseOf(target, reports),
+            OutputFolder = folder,
+            Forms = forms,
+            Publish = publish.Settings,
+            StringWriter = DllStringResourceWriter.Instance,
+            Thn = ThornEvaluator.Instance,
+        };
+    }
 
     /// <summary>Takes the result of the export, and writes its problems and its summary to the Console.</summary>
     private void Finish(Task<ExportResult> task)

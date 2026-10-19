@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
 using Xunit;
 
@@ -88,7 +89,9 @@ public sealed class ModCatalogTests
         using var workspace = new PublishWorkspace();
         var mod = workspace.Mod("m", more: ", \"targets\": [ \"openlancer\" ]");
         var fingerprints = new ModFingerprint();
-        var (content, page) = fingerprints.Of(mod);
+        var manifest = ModManifest.Load(mod);
+        var content = fingerprints.Content(manifest, mod);
+        var page = fingerprints.Page(manifest, mod, PublishSettings.Load(mod).Settings);
         var location = new HistoryLocation(workspace.Exports("m"), "m", mod, []);
         PublishHistory.Update(location, "export", h =>
         {

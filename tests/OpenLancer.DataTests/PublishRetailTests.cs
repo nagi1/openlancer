@@ -84,16 +84,16 @@ public sealed class PublishRetailTests(ITestOutputHelper output) : IDisposable
         Assert.Contains("By OpenLancer contributors.\r\n", readme);
         Assert.Contains("About:\r\nWhat it changes\r\n\r\n- New ship: the Starrunner", readme);
         Assert.Contains("- The Patriot costs less: 5600 credits.", readme);
-        Assert.Contains("Changes:\r\n1.0.0\r\n- First release.\r\n", readme);
+        Assert.Contains("Changes:\r\n1.0.0\r\n- First version of the sample.\r\n", readme);
         Assert.Contains("OpenLancer sample: Starrunner was created under Microsoft's", readme);
         var nexus = File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile));
         Assert.Contains("== Summary ==\r\n" + publish.Settings.Summary + "\r\n", nexus);
         Assert.Contains("[size=5][b]What it changes[/b][/size]\r\n[list]\r\n", nexus);
         Assert.Contains("[*]The Patriot costs less: [b]5600[/b] credits.", nexus);
-        Assert.Contains("== Changelog ==\r\n1.0.0\r\n- First release.\r\n", nexus);
+        Assert.Contains("== Changelog ==\r\n1.0.0\r\n- First version of the sample.\r\n", nexus);
         Assert.Contains("OpenLancer sample: Starrunner was created under Microsoft's", nexus);
         Assert.StartsWith("OpenLancer sample: Starrunner 1.0.0 (ol-sample): checklist for testers\r\n\r\nChanges of this version:\r\n" +
-                          "- First release.\r\n\r\nTarget: Freelancer 1.1\r\n",
+                          "- First version of the sample.\r\n\r\nTarget: Freelancer 1.1\r\n",
             File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.ChecklistFile)));
         RetailChecks.AssertBaseIsUnchanged(baseFolder);
     }

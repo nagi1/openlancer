@@ -27,6 +27,15 @@ public enum PackageForm
     ModFolder,
 }
 
+/// <summary>A character of the FLMM header that FLMM cannot show (decision D580).</summary>
+/// <param name="Field">The field of the publish page that holds the character.</param>
+/// <param name="FieldName">The field for a text, for example "the summary".</param>
+public sealed record FlmmLostCharacter(string Character, PublishField Field, string FieldName)
+{
+    /// <summary>The warning: "The FLMM package cannot show the character ... in ...".</summary>
+    public string Message => PublishMessages.FlmmCharacter(Character, FieldName);
+}
+
 /// <summary>
 /// The texts that the publish settings give to an export (section 9 of the M11c design): the manifest with the display
 /// name and the version, and the settings of <c>publish.json</c>.
@@ -50,16 +59,22 @@ public sealed record PublishTexts(ModManifest Manifest, PublishSettings Settings
     /// <summary>The plain text of the description, one line for each item.</summary>
     public IReadOnlyList<string> DescriptionText => PageText.ToPlainText(PageText.Parse(Settings.Description));
 
+    /// <summary>The page link for the texts, or empty. A hand-written <c>publish.json</c> can hold any text, so the
+    /// texts use only a link that starts with <c>https://</c>.</summary>
+    public string PageUrl => PublishSettings.IsHttps(Settings.PageUrl) ? Settings.PageUrl : "";
+
     /// <summary>The characters of the FLMM header that FLMM cannot show (decision D580), with the field of each.</summary>
-    public IReadOnlyList<(string Character, string Field)> FlmmLost()
+    public IReadOnlyList<FlmmLostCharacter> FlmmLost()
     {
-        var lost = new List<(string, string)>();
-        foreach (var (field, text) in new[]
+        var lost = new List<FlmmLostCharacter>();
+        foreach (var (field, name, text) in new[]
                  {
-                     ("the display name", Manifest.Name), ("the authors", Authors), ("the summary", Settings.Summary),
-                     ("the description", string.Join("\n", DescriptionText)),
+                     (PublishField.DisplayName, "the display name", Manifest.Name),
+                     (PublishField.Authors, "the authors", Authors),
+                     (PublishField.Summary, "the summary", Settings.Summary),
+                     (PublishField.Description, "the description", string.Join("\n", DescriptionText)),
                  })
-            lost.AddRange(PageText.LostInAscii(text).Select(c => (c, field)));
+            lost.AddRange(PageText.LostInAscii(text).Select(c => new FlmmLostCharacter(c, field, name)));
         return lost;
     }
 
@@ -176,10 +191,10 @@ public static class PackageTexts
             lines.Add("Permissions:");
             lines.AddRange(settings.Permissions.Split('\n'));
         }
-        if (settings.PageUrl.Length > 0)
+        if (texts.PageUrl.Length > 0)
         {
             lines.Add("");
-            lines.Add($"Page: {settings.PageUrl}");
+            lines.Add($"Page: {texts.PageUrl}");
         }
         lines.Add("");
         lines.Add(Notice(mod));
@@ -327,10 +342,11 @@ public static class PackageTexts
         yield return "[/list]";
     }
 
-    /// <summary>A requirement of the publish settings: "Name: note (link)".</summary>
+    /// <summary>A requirement of the publish settings: "Name: note (link)". The text leaves out a link that does not
+    /// start with <c>https://</c>.</summary>
     private static string Other(PublishRequirement requirement) =>
         requirement.Name + (requirement.Note.Length > 0 ? ": " + requirement.Note : "") +
-        (requirement.Url.Length > 0 ? $" ({requirement.Url})" : "");
+        (PublishSettings.IsHttps(requirement.Url) ? $" ({requirement.Url})" : "");
 
     private static string Credit(PublishCredit credit) =>
         credit.For.Length > 0 ? $"- {credit.Name}: {credit.For}" : $"- {credit.Name}";

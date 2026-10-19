@@ -62,20 +62,24 @@ internal static class Program
                                             game. --game: the game folder of the target. Without it, the base of the
                                             profile must give the target. The game folder does not change.
           deploy <profile.json>             Build and validate, then write the merged data next to the profile.
-          export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer>
-                 [--game <folder>] [--format dropin|flmm|all] [--out <folder>] [--checklist] [--flmm-probe]
+          export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer> [--target ...]
+                 [--game <folder>]... [--format dropin|flmm|all] [--out <folder>] [--checklist] [--flmm-probe]
                  [--same-version]
-                                            Merge one mod on the files of the target game, check the result and write
-                                            the packages of the target. --game: the game folder of a retail target.
-                                            Without it, the base of the profile must give the target. --format: the
-                                            package forms of a retail target, all by default. --out: the exact output
-                                            folder, <profile folder>\..\exports\<mod id>\<version> by default.
+                                            Merge one mod on the files of each target game, check the result and write
+                                            the packages of the targets. Repeat --target for more targets.
+                                            --game: the game folder of a retail target. Repeat it for each retail
+                                            target. The export uses each folder for the target of its game. Without
+                                            it, the base of the profile must give the target. --format: the package
+                                            forms of a retail target, all by default. --out: the exact output folder,
+                                            <profile folder>\..\exports\<mod id>\<version> by default.
                                             --checklist: print the checklist for testers, and write nothing.
-                                            --flmm-probe: write the probe of the FLMM check, which is not for players.
-                                            The export records the packages in the publish history of
+                                            --flmm-probe: write only the probe of the FLMM check, which is not for
+                                            players. The export records the packages in the publish history of
                                             <profile folder>\..\exports\<mod id>. An export of a version that the
                                             history has with other game files exits 1. --same-version: replace that
-                                            version, when it does not have the mark "published".
+                                            version, when it does not have the mark "published". The replace needs
+                                            each target and form of the earlier exports. A history that does not load
+                                            stops the export with exit 2.
           publish <profile.json> --mod <id> [--json]
                                             Print the publish checklist of a mod: each step with "done" or what is
                                             missing, and the recommended items. It reads the publish history and the
@@ -433,12 +437,14 @@ internal static class Program
         return ExitOk;
     }
 
-    /// <summary>Exports one mod of a profile for one target (section 7.14 of the M11 design). The export goes into the
-    /// version folder, runs the same-version guard and records the publish history (section 15 of the M11c
+    /// <summary>Exports one mod of a profile for its targets (section 7.14 of the M11 design). The export goes into
+    /// the version folder, runs the same-version guard and records the publish history (section 15 of the M11c
     /// design).</summary>
     private static int Export(string profilePath, string[] options)
     {
-        string? modId = null, targetId = null, game = null, format = null, output = null;
+        string? modId = null, format = null, output = null;
+        var targetIds = new List<string>();
+        var games = new List<string>();
         bool checklist = false, probe = false, sameVersion = false;
         for (var i = 0; i < options.Length; i++)
         {
@@ -448,11 +454,11 @@ internal static class Program
                 case "--mod" when modId == null && hasValue:
                     modId = options[++i];
                     break;
-                case "--target" when targetId == null && hasValue:
-                    targetId = options[++i];
+                case "--target" when hasValue:
+                    targetIds.Add(options[++i]);
                     break;
-                case "--game" when game == null && hasValue:
-                    game = options[++i];
+                case "--game" when hasValue:
+                    games.Add(options[++i]);
                     break;
                 case "--format" when format == null && hasValue:
                     format = options[++i];
@@ -473,8 +479,10 @@ internal static class Program
                     return Fail(Usage);
             }
         }
-        if (modId == null || targetId == null || ExportTarget.Find(targetId) is not { } target)
+        if (modId == null || targetIds.Count == 0 || targetIds.Distinct().Count() != targetIds.Count ||
+            targetIds.Any(t => ExportTarget.Find(t) == null))
             return Fail(Usage);
+        var targets = ExportTarget.All.Where(t => targetIds.Contains(t.Id)).ToList();
         ExportForms forms;
         switch (format)
         {
@@ -496,12 +504,17 @@ internal static class Program
         if (index < 0)
             return Fail($"The profile has no mod '{modId}'.");
         var mod = profile.Mods[index];
-        GameReport? report = null;
-        if (target.IsRetail)
+        var reports = new List<GameReport>();
+        if (targets.Any(t => t.IsRetail))
         {
-            if (game != null && !Directory.Exists(game))
-                return Fail($"The folder {game} does not exist.");
-            report = game != null ? GameDetector.Detect(game) : GameDetector.CheckRoot(profile.BaseFolder);
+            foreach (var game in games)
+            {
+                if (!Directory.Exists(game))
+                    return Fail($"The folder {game} does not exist.");
+                reports.Add(GameDetector.Detect(game));
+            }
+            if (games.Count == 0)
+                reports.Add(GameDetector.CheckRoot(profile.BaseFolder));
         }
         // The output root holds the version folders and the publish history (decisions D565 and D566).
         var root = ModExport.DefaultFolder(profile.FilePath, modId);
@@ -510,14 +523,21 @@ internal static class Program
             Err.WriteLine(unsafeVersion);
             return ExitProblems;
         }
+        // The probe is not for players, and the checklist writes nothing. Neither runs the guard or goes into the
+        // history.
+        var guarded = !probe && !checklist;
+        var load = PublishHistory.Load(root, modId);
+        if (guarded && load.GuardRefusal is { } noHistory)
+            return Fail(noHistory);
         var publish = PublishSettings.Load(mod.Folder);
         foreach (var problem in publish.Problems)
             Err.WriteLine($"Warning: {mod.Folder}: {problem}");
         var prepared = ModExport.Prepare(new ExportRequest
         {
             Mod = mod,
-            Targets = [target],
-            BaseOf = _ => report,
+            Targets = targets,
+            // Each retail target uses the game of its kind.
+            BaseOf = t => reports.FirstOrDefault(r => r.Target == t.Id),
             OutputFolder = output ?? ModExport.VersionFolder(root, mod.Manifest),
             Forms = forms,
             FlmmProbe = probe,
@@ -538,14 +558,11 @@ internal static class Program
 
         var version = mod.Manifest.Version;
         var location = new HistoryLocation(root, modId, mod.Folder,
-            [profile.BaseFolder, .. report?.Root is { } gameRoot ? [gameRoot] : Array.Empty<string>()]);
-        var (history, historyProblem) = PublishHistory.Load(root, modId);
-        if (historyProblem != null)
-            Err.WriteLine($"Warning: {historyProblem}");
+            [profile.BaseFolder, .. reports.Select(r => r.Root).OfType<string>()]);
+        var history = load.History;
         var time = DateTime.UtcNow;
         var replace = false;
-        // The probe is not for players, so it neither runs the guard nor goes into the history.
-        if (!probe && !prepared.Refused)
+        if (guarded && !prepared.Refused)
         {
             var guard = history.Conflict(prepared);
             if (guard.Kind != GuardKind.None)
@@ -569,7 +586,7 @@ internal static class Program
         var result = ModExport.Write(prepared, probe ? [] : history.ValidPackages(version, prepared.OutputFolder, prepared.Content));
         foreach (var package in result.Packages)
             Out.WriteLine(package.Path != null ? $"Wrote {package.Path}" : $"Refused {package.FileName}");
-        if (!probe && !prepared.Refused)
+        if (guarded && !prepared.Refused)
         {
             RecordResult? recorded = null;
             RecordHistory(location, h =>

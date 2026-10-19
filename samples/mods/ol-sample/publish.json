@@ -11,6 +11,6 @@
   "pageUrl": "",
   "screenshots": [],
   "changelog": [
-    { "version": "1.0.0", "changes": [ "First release." ] }
+    { "version": "1.0.0", "changes": [ "First version of the sample." ] }
   ]
 }
