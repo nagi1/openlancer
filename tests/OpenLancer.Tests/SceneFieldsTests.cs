@@ -91,14 +91,13 @@ public sealed class SceneFieldsTests
         // 7.3 [Zone]
         Rows(SceneSection.Zone, none, true, "nickname");
         Rows(SceneSection.Zone, transform, false, "pos", "rotate");
-        Rows(SceneSection.Zone, transform | SceneEffect.Volume, false, "size");
-        Rows(SceneSection.Zone, transform | roles | SceneEffect.Volume, false, "shape");
+        Rows(SceneSection.Zone, transform | roles | SceneEffect.Volume, false, "size", "shape");
         Rows(SceneSection.Zone, data | roles, true, "encounter", "faction", "faction_weight");
-        Rows(SceneSection.Zone, data | roles, false, "path_label", "lane_id");
+        Rows(SceneSection.Zone, data | roles, false, "path_label");
         Rows(SceneSection.Zone, data | label, false, "ids_name");
         Rows(SceneSection.Zone, data, false, "ids_info", "edge_fraction", "property_flags", "property_fog_color", "visit",
             "sort", "music", "spacedust", "spacedust_maxparticles", "interference", "power_modifier", "drag_modifier",
-            "comment", "tradelane_attack", "tradelane_down", "damage", "toughness", "density", "population_additive",
+            "comment", "lane_id", "tradelane_attack", "tradelane_down", "damage", "toughness", "density", "population_additive",
             "mission_eligible", "max_battle_size", "pop_type", "relief_time", "repop_time", "attack_ids", "mission_type",
             "usage", "vignette_type", "density_restriction");
         Rows(SceneSection.Zone, none, false, "zone_creation_distance", "spin", "reputation");

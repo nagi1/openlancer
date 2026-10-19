@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Numerics;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
@@ -73,13 +74,14 @@ public sealed class SystemIndexTests
     [Fact]
     public void GivesEachZoneTheFirstRoleInTheRoleOrder()
     {
-        var field = Zone("field", laneId: 3);
+        // The field and its exclusion zone also have the form of a trade lane zone, but they keep their first role.
+        var field = LaneBox("field_Tradelane");
         var nebula = Zone("nebula");
-        var fieldExclusion = Zone("field_exclusion", laneId: 4);
+        var fieldExclusion = LaneBox("field_exclusion_Tradelane");
         var nebulaExclusion = Zone("nebula_exclusion");
         var population = Zone("population", encounters: true);
         var patrol = Zone("patrol", ShapeKind.Cylinder, encounters: true, pathLabel: ["path", "1"]);
-        var lane = Zone("lane", laneId: 5);
+        var lane = LaneBox("Zone_Xx01_Tradelane_1");
         var other = Zone("other", ShapeKind.Box, encounters: true);
         var system = new StarSystem
         {
@@ -113,6 +115,56 @@ public sealed class SystemIndexTests
         Assert.Equal(ZoneRole.Other, index.ZoneRole(other));
         Assert.Equal(ZoneRole.Other, index.ZoneRole(Zone("not_in_system")));
         Assert.Same(ObjectKinds.Of(ZoneRole.Nebula), index.KindOf(nebula));
+    }
+
+    /// <summary>
+    /// The game makes a zone a trade lane zone by its nickname and its form, and it never reads <c>lane_id</c> (decision
+    /// D513). Most retail trade lane zones have a text such as a lane name in <c>lane_id</c>, and the engine reads such a
+    /// text in a text file as 0. Such a zone still gets the trade lane role (fix S2).
+    /// </summary>
+    [Fact]
+    public void ALongBoxWithTradelaneInItsNicknameIsATradeLaneZoneWithoutALaneId()
+    {
+        var lane = LaneBox("Zone_Xx01_Tradelane_1");
+        var system = new StarSystem { Nickname = "xx01", SourceFile = "", Zones = [lane] };
+
+        Assert.Equal(0, lane.LaneId);
+        Assert.Equal(ZoneRole.TradeLane, new SystemIndex(system, system).ZoneRole(lane));
+    }
+
+    /// <summary>A lane id alone gives no role, because the game does not read it.</summary>
+    [Fact]
+    public void ALaneIdWithoutTheTradeLaneFormGivesNoRole()
+    {
+        var zone = Zone("Zone_Xx01_lane", ShapeKind.Box, laneId: 3);
+        zone.Size = new Vector3(500, 500, 10_000);
+        var system = new StarSystem { Nickname = "xx01", SourceFile = "", Zones = [zone] };
+
+        Assert.Equal(ZoneRole.Other, new SystemIndex(system, system).ZoneRole(zone));
+    }
+
+    /// <summary>
+    /// The rule of the game: the nickname has "Tradelane" with this letter case, the shape is a box, and the z size is
+    /// more than 10 times the x size and the y size.
+    /// </summary>
+    [Theory]
+    [InlineData("Zone_Xx01_Tradelane_1", ShapeKind.Box, 500, 500, 10_000, true)]
+    [InlineData("Xx01_Tradelane", ShapeKind.Box, 999, 999, 10_000, true)]
+    [InlineData("Zone_Xx01_tradelane_1", ShapeKind.Box, 500, 500, 10_000, false)]
+    [InlineData("Zone_Xx01_TRADELANE_1", ShapeKind.Box, 500, 500, 10_000, false)]
+    [InlineData("Zone_Xx01_Trade_Lane_1", ShapeKind.Box, 500, 500, 10_000, false)]
+    [InlineData("Zone_Xx01_Tradelane_1", ShapeKind.Box, 1_000, 500, 10_000, false)]
+    [InlineData("Zone_Xx01_Tradelane_1", ShapeKind.Box, 500, 1_000, 10_000, false)]
+    [InlineData("Zone_Xx01_Tradelane_1", ShapeKind.Box, 10_000, 500, 500, false)]
+    [InlineData("Zone_Xx01_Tradelane_1", ShapeKind.Ellipsoid, 500, 500, 10_000, false)]
+    [InlineData("Zone_Xx01_Tradelane_1", ShapeKind.Cylinder, 500, 10_000, 500, false)]
+    public void ATradeLaneZoneHasTheNameAndTheFormThatTheGameNeeds(string nickname, ShapeKind shape, float x, float y,
+        float z, bool lane)
+    {
+        var zone = Zone(nickname, shape);
+        zone.Size = new Vector3(x, y, z);
+
+        Assert.Equal(lane, SystemIndex.IsTradeLaneZone(zone));
     }
 
     [Fact]
@@ -276,6 +328,15 @@ public sealed class SystemIndexTests
             PathLabel = pathLabel,
         };
         zone.LaneId = laneId;
+        return zone;
+    }
+
+    /// <summary>A box zone with the form of a trade lane zone: 20 times longer on its z axis than on its x and y
+    /// axes.</summary>
+    private static Zone LaneBox(string nickname)
+    {
+        var zone = Zone(nickname, ShapeKind.Box);
+        zone.Size = new Vector3(500, 500, 10_000);
         return zone;
     }
 }

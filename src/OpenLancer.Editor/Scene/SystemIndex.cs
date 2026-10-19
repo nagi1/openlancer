@@ -259,7 +259,7 @@ internal sealed class SystemIndex
             {
                 Add(zone, Ui.ZoneRole.PatrolPath);
             }
-            else if (zone.LaneId != 0)
+            else if (IsTradeLaneZone(zone))
             {
                 Add(zone, Ui.ZoneRole.TradeLane);
             }
@@ -267,6 +267,17 @@ internal sealed class SystemIndex
 
         return roles;
     }
+
+    /// <summary>
+    /// True when the game uses a zone as the zone of a trade lane: its nickname has the word "Tradelane" with this letter
+    /// case, and it is a box that is more than 10 times longer on its z axis than on its x axis and on its y axis. The
+    /// game does not read <c>lane_id</c> (decision D513 of the console filter design), so the role does not use it. Most
+    /// trade lane zones have a text such as <c>br01_2</c> in that key, and the engine reads such a text in a text file as
+    /// 0.
+    /// </summary>
+    internal static bool IsTradeLaneZone(Zone zone) =>
+        zone.Nickname.Contains("Tradelane", StringComparison.Ordinal) && zone.Shape == ShapeKind.Box &&
+        zone.Size.X * 10 < zone.Size.Z && zone.Size.Y * 10 < zone.Size.Z;
 
     /// <summary>
     /// The items that use each zone: the asteroid fields and the nebulae, the fields and nebulae that a zone is an
