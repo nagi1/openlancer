@@ -432,10 +432,14 @@ internal sealed class InspectorPanel
             return;
         }
 
-        var errors = session.Edits.CheckLists(section).Count(p => p.Severity == DiagnosticSeverity.Error);
+        // An error that the base game has too does not block the save (the key rule, decision D508 of the console
+        // filter design).
+        var edits = session.Edits;
+        var errors = edits.CheckLists(section)
+            .Count(p => p.Severity == DiagnosticSeverity.Error && !edits.IsBaseGameProblem(p));
         if (view.IsChanged)
         {
-            errors += session.Edits.Check(section).Count(p => p.Severity == DiagnosticSeverity.Error);
+            errors += edits.Check(section).Count(p => p.Severity == DiagnosticSeverity.Error && !edits.IsBaseGameProblem(p));
         }
 
         if (errors > 0)

@@ -142,6 +142,23 @@ internal sealed class PatchLedger
             .ToList();
     }
 
+    /// <summary>
+    /// The mods that change a file in any way: they change, add, delete or rename a section of it, or replace the file.
+    /// In load order.
+    /// </summary>
+    public IReadOnlyList<string> ModsThatChangeFile(string path)
+    {
+        if (!files.TryGetValue(path, out var log))
+            return [];
+        return log.Sections.Values.SelectMany(c => c).Select(c => (c.Sequence, c.ModId))
+            .Concat(log.Overrides)
+            .Concat(log.Renames.Select(r => (r.Sequence, r.ModId)))
+            .OrderBy(c => c.Sequence)
+            .Select(c => c.ModId)
+            .Distinct()
+            .ToList();
+    }
+
     private FileLog Log(string path)
     {
         if (!files.TryGetValue(path, out var log))

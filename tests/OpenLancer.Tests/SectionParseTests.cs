@@ -68,11 +68,20 @@ public sealed class SectionParseTests
         pos = 4, 5, 6
         """;
 
-    /// <summary>A zone with a string in its integer key <c>lane_id</c>, as each retail trade lane zone has.</summary>
+    /// <summary>A zone with a string in its integer key <c>toughness</c>.</summary>
+    private const string StringZone = """
+        [Zone]
+        nickname = lane
+        toughness = br01_2
+        """;
+
+    /// <summary>A zone with a string in <c>lane_id</c> in two lines. The retail game does not read the key, and each
+    /// retail trade lane zone has a string in it.</summary>
     private const string LaneZone = """
         [Zone]
         nickname = lane
         lane_id = br01_2
+        lane_id = br01_3
         """;
 
     private static readonly SectionRef Encounters = SystemWorkspace.Li01Section("Zone", "encounters");
@@ -203,25 +212,43 @@ public sealed class SectionParseTests
     [Theory]
     [InlineData(true, -1, -1, -1)]
     [InlineData(false, 0, 5, 7)]
-    public void AStringInAnIntegerKeyGivesTheIntegerThatTheEngineReads(bool binary, int retail, int plain, int fromText)
+    public void AStringInAnIntegerKeyGivesTheIntegerThatTheEngineReads(bool binary, int text, int plain, int fromText)
+    {
+        using var ws = SystemWorkspace.Create(StringZone, binary);
+        var session = ws.Session("act");
+        var zone = SystemWorkspace.Li01Section("Zone", "lane");
+
+        AssertToughness(session, zone, "br01_2", text);
+        session.Execute(EditCommand.SetLines(zone, "toughness", [[new StringValue("5x")]]));
+        AssertToughness(session, zone, "5x", plain);
+        session.Execute(EditCommand.SetLinesFromText(zone, "toughness", ["7y"]));
+        AssertToughness(session, zone, "7y", fromText);
+    }
+
+    private static void AssertToughness(EditSession session, SectionRef zone, string text, int engine)
+    {
+        var problem = Assert.Single(session.Check(zone));
+        Assert.Equal(DiagnosticSeverity.Warning, problem.Severity);
+        Assert.EndsWith($"the game reads '{text}' in a 'toughness' line as the integer {engine}.", problem.Message);
+        Assert.Equal(engine, Parse<Zone>(session, zone, Zone.TryParse)!.Toughness);
+    }
+
+    /// <summary>
+    /// The retail game never reads <c>lane_id</c>, so the checks skip its lines (decision D513 of the console filter
+    /// design): no warning for the string, and none for the second line.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheChecksSkipAKeyThatTheRetailGameDoesNotRead(bool binary)
     {
         using var ws = SystemWorkspace.Create(LaneZone, binary);
         var session = ws.Session("act");
         var lane = SystemWorkspace.Li01Section("Zone", "lane");
 
-        AssertLaneId(session, lane, "br01_2", retail);
-        session.Execute(EditCommand.SetLines(lane, "lane_id", [[new StringValue("5x")]]));
-        AssertLaneId(session, lane, "5x", plain);
-        session.Execute(EditCommand.SetLinesFromText(lane, "lane_id", ["7y"]));
-        AssertLaneId(session, lane, "7y", fromText);
-    }
-
-    private static void AssertLaneId(EditSession session, SectionRef lane, string text, int engine)
-    {
-        var problem = Assert.Single(session.Check(lane));
-        Assert.Equal(DiagnosticSeverity.Warning, problem.Severity);
-        Assert.EndsWith($"the game reads '{text}' in a 'lane_id' line as the integer {engine}.", problem.Message);
-        Assert.Equal(engine, Parse<Zone>(session, lane, Zone.TryParse)!.LaneId);
+        Assert.Empty(session.Check(lane));
+        Assert.False(session.Schema(lane, "lane_id")!.RetailReads);
+        Assert.True(session.Schema(lane, "toughness")!.RetailReads);
     }
 
     [Fact]

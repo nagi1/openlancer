@@ -12,26 +12,34 @@ public sealed class ConsoleLogTests
     [Fact]
     public void RemovesThePrefixOfAnEngineLineAndUsesTheComponentAsSource()
     {
-        var (source, message) = ConsoleLog.ParseEngineLine(
-            "[Warning: 22:48:12] Ini: Unknown entry x in section Ship: EXE\\..\\data\\ships\\shiparch.ini");
-        Assert.Equal("Ini", source);
-        Assert.Equal("Unknown entry x in section Ship: EXE\\..\\data\\ships\\shiparch.ini", message);
+        var log = new ConsoleLog();
+        log.AddEngineLine("[Warning: 22:48:12] Ini: Unknown entry x in section Ship: EXE\\..\\data\\ships\\shiparch.ini",
+            LogSeverity.Warning);
+        var entry = Assert.Single(log.Entries);
+        Assert.Equal("Ini", entry.Source);
+        Assert.Equal("Unknown entry x in section Ship: EXE\\..\\data\\ships\\shiparch.ini", entry.Message);
     }
 
     [Fact]
     public void KeepsAllLinesOfAMessage()
     {
-        var (source, message) = ConsoleLog.ParseEngineLine("[Error: 22.48.12] Game: Failed\n  at A.B()\n  at C.D()");
-        Assert.Equal("Game", source);
-        Assert.Equal("Failed\n  at A.B()\n  at C.D()", message);
+        var log = new ConsoleLog();
+        log.AddEngineLine("[Error: 22.48.12] Game: Failed\n  at A.B()\n  at C.D()", LogSeverity.Error);
+        var entry = Assert.Single(log.Entries);
+        Assert.Equal("Game", entry.Source);
+        Assert.Equal("Failed\n  at A.B()\n  at C.D()", entry.Message);
+        Assert.Equal("Failed", entry.FirstLine);
     }
 
+    /// <summary>A line without a component gets the engine source. The time goes when the line has it.</summary>
     [Fact]
-    public void GivesTheEngineSourceAndTheFullTextForALineInAnotherForm()
+    public void GivesTheEngineSourceForALineWithoutAComponent()
     {
-        Assert.Equal((ConsoleLog.EngineSource, "no prefix here"), ConsoleLog.ParseEngineLine("no prefix here"));
-        Assert.Equal((ConsoleLog.EngineSource, "[Warning: 22:48:12] no component"),
-            ConsoleLog.ParseEngineLine("[Warning: 22:48:12] no component"));
+        var log = new ConsoleLog();
+        log.AddEngineLine("no prefix here", LogSeverity.Warning);
+        log.AddEngineLine("[Warning: 22:48:12] no component", LogSeverity.Warning);
+        Assert.Equal([(ConsoleLog.EngineSource, "no prefix here"), (ConsoleLog.EngineSource, "no component")],
+            log.Entries.Select(e => (e.Source, e.Message)));
     }
 
     /// <summary>A diagnostic keeps its place in a cutscene, so a click on the entry opens the element.</summary>
@@ -191,8 +199,10 @@ public sealed class ConsoleLogTests
     [Fact]
     public void AGameLineIsAWarningOrAnErrorOfFLLog()
     {
-        Assert.Equal((ConsoleSeverity.Warning, "Ini", "a: b"), ConsoleLog.ParseGameLine("[Warning: 22:48:12] Ini: a: b"));
-        Assert.Equal((ConsoleSeverity.Error, "Game", "e"), ConsoleLog.ParseGameLine("[Error: 22.48.12] Game: e"));
+        var warning = ConsoleLog.ParseGameLine("[Warning: 22:48:12] Ini: a: b")!;
+        var error = ConsoleLog.ParseGameLine("[Error: 22.48.12] Game: e")!;
+        Assert.Equal((LogSeverity.Warning, "Ini", "a: b"), (warning.Severity, warning.Source, warning.Message));
+        Assert.Equal((LogSeverity.Error, "Game", "e"), (error.Severity, error.Source, error.Message));
         Assert.Null(ConsoleLog.ParseGameLine("[Info: 22:48:12] Game: info"));
         Assert.Null(ConsoleLog.ParseGameLine("[Debug: 22:48:12] Game: debug"));
         Assert.Null(ConsoleLog.ParseGameLine("[Warning: 22:48:12] no component"));
@@ -209,10 +219,11 @@ public sealed class ConsoleLogTests
         var log = new ConsoleLog();
         log.AddEngineLine("[Warning: 22:48:12] Ini: known", LogSeverity.Warning);
 
-        log.AddGameLine(ConsoleLog.ParseGameLine("[Warning: 23:00:00] Ini: known")!.Value, "Play");
-        log.AddGameLine(ConsoleLog.ParseGameLine("[Error: 23:00:00] Ini: known")!.Value, "Play");
-        log.AddGameLine(ConsoleLog.ParseGameLine("[Warning: 23:00:00] Ship: new")!.Value, "Play");
-        log.AddGameLine(ConsoleLog.ParseGameLine("[Warning: 23:00:01] Ship: new")!.Value, "Play");
+        var run = log.BeginGameRun();
+        log.AddGameLine(run, ConsoleLog.ParseGameLine("[Warning: 23:00:00] Ini: known")!, "Play");
+        log.AddGameLine(run, ConsoleLog.ParseGameLine("[Error: 23:00:00] Ini: known")!, "Play");
+        log.AddGameLine(run, ConsoleLog.ParseGameLine("[Warning: 23:00:00] Ship: new")!, "Play");
+        log.AddGameLine(run, ConsoleLog.ParseGameLine("[Warning: 23:00:01] Ship: new")!, "Play");
         log.SkipKnownEngineLines = true;
         log.AddEngineLine("[Warning: 23:00:02] Ship: new", LogSeverity.Warning);
 

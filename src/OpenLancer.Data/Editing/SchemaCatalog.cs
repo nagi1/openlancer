@@ -74,6 +74,16 @@ internal static class SchemaCatalog
             [("KeyCmd", "ids_info")] = StringKind.String,
         };
 
+    /// <summary>
+    /// The keys that the fork reads but the retail game never reads (decision D513 of the console filter design). The
+    /// checks skip their lines, because a value of such a key has no effect in the retail game.
+    /// </summary>
+    private static readonly HashSet<(string Section, string Name)> RetailUnread = new(SectionAndName.Instance)
+    {
+        // Retail has no reader for the lane id of a zone. Each retail trade lane zone has a string in it.
+        ("Zone", "lane_id"),
+    };
+
     /// <summary>The schema of each section class and section name (in lowercase) that the catalog read.</summary>
     private static readonly ConcurrentDictionary<(Type Class, string Section), SectionSchema> Classes = new();
 
@@ -169,6 +179,7 @@ internal static class SchemaCatalog
             FloatColor = entry.FloatColor,
             Mode = entry.Mode,
             Field = field.Name,
+            RetailReads = !RetailUnread.Contains((sectionName, entry.Name)),
         };
     }
 

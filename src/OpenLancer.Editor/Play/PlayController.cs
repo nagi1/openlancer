@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using LibreLancer;
 using OpenLancer.Data;
 using OpenLancer.Data.Games;
 using OpenLancer.Editor.Editing;
@@ -332,7 +333,7 @@ internal sealed class PlayController : IDisposable
             return;
         }
 
-        run = new GameRun(process, args, request.Time, clock());
+        run = new GameRun(process, args, request.Time, clock()) { Lines = editor.Log.BeginGameRun() };
         game = run;
         // The lines of the start check belong to a game that started.
         foreach (var (severity, message) in check?.Lines ?? [])
@@ -671,13 +672,14 @@ internal sealed class PlayController : IDisposable
             return;
         }
 
-        if (parsed.Severity == ConsoleSeverity.Error)
+        if (parsed.Severity == LogSeverity.Error)
         {
             run.LastErrorLine = $"{parsed.Source}: {parsed.Message}";
         }
 
-        // Decision D57: only the lines that the Console did not add before.
-        editor.Log.AddGameLine(parsed, Source);
+        // Decision D57: only the lines that the Console did not add before. The run is a batch of the Console, whose
+        // lines resolve when they arrive (decision D514 of the console filter design).
+        editor.Log.AddGameLine(run.Lines, parsed, Source);
     }
 
     private void OnExit(GameRun run, int code, string errorOutput)
@@ -915,5 +917,8 @@ internal sealed class PlayController : IDisposable
 
         /// <summary>The last error line of the engine log, for the report of a crash without a cause.</summary>
         public string? LastErrorLine { get; set; }
+
+        /// <summary>The engine lines of the run for the Console: the count of each key and the notice.</summary>
+        public required GameRunLines Lines { get; init; }
     }
 }

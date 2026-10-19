@@ -211,7 +211,7 @@ base = li01_01_base
 marketgood = my_package, 0, -1, 1, 1, 0, 1, 1
 ```
 
-The values of `marketgood` are: good, rank, reputation, min, max, preserve, price multiplier. The engine sells a ship only when min or max is not 0. A patch cannot change or remove a vanilla market line. Use a whole-file override for that.
+The values of `marketgood` are: good, rank, reputation, min, max, transaction type, price multiplier. The transaction type is 0 when the base buys and sells the good, 1 when the base only buys it, and 2 when the base only sells it. The engine sells a ship only when min or max is not 0. A patch cannot change or remove a vanilla market line. Use a whole-file override for that.
 
 ### Two mods that change the same entry
 
@@ -800,6 +800,8 @@ Each save runs the save gate first, also a save with nothing to write, and also 
 - An error of the format checks of the export or of the content checks of the retail game, when the active mod adds it. See "Format checks" and "Content checks of the retail game". These checks run only for a tier-1 mod that names a retail target. They compare the data with the active mod with the data of the mods that load before it. They do not merge on the files of each target game. Play in the game and the export do that. For example, a good with the price 0 blocks the save, because the retail game can crash when a player buys or sells it.
 - An error of the checks of a cutscene that the active mod changes, when the lower cutscene does not have the error. For example, a LIGHT has no `spatialprops.pos`. A whole cutscene file of the active mod that the engine cannot read is an error too. The game crashes when it plays such a cutscene, so the message starts with "The game crashes when it plays this cutscene." These checks run without the game data, so they do not check templates and costumes.
 
+A field-check error or a missing required key that the base game has too does not block the save. This is true when the key has the value of the base data, no lower mod changes the section, and the same check of the base version of the section gives the same error. For example, the active mod changes the loadout of a retail object, and the position of the object in the base data has a value that is not a number. The save continues with a warning that ends with "The base game has the same problem, so the save continues." The Console hides such a warning by default, as it hides each base-game message. The Inspector shows the problem muted, with a lock glyph. Each other error blocks the save, also when it is a value of the base data: an error of a key that the active mod writes again, an error that a key of the active mod causes, an error of a key that a lower mod changes, and each error that reads another section.
+
 An entry is unusable when the engine cannot use it. A curve without points is unusable, and so is a name that two curves have. An entry is also unusable when its own checks give an error that makes the game drop it or stop loading. Some examples:
 
 - A `[Munition]` with a `motor` and no `explosion_arch`. The game stops loading.
@@ -1053,7 +1055,7 @@ First, the INI checks:
 - A ship package without an engine or a power plant.
 - A market for a base that does not exist, a market good that does not exist, or a market good that the engine cannot sell (a ship hull, or a good without equipment).
 - A market ship whose letter case differs from the ship package. The engine finds ship packages with a case-sensitive match.
-- A ship that a market lists with min = max = 0 (warning: it is not for sale).
+- A ship that a market sells with min = max = 0 (warning: it is not for sale). A line whose transaction type is 1 tells that the base only buys the ship, so it gives no warning. Retail has such a line for each ship of each ship market.
 - A duplicate nickname, two nicknames with the same hash, a nickname that is not ASCII, or an equipment section without a nickname. (The engine drops a `[Good]` or `[Ship]` without a nickname and logs `Missing required field nickname`.)
 - A ship or good whose text id has no text.
 

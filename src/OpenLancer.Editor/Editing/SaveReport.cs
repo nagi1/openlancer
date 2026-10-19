@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,8 +12,10 @@ namespace OpenLancer.Editor.Editing;
 /// <summary>One line of the Console report of a save.</summary>
 /// <param name="Target">The section that the line is about, or null.</param>
 /// <param name="Cutscene">The place in a cutscene that the line is about, or null.</param>
+/// <param name="Origin">Who causes the problem of the line, or null for OpenLancer. The Console hides a base-game
+/// warning of the save gate by default (section 3.6 of the console filter design).</param>
 internal sealed record ReportLine(ConsoleSeverity Severity, string Source, string Message, SectionRef? Target = null,
-    ThnLocation? Cutscene = null);
+    ThnLocation? Cutscene = null, MessageOrigin? Origin = null);
 
 /// <summary>
 /// The Console report of a save: the files that the save wrote and deleted, its problems, and then one summary line.
@@ -40,7 +43,9 @@ internal static class SaveReport
 
     /// <summary>The detail lines of a save: the files that it wrote and deleted, then its problems.</summary>
     /// <param name="modFolder">The folder of the active mod. The file names in the report are relative to it.</param>
-    public static List<ReportLine> Lines(SaveResult result, string modFolder)
+    /// <param name="origin">Gives the origin of a problem (see <see cref="EditSession.SaveProblemOrigin"/>), or null to
+    /// keep the origin of each problem.</param>
+    public static List<ReportLine> Lines(SaveResult result, string modFolder, Func<Diagnostic, MessageOrigin>? origin = null)
     {
         var lines = new List<ReportLine>();
         if (result.Saved)
@@ -53,7 +58,7 @@ internal static class SaveReport
 
         lines.AddRange(result.Problems.Select(p => new ReportLine(
             p.Severity == DiagnosticSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning, p.Source,
-            p.Message, p.Target, p.Cutscene)));
+            p.Message, p.Target, p.Cutscene, origin?.Invoke(p) ?? p.Origin)));
         return lines;
     }
 

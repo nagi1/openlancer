@@ -207,7 +207,7 @@ For an exit code other than 0 or 3, the Console gives the cause and the path of 
 
 When the validation finds errors and the game closes during its load, the Console names the validation errors as the cause.
 
-The warnings and errors of the game log also go to the Console with the source "Play". The Console adds each line only once.
+The warnings and errors of the game log also go to the Console with the source "Play". The Console adds each line only once. The Console hides the lines that the base game without mods also gives, as it does for the lines of the editor. Turn on the base-game toggle of the Console to show them. When the game server is slow, the Console shows one info entry for the Play run. The Play log has each slow update.
 
 ## Play in the game
 

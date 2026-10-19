@@ -81,6 +81,11 @@ internal static class Program
           playcopy check <play copy>        Check the links and the installed files of a play copy, and change
                                             nothing. Exit 1 on a difference.
           playcopy remove <play copy>       Delete a play copy. The game folder does not change.
+          engine-lines <folder> [--json]    Load the game folder without mods as the editor does: the game data, each
+                                            star system and each story mission. Print the number of engine warning and
+                                            error lines of each kind of the Console. --json: write one JSON object with
+                                            the count of each line key, and nothing else. The editor compares the lines
+                                            of a profile with these counts. The folder does not change.
           ini <profile.json|folder> <path>  Print a merged INI file (binary or text) as text.
           dump <profile.json|folder> <out>  Write a canonical JSON dump of the resolved game data.
           thn <profile.json|folder> <path>  Print a cutscene script (.thn) as canonical Lua text. The script comes from
@@ -117,6 +122,7 @@ internal static class Program
                 ["uninstall", var folder] => Uninstall(folder),
                 ["playcopy", "check", var folder] => CheckPlayCopy(folder),
                 ["playcopy", "remove", var folder] => RemovePlayCopy(folder),
+                ["engine-lines", var folder, .. var options] => EngineLines(folder, options),
                 ["ini", var source, var path] => PrintIni(source, path),
                 ["dump", var source, var output] => Dump(source, output),
                 ["thn", "roundtrip", var source] => ThnRoundTrip(source, null),
@@ -601,6 +607,42 @@ internal static class Program
     {
         PlayCopy.Remove(folder);
         Out.WriteLine($"Removed the play copy {Path.GetFullPath(folder)}. The game folder did not change.");
+        return ExitOk;
+    }
+
+    /// <summary>The base run of the console filter (decision D516): the engine lines of a game folder without mods.</summary>
+    private static int EngineLines(string folder, string[] options)
+    {
+        var json = options is ["--json"];
+        if (options.Length > 0 && !json)
+            return Fail(Usage);
+        if (!Directory.Exists(folder))
+            return Fail($"The folder {folder} does not exist.");
+        if (!GameConfig.CheckFLDirectory(folder))
+            return Fail($"The folder {folder} has no EXE\\freelancer.ini.");
+        var run = BaseEngineLines.Run(Path.GetFullPath(folder));
+        // A system or a mission script that does not load is not an engine line. The Scene and the Mission Studio
+        // report it themselves.
+        foreach (var failure in run.Failures)
+            Err.WriteLine(failure);
+        var lines = run.All.ToList();
+        if (json)
+        {
+            Out.WriteLine(BaseEngineLines.ToJson(BaseEngineLines.Count(lines)));
+            return ExitOk;
+        }
+
+        var byKind = lines.GroupBy(l => EngineLineRules.Match(l)?.Id ?? "-").OrderBy(g => g.Key, StringComparer.Ordinal);
+        foreach (var kind in byKind)
+        {
+            Out.WriteLine($"{kind.Key}\t{kind.Count()}");
+            if (kind.Key == "-")
+            {
+                foreach (var line in kind)
+                    Out.WriteLine($"\t{line.Normalized}");
+            }
+        }
+        Out.WriteLine($"{lines.Count} lines.");
         return ExitOk;
     }
 

@@ -95,6 +95,7 @@ internal static class ListChecks
             .SelectMany(r => lists.RuleData.ByRoleAndSection.GetValueOrDefault((r.ToLowerInvariant(),
                 section.Name.ToLowerInvariant())) ?? [])
             .Where(r => !unusableOnly || ListRule.MakesUnusable(r.Effect))
+            .Where(r => !r.SkipIntroRooms || !session.Rooms.IsIntroRoom(target.Path))
             .GroupBy(r => r.Key, StringComparer.OrdinalIgnoreCase);
         var lower = document.BaseSection(document.IdentityAt(index));
         var changedSection = lower == null || !ReferenceEquals(lower, section);
@@ -169,12 +170,11 @@ internal static class ListChecks
         List<(Entry Line, int Index)> read, ListRule rule, bool active, (ValueOrigin Origin, string? ModId) origin,
         bool changedSection, List<ListProblem> result, Func<ListRule, IReadOnlyList<ValueBase>, string, bool>? planned)
     {
-        var required = rule.Required || rule.RequiredWith != null && section.Any(e => Is(e.Name, rule.RequiredWith));
+        var required = IsRequired(section, rule);
         var valid = false;
         foreach (var (line, i) in read)
         {
-            // A scene line gives the place of its value (see ListRule.Scene).
-            var value = rule.IndexIn(line) is >= 0 and var at ? line[at].ToString().Trim() : "";
+            var value = ValueOf(line, rule);
             if (value.Length == 0)
                 continue;
             valid = true;
@@ -248,6 +248,31 @@ internal static class ListChecks
                 $"the key '{key}' is missing.{why}", rule.MissingText);
         }
     }
+
+    /// <summary>
+    /// True when a section misses a required key, as <see cref="Check"/> finds it: the rule needs a line of the key, and
+    /// no line that the engine reads has a value at the place of the rule. The key rule of the save gate runs it on the
+    /// base version of a section (decision D508 of the console filter design).
+    /// </summary>
+    /// <param name="multiline">True when the engine reads each line of the key, false when it reads only the last line
+    /// with a value.</param>
+    internal static bool MissesRequired(Section section, string key, ListRule rule, bool multiline)
+    {
+        var lines = section.Where(e => Is(e.Name, key)).ToList();
+        if (!IsRequired(section, rule) || rule.Empty && lines.Count > 0)
+            return false;
+        var read = multiline ? lines : lines.Where(l => l.Count > 0).TakeLast(1);
+        return read.All(line => ValueOf(line, rule).Length == 0);
+    }
+
+    /// <summary>True when the rule needs a line of its key in the section.</summary>
+    private static bool IsRequired(Section section, ListRule rule) =>
+        rule.Required || rule.RequiredWith != null && section.Any(e => Is(e.Name, rule.RequiredWith));
+
+    /// <summary>The value of a line at the place of the rule, or an empty text. A scene line gives the place of its
+    /// value (see <see cref="ListRule.Scene"/>).</summary>
+    private static string ValueOf(Entry line, ListRule rule) =>
+        rule.IndexIn(line) is >= 0 and var at ? line[at].ToString().Trim() : "";
 
     /// <summary>An error for a section of the active mod whose name has the FLHash of another name of a hash
     /// list.</summary>

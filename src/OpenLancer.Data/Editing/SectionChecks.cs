@@ -23,8 +23,9 @@ namespace OpenLancer.Data.Editing;
 /// but the checks report them as errors.</para>
 /// <para>The engine reads each string as an integer and logs nothing. From a binary file it reads -1, and from a text
 /// file it reads the number at the start of the text, or 0. So the engine loads the line, and the checks report a
-/// string in an integer key as a warning that names the integer that the engine reads. Retail has such strings, for
-/// example <c>lane_id = br01_2</c> in each trade lane zone.</para>
+/// string in an integer key as a warning that names the integer that the engine reads. The checks skip the keys that the
+/// retail game never reads (<see cref="KeySchema.RetailReads"/>), for example <c>lane_id</c>, which has a string in each
+/// retail trade lane zone.</para>
 /// <para>W keeps the text placeholders of the active mod, for example <c>ids_name = $str:li_gun01</c>. The merge puts
 /// the id of the text in place of a placeholder, so the engine reads a placeholder in a key that holds a text id. A
 /// placeholder of the other kind of text is a warning, because then the engine can show no text.</para>
@@ -56,6 +57,9 @@ internal static partial class SectionChecks
                         $"the section type has no key '{lines.Key}'. The game ignores the line.");
                 continue;
             }
+            // The retail game never reads the key, so its value has no effect (decision D513).
+            if (!key.RetailReads)
+                continue;
             var count = lines.Count();
             if (!key.Multiline && count > 1)
                 Report(DiagnosticSeverity.Warning, key.Name,

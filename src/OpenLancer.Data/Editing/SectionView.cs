@@ -62,6 +62,10 @@ public sealed record KeySchema(string Name, Type? ClrType, bool Multiline, bool 
     /// line of either name sets the field, so the last line of the two names wins.
     /// </summary>
     public string? Field { get; init; }
+
+    /// <summary>False when the retail game never reads the key, for example <c>lane_id</c> of a zone. The checks skip
+    /// the lines of such a key (decision D513 of the console filter design).</summary>
+    public bool RetailReads { get; init; } = true;
 }
 
 /// <summary>What an edit, an undo or a redo changed.</summary>

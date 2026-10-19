@@ -29,6 +29,7 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
     private const int RawLines = 18;
 
     private readonly Dictionary<SectionRef, string> rawTexts = [];
+    private readonly Dictionary<SectionRef, IReadOnlyList<(int Line, Diagnostic Problem, bool BaseGame)>> rawProblems = [];
     private (EditorSession? Session, int Version) rawVersion;
 
     /// <param name="sections">The sections of the page. A section that the edit view does not have shows nothing.</param>
@@ -182,10 +183,18 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
             }
         }
 
-        foreach (var (line, problem) in SectionProblems(session.Edits, section, view))
+        foreach (var (line, problem, baseGame) in RawProblems(session, section, view))
         {
-            ImGui.TextColored(problem.Severity == DiagnosticSeverity.Error ? EditorTheme.Error : EditorTheme.Warning,
-                $"{EditorIcons.ExclamationTriangle} {(line > 0 ? $"Line {line}: " : "")}{Short(problem)}");
+            var shown = $"{(line > 0 ? $"Line {line}: " : "")}{Short(problem)}";
+            if (baseGame)
+            {
+                PropertyGrid.BaseGameProblemText(shown);
+            }
+            else
+            {
+                ImGui.TextColored(problem.Severity == DiagnosticSeverity.Error ? EditorTheme.Error : EditorTheme.Warning,
+                    $"{EditorIcons.ExclamationTriangle} {shown}");
+            }
         }
     }
 
@@ -212,11 +221,7 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
     /// <summary>The text of a section, built once for each version of the edit view.</summary>
     private string RawText(EditorSession session, SectionRef section, SectionView view)
     {
-        if (rawVersion != (session, session.Version))
-        {
-            rawTexts.Clear();
-            rawVersion = (session, session.Version);
-        }
+        ForgetOldVersion(session);
 
         if (!rawTexts.TryGetValue(section, out var text))
         {
@@ -227,10 +232,36 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
         return text;
     }
 
+    /// <summary>The problems of the raw block of a section, found once for each version of the edit view.</summary>
+    private IReadOnlyList<(int Line, Diagnostic Problem, bool BaseGame)> RawProblems(EditorSession session,
+        SectionRef section, SectionView view)
+    {
+        ForgetOldVersion(session);
+        if (!rawProblems.TryGetValue(section, out var problems))
+        {
+            problems = SectionProblems(session.Edits, section, view).ToList();
+            rawProblems[section] = problems;
+        }
+
+        return problems;
+    }
+
+    /// <summary>Forgets the texts and the problems of the raw blocks after an edit, an undo, a redo or a save.</summary>
+    private void ForgetOldVersion(EditorSession session)
+    {
+        if (rawVersion != (session, session.Version))
+        {
+            rawTexts.Clear();
+            rawProblems.Clear();
+            rawVersion = (session, session.Version);
+        }
+    }
+
     /// <summary>The problems of a section for its raw block: the field checks and the list checks, each with the line of
-    /// its key in the text, or 0.</summary>
-    internal static IEnumerable<(int Line, Diagnostic Problem)> SectionProblems(EditSession edits, SectionRef section,
-        SectionView view)
+    /// its key in the text, or 0, and true for a base-game problem (the key rule, decision D512 of the console filter
+    /// design).</summary>
+    internal static IEnumerable<(int Line, Diagnostic Problem, bool BaseGame)> SectionProblems(EditSession edits,
+        SectionRef section, SectionView view)
     {
         foreach (var problem in edits.Check(section).Concat(edits.CheckLists(section)))
         {
@@ -238,7 +269,7 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
                 ? -1
                 : view.Entries.ToList().FindIndex(e => e.Name.Equals(problem.Key, StringComparison.OrdinalIgnoreCase));
             // Line 1 of the text is the header.
-            yield return (index < 0 ? 0 : index + 2, problem);
+            yield return (index < 0 ? 0 : index + 2, problem, edits.IsBaseGameProblem(problem));
         }
     }
 

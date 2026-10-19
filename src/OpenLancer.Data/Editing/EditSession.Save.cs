@@ -131,8 +131,9 @@ public sealed partial class EditSession
     }
 
     /// <summary>
-    /// The errors of the save gate (section 11.3 of the M21 design). A save writes nothing while it has one. An edit with
-    /// an error stays a draft in W and in the recovery file, and never reaches the mod files.
+    /// The errors of the save gate (section 11.3 of the M21 design), and the base-game warnings of the key rule. A save
+    /// writes nothing while it has an error. An edit with an error stays a draft in W and in the recovery file, and
+    /// never reaches the mod files.
     /// </summary>
     /// <remarks>
     /// <list type="number">
@@ -155,6 +156,9 @@ public sealed partial class EditSession
     /// </list>
     /// <para>Each list error tells what the game does with the data, for example "The game stops loading with this
     /// value."</para>
+    /// <para>A field-check error or a missing required key that the base game has too does not block the save. The list
+    /// has it as a warning with the origin base game (the key rule, decision D508 of the console filter design, see
+    /// <see cref="IsBaseGameProblem(Diagnostic)"/>). All other errors block.</para>
     /// </remarks>
     public IReadOnlyList<Diagnostic> SaveProblems()
     {
@@ -168,6 +172,19 @@ public sealed partial class EditSession
             if (problem.Severity == DiagnosticSeverity.Error &&
                 seen.Add((problem.Target, problem.Key?.ToLowerInvariant(), problem.Message, problem.Cutscene)))
                 problems.Add(problem);
+        }
+
+        // An error of the base game becomes a warning by the key rule (decision D508 of the console filter design).
+        void AddChecked(SectionRef target, EditDocument document, int index, Diagnostic problem, ListProblem? list)
+        {
+            if (problem.Severity == DiagnosticSeverity.Error && IsBaseGameProblem(target, document, index, problem, list))
+            {
+                var warning = BaseGameWarning(problem);
+                if (seen.Add((warning.Target, warning.Key?.ToLowerInvariant(), warning.Message, null)))
+                    problems.Add(warning);
+            }
+            else
+                Add(problem);
         }
 
         var paths = touched.Concat(active.Patches.Keys).Select(p => VfsPath.Normalize(p) ?? p)
@@ -184,9 +201,17 @@ public sealed partial class EditSession
                     continue;
                 var target = new SectionRef(document.Path, id);
                 if (SchemaOf(target) is { } schema)
-                    Check(target, schema, document, i).ForEach(Add);
+                {
+                    foreach (var problem in Check(target, schema, document, i))
+                        AddChecked(target, document, i, problem, null);
+                }
                 foreach (var problem in Lists.Problems(target))
-                    Add(problem.Diagnostic);
+                {
+                    if (problem.Kind == ListProblemKind.RequiredMissing)
+                        AddChecked(target, document, i, problem.Diagnostic, problem);
+                    else
+                        Add(problem.Diagnostic);
+                }
             }
         }
 

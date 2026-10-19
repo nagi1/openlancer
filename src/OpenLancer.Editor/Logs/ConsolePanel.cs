@@ -5,14 +5,19 @@ using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
+using OpenLancer.Data;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Logs;
 
 /// <summary>
 /// The Console: the editor messages, the mod diagnostics and the engine warnings and errors in a list. The toolbar
-/// strip filters the list by severity and by text. The selected message shows in full in a pane below the list.
+/// strip filters the list by origin, by severity and by text. The selected message shows in full in a pane below the
+/// list, with its origin and its kind.
 /// </summary>
+/// <remarks>The base-game toggle shows or hides the messages that the base game without mods gives too (decision D519 of
+/// the console filter design). It is off by default. While it hides messages, a banner at the top of the list counts
+/// them. While engine lines wait for the base run, a row at the top counts them.</remarks>
 internal sealed class ConsolePanel(EditorWindow window)
 {
     // Sizes in unscaled points.
@@ -35,14 +40,19 @@ internal sealed class ConsolePanel(EditorWindow window)
         new(ConsoleSeverity.Error, EditorIcons.TimesCircle, EditorTheme.Error, "errors"),
     ];
 
+    private const string BaseGameToggleId = "show-base-game";
+
     private readonly bool[] shown = [true, true, true];
     private readonly List<ConsoleEntry> visible = [];
     private readonly List<PanelBadge> badges = [];
     private string search = "";
 
-    // The texts of the severity toggles. They are made again only when the log or the toggles change.
+    // The texts of the severity toggles and of the base-game toggle. They are made again only when the log or the
+    // toggles change.
     private readonly string[] countTexts = ["", "", ""];
     private readonly string[] toggleTips = ["", "", ""];
+    private string baseGameCountText = "";
+    private string baseGameTip = "";
     private int toggleTextsVersion = -1;
     private int toggleTextsShown = -1;
 
@@ -70,6 +80,9 @@ internal sealed class ConsolePanel(EditorWindow window)
     }
 
     private ConsoleLog Log => window.Log;
+
+    /// <summary>True while the list shows the base-game messages. The setting keeps it between runs.</summary>
+    private bool ShowBaseGame => window.Settings.ShowBaseGameMessages;
 
     /// <summary>The glyph and the color of a severity.</summary>
     public static (string Glyph, Vector4 Color) Look(ConsoleSeverity severity) =>
@@ -107,6 +120,11 @@ internal sealed class ConsolePanel(EditorWindow window)
     public void Select(ConsoleEntry entry)
     {
         shown[(int)entry.Severity] = true;
+        if (entry.Origin.IsBaseGame && !ShowBaseGame)
+        {
+            SetShowBaseGame(true);
+        }
+
         if (!Matches(entry, search))
         {
             search = "";
@@ -116,7 +134,8 @@ internal sealed class ConsolePanel(EditorWindow window)
         scrollToSelected = true;
     }
 
-    /// <summary>Draws the items of the toolbar strip: Clear, the search field and the severity toggles.</summary>
+    /// <summary>Draws the items of the toolbar strip: Clear, the search field, the base-game toggle and the severity
+    /// toggles.</summary>
     public void Toolbar()
     {
         var spacing = ImGui.GetStyle().ItemSpacing.X;
@@ -127,7 +146,7 @@ internal sealed class ConsolePanel(EditorWindow window)
 
         ImGui.SameLine();
         UpdateToggleTexts();
-        var togglesWidth = (Severities.Length - 1) * spacing;
+        var togglesWidth = Severities.Length * spacing + ToolbarItems.CountToggleWidth(EditorIcons.Lock, baseGameCountText);
         for (var i = 0; i < Severities.Length; i++)
         {
             togglesWidth += ToolbarItems.CountToggleWidth(Severities[i].Icon, countTexts[i]);
@@ -140,13 +159,16 @@ internal sealed class ConsolePanel(EditorWindow window)
         // The toggles are at the right end of the strip.
         ImGui.SameLine();
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + Math.Max(0, ImGui.GetContentRegionAvail().X - togglesWidth));
+        var showBaseGame = ToolbarItems.CountToggle(BaseGameToggleId, EditorIcons.Lock, EditorTheme.TextDim,
+            baseGameCountText, baseGameTip, ShowBaseGame);
+        if (showBaseGame != ShowBaseGame)
+        {
+            SetShowBaseGame(showBaseGame);
+        }
+
         for (var i = 0; i < Severities.Length; i++)
         {
-            if (i > 0)
-            {
-                ImGui.SameLine();
-            }
-
+            ImGui.SameLine();
             var severity = Severities[i];
             shown[i] = ToolbarItems.CountToggle(severity.ToggleId, severity.Icon, severity.Color, countTexts[i],
                 toggleTips[i], shown[i]);
@@ -168,15 +190,47 @@ internal sealed class ConsolePanel(EditorWindow window)
         for (var i = 0; i < Severities.Length; i++)
         {
             var severity = Severities[i];
-            var count = Log.Count(severity.Value);
+            var count = Log.Count(severity.Value, ShowBaseGame);
             countTexts[i] = CountText(count);
             toggleTips[i] = string.Create(CultureInfo.InvariantCulture,
                 $"{(shown[i] ? "Hide" : "Show")} the {severity.Name} ({count:N0})");
         }
+
+        var baseGame = Log.BaseGameCount;
+        baseGameCountText = CountText(baseGame);
+        baseGameTip = BaseGameToggleTip(baseGame, ShowBaseGame);
     }
 
-    /// <summary>The severity toggles as bits: 1 for info, 2 for warnings and 4 for errors.</summary>
-    private int ShownBits() => (shown[0] ? 1 : 0) | (shown[1] ? 2 : 0) | (shown[2] ? 4 : 0);
+    /// <summary>The tooltip of the base-game toggle (section 4.4 of the console filter design).</summary>
+    internal static string BaseGameToggleTip(int count, bool showing) => showing
+        ? string.Create(CultureInfo.InvariantCulture, $"Hide the base-game messages ({count:N0}).")
+        : string.Create(CultureInfo.InvariantCulture, $"Show the base-game messages ({count:N0}). {BaseGameReason}");
+
+    private const string BaseGameReason =
+        "The base game without mods gives these messages too. The mods do not cause them.";
+
+    /// <summary>The banner text while the list hides base-game messages, and the text of its link.</summary>
+    internal static (string Text, string Link) BaseGameBanner(int count) => count == 1
+        ? ("The Console hides 1 base-game message.", "Show it")
+        : (string.Create(CultureInfo.InvariantCulture, $"The Console hides {count:N0} base-game messages."), "Show them");
+
+    /// <summary>The text of the row while engine lines wait for the base run.</summary>
+    internal static string PendingText(int count) => count == 1
+        ? "The Console compares 1 engine message with the base game. Then it shows the message if a mod causes it."
+        : string.Create(CultureInfo.InvariantCulture,
+            $"The Console compares {count:N0} engine messages with the base game. {PendingThen}");
+
+    private const string PendingThen = "Then it shows the messages that the mods cause.";
+
+    /// <summary>The toggles as bits: 1 for info, 2 for warnings, 4 for errors and 8 for the base-game messages.</summary>
+    private int ShownBits() => (shown[0] ? 1 : 0) | (shown[1] ? 2 : 0) | (shown[2] ? 4 : 0) | (ShowBaseGame ? 8 : 0);
+
+    /// <summary>Shows or hides the base-game messages, and keeps the choice in the settings.</summary>
+    private void SetShowBaseGame(bool value)
+    {
+        window.Settings.ShowBaseGameMessages = value;
+        window.Settings.Save();
+    }
 
     public void Draw()
     {
@@ -201,12 +255,26 @@ internal sealed class ConsolePanel(EditorWindow window)
             : MathF.Truncate(Math.Clamp(settings.ConsoleDetailHeight, DetailMin, detailMax) * scale);
         var listSize = new Vector2(avail.X, Math.Max(1, avail.Y - (selected == null ? 0 : detailHeight + gap)));
 
+        // The rows of the pending lines and of the hidden base-game messages come first. The list takes the rest.
+        var notes = Notes();
+        if (notes > 0)
+        {
+            NoteRows();
+        }
+
+        var listTop = ImGui.GetCursorScreenPos().Y;
+        listSize.Y = Math.Max(1, listSize.Y - (listTop - origin.Y));
+
         if (visible.Count == 0)
         {
             ImGui.BeginChild("##empty", listSize);
-            PanelStates.Message(Log.Entries.Count == 0 ? "No messages." : "No message matches the filters.",
-                Log.Entries.Count == 0 ? "Warnings and errors of the editor, the mods and the engine show here."
-                    : "Turn on the severity toggles or clear the search.");
+            if (notes == 0)
+            {
+                PanelStates.Message(Log.Entries.Count == 0 ? "No messages." : "No message matches the filters.",
+                    Log.Entries.Count == 0 ? "Warnings and errors of the editor, the mods and the engine show here."
+                        : "Turn on the severity toggles or clear the search.");
+            }
+
             ImGui.EndChild();
         }
         else
@@ -220,7 +288,7 @@ internal sealed class ConsolePanel(EditorWindow window)
         }
 
         // A line in the middle of the gap separates the list from the details. A drag on the gap moves it.
-        var gapTop = origin.Y + listSize.Y;
+        var gapTop = listTop + listSize.Y;
         PixelLine.Horizontal(ImGui.GetWindowDrawList(), gapTop + gap / 2, origin.X, origin.X + avail.X,
             ImGui.GetColorU32(EditorTheme.Border));
         var shownHeight = detailHeight / scale;
@@ -240,6 +308,33 @@ internal sealed class ConsolePanel(EditorWindow window)
         Details(selected, new Vector2(avail.X, detailHeight));
     }
 
+    /// <summary>The number of note rows above the list: one while engine lines wait for the base run, and one while the
+    /// list hides base-game messages.</summary>
+    private int Notes() => (Log.PendingCount > 0 ? 1 : 0) + (!ShowBaseGame && Log.BaseGameCount > 0 ? 1 : 0);
+
+    /// <summary>Draws the muted note rows above the list: the pending row, and the banner of the hidden base-game
+    /// messages with its link that shows them.</summary>
+    private void NoteRows()
+    {
+        if (Log.PendingCount is > 0 and var pending)
+        {
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled($"{EditorIcons.InfoCircle}  {PendingText(pending)}");
+        }
+
+        if (!ShowBaseGame && Log.BaseGameCount is > 0 and var hidden)
+        {
+            var (text, link) = BaseGameBanner(hidden);
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled($"{EditorIcons.Lock}  {text}");
+            ImGui.SameLine();
+            if (ImGui.TextLink(link))
+            {
+                SetShowBaseGame(true);
+            }
+        }
+    }
+
     /// <summary>Makes the visible list again when the log, the search or the severity toggles changed.</summary>
     private void UpdateVisible()
     {
@@ -251,12 +346,19 @@ internal sealed class ConsolePanel(EditorWindow window)
 
         (visibleVersion, visibleSearch, visibleShown) = (Log.Version, search, shownBits);
         visible.Clear();
-        visible.AddRange(Log.Entries.Where(e => shown[(int)e.Severity] && Matches(e, search)));
+        var baseGame = ShowBaseGame;
+        visible.AddRange(Log.Entries.Where(e => IsShown(e.Origin, baseGame) && shown[(int)e.Severity] &&
+                                                Matches(e, search)));
         if (selected != null && !visible.Contains(selected))
         {
             selected = null;
         }
     }
+
+    /// <summary>True when an entry of the origin shows: a pending entry never shows, and a base-game entry shows only
+    /// while the base-game toggle is on.</summary>
+    internal static bool IsShown(MessageOrigin origin, bool baseGame) =>
+        origin.Kind != OriginKind.Pending && (baseGame || !origin.IsBaseGame);
 
     /// <summary>True when the message or the source contains the text. Case does not matter.</summary>
     private static bool Matches(ConsoleEntry entry, string text) =>
@@ -361,11 +463,12 @@ internal sealed class ConsolePanel(EditorWindow window)
             ImGui.EndPopup();
         }
 
-        // Only the glyph has the severity color.
+        // Only the glyph has the severity color. A base-game row is muted.
+        var muted = entry.Origin.IsBaseGame;
         var (glyph, color) = Look(entry.Severity);
         ImGui.GetWindowDrawList().AddText(
             new Vector2(cell.X + MathF.Truncate((cellWidth - ImGui.CalcTextSize(glyph).X) / 2), cell.Y),
-            ImGui.GetColorU32(color), glyph);
+            ImGui.GetColorU32(muted ? EditorTheme.TextDim : color), glyph);
 
         if (ImGui.TableSetColumnIndex(1))
         {
@@ -378,16 +481,29 @@ internal sealed class ConsolePanel(EditorWindow window)
 
         if (ImGui.TableSetColumnIndex(2))
         {
-            ImGui.TextDisabled(entry.Source);
+            ImGui.TextDisabled(SourceText(entry));
         }
 
         if (ImGui.TableSetColumnIndex(3))
         {
-            ImGui.Text(entry.FirstLine);
+            if (muted)
+            {
+                ImGui.TextDisabled(entry.FirstLine);
+            }
+            else
+            {
+                ImGui.Text(entry.FirstLine);
+            }
         }
 
         ImGui.PopID();
     }
+
+    /// <summary>The source of a row, after the lock glyph of a base-game entry and the wrench glyph of an engine
+    /// gap.</summary>
+    internal static string SourceText(ConsoleEntry entry) =>
+        (entry.Origin.IsBaseGame ? $"{EditorIcons.Lock} " : "") +
+        (entry.Kind?.Class == EngineLineClass.EngineGap ? $"{EditorIcons.Wrench} " : "") + entry.Source;
 
     private void ContextMenu(ConsoleEntry entry)
     {
@@ -409,7 +525,8 @@ internal sealed class ConsolePanel(EditorWindow window)
     }
 
     /// <summary>
-    /// Draws the details pane: the severity, the source and the time with a copy button, and the full message.
+    /// Draws the details pane: the severity, the source and the time with a copy button, the origin line, the kind line
+    /// of an engine line, and the full message.
     /// </summary>
     private static void Details(ConsoleEntry entry, Vector2 size)
     {
@@ -438,6 +555,14 @@ internal sealed class ConsolePanel(EditorWindow window)
             }
 
             EditorTheme.PopFlatButtonColors();
+            ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+            ImGui.TextWrapped(entry.Origin.Text);
+            if (entry.Kind != null)
+            {
+                ImGui.TextWrapped(entry.Kind.DetailText);
+            }
+
+            ImGui.PopStyleColor();
             ImGui.TextWrapped(entry.Message);
         }
 

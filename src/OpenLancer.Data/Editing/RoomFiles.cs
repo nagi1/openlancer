@@ -26,6 +26,10 @@ namespace OpenLancer.Data.Editing;
 internal sealed class RoomFiles(EditSession session, Func<IReadOnlyList<Section>> freelancerIni)
 {
     private const string FileKey = "file";
+    private const string NicknameKey = "nickname";
+
+    /// <summary>The nickname prefix of an intro base (GameItemDb.cs:261).</summary>
+    private const string IntroPrefix = "intro";
 
     private int revision = int.MinValue;
 
@@ -33,6 +37,7 @@ internal sealed class RoomFiles(EditSession session, Func<IReadOnlyList<Section>
     private (string Path, object? State)[] read = [];
     private List<string> files = [];
     private HashSet<string> set = new(VfsPath.Comparer);
+    private HashSet<string> intro = new(VfsPath.Comparer);
 
     /// <summary>The room files, in the order of the bases and their rooms, without repeats.</summary>
     public IReadOnlyList<string> Files
@@ -49,6 +54,14 @@ internal sealed class RoomFiles(EditSession session, Func<IReadOnlyList<Section>
     {
         Refresh();
         return VfsPath.Normalize(path) is { } normal && set.Contains(normal);
+    }
+
+    /// <summary>True when only the <c>[Room]</c> sections of intro bases name the file. The fork marks an intro base by
+    /// the nickname prefix "intro" (GameItemDb.cs:261), and only the main menu shows its rooms.</summary>
+    public bool IsIntroRoom(string path)
+    {
+        Refresh();
+        return VfsPath.Normalize(path) is { } normal && intro.Contains(normal);
     }
 
     private void Refresh()
@@ -72,19 +85,24 @@ internal sealed class RoomFiles(EditSession session, Func<IReadOnlyList<Section>
 
         var result = new List<string>();
         var found = new HashSet<string>(VfsPath.Comparer);
+        var other = new HashSet<string>(VfsPath.Comparer);
+        var introRooms = new HashSet<string>(VfsPath.Comparer);
         if (session.UniversePath is { } universe)
         {
             var ini = freelancerIni();
-            foreach (var basePath in Named(Read(universe), "Base", ini))
+            foreach (var (basePath, nickname) in Named(Read(universe), "Base", ini))
             {
-                foreach (var roomPath in Named(Read(basePath), "Room", ini))
+                var isIntro = nickname?.StartsWith(IntroPrefix, StringComparison.OrdinalIgnoreCase) == true;
+                foreach (var (roomPath, _) in Named(Read(basePath), "Room", ini))
                 {
                     if (found.Add(roomPath))
                         result.Add(roomPath);
+                    (isIntro ? introRooms : other).Add(roomPath);
                 }
             }
         }
-        (read, files, set) = (used.ToArray(), result, found);
+        introRooms.ExceptWith(other);
+        (read, files, set, intro) = (used.ToArray(), result, found, introRooms);
     }
 
     /// <summary>The state of a file for the map: W of its document when the session has it open, else the edit
@@ -92,16 +110,20 @@ internal sealed class RoomFiles(EditSession session, Func<IReadOnlyList<Section>
     private object? StateOf(string path) => session.OpenedDocument(path) is { } document ? document.Working : session.EditView;
 
     /// <summary>The install paths that the sections of a type name with their last <c>file</c> line, relative to the
-    /// data folder, in order, without repeats.</summary>
-    private static IEnumerable<string> Named(IReadOnlyList<Section> sections, string type, IReadOnlyList<Section> ini)
+    /// data folder, in order, without repeats, each with the nickname of its first section.</summary>
+    private static IEnumerable<(string Path, string? Nickname)> Named(IReadOnlyList<Section> sections, string type,
+        IReadOnlyList<Section> ini)
     {
         var seen = new HashSet<string>(VfsPath.Comparer);
         foreach (var section in sections.Where(s => s.Name.Equals(type, StringComparison.OrdinalIgnoreCase)))
         {
-            var file = section.LastOrDefault(e => e.Name.Equals(FileKey, StringComparison.OrdinalIgnoreCase) && e.Count > 0)?
-                [0].ToString();
+            var file = LastValue(section, FileKey);
             if (file != null && DataPaths.Resolve(ini, file) is { } path && seen.Add(path))
-                yield return path;
+                yield return (path, LastValue(section, NicknameKey));
         }
     }
+
+    /// <summary>The first value of the last line of a key with a value, or null.</summary>
+    private static string? LastValue(Section section, string key) =>
+        section.LastOrDefault(e => e.Name.Equals(key, StringComparison.OrdinalIgnoreCase) && e.Count > 0)?[0].ToString();
 }

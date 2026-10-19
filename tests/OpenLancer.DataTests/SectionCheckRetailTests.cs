@@ -33,8 +33,8 @@ public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
 
     /// <summary>
     /// The warnings of universe.ini and of the retail system files, as <see cref="KnownItemWarnings"/> gives them. Each
-    /// trade lane zone has a string in its integer key <c>lane_id</c>, for example <c>br01_2</c>. The engine reads it
-    /// as -1 and logs nothing. One row counts these warnings, with <c>&lt;text&gt;</c> in place of the string.
+    /// trade lane zone has a string in <c>lane_id</c>, for example <c>br01_2</c>. The retail game never reads the key,
+    /// so the checks skip it (decision D513 of the console filter design), and no row counts these lines.
     /// </summary>
     private static readonly Dictionary<string, int> KnownSystemWarnings = new(StringComparer.Ordinal)
     {
@@ -57,7 +57,6 @@ public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
         ["[zone] the section type has no key 'spacedust _maxparticles'. The game ignores the line."] = 5,
         ["[zone] the section type has no key 'spacedust_masparticles'. The game ignores the line."] = 2,
         ["[zone] the section type has no key 'spacedust_maxdust'. The game ignores the line."] = 3,
-        ["[zone] the game reads '<text>' in a 'lane_id' line as the integer -1."] = 91,
     };
 
     [Fact]

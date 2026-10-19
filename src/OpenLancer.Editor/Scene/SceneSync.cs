@@ -102,7 +102,8 @@ internal sealed class SceneSync : ISceneHost, IDisposable
     /// <summary>
     /// The catch-up at the open. A model that loads again can log the lines that the Console showed at an earlier open
     /// of the system, so the Console skips the engine lines of the catch-up that it showed (section 13 of the design).
-    /// The lines of the system load show as before.
+    /// The lines of the system load show as before. The catch-up runs in the Console batch of the open of the system
+    /// (see <see cref="SceneView.Open"/>), so each of its lines still counts for the comparison with the base run.
     /// </summary>
     private void CatchUp() =>
         window.Log.SkipKnownEngineLinesOf(() => applier.CatchUp(), window, () => window.Session?.IsReloading == true);

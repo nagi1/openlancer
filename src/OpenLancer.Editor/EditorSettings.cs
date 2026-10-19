@@ -102,6 +102,13 @@ internal sealed class EditorSettings
     /// <summary>The height of the details pane below the Console list.</summary>
     public float ConsoleDetailHeight { get; set; } = DefaultConsoleDetailHeight;
 
+    /// <summary>
+    /// True when the views show the messages and problems that the base game without mods has too: the Console and the
+    /// views of the Mission Studio (decisions D519 of the console filter design and D527 of the M6a design). It is off
+    /// by default, so the views show only what the mods cause.
+    /// </summary>
+    public bool ShowBaseGameMessages { get; set; }
+
     /// <summary>The id of the category of the Assets panel that shows, for example "solars/station" (milestone
     /// M23).</summary>
     public string AssetsCategory { get; set; } = DefaultAssetsCategory;

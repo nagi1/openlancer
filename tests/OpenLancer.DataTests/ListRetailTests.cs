@@ -106,14 +106,14 @@ public sealed class ListRetailTests(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// With no edit of the active mod, no rule gives an error. The warnings are the 4 retail values outside a list, two
-    /// <c>parent</c> lines that name an object of another system and two <c>lens_glow</c> lines, and the 3 rooms without
-    /// <c>set_script</c>: the <c>Cityscape</c> rooms of the intro bases, which the engine plays through
-    /// <c>IntroScenes</c>, not as rooms (section 5.6 of the M8b design). Each rule matches a retail line, or the rule
-    /// data marks it as unused.
+    /// With no edit of the active mod, no rule gives an error. The warnings are the 4 retail values outside a list: two
+    /// <c>parent</c> lines that name an object of another system and two <c>lens_glow</c> lines. The 3 rooms without
+    /// <c>set_script</c> give no warning: they are the <c>Cityscape</c> rooms of the intro bases, which the engine plays
+    /// through <c>IntroScenes</c>, not as rooms (section 5.6 of the M8b design), so the rule skips them (section 6 of the
+    /// console filter design). Each rule matches a retail line, or the rule data marks it as unused.
     /// </summary>
     [Fact]
-    public void TheRetailDataGivesNoListErrorAndSevenWarnings()
+    public void TheRetailDataGivesNoListErrorAndFourWarnings()
     {
         using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m21proof");
         var session = workspace.Open();
@@ -147,11 +147,9 @@ public sealed class ListRetailTests(ITestOutputHelper output)
             output.WriteLine(problem.Diagnostic.ToString());
 
         Assert.DoesNotContain(problems, p => p.IsError);
-        Assert.Equal(7, problems.Count);
-        var intro = problems.Where(p => p.Kind == ListProblemKind.RequiredMissing).ToList();
-        Assert.Equal(3, intro.Count);
-        Assert.All(intro, p => Assert.Equal(("set_script", "Room_Info"), (p.Diagnostic.Key, p.Diagnostic.Target!.Id.Type)));
-        Assert.All(intro, p => Assert.Contains("intro", p.Diagnostic.Source, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(4, problems.Count);
+        Assert.DoesNotContain(problems, p => p.Kind == ListProblemKind.RequiredMissing);
+        Assert.Equal(3, session.Rooms.Files.Count(session.Rooms.IsIntroRoom));
         Assert.Equal(2, problems.Count(p => p.Diagnostic.Key == "parent" && p.Value!.Equals("Li01_space_police_dmg_1",
             StringComparison.OrdinalIgnoreCase)));
         Assert.Contains(problems, p => p.Diagnostic.Key == "lens_glow" && p.Value == "blue_lens_glow");

@@ -13,6 +13,7 @@ using LibreLancer.Resources;
 using LibreLancer.World;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
@@ -204,7 +205,22 @@ internal sealed class SceneView : IDisposable
     /// </summary>
     /// <param name="keepCamera">True to keep the camera pose, for an open of the same system after a reload of the game
     /// data (decision D282 of the M23 design). Else the camera frames the whole system.</param>
+    /// <remarks>The engine lines of the system load and of the catch-up of W form a batch of the Console, which compares
+    /// them with the base run (section 3.4 of the console filter design).</remarks>
     public void Open(StarSystem source, EditorSession session, bool keepCamera = false)
+    {
+        var batch = window.BeginConsoleBatch();
+        try
+        {
+            Load(source, session, keepCamera);
+        }
+        finally
+        {
+            ConsoleLog.EndBatch(batch);
+        }
+    }
+
+    private void Load(StarSystem source, EditorSession session, bool keepCamera)
     {
         Close();
         var data = session.GameData!;

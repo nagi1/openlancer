@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
 using LibreLancer;
 using OpenLancer.Data;
 using OpenLancer.Runtime.Validation;
@@ -39,10 +37,7 @@ internal sealed record ValidationState(int Save, bool Running, ValidationResult?
 internal sealed class ValidationRunner : IDisposable
 {
     private readonly Func<string, string?, ProcessStartInfo> command;
-    private Process? process;
-
-    // Changes when a validation starts or stops, so that the result of a stopped process is dropped.
-    private int generation;
+    private readonly ToolProcess process = new();
 
     /// <summary>A runner that starts the oltool program next to the editor.</summary>
     public ValidationRunner() : this(OltoolCommand)
@@ -69,49 +64,9 @@ internal sealed class ValidationRunner : IDisposable
         Stop();
         // The state changes first, because a process that does not start gives its result at once.
         State = new ValidationState(save, Running: true, Result: null);
-        var info = command(profilePath, modId);
-        info.RedirectStandardOutput = true;
-        info.RedirectStandardError = true;
-        info.UseShellExecute = false;
-        info.CreateNoWindow = true;
-        Process started;
-        try
-        {
-            started = Process.Start(info) ?? throw new InvalidOperationException("The process did not start.");
-        }
-        catch (Exception e) when (e is Win32Exception or InvalidOperationException)
-        {
-            Finish(new ValidationResult(save, null, $"{info.FileName} did not start: {e.Message}"), done);
-            return;
-        }
-
-        process = started;
-        var id = ++generation;
-        Task.Run(async () =>
-        {
-            ValidationResult result;
-            try
-            {
-                var output = started.StandardOutput.ReadToEndAsync();
-                var errors = started.StandardError.ReadToEndAsync();
-                await started.WaitForExitAsync();
-                result = Result(save, started.ExitCode, await output, await errors);
-            }
-            finally
-            {
-                started.Dispose();
-            }
-            ui.QueueUIThread(() =>
-            {
-                if (id != generation)
-                {
-                    return;
-                }
-
-                process = null;
-                Finish(result, done);
-            });
-        });
+        process.Start(command(profilePath, modId), ui, output => Finish(output.StartError is { } failure
+            ? new ValidationResult(save, null, failure)
+            : Result(save, output.ExitCode, output.Output, output.Errors), done));
     }
 
     private void Finish(ValidationResult result, Action<ValidationResult> done)
@@ -161,24 +116,11 @@ internal sealed class ValidationRunner : IDisposable
     /// result.</summary>
     public void Stop()
     {
-        if (process == null)
-        {
-            return;
-        }
-
-        generation++;
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception e) when (e is InvalidOperationException or Win32Exception or NotSupportedException)
-        {
-            // The process ended already. Its task disposes it.
-        }
-
-        process = null;
         // A process runs only after the state of its save is set.
-        State = State! with { Running = false };
+        if (process.Stop())
+        {
+            State = State! with { Running = false };
+        }
     }
 
     /// <summary>Stops the running validation and forgets the state, for example when the profile closes.</summary>
@@ -188,5 +130,5 @@ internal sealed class ValidationRunner : IDisposable
         State = null;
     }
 
-    public void Dispose() => Stop();
+    public void Dispose() => process.Dispose();
 }

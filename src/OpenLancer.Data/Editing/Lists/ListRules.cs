@@ -90,6 +90,12 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
     /// </summary>
     public bool Exists { get; init; }
 
+    /// <summary>
+    /// True when the rule does not apply to the rooms of the intro bases. The fork marks an intro base by the nickname
+    /// prefix "intro" (GameItemDb.cs:261). Only the main menu shows these rooms, and the player cannot enter them.
+    /// </summary>
+    public bool SkipIntroRooms { get; init; }
+
     /// <summary>The index of the value that the rule reads in a line, or -1 when the line has no such value. Without
     /// <see cref="Scene"/>, it is <see cref="Index"/>.</summary>
     public int IndexIn(Entry line) => IndexIn(line.Count, line.Count > 0 ? line[0].ToString() : null);
@@ -470,6 +476,7 @@ internal sealed class ListRules
             Unused = Bool(e, "unused"),
             Scene = Bool(e, "scene"),
             Exists = Bool(e, "exists"),
+            SkipIntroRooms = Bool(e, "skipIntroRooms"),
             MissingConsequence = String(e, "missing"),
             OnDelete = onDelete,
         };

@@ -379,6 +379,24 @@ internal sealed partial class PropertyGrid
         scene.ForEach(ProblemText);
     }
 
+    /// <summary>The tooltip of a base-game problem of a section (decision D512 of the console filter design).</summary>
+    internal const string BaseGameProblemTip =
+        "Base game: the base game without mods has the same problem. No mod changes this line.";
+
+    /// <summary>
+    /// A problem that the base game without mods has too (the key rule, decision D512 of the console filter design):
+    /// muted, with the lock glyph, and with the tooltip that tells why. It never marks a field, because no mod causes it.
+    /// The look does not depend on the base-game toggle of the Console, because the Inspector shows one section on
+    /// request.
+    /// </summary>
+    internal static void BaseGameProblemText(string text)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+        ImGui.TextWrapped($"{EditorIcons.Lock} {text}");
+        ImGui.PopStyleColor();
+        ImGui.SetItemTooltip(BaseGameProblemTip);
+    }
+
     /// <summary>A problem of the scene as a warning, without the section at the start of its message.</summary>
     internal static void ProblemText(Diagnostic problem) => ProblemText(problem, EditorTheme.Warning);
 

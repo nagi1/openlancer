@@ -27,6 +27,10 @@ public sealed record Diagnostic(DiagnosticSeverity Severity, string Source, stri
     /// <summary>The place in a cutscene that the problem is about, or null.</summary>
     public ThnLocation? Cutscene { get; init; }
 
+    /// <summary>Who causes the problem, or null when the check does not know it (section 3.6 of the console filter
+    /// design). The Console shows a problem of the origin base game only on request.</summary>
+    public MessageOrigin? Origin { get; init; }
+
     public static Diagnostic Error(string source, string message) => new(DiagnosticSeverity.Error, source, message);
 
     public static Diagnostic Warning(string source, string message) => new(DiagnosticSeverity.Warning, source, message);

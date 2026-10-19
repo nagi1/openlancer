@@ -2,7 +2,6 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading;
 using LibreLancer;
 
@@ -20,21 +19,15 @@ namespace OpenLancer.Data;
 /// So <see cref="Start"/> logs a start sentinel and the capture ignores all lines before it, and
 /// <see cref="Stop"/> logs an end sentinel and waits for it. (<see cref="FLLog.Flush"/> can return before the
 /// last line arrives.)</para>
+/// <para>The capture does not collect the lines that <see cref="EngineLineRules"/> drops, because they describe the
+/// state of the engine process, not the data. An example is the line of a second data load in one process, which
+/// replaces the global material map.</para>
 /// </remarks>
-public sealed partial class EngineLogCapture : IUIThread, IDisposable
+public sealed class EngineLogCapture : IUIThread, IDisposable
 {
     private static readonly Lock StartLock = new();
 
-    /// <summary>
-    /// Lines that describe the engine's process state, not the data. They are not collected.
-    /// </summary>
-    private static readonly string[] ProcessStateLines =
-    [
-        // Logged when a second data load in one process replaces the global material map.
-        "Warning MaterialMap: Switching global material map. TODO make instance",
-    ];
-
-    private readonly ConcurrentQueue<string> lines = new();
+    private readonly ConcurrentQueue<EngineLine> lines = new();
     private readonly ManualResetEventSlim endSeen = new();
     private readonly string startSentinel;
     private readonly string endSentinel;
@@ -76,9 +69,13 @@ public sealed partial class EngineLogCapture : IUIThread, IDisposable
     void IUIThread.QueueUIThread(Action work) => work();
 
     /// <summary>
-    /// Stops the capture. Returns the warning and error lines in arrival order, as "Severity Component: message".
+    /// Stops the capture. Returns the warning and error lines in arrival order, as "Severity Component: message", without
+    /// the time and the line number (see <see cref="EngineLine.Normalized"/>).
     /// </summary>
-    public IReadOnlyList<string> Stop()
+    public IReadOnlyList<string> Stop() => StopLines().Select(l => l.Normalized).ToList();
+
+    /// <summary>Stops the capture. Returns the warning and error lines in arrival order.</summary>
+    public IReadOnlyList<EngineLine> StopLines()
     {
         lock (StartLock)
         {
@@ -99,7 +96,7 @@ public sealed partial class EngineLogCapture : IUIThread, IDisposable
     }
 
     /// <summary>Stops the capture. All lines that were logged before are delivered first.</summary>
-    public void Dispose() => Stop();
+    public void Dispose() => StopLines();
 
     private void Append(string line, LogSeverity severity)
     {
@@ -116,29 +113,12 @@ public sealed partial class EngineLogCapture : IUIThread, IDisposable
         }
         if (collecting && severity >= LogSeverity.Warning)
         {
-            var text = Normalize(line);
-            if (!ProcessStateLines.Contains(text))
-                lines.Enqueue(text);
+            var parsed = EngineLine.Parse(line, severity);
+            if (EngineLineRules.Match(parsed)?.Disposition != EngineLineDisposition.Drop)
+                lines.Enqueue(parsed);
         }
         previousThread.QueueUIThread(() => previousAppend(line, severity));
     }
-
-    /// <summary>
-    /// Removes what differs between two loads of the same data:
-    /// "[Warning: 12:34:56] Ini: Unknown entry x at section Ship: a.ini, line 12" and
-    /// "[Warning: 12:34:56] Ini: Unknown entry x in section Ship: a.ini (line not available)" both become
-    /// "Warning Ini: Unknown entry x in section Ship: a.ini". The time separator depends on the culture. The line
-    /// is known only for a text INI file, and it changes when a patch rewrites the file.
-    /// </summary>
-    private static string Normalize(string line) =>
-        Location().Replace(Timestamp().Replace(line, "$1 "), " in${section} ${file}");
-
-    [GeneratedRegex(@"^\[(\w+): [^\]]*\] ")]
-    private static partial Regex Timestamp();
-
-    // The two forms of upstream IniDiagnostic.FormatLine, with or without the section part.
-    [GeneratedRegex(@" (?:at|in)(?<section> section [^:]+:)? (?<file>\S.*?)(?:, line \d+| \(line not available\))$")]
-    private static partial Regex Location();
 
     private sealed class ImmediateThread : IUIThread
     {

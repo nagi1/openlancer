@@ -267,9 +267,10 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// <param name="hadEdits">True when the session had unsaved edits before the save.</param>
     private void Report(SaveResult result, Mod mod, int number, bool hadEdits)
     {
-        foreach (var line in SaveReport.Lines(result, mod.Folder))
+        var edits = window.Session?.Edits;
+        foreach (var line in SaveReport.Lines(result, mod.Folder, edits == null ? null : edits.SaveProblemOrigin))
         {
-            Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene);
+            Log.Add(line.Severity, line.Source, line.Message, line.Target, line.Cutscene, line.Origin);
         }
 
         var summary = SaveReport.Summary(result, mod.Id, number, hadEdits);
@@ -515,6 +516,8 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         // Each reload reads its own file system of the edit view, which no later save changes.
         var fs = session.Edits.EditView.CreateFileSystem();
         var saves = session.Saves;
+        // The engine lines of the reload form a batch, which the Console compares with the base run.
+        var batch = window.BeginConsoleBatch();
         Task.Run(() =>
         {
             GameDataManager? data = null;
@@ -531,6 +534,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
                 (data, error) = (null, e.Message);
             }
 
+            ConsoleLog.EndBatch(batch);
             // FLLog gives its lines to the UI thread in order. So after the flush, the lines of the load come first.
             FLLog.Flush();
             window.QueueUIThread(() => Reloaded(session, data, error, saves));
@@ -613,9 +617,14 @@ internal sealed class EditController(EditorWindow window) : IDisposable
             Log.Add(errors > 0 ? ConsoleSeverity.Error : ConsoleSeverity.Info, ValidationSource, errors > 0
                 ? $"Validation of {save} failed: {errors} errors and {warnings} warnings {adds}."
                 : $"Validation OK for {save}: no errors, {warnings} warnings {adds}.");
+            // The command reports only the problems that the active mod adds, or that all mods add without an active mod
+            // (section 3.6 of the console filter design).
+            var origin = session.Edits.ActiveMod is { } active
+                ? MessageOrigin.Mod(active.Id, ModEvidence.ActiveMod)
+                : MessageOrigin.SomeMod;
             foreach (var problem in problems)
             {
-                Log.Add(problem, $"{Capital(save)}: ");
+                Log.Add(problem with { Origin = problem.Origin ?? origin }, $"{Capital(save)}: ");
             }
         }
     }

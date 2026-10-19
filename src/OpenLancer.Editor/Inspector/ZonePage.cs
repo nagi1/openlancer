@@ -27,7 +27,11 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
     private const string SharedBitNote = "Spacedust and Music have the same bit, 0x200000. So a chip cannot show " +
                                          "which of the two names the INI file uses.";
 
-    private static readonly string[] LaneKeys = ["lane_id", "tradelane_attack", "tradelane_down"];
+    private const string LaneIdKey = "lane_id";
+
+    private const string LaneIdNote = "The retail game does not read this key, so its value has no effect in the game.";
+
+    private static readonly string[] LaneKeys = ["tradelane_attack", "tradelane_down"];
 
     private static readonly string[] PopulationKeys =
     [
@@ -51,6 +55,11 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
             if (grid.Shows(zone.IsPopulationZone || zone.IsPatrolPathZone, PopulationKeys))
             {
                 Encounters(zone);
+            }
+
+            if (grid.Shows(zone.LaneId != 0, LaneIdKey))
+            {
+                Advanced(zone);
             }
         }
 
@@ -167,11 +176,24 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
         if (grid.Shows(zone.LaneId != 0, LaneKeys))
         {
             grid.SubHeading("Trade lane");
-            grid.Number("Lane id", zone.LaneId, iniKey: "lane_id");
             grid.Number("Attack chance", zone.TradelaneAttack, iniKey: "tradelane_attack");
             grid.Number("Down chance", zone.TradelaneDown, iniKey: "tradelane_down");
         }
 
+        grid.EndSection();
+    }
+
+    /// <summary>The keys that have no effect in the retail game, in a closed section (decision D513 of the console filter
+    /// design, UI rule 4).</summary>
+    private void Advanced(Zone zone)
+    {
+        if (!grid.BeginSection("Zone.Advanced", EditorIcons.Cog, "Advanced", false))
+        {
+            return;
+        }
+
+        grid.SetNextNote(LaneIdNote);
+        grid.Number("Lane id", zone.LaneId, iniKey: LaneIdKey);
         grid.EndSection();
     }
 

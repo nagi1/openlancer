@@ -70,6 +70,10 @@ internal sealed partial class EditorWindow : Game
     private CutsceneBench? bench;
     private readonly PlayMenu playMenu;
 
+    // The base run of the Console: the engine lines of the base folder without mods (decision D516 of the console
+    // filter design).
+    private readonly BaseRunRunner baseRun = new();
+
     // The time since the last frame. The Scene panel reads it while the layout draws.
     private double frameElapsed;
 
@@ -305,6 +309,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         Edits.Dispose();
+        baseRun.Dispose();
         Cutscenes.Dispose();
         assets?.Dispose();
         Scene.Dispose();
@@ -421,7 +426,7 @@ internal sealed partial class EditorWindow : Game
             edits = EditSession.Open(profile, active, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
             foreach (var d in edits.OpenProblems.Concat(edits.EditView.Diagnostics))
             {
-                Log.Add(d);
+                Log.Add(d with { Origin = d.Origin ?? edits.MergeProblemOrigin(d) });
             }
 
             if (edits.EditView.HasErrors)
@@ -439,6 +444,7 @@ internal sealed partial class EditorWindow : Game
             var session = new EditorSession(edits, new GameResourceManager(this, fileSystem), repo);
             Session = session;
             edits = null;
+            Log.Origins = new EngineLineOrigins(session.Edits);
             Log.Add(ConsoleSeverity.Info, EditorSource,
                 $"Opened profile {profile.Name} ({profile.Mods.Count} mods). " +
                 (session.Edits.ActiveMod is not { } activeMod
@@ -448,6 +454,8 @@ internal sealed partial class EditorWindow : Game
             ModWarnings(session);
             Links.ProfileOpened(profile);
             Edits.OfferRecovery();
+            // The engine lines of the load form a batch, which the Console compares with the base run.
+            var batch = BeginConsoleBatch();
             Task.Run(() =>
             {
                 try
@@ -463,6 +471,10 @@ internal sealed partial class EditorWindow : Game
                         session.LoadEnded(null);
                         Log.Add(ConsoleSeverity.Error, EditorSource, $"The game data did not load: {e.Message}");
                     });
+                }
+                finally
+                {
+                    ConsoleLog.EndBatch(batch);
                 }
             });
         }
@@ -508,6 +520,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         Edits.Stop();
+        baseRun.Stop();
         // The game shows the data of one profile and one active mod, so it cannot follow another session (decision
         // D48). A change of the active mod and a new mod open the profile again, so they close it here too.
         Play.SessionEnding(windowClose: false);
@@ -525,8 +538,44 @@ internal sealed partial class EditorWindow : Game
         reopenAfterReload = false;
         Selection = null;
         Session.Dispose();
+        Log.Origins = null;
         Log.Add(ConsoleSeverity.Info, EditorSource, $"Closed profile {Session.Profile.Name}.");
         Session = null;
+    }
+
+    /// <summary>
+    /// Starts a batch of the engine lines of a known load of the open profile: the open, a reload after a save, or the
+    /// load of a system in the Scene (section 3.4 of the console filter design). The Console compares the lines of the
+    /// batch with the base run, so the base run starts first when the batch needs it and no run gave its result yet.
+    /// End the batch with <see cref="ConsoleLog.EndBatch"/> after the load.
+    /// </summary>
+    internal string BeginConsoleBatch()
+    {
+        if (Session is { } session && Log.Origins is { NeedsBaseRun: true, CanResolve: false } && !baseRun.Running)
+        {
+            baseRun.Start(session.Profile.BaseFolder, this, result => BaseRunDone(session, result));
+        }
+
+        return ConsoleLog.BeginBatch();
+    }
+
+    /// <summary>Gives the result of the base run to the Console. A result of a session that closed is dropped.</summary>
+    private void BaseRunDone(EditorSession session, BaseRunResult result)
+    {
+        if (Session != session)
+        {
+            return;
+        }
+
+        if (result.Counts is { } counts)
+        {
+            Log.BaseRunEnded(counts);
+        }
+        else
+        {
+            Log.BaseRunFailed(result.Failure!);
+            Log.Add(ConsoleSeverity.Warning, EditorSource, BaseRunRunner.FailedText(result.Failure!));
+        }
     }
 
     public void OpenSystem(StarSystem system)
