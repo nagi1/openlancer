@@ -8,9 +8,9 @@ using static OpenLancer.Tests.MissionTestData;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The placeable items of a mission in a system (section 7.2 of the M6a design) on a synthetic script: the starts of the
-/// cast, the anchors, the lines of the triggers with a place, the objective markers and the order paths, each in its
-/// system.
+/// The placeable items of a mission in a system (section 7.2 of the M6a design) on a synthetic script. The tests check
+/// the starts of the cast, the anchors and the lines of the triggers with a place. They also check the objective
+/// markers and the order paths, each in its system.
 /// </summary>
 public sealed class MissionPlacementsTests
 {
@@ -134,6 +134,37 @@ public sealed class MissionPlacementsTests
         Assert.Equal(["s_other"], In("sys_b").Where(p => p.Kind == PlacementKind.ShipStart).Select(p => p.Label));
     }
 
+    /// <summary>A line of a trigger has the system line of its trigger. Without it, the line has the system of the
+    /// first item of the script that it names. The mission layer and the cross-links use the same rule.</summary>
+    [Fact]
+    public void ALineHasTheSystemOfItsTriggerOrOfItsItem()
+    {
+        var index = MissionTestData.Index("""
+            [MsnShip]
+            nickname = s_a
+            system = sys_b
+
+            [Trigger]
+            nickname = t_hint
+            system = sys_c
+            Cnd_True = no_params
+            Act_RelocateShip = s_a, 1, 2, 3
+
+            [Trigger]
+            nickname = t_free
+            Cnd_True = no_params
+            Act_RelocateShip = s_a, 1, 2, 3
+            Act_ActTrig = t_hint
+            """);
+        var hinted = index.Trigger("t_hint")!.Actions.Single();
+        var free = index.Trigger("t_free")!.Actions[0];
+
+        Assert.Equal("sys_c", MissionPlacements.SystemOfLine(index, hinted));
+        Assert.Equal("sys_b", MissionPlacements.SystemOfLine(index, free));
+        Assert.Equal("sys_d", MissionPlacements.SystemOfLine(index, free, _ => "sys_d"));
+        Assert.Null(MissionPlacements.SystemOfLine(index, index.Trigger("t_free")!.Actions[1]));
+    }
+
     [Fact]
     public void AnAnchorGivesARingAndADotAtTheHeading()
     {
@@ -141,7 +172,6 @@ public sealed class MissionPlacementsTests
 
         Assert.Equal((PlacementShape.Ring, new Vector3(5000, 0, 0), 1000f), (near.Shape, near.Position, near.Radius));
         Assert.Equal(6000, near.To!.Value.X, 1);
-        Assert.Equal(["station_a"], near.Names);
     }
 
     [Fact]

@@ -1,18 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 
 namespace OpenLancer.Data.Missions;
 
 /// <summary>
-/// The completeness reports of a mission and of its prefab instances (section 13.5 of the M6a design, AGENTS.md UI rule
-/// 12). A step is done when no shown problem of its rules exists, and its member roles and checks hold.
+/// The completeness reports of a mission, of its items and of its prefab instances (section 13.5 of the M6a design,
+/// AGENTS.md UI rule 12). A step is done when no shown problem of its rules exists, and its member roles and checks
+/// hold. The rule data holds the names and the reasons of the steps. The class makes no ImGui call, so the Inspector,
+/// the graph and later an agent server (roadmap row MCP1) read the same reports.
 /// </summary>
-/// <remarks>A missing step is hidden when the base game misses it too (decision D551): its problems are base-game
-/// problems, or the base-game run of the script has the same instance with the same step missing. An instance is the same
-/// when its prefab and its core trigger are the same. In a script that no mod changes, each missing step is
-/// hidden.</remarks>
+/// <remarks>A missing step is hidden when the base game misses it too (decision D551). Then its problems are base-game
+/// problems, or the base-game run of the script has the same item with the same step missing. An instance of a prefab is
+/// the same when its prefab and its core trigger are the same. A mission ship is the same when its section is the
+/// same.</remarks>
 public static class MissionCompleteness
 {
     /// <summary>The fixed checks that a step of the prefab data can name.</summary>
@@ -21,28 +24,124 @@ public static class MissionCompleteness
         "sceneRebuild", "bothPaths", "watchersStopEachOther", "sidesOfSpawned", "targetsMarked",
     };
 
-    /// <summary>The steps of a mission, in the order of section 13.5 of the M6a design, with their rules.</summary>
-    private static readonly (string Name, string[] Rules, string Reason)[] MissionSteps =
-    [
-        ("Start trigger", ["G01"], "Without a start trigger, nothing in the mission runs."),
-        ("Mission success", ["G02", "G03"], "Without one success, the story cannot go to the next mission."),
-        ("Fail texts", ["G04"], "The game shows this text when the mission fails."),
-        ("One condition for each trigger", ["M01", "M03"],
-            "A trigger without a condition stops the game when it starts. The game ignores all conditions but the last."),
-        ("Names resolve", ["M05", "M06", "M21", "M22", "M23"],
-            "The game ignores a name that it cannot find, so the line does nothing."),
-        ("Each trigger can start", ["G05"], "The game never runs a trigger that nothing starts."),
-        ("Cutscenes end", ["G06"],
-            "Without \"End camera\", the camera does not come back to the player, and the player stays invulnerable."),
-    ];
+    /// <summary>The fixed checks that a step of a mission item can name.</summary>
+    public static readonly IReadOnlySet<string> ItemChecks = new HashSet<string> { "shipBuildParts" };
 
     /// <summary>The completeness of a mission: its 7 steps.</summary>
     public static CompletenessReport OfMission(MissionAnalysis analysis)
     {
-        var steps = MissionSteps.Select(s => RuleStep(s.Name, s.Reason, analysis.Problems.Where(p => p.Rule != null &&
-            s.Rules.Contains(p.Rule)).ToList())).ToList();
-        return new CompletenessReport("Mission", steps) { HiddenMessages = BaseGameMessages.Count(analysis.Problems) };
+        var item = analysis.Index.Schema.Completeness["mission"];
+        var steps = item.Steps.Select(s => RuleStep(s.Name, s.Reason, ProblemsOf(analysis.Problems, s))).ToList();
+        return new CompletenessReport(item.Title, steps) { HiddenMessages = BaseGameMessages.Count(analysis.Problems) };
     }
+
+    /// <summary>
+    /// The completeness of a mission ship (section 10.6 of the M6a design). The steps are its pilot and voice, its ship
+    /// build, and the archetype, the loadout and the pilot of the build. The first two steps come from the checks of
+    /// the names of the ship and of its <c>[NPC]</c>. The build is in a mission ship file, so the third step compares
+    /// its names with the names of the game data. A step that the game data cannot tell stays done.
+    /// </summary>
+    public static CompletenessReport OfShip(MissionRunResult result, MissionAnalysis analysis, MissionSection ship)
+    {
+        var item = analysis.Index.Schema.Completeness["missionShip"];
+        var npc = NpcOf(analysis.Index, ship);
+        var sections = new[] { ship, npc }.OfType<MissionSection>().Select(s => s.Ref).ToHashSet();
+        var problems = analysis.Problems.Where(p => p.Target != null && sections.Contains(p.Target)).ToList();
+        var steps = item.Steps.Select(step => step.Check == "shipBuildParts"
+            ? BuildParts(result, analysis, ship, step)
+            : RuleStep(step.Name, step.Reason, ProblemsOf(problems, step))).ToList();
+        return new CompletenessReport(item.Title, steps)
+        {
+            HiddenMessages = BaseGameMessages.Count(problems.Where(p => p.Rule != null && item.Steps.Any(s => s.Rules.Contains(p.Rule)))),
+        };
+    }
+
+    /// <summary>The completeness of a conversation: its comm lines and its speakers (rules M21 and M19).</summary>
+    public static CompletenessReport OfConversation(MissionAnalysis analysis, MissionSection conversation) =>
+        OfLines(analysis, "conversation", analysis.Problems.Where(p => Equals(p.Target, conversation.Ref)).ToList());
+
+    /// <summary>The completeness of a cutscene link: the file, the anchor and the end camera of an
+    /// <c>Act_CallThorn</c> line.</summary>
+    public static CompletenessReport OfCutsceneLink(MissionAnalysis analysis, MissionLine line) =>
+        OfLines(analysis, "cutsceneLink", ProblemsOfLine(analysis, line));
+
+    /// <summary>The completeness of a base scene link: the file and the path length of an <c>Act_AddRTC</c> or
+    /// <c>Act_RemoveRTC</c> line.</summary>
+    public static CompletenessReport OfBaseSceneLink(MissionAnalysis analysis, MissionLine line) =>
+        OfLines(analysis, "baseSceneLink", ProblemsOfLine(analysis, line));
+
+    /// <summary>The problems of the checks for one line.</summary>
+    private static List<Diagnostic> ProblemsOfLine(MissionAnalysis analysis, MissionLine line) =>
+        analysis.Problems.Where(p => Equals(p.Target, line.Section.Ref) && p.EntryIndex == line.Entry).ToList();
+
+    /// <summary>A report whose steps all come from the problems of their rules.</summary>
+    private static CompletenessReport OfLines(MissionAnalysis analysis, string id, IReadOnlyList<Diagnostic> problems)
+    {
+        var item = analysis.Index.Schema.Completeness[id];
+        return new CompletenessReport(item.Title,
+            item.Steps.Select(s => RuleStep(s.Name, s.Reason, ProblemsOf(problems, s))).ToList())
+        {
+            HiddenMessages = BaseGameMessages.Count(problems),
+        };
+    }
+
+    /// <summary>The problems of the rules of a step, on the lines of its key.</summary>
+    private static List<Diagnostic> ProblemsOf(IEnumerable<Diagnostic> problems, MissionStepSpec step) =>
+        problems.Where(p => p.Rule != null && step.Rules.Contains(p.Rule) &&
+                            (step.Key == null || MissionIndex.Is(p.Key, step.Key))).ToList();
+
+    /// <summary>The <c>[NPC]</c> that a mission ship names, or null.</summary>
+    public static MissionSection? NpcOf(MissionIndex index, MissionSection ship) =>
+        index.LinesOf(ship).FirstOrDefault(l => MissionIndex.Is(l.Key, "npc"))?.Value(0) is { } name
+            ? index.Item(MissionSectionKind.Npc, name)
+            : null;
+
+    /// <summary>The ship build that the <c>[NPC]</c> of a mission ship names, or null.</summary>
+    public static NpcShipBuild? BuildOf(NpcShipBuilds builds, MissionIndex index, MissionSection ship) =>
+        NpcOf(index, ship) is { } npc &&
+        index.LinesOf(npc).FirstOrDefault(l => MissionIndex.Is(l.Key, "npc_ship_arch"))?.Value(0) is { } build
+            ? builds.Find(build)
+            : null;
+
+    /// <summary>
+    /// The step "Archetype, loadout and pilot" of a mission ship: each name of its build is in the game data. The step
+    /// is hidden when the base game misses the same names for the same ship (decision D551). So a mod that removes a
+    /// loadout of a retail ship build gives a missing step, also when the mod does not change the script. A step of a
+    /// script that only a mod has is never hidden.
+    /// </summary>
+    private static CompletenessStep BuildParts(MissionRunResult result, MissionAnalysis analysis, MissionSection ship,
+        MissionStepSpec step)
+    {
+        var index = analysis.Index;
+        var build = BuildOf(result.ShipBuilds, index, ship);
+        var missing = build != null ? MissingParts(build, index.World) : [];
+        if (build == null || missing.Count == 0)
+            return new CompletenessStep(step.Name, CompletenessState.Done, step.Reason);
+
+        var baseIndex = analysis.BaseIndex ?? (analysis.Script.State == MissionScriptState.BaseGame ? index : null);
+        var baseShip = baseIndex?.Document.Sections.FirstOrDefault(s => s.Ref.Equals(ship.Ref));
+        var baseBuild = baseShip != null ? BuildOf(result.BaseShipBuilds ?? result.ShipBuilds, baseIndex!, baseShip) : null;
+        var baseMissing = baseBuild != null ? MissingParts(baseBuild, result.BaseWorld ?? index.World) : [];
+        var hidden = missing.All(baseMissing.Contains);
+        var (kind, name) = missing[0];
+        var detail = $"Ship build '{build.Nickname}' names {KindText(kind)} '{name}'. The game data has no " +
+                     $"{KindText(kind)} with this name.";
+        return new CompletenessStep(step.Name, hidden ? CompletenessState.Hidden : CompletenessState.Missing, step.Reason,
+            detail, build.Ref, IsError: !hidden);
+    }
+
+    /// <summary>The names of a build that a world does not have, without letter case. A kind that the world does not
+    /// know does not count.</summary>
+    private static List<(MissionValueKind Kind, string Name)> MissingParts(NpcShipBuild build, MissionWorld world) =>
+        build.Parts.Where(p => world.Knows(p.Kind) && !world.Has(p.Kind, p.Name))
+            .Select(p => (p.Kind, p.Name.ToLowerInvariant())).ToList();
+
+    private static string KindText(MissionValueKind kind) => kind switch
+    {
+        MissionValueKind.ShipArch => "ship archetype",
+        MissionValueKind.Loadout => "loadout",
+        _ => "pilot",
+    };
 
     /// <summary>The completeness of a prefab instance: the steps of its prefab.</summary>
     public static CompletenessReport OfInstance(MissionAnalysis analysis, MissionPrefabInstance instance)

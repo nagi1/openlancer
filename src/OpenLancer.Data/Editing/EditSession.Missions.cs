@@ -110,6 +110,12 @@ public sealed partial class EditSession
     /// <summary>The install path of a path relative to the data folder of the edit view, or null.</summary>
     public string? DataPath(string relative) => DataPaths.Resolve(FreelancerIni, relative);
 
+    /// <summary>The nickname of the system whose file has an object or a zone of a nickname. It is null when no system
+    /// file has it (section 7.3 of the M6a design). The cross-links of the Mission tab use it for an item in another
+    /// system.</summary>
+    public string? SystemOfObject(string nickname) =>
+        Nicknames.Taken(nickname) is { } name ? Systems.NicknameOf(name.Section.Path) : null;
+
     /// <summary>True when the active mod has a <c>targets</c> list without OpenLancer. The editor then hides the
     /// OpenLancer marks (AGENTS.md UI rule 4).</summary>
     public bool HidesOpenLancer => ActiveMod?.Manifest.Targets is { } targets && !targets.Contains(ModTargets.OpenLancer);

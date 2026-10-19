@@ -75,4 +75,22 @@ public sealed class MissionLayerTests
 
         Assert.Empty(MissionLayer.Outline(start));
     }
+
+    /// <summary>A placement of a trigger line selects the line. A placement of an item selects its section.</summary>
+    [Fact]
+    public void ThePlacementOfALineSelectsTheLine()
+    {
+        var index = MissionTestData.Index(MissionTestData.Story.Replace("Cnd_True = no_params\nAct_ActTrig = t_end",
+            "Cnd_True = no_params\nAct_ActTrig = t_end\nAct_StaticCam = 1, 2, 3") + "\n\n[MsnShip]\nnickname = s\nsystem = sys\nposition = 1, 1, 1\n");
+        var start = index.Trigger("t_start")!;
+        var placements = MissionPlacements.In(index, "sys", _ => null);
+
+        Assert.DoesNotContain(placements, p => p.Trigger != null);
+        var ship = MissionRef.OfPlacement(MissionTestData.Path, placements.Single());
+        Assert.Equal(MissionItemKind.Ship, ship.Kind);
+        var line = new MissionPlacement(PlacementKind.FixedCamera, PlacementShape.Point, "sys", Vector3.Zero, start.Section,
+            5, "Fixed camera") { Trigger = start };
+        Assert.Equal(new MissionRef(MissionTestData.Path, MissionItemKind.Row, start.Section.Ref, Row: 5),
+            MissionRef.OfPlacement(MissionTestData.Path, line));
+    }
 }

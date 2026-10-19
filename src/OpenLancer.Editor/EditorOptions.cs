@@ -9,11 +9,12 @@ namespace OpenLancer.Editor;
 /// </summary>
 /// <param name="Profile">The profile file to open at the start, or null for the newest recent profile.</param>
 /// <param name="BenchCutscenes">The cutscene scripts of the preview bench, or an empty list for a normal start. With
-/// scripts, the editor opens the profile without an active mod, previews each script, writes the times to the log, and
-/// closes (section 8.5 of the M8 design). It does not read or write the editor settings.</param>
+/// scripts, the editor opens the profile without an active mod and previews each script. Then it writes the times to
+/// the log and closes (section 8.5 of the M8 design). It does not read or write the editor settings.</param>
 /// <param name="BenchMissions">The mission scripts of the frame bench of the mission graph, or an empty list (section
-/// 18.4 of the M6a design). With scripts, the editor opens the profile without an active mod, draws the graph of each
-/// script, writes the frame times to the log, and closes. It does not read or write the editor settings.</param>
+/// 18.4 of the M6a design). With scripts, the editor opens the profile without an active mod and draws the graph of
+/// each script. Then it writes the frame times to the log and closes. It does not read or write the editor
+/// settings.</param>
 internal sealed record EditorOptions(string? Profile, IReadOnlyList<string> BenchCutscenes,
     IReadOnlyList<string> BenchMissions)
 {

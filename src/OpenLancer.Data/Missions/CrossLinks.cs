@@ -2,39 +2,43 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using OpenLancer.Data.Missions;
 
-namespace OpenLancer.Editor.Missions;
+namespace OpenLancer.Data.Missions;
 
 /// <summary>An item of the world that a line of the selection names (section 7.3 of the M6a design).</summary>
 /// <param name="Line">The line that names the item.</param>
-/// <param name="Item">The selection of an item of the mission layer, or null for an object of a system.</param>
+/// <param name="Item">The item of the mission layer, or null for an object of a system.</param>
 /// <param name="Object">The nickname of an object of a system, or null.</param>
 /// <param name="Name">The name of the item for its label.</param>
-/// <param name="System">The system of an item of the mission, or null when the index does not know it.</param>
-internal sealed record CrossLinkTarget(MissionLine Line, MissionRef? Item, string? Object, string Name, string? System);
+/// <param name="System">The system of the item, or null when the index does not know it.</param>
+public sealed record CrossLinkTarget(MissionLine Line, MissionRef? Item, string? Object, string Name, string? System);
 
-/// <summary>Where a connector line starts in the graph: a row at the lines level, the chip of the group of the line at
-/// the summary level, or the node of a collapsed frame.</summary>
+/// <summary>Where a connector line starts in the graph. It is a row at the lines level, or the chip of the group of the
+/// line at the summary level. A collapsed frame has the start at its node.</summary>
 /// <param name="Node">The key of the node that shows the line.</param>
 /// <param name="Entry">The index of the line of a row, or null.</param>
 /// <param name="Group">The action group of a chip, or null.</param>
-internal sealed record CrossLinkSource(string Node, int? Entry, string? Group);
+public sealed record CrossLinkSource(string Node, int? Entry, string? Group);
+
+/// <summary>One connector line of the selection: a source in the graph and an item of the world. Two lines of a
+/// trigger to one item from one row or chip give one connector line.</summary>
+public sealed record CrossLinkLine(CrossLinkSource Source, CrossLinkTarget Target);
 
 /// <summary>A connector line on the screen between the graph and the Scene part.</summary>
 /// <param name="FromArrow">True when the source is outside the graph view, so the line starts at its edge with an
 /// arrow.</param>
 /// <param name="ToArrow">True when the item is outside the Scene view, so the line ends at its edge with an
 /// arrow.</param>
-internal readonly record struct ConnectorLine(Vector2 From, Vector2 To, bool FromArrow, bool ToArrow);
+public readonly record struct ConnectorLine(Vector2 From, Vector2 To, bool FromArrow, bool ToArrow);
 
 /// <summary>
-/// The cross-highlighting of the Mission tab (section 7.3 of the M6a design, UI rule 6). From a node to the world: the
-/// items that the lines of a trigger, a row or a prefab instance name, the highlight sets of the Scene, and where each
-/// connector line starts. From the world to the graph: the triggers whose lines name a world item. The class makes no
-/// ImGui call, so the tests check it. The Mission tab draws the lines.
+/// The cross-highlighting of the Mission tab (section 7.3 of the M6a design, UI rule 6). From a node to the world, it
+/// gives the items that a selection names. A selection is a trigger, a row, a prefab instance or an act. It also gives
+/// the highlight sets of the Scene and the start of each connector line. From the world to the graph, it gives the
+/// triggers whose lines name a world item. The class makes no ImGui call, so the tests and later an agent server
+/// (roadmap row MCP1) call it. The Mission tab draws the lines.
 /// </summary>
-internal static class CrossLinks
+public static class CrossLinks
 {
     /// <summary>At most this many connector lines draw. More items give the chip "and {n} more".</summary>
     public const int MaxLines = 24;
@@ -43,7 +47,6 @@ internal static class CrossLinks
     /// instance or an act. Empty for another selection.</summary>
     public static IReadOnlyList<MissionLine> SourceLines(MissionAnalysis analysis, MissionRef selection)
     {
-        var index = analysis.Index;
         switch (selection.Kind)
         {
             case MissionItemKind.Row when selection.Section is { } row && TriggerOf(analysis, row) is { } trigger:
@@ -55,27 +58,25 @@ internal static class CrossLinks
                                                          { } instance:
                 return MissionUses.LinesOf(instance.Triggers);
             case MissionItemKind.Act when selection.Key != null:
-                var acts = analysis.Acts ?? MissionActs.Propose(index);
-                var number = selection.Key == "a:0" ? 0 : int.TryParse(selection.Key.AsSpan(2), out var n) ? n : -1;
-                var triggers = number == 0
-                    ? acts.NotStarted
-                    : acts.Acts.FirstOrDefault(a => a.Number == number)?.Triggers ?? [];
-                return MissionUses.LinesOf(triggers);
+                return MissionUses.LinesOf((analysis.Acts ?? MissionActs.Propose(analysis.Index)).TriggersOf(selection.Key));
             default:
                 return [];
         }
     }
 
     /// <summary>The trigger of a section of the script, or null.</summary>
-    private static MissionTrigger? TriggerOf(MissionAnalysis analysis, Data.Editing.SectionRef section) =>
+    private static MissionTrigger? TriggerOf(MissionAnalysis analysis, Editing.SectionRef section) =>
         analysis.Document.Find(section) is { } found ? analysis.Index.Triggers.FirstOrDefault(t => t.Section == found) : null;
 
     /// <summary>
-    /// The items of the world that lines name (node to world): the items of the cast, the members of the labels, the
-    /// order lists and the objectives, the objects of a system, and each line that has its own place, for example a
-    /// distance volume or a spawn at a position.
+    /// The items of the world that lines name (node to world). They are the items of the cast and the members of the
+    /// labels, the order lists and the objectives, and the objects of a system. Each line that has its own place is an
+    /// item too, for example a distance volume or a spawn at a position.
     /// </summary>
-    public static IReadOnlyList<CrossLinkTarget> Targets(MissionAnalysis analysis, IReadOnlyList<MissionLine> lines)
+    /// <param name="objectSystem">Gives the system of an object of a system by its nickname, or null when no system has
+    /// it. Null when the caller knows no systems.</param>
+    public static IReadOnlyList<CrossLinkTarget> Targets(MissionAnalysis analysis, IReadOnlyList<MissionLine> lines,
+        Func<string, string?>? objectSystem = null)
     {
         var index = analysis.Index;
         var script = analysis.Script.Path;
@@ -84,33 +85,32 @@ internal static class CrossLinks
         {
             if (use.Section is not { } section)
             {
-                result.Add(new CrossLinkTarget(use.Line, null, use.Name, use.Name, null));
+                result.Add(new CrossLinkTarget(use.Line, null, use.Name, use.Name, objectSystem?.Invoke(use.Name)));
                 continue;
             }
 
-            result.Add(new CrossLinkTarget(use.Line, MissionWorkspace.RefOf(section.Ref, -1), null,
+            result.Add(new CrossLinkTarget(use.Line, MissionRef.OfSection(section.Ref, -1), null,
                 section.Nickname ?? use.Name, SystemOf(index, section)));
             // The object that a ship arrives through is a world item of the line too.
             if (section.Kind is MissionSectionKind.Ship or MissionSectionKind.Formation &&
                 section.Section.FirstOrDefault(e => MissionIndex.Is(e.Name, "arrival_obj") && e.Count > 0) is { } arrival)
             {
                 var gate = MissionIndex.Text(arrival[0]);
-                result.Add(new CrossLinkTarget(use.Line, null, gate, gate, null));
+                result.Add(new CrossLinkTarget(use.Line, null, gate, gate, objectSystem?.Invoke(gate)));
             }
         }
 
-        foreach (var line in lines.Where(l => l.Trigger != null && MissionPlacements.HasPlace(l)))
+        foreach (var line in lines.Where(MissionPlacements.HasPlace))
         {
             result.Add(new CrossLinkTarget(line, new MissionRef(script, MissionItemKind.Row, line.Section.Ref, Row: line.Entry),
-                null, line.Name?.Plain ?? line.Key, line.Trigger!.SystemHint is { } hint && !MissionIndex.Is(hint, "ANY")
-                    ? hint
-                    : null));
+                null, line.Name?.Plain ?? line.Key, MissionPlacements.SystemOfLine(index, line)));
         }
 
         return result;
     }
 
-    /// <summary>The system of an item of the script: its own, or the system of the trigger that gives an order list.</summary>
+    /// <summary>The system of an item of the script: its own, or the system of the trigger that gives an order
+    /// list.</summary>
     private static string? SystemOf(MissionIndex index, MissionSection section) =>
         index.SystemOf(section) ?? MissionUses.Naming(index, section).Select(l => l.Trigger?.SystemHint)
             .FirstOrDefault(h => h != null && !MissionIndex.Is(h, "ANY"));
@@ -124,33 +124,23 @@ internal static class CrossLinks
         foreach (var target in targets)
         {
             if (target.Item != null)
-            {
                 items.Add(target.Item);
-            }
             else if (target.Object != null)
-            {
                 objects.Add(target.Object);
-            }
         }
 
         return (items, objects);
     }
 
-    /// <summary>Where the connector line of a line starts: its row at the lines level, the chip of its action group at
-    /// the summary level, or the node of a collapsed frame. Null when the graph does not show the trigger of the
-    /// line.</summary>
+    /// <summary>Where the connector line of a line starts. It is its row at the lines level, or the chip of its action
+    /// group at the summary level. A collapsed frame has the start at its node. Null when the graph does not show the
+    /// trigger of the line.</summary>
     public static CrossLinkSource? SourceOf(MissionGraph graph, MissionLine line)
     {
         if (line.Trigger is not { } trigger || graph.NodeOf(trigger) is not { } node)
-        {
             return null;
-        }
-
         if (node.Kind != GraphNodeKind.Trigger)
-        {
             return new CrossLinkSource(node.Key, null, null);
-        }
-
         if (node.Lines)
         {
             return node.Rows.Any(r => r.Line == line)
@@ -163,8 +153,31 @@ internal static class CrossLinks
             : new CrossLinkSource(node.Key, null, null);
     }
 
-    /// <summary>The keys of the blocks that the graph outlines for the triggers of a world item (world to graph): the node
-    /// that shows each trigger, and each open prefab frame that holds such a node.</summary>
+    /// <summary>
+    /// The connector lines of targets in a graph, in the order of the targets. Each source and item gives one line, so
+    /// two lines of one chip to one ship give one connector line. A target whose trigger the graph does not show gives
+    /// no line. The Mission tab makes the lines once for each selection and graph, and only projects their ends in each
+    /// frame.
+    /// </summary>
+    public static IReadOnlyList<CrossLinkLine> Lines(MissionGraph graph, IEnumerable<CrossLinkTarget> targets)
+    {
+        var result = new List<CrossLinkLine>();
+        var seen = new HashSet<(CrossLinkSource, MissionRef?, string?)>();
+        foreach (var target in targets)
+        {
+            if (SourceOf(graph, target.Line) is not { } source)
+                continue;
+            var item = target.Item;
+            var obj = target.Object?.Trim().ToLowerInvariant();
+            if (seen.Add((source, item, obj)))
+                result.Add(new CrossLinkLine(source, target));
+        }
+
+        return result;
+    }
+
+    /// <summary>The keys of the blocks that the graph outlines for the triggers of a world item (world to graph). They
+    /// are the node that shows each trigger, and each open prefab frame that holds such a node.</summary>
     public static IReadOnlySet<string> OutlineOf(MissionGraph graph, IEnumerable<MissionTrigger> triggers)
     {
         var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -174,9 +187,7 @@ internal static class CrossLinks
             for (var frame = node.Parent; frame != null; frame = frame.Parent)
             {
                 if (frame.Kind == GraphFrameKind.Prefab)
-                {
                     keys.Add(frame.Key);
-                }
             }
         }
 
@@ -184,28 +195,34 @@ internal static class CrossLinks
     }
 
     /// <summary>
-    /// The lines that name a world item (world to graph): a mission ship, formation, solar, loot, order list or objective
-    /// names its section, a line of the mission layer is its own line, and an object of a system names its nickname.
+    /// The lines that name an item of a mission (world to graph). A mission ship, formation, solar, loot, order list or
+    /// objective names its section. A line of the mission layer is its own line. A label names each line that names
+    /// the label.
     /// </summary>
-    public static IReadOnlyList<MissionLine> LinesUsing(MissionAnalysis analysis, object item)
+    public static IReadOnlyList<MissionLine> LinesUsing(MissionAnalysis analysis, MissionRef item)
     {
         var index = analysis.Index;
         switch (item)
         {
-            case MissionRef { Kind: MissionItemKind.Row, Section: { } row } mission when analysis.Document.Find(row) is { } found:
-                return index.LinesOf(found).Where(l => l.Entry == mission.Row).ToList();
-            case MissionRef { Section: { } section } when analysis.Document.Find(section) is { } found &&
-                                                          found.Kind != MissionSectionKind.Trigger:
+            case { Kind: MissionItemKind.Row, Section: { } row } when analysis.Document.Find(row) is { } found:
+                return index.LinesOf(found).Where(l => l.Entry == item.Row).ToList();
+            case { Section: { } section } when analysis.Document.Find(section) is { } found &&
+                                               found.Kind != MissionSectionKind.Trigger:
                 return MissionUses.Naming(index, found);
-            case MissionRef { Kind: MissionItemKind.Label, Key: { } label }:
+            case { Kind: MissionItemKind.Label, Key: { } label }:
                 return index.ReferencesTo(MissionValueKind.Object, label).Where(r => r.Section == null)
                     .Select(r => r.Line).Distinct().ToList();
-            case string nickname:
-                return MissionUses.NamingObject(index, nickname);
             default:
                 return [];
         }
     }
+
+    /// <summary>The lines that name items of a system by their nicknames (world to graph): an object, the base of a
+    /// docking object, or a zone. Each line shows once, in file order.</summary>
+    public static IReadOnlyList<MissionLine> LinesNaming(MissionAnalysis analysis, IEnumerable<string> nicknames) =>
+        nicknames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase)
+            .SelectMany(n => MissionUses.NamingObject(analysis.Index, n)).Distinct()
+            .OrderBy(l => l.Section.Index).ThenBy(l => l.Entry).ToList();
 
     /// <summary>
     /// The connector line from a source rectangle in the graph to a point in the Scene (section 7.3 of the M6a design).
@@ -218,10 +235,7 @@ internal static class CrossLinks
         var from = new Vector2(source.Max.X, (source.Min.Y + source.Max.Y) / 2);
         var fromArrow = !Inside(from, graph);
         if (fromArrow)
-        {
             from = Vector2.Clamp(from, graph.Min, graph.Max);
-        }
-
         var toArrow = !Inside(target, scene);
         var to = toArrow ? EdgeToward(from, target, scene) : target;
         return new ConnectorLine(from, to, fromArrow, toArrow);
@@ -232,29 +246,19 @@ internal static class CrossLinks
 
     /// <summary>The point where the line from a point to a target leaves a rectangle that the target is outside of. The
     /// start is the center of the rectangle when the point is outside it too.</summary>
-    internal static Vector2 EdgeToward(Vector2 from, Vector2 target, (Vector2 Min, Vector2 Max) rect)
+    public static Vector2 EdgeToward(Vector2 from, Vector2 target, (Vector2 Min, Vector2 Max) rect)
     {
         var start = Inside(from, rect) ? from : (rect.Min + rect.Max) / 2;
         var direction = target - start;
         var t = 1f;
         if (direction.X > 0)
-        {
             t = Math.Min(t, (rect.Max.X - start.X) / direction.X);
-        }
         else if (direction.X < 0)
-        {
             t = Math.Min(t, (rect.Min.X - start.X) / direction.X);
-        }
-
         if (direction.Y > 0)
-        {
             t = Math.Min(t, (rect.Max.Y - start.Y) / direction.Y);
-        }
         else if (direction.Y < 0)
-        {
             t = Math.Min(t, (rect.Min.Y - start.Y) / direction.Y);
-        }
-
         return start + direction * Math.Max(0, t);
     }
 

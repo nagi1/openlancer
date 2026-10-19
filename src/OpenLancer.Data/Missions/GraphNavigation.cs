@@ -23,7 +23,7 @@ public sealed record GraphPinSources(IReadOnlyList<MissionLink> Start, IReadOnly
 }
 
 /// <summary>
-/// The map of the minimap (section 6.6 of the M6a design): it fits the bounds of the graph into a screen rectangle and
+/// The map of the minimap (section 6.6 of the M6a design). It fits the bounds of the graph into a screen rectangle and
 /// keeps the ratio of the sides.
 /// </summary>
 /// <param name="Canvas">The bounds of the graph in canvas points.</param>
@@ -52,9 +52,9 @@ public readonly record struct GraphMinimap((Vector2 Min, Vector2 Max) Canvas, (V
 }
 
 /// <summary>
-/// The navigation of the mission graph (section 6.6 of the M6a design): the search, the path from a start trigger, the
-/// sources of the pins, the neighbors of a node, the system filter and the minimap. The class makes no ImGui call, so
-/// the tests and later an agent server (roadmap row MCP1) call it.
+/// The navigation of the mission graph (section 6.6 of the M6a design). It has the search, the path from a start
+/// trigger, the sources of the pins, the neighbors, the system filter and the minimap. The class makes no ImGui call,
+/// so the tests and later an agent server (roadmap row MCP1) call it.
 /// </summary>
 public static class GraphNavigation
 {

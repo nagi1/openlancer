@@ -9,22 +9,18 @@ namespace OpenLancer.Data.Missions;
 /// <param name="Line">The line.</param>
 /// <param name="Name">The name as the line gives it.</param>
 /// <param name="Section">The section of an item of the script, or null for an object of a system.</param>
-public sealed record MissionUse(MissionLine Line, string Name, MissionSection? Section)
-{
-    /// <summary>True for an object of a system, for example the gate of a lock line.</summary>
-    public bool IsObject => Section == null;
-}
+public sealed record MissionUse(MissionLine Line, string Name, MissionSection? Section);
 
 /// <summary>
-/// The links between the lines of a mission and the items of the world (section 7.3 of the M6a design): the items that a
-/// line names, and the lines that name an item. The cross-highlighting of the graph and the Scene, the Used by sections
-/// and the Behaviors section of a system object read them. A label stands for each of its members. The class makes no
-/// ImGui call, so the tests and later an agent server (roadmap row MCP1) call it.
+/// The links between the lines of a mission and the items of the world (section 7.3 of the M6a design). They are the
+/// items that a line names, and the lines that name an item. The cross-highlighting of the graph and the Scene, the
+/// Used by sections and the Behaviors section of a system object read them. A label stands for each of its members. The
+/// class makes no ImGui call, so the tests and later an agent server (roadmap row MCP1) call it.
 /// </summary>
 public static class MissionUses
 {
-    /// <summary>The kinds of the values that name items of the world: the cast, the labels, the order lists, the
-    /// objectives and the objects of a system.</summary>
+    /// <summary>The kinds of the values that name items of the world. They are the cast, the labels, the order lists,
+    /// the objectives and the objects of a system.</summary>
     private static readonly HashSet<MissionValueKind> WorldKinds =
     [
         MissionValueKind.Object, MissionValueKind.Group, MissionValueKind.Ship, MissionValueKind.Formation,
@@ -37,30 +33,30 @@ public static class MissionUses
     public static IReadOnlyList<MissionUse> Of(MissionIndex index, IEnumerable<MissionLine> lines)
     {
         var result = new List<MissionUse>();
+        // One use for each line and item. An object of a system is its name without letter case.
+        var seen = new HashSet<(MissionLine, MissionSection?, string?)>();
+        void Add(MissionUse use)
+        {
+            if (seen.Add((use.Line, use.Section, use.Section == null ? use.Name.Trim().ToLowerInvariant() : null)))
+                result.Add(use);
+        }
         foreach (var line in lines)
         {
             foreach (var reference in line.References.Where(r => r.State == MissionReferenceState.Found &&
                                                                  WorldKinds.Contains(r.Kind)))
             {
                 if (reference.Section is { } section)
-                    Add(result, new MissionUse(line, reference.Name, section));
+                    Add(new MissionUse(line, reference.Name, section));
                 else if (index.Labels.TryGetValue(reference.Name.Trim(), out var members))
                 {
                     foreach (var member in members)
-                        Add(result, new MissionUse(line, reference.Name, member));
+                        Add(new MissionUse(line, reference.Name, member));
                 }
                 else if (!MissionIndex.Is(reference.Name, "Player"))
-                    Add(result, new MissionUse(line, reference.Name, null));
+                    Add(new MissionUse(line, reference.Name, null));
             }
         }
         return result;
-    }
-
-    private static void Add(List<MissionUse> uses, MissionUse use)
-    {
-        if (!uses.Any(u => u.Line == use.Line && u.Section == use.Section &&
-                           (use.Section != null || MissionIndex.Is(u.Name, use.Name))))
-            uses.Add(use);
     }
 
     /// <summary>The lines of the triggers of a selection: one line, all lines of a trigger, or all lines of the triggers
@@ -95,8 +91,8 @@ public static class MissionUses
         return Distinct(references.Select(r => r.Line));
     }
 
-    /// <summary>The lines that name an object of a system or a base by its nickname, for example the gate of a lock
-    /// line or the object of an arrival line.</summary>
+    /// <summary>The lines that name an object of a system or a base by its nickname. Examples are the gate of a lock
+    /// line and the object of an arrival line.</summary>
     public static IReadOnlyList<MissionLine> NamingObject(MissionIndex index, string nickname)
     {
         var references = index.ReferencesTo(MissionValueKind.SystemObject, nickname).Where(r => r.Section == null)

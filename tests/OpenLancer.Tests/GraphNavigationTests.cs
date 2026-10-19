@@ -7,8 +7,8 @@ using static OpenLancer.Tests.GraphTestData;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The navigation of the mission graph (section 6.6 of the M6a design) on a synthetic mission: the search, the path from
-/// a start trigger, the sources of each pin, the neighbors, the system filter and the minimap.
+/// The navigation of the mission graph (section 6.6 of the M6a design) on a synthetic mission. The tests check the
+/// search, the path from a start trigger, the sources of each pin, the neighbors, the system filter and the minimap.
 /// </summary>
 public sealed class GraphNavigationTests
 {

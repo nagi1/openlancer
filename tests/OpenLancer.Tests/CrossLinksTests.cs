@@ -9,9 +9,9 @@ using static OpenLancer.Tests.MissionTestData;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The cross-highlighting of the Mission tab (sections 7.3 and 18.1 of the M6a design): the highlight set of a trigger
-/// with a spawn, an order list, an arrival object and a distance volume, the source of a connector line at each level,
-/// the triggers of a world item, and the geometry of the connector lines.
+/// The cross-highlighting of the Mission tab (sections 7.3 and 18.1 of the M6a design). The tests check the highlight
+/// set of a trigger with a spawn, an order list, an arrival object and a distance volume. They check the source of a
+/// connector line at each level, the triggers of a world item, and the geometry of the connector lines.
 /// </summary>
 public sealed class CrossLinksTests
 {
@@ -52,6 +52,11 @@ public sealed class CrossLinksTests
         system = sys_a
         Cnd_DistVec = inside, s_one, 100, 200, 300, 400
         Act_ChangeState = SUCCEED
+
+        [Trigger]
+        nickname = t_free
+        Cnd_True = no_params
+        Act_RelocateShip = s_two, 1, 2, 3
         """;
 
     private static readonly MissionAnalysis Mission = Run();
@@ -69,7 +74,7 @@ public sealed class CrossLinksTests
     private static MissionRef RefOf(MissionTrigger trigger) => new(Script, MissionItemKind.Trigger, trigger.Section.Ref);
 
     private static MissionRef SectionRef(string nickname, MissionSectionKind kind) =>
-        MissionWorkspace.RefOf(Mission.Document.OfKind(kind).Single(s => s.Nickname == nickname).Ref, -1);
+        MissionRef.OfSection(Mission.Document.OfKind(kind).Single(s => s.Nickname == nickname).Ref, -1);
 
     [Fact]
     public void TheHighlightOfATriggerHasItsShipsOrdersObjectsAndPlaces()
@@ -139,16 +144,60 @@ public sealed class CrossLinksTests
     [Fact]
     public void TheTriggersOfAWorldItemAreTheTriggersThatNameIt()
     {
-        string[] Users(object item) => MissionUses.TriggersOf(CrossLinks.LinesUsing(Mission, item)).Select(t => t.Nickname)
-            .ToArray();
+        string[] Users(object item) => MissionUses.TriggersOf(item is MissionRef mission
+                ? CrossLinks.LinesUsing(Mission, mission)
+                : CrossLinks.LinesNaming(Mission, [(string)item]))
+            .Select(t => t.Nickname).ToArray();
 
         Assert.Equal(["t_start", "t_near"], Users(SectionRef("s_one", MissionSectionKind.Ship)));
-        // The second ship has no line of its own, but its label does.
-        Assert.Equal(["t_start"], Users(SectionRef("s_two", MissionSectionKind.Ship)));
+        // The second ship has a move line, and its label has a line too.
+        Assert.Equal(["t_start", "t_free"], Users(SectionRef("s_two", MissionSectionKind.Ship)));
         Assert.Equal(["t_start"], Users(SectionRef("ol_one", MissionSectionKind.OrderList)));
         Assert.Equal(["t_start"], Users("gate_b"));
         Assert.Equal(["t_start"], Users(new MissionRef(Script, MissionItemKind.Label, Key: "l_wing")));
         Assert.Empty(Users("gate_c"));
+    }
+
+    /// <summary>An object and the base of its dock are one world item. So a line that names both counts once (section
+    /// 7.3 of the M6a design, world to graph).</summary>
+    [Fact]
+    public void TheNicknamesOfAWorldItemGiveEachLineOnce()
+    {
+        var lines = CrossLinks.LinesNaming(Mission, ["gate_b", "GATE_B", "gate_c", ""]);
+
+        Assert.Equal(["Act_LockDock"], lines.Select(l => l.Key));
+    }
+
+    /// <summary>An object of a system gets the system that the caller finds for it. So a line to an object in another
+    /// system ends at the chip of that system. A placed line of a trigger without a system line gets the system of the
+    /// item that it names (section 7.3, item 6).</summary>
+    [Fact]
+    public void AnObjectAndAPlacedLineGetTheSystemOfTheirItem()
+    {
+        var start = CrossLinks.Targets(Mission, CrossLinks.SourceLines(Mission, RefOf(Trigger("t_start"))),
+            name => name == "gate_b" ? "sys_c" : null);
+        var free = CrossLinks.Targets(Mission, CrossLinks.SourceLines(Mission, RefOf(Trigger("t_free"))));
+
+        Assert.Equal("sys_c", start.Single(t => t.Object == "gate_b").System);
+        Assert.Null(start.First(t => t.Object == "gate_a").System);
+        Assert.Equal("sys_b", free.Single(t => t.Item?.Kind == MissionItemKind.Row).System);
+    }
+
+    /// <summary>Two lines of one source to one item give one connector line, so a collapsed frame draws one line to
+    /// each item.</summary>
+    [Fact]
+    public void TheConnectorLinesHaveOneLineForEachSourceAndItem()
+    {
+        var targets = CrossLinks.Targets(Mission, CrossLinks.SourceLines(Mission, RefOf(Trigger("t_start"))));
+        var beats = MissionGraph.Build(Mission, new GraphOptions(GraphLens.Beats));
+        var logic = MissionGraph.Build(Mission, new GraphOptions(GraphLens.Logic));
+        var ship = SectionRef("s_one", MissionSectionKind.Ship);
+
+        // The spawn line and the order line both name the first ship.
+        Assert.Equal(2, targets.Count(t => Equals(t.Item, ship)));
+        // In the open frame, the spawn chip and the order chip each start a line. The collapsed frame starts one line.
+        Assert.Equal(2, CrossLinks.Lines(logic, targets).Count(l => Equals(l.Target.Item, ship)));
+        Assert.Single(CrossLinks.Lines(beats, targets), l => Equals(l.Target.Item, ship));
     }
 
     [Fact]

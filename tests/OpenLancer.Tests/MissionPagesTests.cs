@@ -11,7 +11,7 @@ namespace OpenLancer.Tests;
 
 /// <summary>
 /// The page models of each item kind of a mission (sections 10.3 to 10.17 and 18.1 of the M6a design) on a synthetic
-/// script: the named sections and fields exist, and a field without an effect does not show.
+/// script. The named sections and fields exist, and a field without an effect does not show.
 /// </summary>
 public sealed class MissionPagesTests
 {
@@ -82,7 +82,14 @@ public sealed class MissionPagesTests
 
         [MsnRandEnc]
         nickname = enc_one
-        encounter_type = invented
+        encounter_type = SP_Attack
+        attacker_rep_name = fc_invented
+        target_ship_name = Player
+        activation_type = time, 5, 30
+        formation = shape_a, 5, 1, 2, class_a, 100
+        num_forms = 1, 2
+        label = l_attackers
+        odd_key = 1
 
         [Trigger]
         nickname = t_start
@@ -110,10 +117,21 @@ public sealed class MissionPagesTests
 
     private static readonly (MissionRunResult Result, MissionAnalysis Analysis) Run = Execute();
 
+    /// <summary>The ship builds of the mission ship file of the folder.</summary>
+    internal const string ShipBuilds = """
+        [NPCShipArch]
+        nickname = build_one
+        ship_archetype = ship_a
+        loadout = load_a
+        pilot = pilot_a
+        npc_class = lawful, d5
+        """;
+
     private static (MissionRunResult, MissionAnalysis) Execute()
     {
         using var folder = new MissionFolder();
         folder.Write(Script, Text);
+        folder.Write(@"DATA\MISSIONS\npcships.ini", ShipBuilds);
         var result = MissionRun.Execute(folder.Inputs());
         return (result, result.Of(Script)!);
     }
@@ -123,17 +141,13 @@ public sealed class MissionPagesTests
         {
             Text = id => id == 1001 ? "Invented pilot" : "",
             SystemName = s => s == "sys_a" ? "Invented System" : null,
-            ShipBuild = name => name == "build_one"
-                ? [("nickname", "build_one"), ("ship_archetype", "ship_a"), ("loadout", "load_a"), ("pilot", "pilot_a"),
-                   ("npc_class", "lawful, d5")]
-                : null,
         }, item);
 
     private static MissionSection Section(MissionSectionKind kind, string nickname) =>
         Run.Analysis.Document.OfKind(kind).Single(s => s.Nickname == nickname);
 
     private static MissionRef RefOf(MissionSectionKind kind, string nickname) =>
-        MissionWorkspace.RefOf(Section(kind, nickname).Ref, -1);
+        MissionRef.OfSection(Section(kind, nickname).Ref, -1);
 
     private static MissionTrigger Trigger(string nickname) => Run.Analysis.Index.Trigger(nickname)!;
 
@@ -159,11 +173,13 @@ public sealed class MissionPagesTests
         Assert.Equal("Line 5", spawn[0].Label);
         Assert.Equal(["Ship", "Orders"], spawn.Skip(1).Select(f => f.Label));
         Assert.Equal(RefOf(MissionSectionKind.Ship, "s_one"), spawn[1].Link);
+        // A name shows with the reference widget, read-only in M6a (section 10.1 of the M6a design).
+        Assert.Equal("s_one", spawn[1].Reference!.Nickname);
         // Nothing starts the start trigger, so the page has no section "Started by".
         Assert.Null(page.Section("startedBy"));
         Assert.Equal(["System", "Lines in file order"], Labels(page, "advanced").Take(2));
         Assert.True(page.Section("advanced")!.Advanced);
-        Assert.Equal(MissionPageModel.UnusedSystem, page.Section("advanced")!.Fields[0].Help);
+        Assert.Equal(MissionSchema.Retail.Section("Trigger")!.Key("system")!.Help, page.Section("advanced")!.Fields[0].Help);
     }
 
     [Fact]
@@ -230,10 +246,18 @@ public sealed class MissionPagesTests
             page.Completeness!.Steps.Select(s => s.Name));
         Assert.True(page.Completeness.Complete);
         Assert.Equal(["Start position", "Rotation", "System", "Labels", "Cargo", "Hull points"], Labels(page, "ship"));
-        Assert.Equal(MissionPageModel.HullPointsHelp, page.Section("ship")!.Fields.Last().Help);
+        Assert.Equal(MissionSchema.Retail.Notes["hullPointsNotSet"], page.Section("ship")!.Fields.Last().Help);
         Assert.Equal(2, page.Section("ship")!.Fields.Single(f => f.Label == "Cargo").List!.Rows.Count);
-        Assert.Equal(["Faction", "Voice", "Costume", "Name text", "Ship build"], Labels(page, "pilot"));
+        // A position has one field for each number, as the editable field has.
+        Assert.Equal([("X", "10"), ("Y", "0"), ("Z", "20")],
+            page.Section("ship")!.Fields.Single(f => f.Label == "Start position").Parts);
+        // The costume has a named field for each slot, not one comma-separated text.
+        Assert.Equal(["Faction", "Voice", "Costume", "Head", "Body", "Name text", "Ship build"], Labels(page, "pilot"));
+        Assert.True(page.Section("pilot")!.Fields.Single(f => f.Label == "Costume").Heading);
+        // The ship build comes from the mission ship file of the run, with the labels of the rule data.
         Assert.Equal(["Ship archetype", "Loadout", "Pilot", "NPC classes"], Labels(page, "build"));
+        // Each class of the npc_class line is one row of the list field.
+        Assert.Equal(2, page.Section("build")!.Fields.Single(f => f.Label == "NPC classes").List!.Rows.Count);
         Assert.Equal("Invented pilot (1001)", page.Lead.Single().Value);
         // The formation takes the ship, so a note says that a spawn of the ship spawns nothing.
         Assert.Contains(page.Section("ship")!.Notes, n => n.StartsWith("Formation f_one takes this ship."));
@@ -247,6 +271,8 @@ public sealed class MissionPagesTests
         var labels = Labels(page, "ship").ToList();
 
         Assert.Contains("Placed near", labels);
+        // The place near an anchor has a named field for each value.
+        Assert.Equal(["Heading", "Anchor", "Range"], labels.SkipWhile(l => l != "Placed near").Skip(1).Take(3));
         Assert.DoesNotContain("Start position", labels);
         Assert.DoesNotContain("Rotation", labels);
         Assert.Contains("Arrives through", labels);
@@ -284,6 +310,12 @@ public sealed class MissionPagesTests
         var encounter = Page(RefOf(MissionSectionKind.RandomEncounter, "enc_one"));
         Assert.Equal(["t_start"], Labels(encounter, "armedBy"));
         Assert.Equal("Random encounter", encounter.Kind);
+        // The keys of the encounter have their named fields (section 10.16 of the M6a design). An unknown key goes to
+        // Advanced.
+        var keys = Labels(encounter, "encounter").ToList();
+        foreach (var label in new[] { "Encounter type", "Attacker faction", "Target", "Starts by", "Formations", "Form count", "Labels" })
+            Assert.Contains(label, keys);
+        Assert.Equal(["odd_key"], Labels(encounter, "advanced"));
     }
 
     [Fact]
@@ -301,8 +333,14 @@ public sealed class MissionPagesTests
         Assert.Equal("Behavior prefab", prefab.Kind);
         Assert.NotNull(prefab.Completeness);
         Assert.Equal(instance.Definition.Fields.Select(f => f.Label), Labels(prefab, "fields"));
-        Assert.Equal("Core", prefab.Section("members")!.Fields[0].Label);
+        // Each field of a prefab has a help text, and the core trigger has its role.
+        Assert.All(instance.Definition.Fields, f =>
+            Assert.Equal(f.Help, prefab.Section("fields")!.Fields.First(field => field.Label == f.Label).Help));
+        Assert.Equal("Play", prefab.Section("members")!.Fields[0].Label);
         Assert.NotEmpty(prefab.IniSections);
+        Assert.Equal("INI (all triggers)", prefab.IniTitle);
+        var patrol = Run.Analysis.Prefabs!.Instances.Single(i => i.Definition.Id == "patrol");
+        Assert.Equal("INI (all sections)", Page(new MissionRef(Script, MissionItemKind.PrefabInstance, Key: patrol.Key)).IniTitle);
 
         var kind = Page(new MissionRef(Script, MissionItemKind.PrefabKind, Key: "spaceCutscene"));
         Assert.Equal(["whatItIs", "whatItWrites", "fields", "steps", "uses"], kind.Sections.Select(s => s.Id));

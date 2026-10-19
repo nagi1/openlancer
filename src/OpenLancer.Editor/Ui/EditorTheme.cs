@@ -79,6 +79,20 @@ internal static class EditorTheme
     /// degrees or more from each other color of the theme and of the kinds, so no other meaning uses it.</summary>
     public static readonly Vector4 MissionItem = Rgb(0xF07AB4);
 
+    /// <summary>The brackets and lines of an item under the mouse, and of the items that the cross-links of the Mission
+    /// tab name. It is a light grey, so it does not look like the blue of the selection (UI rule 7).</summary>
+    public static readonly Vector4 Highlight = Label;
+
+    // The mission graph (section 6 of the M6a design). The links use neutral greys only (decision D553).
+    public static readonly Vector4 GraphNode = Rgb(0x2E2E2E);
+    public static readonly Vector4 GraphNodeHeader = Rgb(0x3A3A3A);
+    public static readonly Vector4 GraphNodeBorder = Rgb(0x555555);
+    public static readonly Vector4 GraphFrame = Rgb(0xFFFFFF, 10 / 255f);
+    public static readonly Vector4 GraphFrameBorder = Rgb(0xFFFFFF, 50 / 255f);
+    public static readonly Vector4 GraphPrefabFrame = Rgb(0xFFFFFF, 18 / 255f);
+    public static readonly Vector4 GraphLinkLight = Rgb(0xC8C8C8);
+    public static readonly Vector4 GraphLinkMid = Rgb(0x8C8C8C);
+
     // The scene.
     public static readonly Vector4 AxisX = Rgb(0xE06C6C);
     public static readonly Vector4 AxisY = Rgb(0x7CC46A);
@@ -114,7 +128,7 @@ internal static class EditorTheme
 
     /// <summary>
     /// Writes the style again at a scale. The node editor of the engine restores the LibreLancer style when its canvas
-    /// starts, ends, stops or goes on, and its canvas draws at the scale 1. So the mission graph calls this after each of
+    /// starts, ends, stops or goes on. Its canvas draws at the scale 1. So the mission graph calls this after each of
     /// these calls, with 1 in the canvas and the UI scale outside it.
     /// </summary>
     public static void Reapply(float scale) => Apply(ImGui.GetStyle(), scale);

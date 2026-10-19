@@ -7,9 +7,9 @@ using OpenLancer.Editor.Ui;
 namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
-/// The rows of the mission lines that name an item of the world (section 10.18 of the M6a design): one row for each
-/// line, "{slot}: {trigger nickname} ({plain name})". A click opens the mission in the Mission tab and selects the
-/// line. The Behaviors section of a system object and the Used by sections of a base and of a zone draw them.
+/// The rows of the mission lines that name an item of the world (section 10.18 of the M6a design). Each line has one
+/// row, "{slot}: {trigger nickname} ({plain name})". A click opens the mission in the Mission tab and selects the line.
+/// The Behaviors section of a system object and the Used by sections of a base and of a zone draw them.
 /// </summary>
 internal sealed class MissionUsesRows(EditorWindow window, PropertyGrid grid)
 {

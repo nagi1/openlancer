@@ -1,4 +1,5 @@
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Missions;
 using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui;
 using Xunit;

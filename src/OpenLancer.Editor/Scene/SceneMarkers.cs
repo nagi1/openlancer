@@ -36,11 +36,35 @@ internal sealed class SceneMarkers
     private readonly List<SceneMarker> markers = [];
     private float scale = 1;
 
+    // The first marker of each item, made at the first lookup of the frame, or null.
+    private Dictionary<object, SceneMarker>? lookup;
+
     /// <summary>The markers of the frame, from far to near, so that near markers draw on top of far markers.</summary>
     public IReadOnlyList<SceneMarker> Items => markers;
 
     /// <summary>Forgets the markers. Call it when a system opens or closes.</summary>
-    public void Clear() => markers.Clear();
+    public void Clear()
+    {
+        markers.Clear();
+        lookup = null;
+    }
+
+    /// <summary>The marker of an item in this frame, or null when the item has no marker. An item compares by its
+    /// equality. The first lookup of a frame indexes the markers, so each later lookup takes one dictionary
+    /// lookup.</summary>
+    public SceneMarker? Find(object item)
+    {
+        if (lookup == null)
+        {
+            lookup = [];
+            foreach (var marker in markers)
+            {
+                lookup.TryAdd(marker.Item, marker);
+            }
+        }
+
+        return lookup.TryGetValue(item, out var found) ? found : null;
+    }
 
     /// <summary>
     /// Projects the markers of the system for this frame. The Zones and Lights toggles show the zone and light markers.
@@ -50,6 +74,7 @@ internal sealed class SceneMarkers
     public void Update(SceneProjection projection, SystemIndex index, EditorSettings settings, object? selection)
     {
         markers.Clear();
+        lookup = null;
         scale = projection.UiScale;
         if (!settings.ShowMarkers)
         {
@@ -112,6 +137,7 @@ internal sealed class SceneMarkers
         IEnumerable<(object Item, ObjectKind Kind, uint Color, Vector3 Position)> items)
     {
         markers.Clear();
+        lookup = null;
         scale = projection.UiScale;
         foreach (var (item, kind, color, position) in items)
         {
@@ -122,14 +148,15 @@ internal sealed class SceneMarkers
     }
 
     /// <summary>
-    /// Adds the markers of other items to the markers of the frame, for example the items of the open mission (section
-    /// 7.2 of the M6a design). So the picker and the pick cycle find them too. An item compares with the selection by its
-    /// equality.
+    /// Adds the markers of other items to the markers of the frame. An example is the items of the open mission
+    /// (section 7.2 of the M6a design). So the picker and the pick cycle find them too. An item compares with the
+    /// selection by its equality.
     /// </summary>
     public void Append(SceneProjection projection, object? selection,
         IEnumerable<(object Item, ObjectKind Kind, uint Color, Vector3 Position)> items)
     {
         scale = projection.UiScale;
+        lookup = null;
         var before = markers.Count;
         foreach (var (item, kind, color, position) in items)
         {

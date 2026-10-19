@@ -24,6 +24,16 @@ internal sealed class PickCycle
     private IReadOnlyList<object> stack = [];
     private object? picked;
 
+    // True after the second press of a double-click, until its release.
+    private bool keepNext;
+
+    /// <summary>
+    /// Marks the second press of a double-click (section 7.3 of the M6a design). The release of that press keeps the
+    /// selection when the stack under the mouse holds it. So a double-click acts on the item of its first click, and the
+    /// cycle does not go to the next item.
+    /// </summary>
+    public void DoublePress() => keepNext = true;
+
     /// <summary>
     /// The selection after a click on the Scene. A plain click selects the next item of the stack under three
     /// conditions. The click is at the same place as the last pick. The camera did not move. The selection is still the
@@ -37,6 +47,15 @@ internal sealed class PickCycle
     public (bool Changes, object? Selection) Click(IReadOnlyList<object> items, Vector2 mouse, CameraPose cameraPose,
         object? selection, bool alt)
     {
+        if (keepNext)
+        {
+            keepNext = false;
+            if (IndexOf(items, selection) >= 0)
+            {
+                return (false, selection);
+            }
+        }
+
         if (items.Count == 0)
         {
             Reset();
@@ -76,6 +95,7 @@ internal sealed class PickCycle
         pose = default;
         stack = [];
         picked = null;
+        keepNext = false;
     }
 
     private bool IsSamePlace(Vector2 mouse) => place is { } last && Vector2.Distance(last, mouse) <= SamePlace;

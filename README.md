@@ -88,6 +88,10 @@ The Mission tab shows the mission as a graph beside the Scene. Each box is one t
 
 The Hierarchy lists the items of the open mission, and the Inspector shows each item with named fields and a completeness panel. The Raw INI view shows the whole script with the marks of the checks. This version shows mission scripts but does not change them. The toggle "base-game messages" shows the problems that the base game has too. They are hidden by default.
 
+To measure the frame time of the Mission tab, start the editor with `OpenLancer.Editor <profile.json> --bench-mission <install path>...`. For example, give the scripts `DATA\MISSIONS\M10\m10.ini` and `DATA\MISSIONS\M06\m06.ini`. The bench opens the profile without an active mod and shows each mission with the Scene beside it. For each mission, it draws 300 frames in the Beats lens and 300 frames in the Logic lens with "Show lines". The frames pan and zoom the graph.
+
+Then the bench writes the median and the 95th percentile of the frame times to the engine log of the editor, and closes. The gates are a median under 16 ms in the Beats lens and under 33 ms in the Logic lens. A case above its gate, or a script that the mission checks do not have, gives the exit code 1. The bench does not change the editor settings. The log is the file of the cutscene bench `--bench-cutscene` (see "The Cutscene tab" in [docs/CUTSCENES.md](docs/CUTSCENES.md)).
+
 ## Study and edit cutscenes
 
 Open the Cutscenes tab of the editor to browse the retail cutscenes and the cutscenes of the mods. Open one to preview it on a timeline and to see each value. With Mod > None (read-only), the editor takes no edits. With an active mod, a save writes the changes of a cutscene as a small THN patch. See [docs/CUTSCENES.md](docs/CUTSCENES.md).

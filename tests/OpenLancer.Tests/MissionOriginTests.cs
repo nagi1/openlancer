@@ -160,6 +160,18 @@ public sealed class MissionOriginTests
         Assert.DoesNotContain(problems, p => p.Message.Contains("'Li02_to_Li01'"));
     }
 
+    /// <summary>The session finds the system of an object by the system file that holds it. So a connector line to an
+    /// object in another system ends at the chip of that system (section 7.3 of the M6a design).</summary>
+    [Fact]
+    public void TheSessionFindsTheSystemOfAnObject()
+    {
+        using var ws = ListWorkspace.Create();
+        using var session = ws.Session("act");
+
+        Assert.Equal("li01", session.SystemOfObject("LI01_TO_LI02")?.ToLowerInvariant());
+        Assert.Null(session.SystemOfObject("no_such_object"));
+    }
+
     [Fact]
     public void WithoutARemovedNameTheSnapshotHasNoBaseNames()
     {

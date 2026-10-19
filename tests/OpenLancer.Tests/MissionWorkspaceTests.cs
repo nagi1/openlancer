@@ -22,12 +22,12 @@ public sealed class MissionWorkspaceTests
         var other = new SectionRef(Script, new SectionIdentity("Constants", null));
         var mission = new SectionRef(Script, new SectionIdentity("Mission", null));
 
-        Assert.Equal(new MissionRef(Script, MissionItemKind.Row, trigger, Row: 3), MissionWorkspace.RefOf(trigger, 3));
-        Assert.Equal(new MissionRef(Script, MissionItemKind.Trigger, trigger), MissionWorkspace.RefOf(trigger, -1));
+        Assert.Equal(new MissionRef(Script, MissionItemKind.Row, trigger, Row: 3), MissionRef.OfSection(trigger, 3));
+        Assert.Equal(new MissionRef(Script, MissionItemKind.Trigger, trigger), MissionRef.OfSection(trigger, -1));
         // A line of another section selects the section.
-        Assert.Equal(new MissionRef(Script, MissionItemKind.Ship, ship), MissionWorkspace.RefOf(ship, 2));
-        Assert.Equal(MissionItemKind.OtherSection, MissionWorkspace.RefOf(other, -1).Kind);
-        Assert.Equal(MissionRef.Of(Script), MissionWorkspace.RefOf(mission, 0));
+        Assert.Equal(new MissionRef(Script, MissionItemKind.Ship, ship), MissionRef.OfSection(ship, 2));
+        Assert.Equal(MissionItemKind.OtherSection, MissionRef.OfSection(other, -1).Kind);
+        Assert.Equal(MissionRef.Of(Script), MissionRef.OfSection(mission, 0));
     }
 
     [Fact]

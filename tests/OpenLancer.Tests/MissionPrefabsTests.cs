@@ -312,6 +312,30 @@ public sealed class MissionPrefabsTests
         Assert.Contains(acts.Acts[0].Triggers, t => t.Nickname == "side");
         Assert.Equal(1, acts.Acts[1].Checkpoints);
         Assert.Equal("lonely", Assert.Single(acts.NotStarted).Nickname);
+        // The keys of the acts and of the frame "Not started by the mission" give their triggers.
+        Assert.Equal("a:2", MissionActs.KeyOf(acts.Acts[1]));
+        Assert.Same(acts.Acts[1], acts.Act("a:2"));
+        Assert.Equal(acts.Acts[1].Triggers, acts.TriggersOf("a:2"));
+        Assert.Equal(acts.NotStarted, acts.TriggersOf(MissionActs.NotStartedKey));
+        Assert.Empty(acts.TriggersOf("a:9"));
+    }
+
+    /// <summary>The game never runs a duplicate trigger (TR4), so the frame "Not started by the mission" holds it. The
+    /// graph, the pages and the cross-links read this one set.</summary>
+    [Fact]
+    public void ADuplicateTriggerIsNotStartedByTheMission()
+    {
+        var acts = MissionActs.Propose(Index(Story + """
+
+
+            [Trigger]
+            nickname = t_end
+            Cnd_True = no_params
+            """));
+
+        var duplicate = Assert.Single(acts.NotStarted);
+        Assert.True(duplicate.IsDuplicate);
+        Assert.Null(acts.ActOf(duplicate));
     }
 
     [Fact]

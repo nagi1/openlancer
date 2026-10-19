@@ -9,8 +9,8 @@ using static OpenLancer.Tests.GraphTestData;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The session state of the mission graph view (sections 6.4 to 6.7 of the M6a design): collapse and open, lines, drags,
-/// the lens, and the link between a selection and the node that shows it.
+/// The session state of the mission graph view (sections 6.4 to 6.7 of the M6a design). The tests check collapse and
+/// open, lines, drags, the lens, and the link between a selection and the node that shows it.
 /// </summary>
 public sealed class GraphViewStateTests
 {

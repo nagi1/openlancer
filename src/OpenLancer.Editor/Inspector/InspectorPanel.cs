@@ -11,6 +11,7 @@ using LibreLancer.ImUI;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Assets;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;

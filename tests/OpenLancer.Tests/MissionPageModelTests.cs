@@ -63,7 +63,9 @@ public sealed class MissionPageModelTests
         Assert.Equal("Start trigger", page.Section("overview")!.Fields.Single(f => f.Value == "t_start").Label);
         var advanced = page.Section("advanced")!;
         Assert.True(advanced.Advanced);
-        Assert.Equal(MissionPageModel.UnusedMissionKey, Assert.Single(advanced.Fields).Help);
+        // The help of a key that the game does not use comes from the rule data (decision D426).
+        Assert.Equal(MissionSchema.Retail.Section("Mission")!.Key("mission_title")!.Help, Assert.Single(advanced.Fields).Help);
+        Assert.StartsWith("The game does not use this value.", Assert.Single(advanced.Fields).Help);
     }
 
     /// <summary>The systems of the Overview are chips with the names of the systems. A

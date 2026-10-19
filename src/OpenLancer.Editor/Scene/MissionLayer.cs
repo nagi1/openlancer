@@ -13,20 +13,23 @@ namespace OpenLancer.Editor.Scene;
 
 /// <summary>
 /// The mission layer of the Scene (section 7.2 of the M6a design): the items of the open mission in the open system.
-/// The ship, formation, solar and loot starts, the spawns, moves, routes, objective markers, cameras and cutscene anchors
-/// are markers, which the picker and the pick cycle find. The volumes, rings, planes, paths and lines are helper lines of
-/// the 3D scene. The layer shows while the toggle "Mission items" is on and a mission is open. An item of the highlight
-/// set of the cross-links shows also when the toggle is off. The markers are read-only, so the gizmo does not take them.
+/// The ship, formation, solar and loot starts, the spawns, moves, routes, objective markers, cameras and cutscene
+/// anchors are markers. The picker and the pick cycle find them. The volumes, rings, planes, paths and lines are helper
+/// lines of the 3D scene. The layer shows while the toggle "Mission items" is on and a mission is open. An item of the
+/// highlight set of the cross-links shows also when the toggle is off. Its helper lines have the highlight color, and
+/// the overlay draws brackets around its marker, as for a highlighted object of the system. The markers are read-only,
+/// so the gizmo does not take them.
 /// </summary>
 /// <remarks>The layer reads the placements of <see cref="MissionPlacements"/> once for each mission and system, so it does
-/// no work for a frame without a change.</remarks>
+/// no work for a frame without a change. A lookup of an item by its selection takes one dictionary lookup.</remarks>
 internal sealed class MissionLayer(EditorWindow window)
 {
     // A sphere is three great circles of this many segments. An outside sphere draws every other segment.
     private const int Segments = 48;
 
     private static readonly Color4 LineColor = new(EditorTheme.MissionItem with { W = 0.75f });
-    private static readonly Color4 HighlightColor = new(EditorTheme.Accent);
+    private static readonly Color4 HighlightColor = new(EditorTheme.Highlight);
+    private static readonly uint MarkerColor = EditorTheme.ToAbgr(EditorTheme.MissionItem);
 
     private static readonly Dictionary<PlacementKind, ObjectKind> Kinds = new()
     {
@@ -52,6 +55,9 @@ internal sealed class MissionLayer(EditorWindow window)
 
     private (MissionAnalysis? Analysis, StarSystemKey System, int Names, int Overrides) built;
     private IReadOnlyList<(MissionRef Ref, MissionPlacement Placement)> items = [];
+
+    // The first placement of each selection, for the lookups of the cross-links in each frame.
+    private Dictionary<MissionRef, MissionPlacement> byRef = [];
 
     // The helper lines of each item, in the order of the items.
     private IReadOnlyList<IReadOnlyList<(Vector3 A, Vector3 B)>> outlines = [];
@@ -92,20 +98,21 @@ internal sealed class MissionLayer(EditorWindow window)
         {
             items = [];
             outlines = [];
+            byRef = [];
             return;
         }
 
         var placements = MissionPlacements.In(analysis.Index, index.Source.Nickname,
             name => index.ObjectsByNickname.GetValueOrDefault(name)?.Position, FormationSlots,
             section => window.Missions.SystemOverride(section.Ref));
-        items = placements.Select(p => (RefOf(analysis.Script.Path, p), p)).ToList();
+        items = placements.Select(p => (MissionRef.OfPlacement(analysis.Script.Path, p), p)).ToList();
         outlines = placements.Select(Outline).ToList();
+        byRef = [];
+        foreach (var (item, placement) in items)
+        {
+            byRef.TryAdd(item, placement);
+        }
     }
-
-    /// <summary>The selection of a placement: the line of a trigger, or the section of an item.</summary>
-    public static MissionRef RefOf(string script, MissionPlacement placement) => placement.Trigger != null
-        ? new MissionRef(script, MissionItemKind.Row, placement.Section.Ref, Row: placement.Entry)
-        : MissionWorkspace.RefOf(placement.Section.Ref, -1);
 
     /// <summary>The markers of the layer: the glyph of each item, and the ghost glyphs of the formation members. With
     /// the toggle off, only the highlighted items show.</summary>
@@ -122,31 +129,28 @@ internal sealed class MissionLayer(EditorWindow window)
             }
 
             var kind = Kinds[placement.Kind];
-            var color = EditorTheme.ToAbgr(highlighted ? EditorTheme.Accent : EditorTheme.MissionItem);
             if (placement.Kind == PlacementKind.FormationMember)
             {
                 foreach (var point in placement.Points)
                 {
-                    yield return (item, kind, color, point);
+                    yield return (item, kind, MarkerColor, point);
                 }
 
                 continue;
             }
 
             var position = placement.Shape == PlacementShape.Ring && placement.To is { } dot ? dot : placement.Position;
-            yield return (item, kind, color, position);
+            yield return (item, kind, MarkerColor, position);
         }
     }
 
     /// <summary>The label of a marker item, or null for an item that is not of the layer.</summary>
     public string? Label(object item) =>
-        item is MissionRef mission && items.FirstOrDefault(i => i.Ref.Equals(mission)) is { Placement: { } placement }
-            ? placement.Label
-            : null;
+        item is MissionRef mission && byRef.TryGetValue(mission, out var placement) ? placement.Label : null;
 
     /// <summary>The position of an item of the layer, for the focus of the camera, or null.</summary>
     public (Vector3 Position, float Radius)? PlaceOf(MissionRef item) =>
-        items.FirstOrDefault(i => i.Ref.Equals(item)) is { Placement: { } placement }
+        byRef.TryGetValue(item, out var placement)
             ? (placement.Position, Math.Max(500, placement.Radius * 1.5f))
             : null;
 
@@ -273,6 +277,7 @@ internal sealed class MissionLayer(EditorWindow window)
         built = default;
         items = [];
         outlines = [];
+        byRef = [];
         slots = null;
         slotsView = null;
     }

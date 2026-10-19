@@ -10,8 +10,9 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// Retail proofs of the mission layer of the Scene (sections 7.2 and 18.2 of the M6a design): the count of placeable
-/// items of each kind in Li01 over the 14 retail story scripts. The tests count items. They hold no retail text.
+/// Retail proofs of the mission layer of the Scene (sections 7.2 and 18.2 of the M6a design). They pin the count of
+/// placeable items of each kind in Li01 over the 14 retail story scripts. The tests count items. They hold no retail
+/// text.
 /// </summary>
 public sealed class MissionLayerRetailTests(ITestOutputHelper output)
 {
@@ -56,7 +57,7 @@ public sealed class MissionLayerRetailTests(ITestOutputHelper output)
             : 0;
 
     /// <summary>The objects of Li01 list the mission lines that name them in their Behaviors section (section 10.18 of
-    /// the M6a design), for example the gates of the lock lines.</summary>
+    /// the M6a design). Examples are the gates of the lock lines.</summary>
     [Fact]
     public void TheObjectsOfLi01ListTheirMissionRows()
     {

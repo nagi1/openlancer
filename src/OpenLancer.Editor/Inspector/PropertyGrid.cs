@@ -216,7 +216,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         igTableFullRowEnd();
     }
 
-    /// <summary>A row that spans the two columns, for a widget that has its own label, for example a list field
+    /// <summary>A row that spans the two columns, for a widget that has its own label. An example is a list field
     /// (section 11.1 of the M6a design).</summary>
     public void FullRow(Action draw)
     {
@@ -429,6 +429,28 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             return;
         }
 
+        ReferenceRow(label, kind, nickname, text, follow, iniKey);
+    }
+
+    /// <summary>
+    /// A read-only link to an item that is not a selection, for example a system that opens in the Scene. It has the
+    /// widget of <see cref="Reference(string, ObjectKind, string?, string?, object?, string?)"/>. A name that does not
+    /// resolve shows "Missing" in the error color. A null action disables the button.
+    /// </summary>
+    /// <param name="go">Goes to the item, or null when the editor cannot go to it.</param>
+    /// <param name="missing">True for a name that the data does not have (the "Missing" look of M21).</param>
+    public void ReferenceTo(string label, ObjectKind kind, string nickname, string? name, Action? go, bool missing = false)
+    {
+        var text = missing ? $"Missing: {nickname}" : string.IsNullOrEmpty(name) ? nickname : $"{nickname} ({name})";
+        ReferenceRow(label, missing ? kind with { Color = EditorTheme.Error } : kind, nickname, text,
+            new Follow(null, $"{kind.Label}: {text}", go), null, missing);
+    }
+
+    /// <summary>The row of a reference: a field with the kind glyph and the text, and the button that goes to the
+    /// item.</summary>
+    private void ReferenceRow(string label, ObjectKind kind, string? nickname, string text, Follow follow, string? iniKey,
+        bool missing = false)
+    {
         BeginRow(label, iniKey);
         var style = ImGui.GetStyle();
         var height = ImGui.GetFrameHeight();
@@ -454,7 +476,8 @@ internal sealed partial class PropertyGrid(EditorWindow window)
 
         // A long reference ends with "...". The tooltip shows all of it.
         TextFit.AddText(drawList, font, fontSize, position,
-            ImGui.GetColorU32(nickname == null ? ImGuiCol.TextDisabled : ImGuiCol.Text), text, textEnd - position.X);
+            missing ? ImGui.GetColorU32(EditorTheme.Error)
+            : ImGui.GetColorU32(nickname == null ? ImGuiCol.TextDisabled : ImGuiCol.Text), text, textEnd - position.X);
         ImGui.Dummy(new Vector2(width, height));
         if (nickname != null && ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
         {
@@ -466,24 +489,54 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         EndRow();
     }
 
-    /// <summary>The button of a reference that selects the item. A null target disables it.</summary>
+    /// <summary>The button of a reference that selects the item, or that goes to it. A follow without a target and
+    /// without an action disables it.</summary>
     private void FollowButton(Follow follow)
     {
-        ImGui.BeginDisabled(follow.Target == null);
+        var none = follow.Target == null && follow.Go == null;
+        ImGui.BeginDisabled(none);
         if (ImGui.Button($"{EditorIcons.UpRightFromSquare}##follow",
                 new Vector2(ToolbarItems.IconWidth, ImGui.GetFrameHeight())))
         {
-            window.Selection = follow.Target;
+            if (follow.Go != null)
+            {
+                follow.Go();
+            }
+            else
+            {
+                window.Selection = follow.Target;
+            }
         }
 
         ImGui.EndDisabled();
-        ImGui.SetItemTooltip(follow.Target == null ? "The editor cannot select this item." : $"Select {follow.Item}");
+        ImGui.SetItemTooltip(none ? "The editor cannot select this item."
+            : follow.Go != null ? $"Go to {follow.Item}"
+            : $"Select {follow.Item}");
     }
 
     /// <summary>The item of a reference that its button selects.</summary>
     /// <param name="Target">The item, or null when the editor cannot select it.</param>
     /// <param name="Item">The kind and the name of the item, for the tooltips.</param>
-    private readonly record struct Follow(object? Target, string Item);
+    /// <param name="Go">Goes to an item that is not a selection, or null.</param>
+    private readonly record struct Follow(object? Target, string Item, Action? Go = null);
+
+    /// <summary>
+    /// A read-only row of the named parts of one value, one field for each part. Examples are the X, Y and Z of a
+    /// position and the W, X, Y and Z of a rotation. X, Y and Z have the axis colors. M6b makes the fields editable.
+    /// </summary>
+    public void Parts(string label, IReadOnlyList<(string Label, string Value)> parts)
+    {
+        BeginRow(label, null);
+        var labels = parts.Select(p => p.Label switch
+        {
+            "X" => AxisLabels[0],
+            "Y" => AxisLabels[1],
+            "Z" => AxisLabels[2],
+            _ => new ComponentLabel(p.Label, EditorTheme.Label),
+        }).ToList();
+        ComponentFields(parts.Select(p => p.Value).ToList(), labels, (_, text, width) => Field(text, width));
+        EndRow();
+    }
 
     /// <summary>A row with its own widgets. <paramref name="value"/> draws them in the value column.</summary>
     public void Row(string label, Action value)

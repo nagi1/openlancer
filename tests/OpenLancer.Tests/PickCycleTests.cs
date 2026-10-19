@@ -23,6 +23,18 @@ public sealed class PickCycleTests
         Assert.Equal((true, A), cycle.Click(Stack, Place, Pose, null, false));
     }
 
+    /// <summary>The release of the second press of a double-click keeps the item of the first click. So the
+    /// double-click acts on that item (section 7.3 of the M6a design). The next click cycles again.</summary>
+    [Fact]
+    public void TheReleaseOfADoubleClickKeepsTheSelection()
+    {
+        var (_, first) = cycle.Click(Stack, Place, Pose, null, false);
+
+        cycle.DoublePress();
+        Assert.Equal((false, A), cycle.Click(Stack, Place, Pose, first, false));
+        Assert.Equal((true, B), cycle.Click(Stack, Place, Pose, first, false));
+    }
+
     [Fact]
     public void AClickAgainAtTheSamePlaceSelectsTheNext()
     {

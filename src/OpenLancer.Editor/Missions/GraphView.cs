@@ -16,8 +16,8 @@ using OpenLancer.Editor.Ui.Fields;
 namespace OpenLancer.Editor.Missions;
 
 /// <summary>
-/// The mission graph of the Mission tab (section 6 of the M6a design): the node editor with one node for each trigger,
-/// the act and prefab frames, the pins, the links, the chips and the marks. It draws the model of
+/// The mission graph of the Mission tab (section 6 of the M6a design). It is the node editor with one node for each
+/// trigger. It draws the act and prefab frames, the pins, the links, the chips and the marks. It draws the model of
 /// <see cref="MissionGraph"/> at the places of <see cref="GraphLayout"/>. A node outside the view is a stub, and a node
 /// below 60 percent zoom shows its header only (decision D554). The node editor shortcuts that change data are off, and
 /// the editor selection is the only selection (decision D558, review finding RV37). The view writes no file: the node
@@ -39,24 +39,14 @@ internal sealed class GraphView : IDisposable
     private const float SmallSize = 12;
     private const float SidePadding = 16;
     private const float ChipHeight = 16;
-    private const float ChipPadding = 5;
     private const float ChipGap = 4;
     private const float Rounding = 4;
 
     // The minimum zoom of a full node (decision D554).
     private const float FullDetailScale = 0.6f;
 
-    private static readonly Vector4 NodeFill = EditorTheme.Rgb(0x2E2E2E);
-    private static readonly Vector4 NodeHeader = EditorTheme.Rgb(0x3A3A3A);
-    private static readonly Vector4 NodeBorder = EditorTheme.Rgb(0x555555);
-    private static readonly Vector4 FrameFill = EditorTheme.Rgb(0xFFFFFF, 10 / 255f);
-    private static readonly Vector4 FrameBorder = EditorTheme.Rgb(0xFFFFFF, 50 / 255f);
-    private static readonly Vector4 PrefabFill = EditorTheme.Rgb(0xFFFFFF, 18 / 255f);
-    private static readonly Vector4 ChipFill = EditorTheme.Rgb(0x4D4D4D);
-
-    // The link greys of decision D553. No link uses a state color.
-    private static readonly Vector4 LightGrey = EditorTheme.Rgb(0xC8C8C8);
-    private static readonly Vector4 MidGrey = EditorTheme.Rgb(0x8C8C8C);
+    // The look of a chip that names an item: the grey chip, with the accent outline under the mouse.
+    private static readonly ChipLook WarningChip = ChipLook.Grey with { Text = EditorTheme.Warning };
 
     private readonly EditorWindow window;
     private readonly MissionWorkspace missions;
@@ -146,8 +136,8 @@ internal sealed class GraphView : IDisposable
     /// group.</summary>
     public IReadOnlyDictionary<(string Node, string Group), (Vector2 Min, Vector2 Max)> ChipRects => chipRects;
 
-    /// <summary>The keys of the nodes and frames that the view outlines, for example the nodes that use a selected world
-    /// item and their prefab frames (section 7.3). The Mission tab sets them in each frame.</summary>
+    /// <summary>The keys of the nodes and frames that the view outlines. Examples are the nodes that use a selected
+    /// world item, and their prefab frames (section 7.3). The Mission tab sets them in each frame.</summary>
     public IReadOnlySet<string> Outlined { get; set; } = new HashSet<string>();
 
     /// <summary>The system of the system filter, or null for all systems. The nodes of other systems fade.</summary>
@@ -306,10 +296,7 @@ internal sealed class GraphView : IDisposable
     }
 
     /// <summary>The name of a system of the game data, or null.</summary>
-    private string? SystemName(string nickname) =>
-        window.Session is { GameData: { } data } session && data.Items.Systems.Get(nickname) is { } system
-            ? session.ItemName(system)
-            : null;
+    private string? SystemName(string nickname) => window.Session?.SystemName(nickname);
 
     /// <summary>The node editor reports the moves of a drag. The view keeps them as session offsets.</summary>
     private void Dragged(NodeId id, float oldX, float oldY, float newX, float newY, IntPtr user)
@@ -399,12 +386,18 @@ internal sealed class GraphView : IDisposable
         SearchResults(analysis.Script.Path);
         SideList(analysis.Script.Path, graph);
         Minimap(graph, layout);
-        foreach (var (key, delta) in drags)
+        if (drags.Count > 0)
         {
-            state.Dragged(analysis.Script.Path, key, delta);
-        }
+            foreach (var (key, delta) in drags)
+            {
+                state.Dragged(analysis.Script.Path, key, delta);
+            }
 
-        drags.Clear();
+            drags.Clear();
+            // The node editor keeps the nodes where the drag left them, so the new layout only updates the places
+            // that the view reads.
+            Layout = GraphLayout.Of(graph, state.Offsets(analysis.Script.Path));
+        }
     }
 
     /// <summary>Puts each node and each open frame that shows at its place of the layout, and gives each open frame its
@@ -447,8 +440,9 @@ internal sealed class GraphView : IDisposable
         var outlined = Outlined.Contains(frame.Key);
         NodeEditor.PushStyleVar(StyleVar.NodePadding, Vector4.Zero);
         NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, outlined ? 2.5f : 1f);
-        NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(frame.Kind == GraphFrameKind.Prefab ? PrefabFill : FrameFill));
-        NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(outlined ? EditorTheme.AccentText : FrameBorder));
+        NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(frame.Kind == GraphFrameKind.Prefab
+            ? EditorTheme.GraphPrefabFrame : EditorTheme.GraphFrame));
+        NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(outlined ? EditorTheme.AccentText : EditorTheme.GraphFrameBorder));
         NodeEditor.BeginNode(frame.Id);
         ImGui.PushID(frame.Id);
         var origin = ImGui.GetCursorScreenPos();
@@ -471,7 +465,7 @@ internal sealed class GraphView : IDisposable
             state.SetCollapsed(script, frame.Key, true);
         }
 
-        HoverTip("Collapse this frame into one node.");
+        HoverTip("Collapse this frame into one box.");
         Text(drawList, font, GlyphSize, ImGui.GetItemRectMin() + new Vector2(2, 0), ImGui.IsItemHovered()
             ? EditorTheme.AccentText : EditorTheme.TextDim, EditorIcons.CaretDown.ToString());
         InfoGlyph(new Vector2(right - ChipHeight, origin.Y + 5), FrameHelp(frame));
@@ -504,10 +498,10 @@ internal sealed class GraphView : IDisposable
         var border = selected ? EditorTheme.Accent
             : outlined ? EditorTheme.AccentText
             : node.Kind == GraphNodeKind.Missing ? EditorTheme.Error with { W = 0.6f }
-            : NodeBorder;
+            : EditorTheme.GraphNodeBorder;
         NodeEditor.PushStyleVar(StyleVar.NodePadding, Vector4.Zero);
         NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, outlined ? 2.5f : 1f);
-        NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(NodeFill with { W = alpha }));
+        NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(EditorTheme.GraphNode with { W = alpha }));
         NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(border with { W = border.W * alpha }));
         NodeEditor.BeginNode(node.Id);
         ImGui.PushID(node.Id);
@@ -567,25 +561,10 @@ internal sealed class GraphView : IDisposable
                 MissionGlyphs.OfPin(pin.Kind).ToString());
             if (ImGui.IsItemHovered())
             {
-                pendingTooltip = PinTip(pin);
+                pendingTooltip = pin.Tooltip;
             }
         }
     }
-
-    /// <summary>The tooltip of a pin (section 13.1 of the M6a design).</summary>
-    private static string PinTip(GraphPin pin) => pin.Kind switch
-    {
-        GraphPinKind.Start => "Start: triggers that start this trigger.",
-        GraphPinKind.Stop => "Stop: triggers that stop it.",
-        GraphPinKind.Load => "Load: checkpoints that continue at it after a load.",
-        GraphPinKind.Watches => "Watches: the trigger whose state the condition of this trigger waits for.",
-        GraphPinKind.State => "State: conditions that watch the state of this trigger.",
-        GraphPinKind.Starts => "The triggers that this trigger starts.",
-        GraphPinKind.Stops => "The triggers that this trigger stops.",
-        GraphPinKind.Saves => "The trigger where the mission continues after a load.",
-        GraphPinKind.More => "The lines that the row \"Show more lines\" hides.",
-        _ => "The trigger that this line names.",
-    };
 
     /// <summary>The vertical center of a line of a node: 0 is the header.</summary>
     private static float LineCenter(Vector2 origin, int slot) => slot == 0
@@ -600,7 +579,7 @@ internal sealed class GraphView : IDisposable
         var font = ImGuiHelper.Roboto;
         var width = node.Size.X;
         drawList.AddRectFilled(origin, origin + new Vector2(width, MissionGraph.HeaderHeight),
-            EditorTheme.ToAbgr(NodeHeader), Rounding, ImDrawFlags.RoundCornersTop);
+            EditorTheme.ToAbgr(EditorTheme.GraphNodeHeader), Rounding, ImDrawFlags.RoundCornersTop);
         var glyph = node.Kind switch
         {
             GraphNodeKind.Trigger => MissionGlyphs.OfEvent(node.EventGroup),
@@ -633,31 +612,23 @@ internal sealed class GraphView : IDisposable
 
         foreach (var chip in node.HeaderChips)
         {
-            var chipWidth = font.CalcTextSizeA(SmallSize, float.MaxValue, 0, chip).X + 2 * ChipPadding;
+            var chipWidth = Chip.WidthOf(font, SmallSize, chip);
             if (x + chipWidth > right)
             {
                 break;
             }
 
             var min = new Vector2(x, origin.Y + (MissionGraph.HeaderHeight - ChipHeight) / 2);
-            drawList.AddRectFilled(min, min + new Vector2(chipWidth, ChipHeight), EditorTheme.ToAbgr(ChipFill), 3);
-            drawList.AddText(font, SmallSize, min + new Vector2(ChipPadding, 1), EditorTheme.ToAbgr(EditorTheme.Text), chip);
-            if (ImGui.IsMouseHoveringRect(min, min + new Vector2(chipWidth, ChipHeight)))
+            var max = min + new Vector2(chipWidth, ChipHeight);
+            Chip.Paint(drawList, font, SmallSize, min, max, chip, ChipLook.Grey);
+            if (ImGui.IsMouseHoveringRect(min, max))
             {
-                pendingTooltip = HeaderChipTip(chip);
+                pendingTooltip = MissionPageModel.TriggerChipTip(chip);
             }
 
             x += chipWidth + ChipGap;
         }
     }
-
-    /// <summary>The tooltip of a chip of the header (section 13.1 of the M6a design).</summary>
-    private static string HeaderChipTip(string chip) => chip switch
-    {
-        "Start" => "This trigger starts with the mission (InitState = ACTIVE).",
-        "Repeats" => "This trigger becomes active again each time it runs (repeatable = true).",
-        _ => "The system line of this trigger. The game does not use it. The editor uses it to place the trigger.",
-    };
 
     /// <summary>The help text of the info icon of a node: the event of a trigger, or the text of its frame.</summary>
     private static HelpText NodeHelp(GraphNode node)
@@ -681,49 +652,51 @@ internal sealed class GraphView : IDisposable
     /// "Never starts" and "Watched state". Returns the left end of the marks.</summary>
     private float Marks(GraphNode node, ImDrawListPtr drawList, float right, float y)
     {
-        var marks = new List<(char Glyph, Vector4 Color, string Tip)>();
-        if (node.Errors > 0)
-        {
-            marks.Add((EditorIcons.TimesCircle, EditorTheme.Error, ProblemTip(node, DiagnosticSeverity.Error)));
-        }
-
-        if (node.Warnings > 0)
-        {
-            marks.Add((EditorIcons.ExclamationTriangle, EditorTheme.Warning, ProblemTip(node, DiagnosticSeverity.Warning)));
-        }
-
-        if (node.Muted > 0)
-        {
-            marks.Add((EditorIcons.Lock, EditorTheme.TextDim, "Base-game messages:\n" + string.Join("\n",
-                node.Problems.Where(p => p.Origin?.IsBaseGame == true).Select(p => p.Message))));
-        }
-
-        if (node.NeverStarts)
-        {
-            marks.Add((EditorIcons.Ban, EditorTheme.TextDim, "Never starts. No trigger starts this trigger, and it is " +
-                                                             "not a start trigger or a checkpoint target. So the game " +
-                                                             "never runs it."));
-        }
-
-        if (node.WatchedState)
-        {
-            marks.Add((EditorIcons.Eye, EditorTheme.TextDim, "Watched state. This trigger has a condition and no " +
-                                                             "actions. Other triggers watch its state."));
-        }
-
-        foreach (var (glyph, color, tip) in marks)
+        void Mark(char glyph, Vector4 color, Func<string> tip)
         {
             right -= GlyphSize + 3;
             var min = new Vector2(right, y);
             Text(drawList, ImGuiHelper.Roboto, GlyphSize, min, color, glyph.ToString());
             if (ImGui.IsMouseHoveringRect(min, min + new Vector2(GlyphSize)))
             {
-                pendingTooltip = tip;
+                pendingTooltip = tip();
             }
+        }
+
+        if (node.Errors > 0)
+        {
+            Mark(EditorIcons.TimesCircle, EditorTheme.Error, () => ProblemTip(node, DiagnosticSeverity.Error));
+        }
+
+        if (node.Warnings > 0)
+        {
+            Mark(EditorIcons.ExclamationTriangle, EditorTheme.Warning, () => ProblemTip(node, DiagnosticSeverity.Warning));
+        }
+
+        if (node.Muted > 0)
+        {
+            Mark(EditorIcons.Lock, EditorTheme.TextDim, () => "Base-game messages:\n" + string.Join("\n",
+                node.Problems.Where(p => p.Origin?.IsBaseGame == true).Select(p => p.Message)));
+        }
+
+        if (node.NeverStarts)
+        {
+            Mark(EditorIcons.Ban, EditorTheme.TextDim, () => NeverStartsTip);
+        }
+
+        if (node.WatchedState)
+        {
+            Mark(EditorIcons.Eye, EditorTheme.TextDim, () => WatchedStateTip);
         }
 
         return right - 4;
     }
+
+    private const string NeverStartsTip = "Never starts. No trigger starts this trigger, and it is not a start trigger " +
+                                          "or a checkpoint target. So the game never runs it.";
+
+    private const string WatchedStateTip = "Watched state. This trigger has a condition and no actions. Other triggers " +
+                                           "watch its state.";
 
     private static string ProblemTip(GraphNode node, DiagnosticSeverity severity) =>
         string.Join("\n", node.Problems.Where(p => p.Severity == severity && p.Origin?.IsBaseGame != true)
@@ -761,24 +734,21 @@ internal sealed class GraphView : IDisposable
         var font = ImGuiHelper.Roboto;
         var x = start.X;
         var right = start.X + width;
-        var more = font.CalcTextSizeA(SmallSize, float.MaxValue, 0, "+99").X + 2 * ChipPadding;
+        var more = Chip.WidthOf(font, SmallSize, "+99");
         for (var i = 0; i < node.Chips.Count; i++)
         {
             var chip = node.Chips[i];
             var glyph = chip.Group != null ? MissionGlyphs.OfGroup(chip.Group) : EditorIcons.Sync;
             var label = $"{glyph} {chip.Text}";
-            var chipWidth = font.CalcTextSizeA(SmallSize, float.MaxValue, 0, label).X + 2 * ChipPadding;
+            var chipWidth = Chip.WidthOf(font, SmallSize, label);
             var last = i == node.Chips.Count - 1;
             if (x + chipWidth > right - (last ? 0 : more + ChipGap))
             {
                 var rest = node.Chips.Count - i;
                 var restText = $"+{rest.ToString(CultureInfo.InvariantCulture)}";
                 var restMin = new Vector2(x, start.Y);
-                var restMax = restMin + new Vector2(font.CalcTextSizeA(SmallSize, float.MaxValue, 0, restText).X +
-                                                    2 * ChipPadding, ChipHeight);
-                drawList.AddRectFilled(restMin, restMax, EditorTheme.ToAbgr(ChipFill), 3);
-                drawList.AddText(font, SmallSize, restMin + new Vector2(ChipPadding, 1), EditorTheme.ToAbgr(EditorTheme.Text),
-                    restText);
+                var restMax = restMin + new Vector2(Chip.WidthOf(font, SmallSize, restText), ChipHeight);
+                Chip.Paint(drawList, font, SmallSize, restMin, restMax, restText, ChipLook.Grey);
                 if (ImGui.IsMouseHoveringRect(restMin, restMax))
                 {
                     pendingTooltip = string.Join("\n\n", node.Chips.Skip(i).Select(c => $"{c.Text}\n{c.Tooltip}"));
@@ -794,9 +764,7 @@ internal sealed class GraphView : IDisposable
 
             var min = new Vector2(x, start.Y);
             var max = min + new Vector2(chipWidth, ChipHeight);
-            var color = chip.Warning ? EditorTheme.Warning : EditorTheme.Text;
-            drawList.AddRectFilled(min, max, EditorTheme.ToAbgr(ChipFill), 3);
-            drawList.AddText(font, SmallSize, min + new Vector2(ChipPadding, 1), EditorTheme.ToAbgr(color), label);
+            Chip.Paint(drawList, font, SmallSize, min, max, label, chip.Warning ? WarningChip : ChipLook.Grey);
             if (ImGui.IsMouseHoveringRect(min, max))
             {
                 pendingTooltip = chip.Tooltip;
@@ -839,6 +807,8 @@ internal sealed class GraphView : IDisposable
             var max = new Vector2(origin.X + node.Size.X - PinSize, min.Y + MissionGraph.LineHeight);
             ImGui.SetCursorScreenPos(min);
             var rowRef = new MissionRef(script, MissionItemKind.Row, node.Trigger!.Section.Ref, Row: graphRow.Line.Entry);
+            // The link chips of the row come after the row button, so the row button lets them take the mouse.
+            ImGui.SetNextItemAllowOverlap();
             if (ImGui.InvisibleButton($"##row{i}", max - min))
             {
                 window.Selection = rowRef;
@@ -874,33 +844,7 @@ internal sealed class GraphView : IDisposable
                 drawList.AddText(font, SmallSize, new Vector2(right + 6, textY), EditorTheme.ToAbgr(EditorTheme.TextDim), mark);
             }
 
-            if (graphRow.Links.Count > 0)
-            {
-                var link = graphRow.Links[0];
-                var linkWidth = Math.Min(font.CalcTextSizeA(SmallSize, float.MaxValue, 0, link.Text).X + 2 * ChipPadding, width / 2);
-                right -= linkWidth + 4;
-                var linkMin = new Vector2(right + 4, min.Y + (MissionGraph.LineHeight - ChipHeight) / 2);
-                var linkMax = linkMin + new Vector2(linkWidth, ChipHeight);
-                ImGui.SetCursorScreenPos(linkMin);
-                if (ImGui.InvisibleButton($"##link{i}", linkMax - linkMin))
-                {
-                    window.Selection = LinkRef(script, node, graphRow, link);
-                }
-
-                if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                {
-                    missions.FrameInScene(LinkRef(script, node, graphRow, link));
-                }
-
-                drawList.AddRectFilled(linkMin, linkMax, EditorTheme.ToAbgr(ChipFill), 3);
-                TextFit.AddText(drawList, font, SmallSize, linkMin + new Vector2(ChipPadding, 1),
-                    EditorTheme.ToAbgr(ImGui.IsItemHovered() ? EditorTheme.AccentText : EditorTheme.Text), link.Text,
-                    linkWidth - 2 * ChipPadding);
-                if (ImGui.IsItemHovered())
-                {
-                    pendingTooltip = $"{link.Text}. Click to select it.";
-                }
-            }
+            right = LinkChips(script, node, graphRow, i, drawList, font, min, right, width / 2);
 
             var textWidth = TextFit.AddText(drawList, font, SmallSize, new Vector2(textX, textY), EditorTheme.ToAbgr(color),
                 graphRow.Text, right - textX);
@@ -937,6 +881,51 @@ internal sealed class GraphView : IDisposable
         }
     }
 
+    /// <summary>
+    /// The link chips of a row, one for each item that the row names. The chips start at the right end of the row
+    /// (section 6.2 of the M6a design). Each chip takes at most the space of <paramref name="space"/>, and the chips
+    /// that do not fit do not show. A click on a chip selects its item, and a double-click frames the item in the Scene
+    /// part. Returns the left end of the chips.
+    /// </summary>
+    private float LinkChips(string script, GraphNode node, GraphRow row, int index, ImDrawListPtr drawList, ImFontPtr font,
+        Vector2 rowMin, float right, float space)
+    {
+        var left = right - space;
+        for (var k = 0; k < row.Links.Count; k++)
+        {
+            var link = row.Links[k];
+            var linkWidth = Math.Min(Chip.WidthOf(font, SmallSize, link.Text), space);
+            if (right - linkWidth - ChipGap < left && k > 0)
+            {
+                break;
+            }
+
+            right -= linkWidth + ChipGap;
+            var linkMin = new Vector2(right + ChipGap, rowMin.Y + (MissionGraph.LineHeight - ChipHeight) / 2);
+            var linkMax = linkMin + new Vector2(linkWidth, ChipHeight);
+            ImGui.SetCursorScreenPos(linkMin);
+            if (ImGui.InvisibleButton($"##link{index}.{k}", linkMax - linkMin))
+            {
+                window.Selection = LinkRef(script, node, row, link);
+            }
+
+            var hovered = ImGui.IsItemHovered();
+            if (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            {
+                missions.FrameInScene(LinkRef(script, node, row, link));
+            }
+
+            Chip.Paint(drawList, font, SmallSize, linkMin, linkMax, link.Text, ChipLook.Grey, hovered: hovered,
+                clickable: true);
+            if (hovered)
+            {
+                pendingTooltip = $"{link.Text}. Click to select it. Double-click to frame it in the Scene.";
+            }
+        }
+
+        return right;
+    }
+
     /// <summary>The color of the glyph of a row with a problem that shows, or null.</summary>
     private static Vector4? ProblemColor(GraphRow row)
     {
@@ -967,11 +956,9 @@ internal sealed class GraphView : IDisposable
         }
 
         lines.AddRange(row.Problems.Select(p => (p.Origin?.IsBaseGame == true ? "Base game: " : "") + p.Message));
-        if (row.Mark is { } mark)
+        if (row.MarkTip is { } markTip)
         {
-            lines.Add(mark.EndsWith("cannot load", StringComparison.Ordinal)
-                ? "OpenLancer stops when it loads this line. The retail game runs it."
-                : "OpenLancer reads this line but does nothing with it. The retail game runs it.");
+            lines.Add(markTip);
         }
 
         lines.Add($"Line {(row.Line.Entry + 1).ToString(CultureInfo.InvariantCulture)} of trigger {node.Title}.");
@@ -984,7 +971,7 @@ internal sealed class GraphView : IDisposable
     {
         if (link.Section is { } section)
         {
-            return MissionWorkspace.RefOf(section.Ref, -1);
+            return MissionRef.OfSection(section.Ref, -1);
         }
 
         return link.Kind == "Label"
@@ -1000,16 +987,16 @@ internal sealed class GraphView : IDisposable
         var font = ImGuiHelper.Roboto;
         var x = origin.X + SidePadding;
         var width = node.Size.X - 2 * SidePadding;
-        var lines = new List<(string Text, Vector4 Color)>();
+        var lines = new List<(string Text, Vector4 Color, string Tip)>();
         if (node.Kind is GraphNodeKind.Act or GraphNodeKind.Missing)
         {
-            lines.Add((node.Sentence, EditorTheme.TextDim));
+            lines.Add((node.Sentence, EditorTheme.TextDim, node.Sentence));
         }
 
-        lines.AddRange(node.Fields.Select(f => (f, EditorTheme.Text)));
+        lines.AddRange(node.Fields.Select((f, i) => (f, EditorTheme.Text, i < node.FieldTips.Count ? node.FieldTips[i] : f)));
         if (node.Completeness is { } completeness)
         {
-            lines.Add((completeness, EditorTheme.Warning));
+            lines.Add((completeness, EditorTheme.Warning, completeness));
         }
 
         for (var i = 0; i < lines.Count && i < node.BodyLines; i++)
@@ -1018,7 +1005,7 @@ internal sealed class GraphView : IDisposable
             TextFit.AddText(drawList, font, SmallSize, position, EditorTheme.ToAbgr(lines[i].Color), lines[i].Text, width);
             if (ImGui.IsMouseHoveringRect(position, position + new Vector2(width, SmallSize)))
             {
-                pendingTooltip = lines[i].Text;
+                pendingTooltip = lines[i].Tip;
             }
         }
     }
@@ -1028,9 +1015,9 @@ internal sealed class GraphView : IDisposable
     {
         var (color, thickness) = link.Kind switch
         {
-            MissionLinkKind.Start => (LightGrey, 1.5f),
-            MissionLinkKind.Load => (LightGrey, 2f),
-            _ => (MidGrey, 1f),
+            MissionLinkKind.Start => (EditorTheme.GraphLinkLight, 1.5f),
+            MissionLinkKind.Load => (EditorTheme.GraphLinkLight, 2f),
+            _ => (EditorTheme.GraphLinkMid, 1f),
         };
         var faded = Alpha(link.From) < 1 || Alpha(link.To) < 1;
         // The links of the path view have a bold line.
@@ -1044,8 +1031,8 @@ internal sealed class GraphView : IDisposable
             (VertexDiffuse)new Color4(color with { W = faded ? MissionGraph.FadeAlpha : 1 }), thickness);
     }
 
-    /// <summary>The state chips of the watch links: "Is active", "Is not active", "Is inactive" or "Has run", at the
-    /// target pin, left of the node of the watcher.</summary>
+    /// <summary>The state chips of the watch links: "Is active", "Is not active", "Is inactive" or "Has run". A chip is
+    /// at the target pin, left of the node of the watcher.</summary>
     private static void DrawStateChips(MissionGraph graph, GraphLayout layout, float scale)
     {
         if (scale < FullDetailScale)
@@ -1059,16 +1046,14 @@ internal sealed class GraphView : IDisposable
         {
             var origin = layout.PositionOf(link.To);
             var y = LineCenter(origin, link.ToPin.Slot) - ChipHeight / 2;
-            var width = font.CalcTextSizeA(SmallSize, float.MaxValue, 0, link.State!).X + 2 * ChipPadding;
+            var width = Chip.WidthOf(font, SmallSize, link.State!);
             var min = new Vector2(origin.X - width - 6, y);
-            drawList.AddRectFilled(min, min + new Vector2(width, ChipHeight), EditorTheme.ToAbgr(ChipFill), 3);
-            drawList.AddText(font, SmallSize, min + new Vector2(ChipPadding, 1), EditorTheme.ToAbgr(EditorTheme.Text),
-                link.State!);
+            Chip.Paint(drawList, font, SmallSize, min, min + new Vector2(width, ChipHeight), link.State!, ChipLook.Grey);
         }
     }
 
-    /// <summary>The selection of the editor shows in the node editor: one ClearSelection and SelectNode for each change
-    /// of the editor selection (section 6.6 of the M6a design).</summary>
+    /// <summary>The selection of the editor shows in the node editor. The view calls ClearSelection and SelectNode once
+    /// for each change of the editor selection (section 6.6 of the M6a design).</summary>
     private void FollowEditorSelection(string script, MissionGraph graph)
     {
         var selection = window.Selection;
@@ -1344,7 +1329,7 @@ internal sealed class GraphView : IDisposable
 
         if (!sources.All.Any())
         {
-            ImGui.TextDisabled("No trigger starts, stops, loads or watches this trigger.");
+            ImGui.TextDisabled("No trigger starts, stops or loads this trigger, and it watches no trigger.");
         }
 
         EditorTheme.PopMenuColors();
@@ -1396,9 +1381,9 @@ internal sealed class GraphView : IDisposable
     }
 
     /// <summary>
-    /// The side list of the Cutscene and Objectives lenses at the top right of the graph (section 6.5 of the M6a design):
-    /// the lines of the lens in path order from the start triggers, with the texts of their text ids. A click frames
-    /// the trigger and selects the line.
+    /// The side list of the Cutscene and Objectives lenses at the top right of the graph (section 6.5 of the M6a
+    /// design). It lists the lines of the lens in path order from the start triggers, with the texts of their text ids.
+    /// A click frames the trigger and selects the line.
     /// </summary>
     private void SideList(string script, MissionGraph graph)
     {

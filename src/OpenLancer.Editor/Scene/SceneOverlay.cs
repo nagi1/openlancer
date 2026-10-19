@@ -36,7 +36,7 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     private static readonly uint LabelColor = EditorTheme.ToAbgr(EditorTheme.Text);
     private static readonly uint SelectedLabelColor = EditorTheme.ToAbgr(EditorTheme.TextBright);
     private static readonly uint SelectionColor = EditorTheme.ToAbgr(EditorTheme.Accent);
-    private static readonly uint HoverColor = EditorTheme.ToAbgr(EditorTheme.Label);
+    private static readonly uint HoverColor = EditorTheme.ToAbgr(EditorTheme.Highlight);
 
     private readonly List<SceneMarker> labelOrder = [];
     private readonly List<(Vector2 Min, Vector2 Max)> placedLabels = [];
@@ -245,17 +245,14 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
         {
             // An item without a position in the system, for example an item of the open mission, has the box of its
             // marker.
-            foreach (var marker in Markers.Items)
+            if (Markers.Find(item) is not { } marker)
             {
-                if (Equals(marker.Item, item))
-                {
-                    var markerHalf = new Vector2(GlyphBoxHalf(marker.Kind));
-                    (min, max) = (marker.Screen - markerHalf, marker.Screen + markerHalf);
-                    return true;
-                }
+                return false;
             }
 
-            return false;
+            var markerHalf = new Vector2(GlyphBoxHalf(marker.Kind));
+            (min, max) = (marker.Screen - markerHalf, marker.Screen + markerHalf);
+            return true;
         }
 
         if (index?.KindOf(item) is not { } kind || !projection.Project(position.Value, out var screen, out _))

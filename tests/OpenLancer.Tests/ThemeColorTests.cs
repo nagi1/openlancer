@@ -4,7 +4,6 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using OpenLancer.Data.Missions;
-using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 using Xunit;
@@ -12,8 +11,8 @@ using Xunit;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The color of the mission layer (decision D557 of the M6a design): its hue differs by 25 degrees or more from each
-/// color of <see cref="EditorTheme"/> and <see cref="ObjectKinds"/>, so no other meaning uses it. A grey has no hue, so
+/// The color of the mission layer (decision D557 of the M6a design). Its hue differs by 25 degrees or more from each
+/// color of <see cref="EditorTheme"/> and <see cref="ObjectKinds"/>. So no other meaning uses it. A grey has no hue, so
 /// the test leaves out the colors with a saturation below 0.15.
 /// </summary>
 public sealed class ThemeColorTests
@@ -87,21 +86,12 @@ public sealed class ThemeColorTests
             Assert.Equal(EditorTheme.MissionItem, MissionLayer.KindOf(kind).Color);
     }
 
-    /// <summary>A placement of a trigger line selects the line. A placement of an item selects its section.</summary>
+    /// <summary>The highlight of the cross-links is a grey without a hue. So ten highlighted ships do not look
+    /// selected. Blue means a selection or an unsaved edit (decision D537, UI rule 7).</summary>
     [Fact]
-    public void ThePlacementOfALineSelectsTheLine()
+    public void TheHighlightHasNoStateColor()
     {
-        var index = MissionTestData.Index(MissionTestData.Story.Replace("Cnd_True = no_params\nAct_ActTrig = t_end",
-            "Cnd_True = no_params\nAct_ActTrig = t_end\nAct_StaticCam = 1, 2, 3") + "\n\n[MsnShip]\nnickname = s\nsystem = sys\nposition = 1, 1, 1\n");
-        var start = index.Trigger("t_start")!;
-        var placements = MissionPlacements.In(index, "sys", _ => null);
-
-        Assert.DoesNotContain(placements, p => p.Trigger != null);
-        var ship = MissionLayer.RefOf(MissionTestData.Path, placements.Single());
-        Assert.Equal(MissionItemKind.Ship, ship.Kind);
-        var line = new MissionPlacement(PlacementKind.FixedCamera, PlacementShape.Point, "sys", Vector3.Zero, start.Section,
-            5, "Fixed camera") { Trigger = start };
-        Assert.Equal(new MissionRef(MissionTestData.Path, MissionItemKind.Row, start.Section.Ref, Row: 5),
-            MissionLayer.RefOf(MissionTestData.Path, line));
+        Assert.True(Hsv(EditorTheme.Highlight).Saturation < MinSaturation);
+        Assert.NotEqual(EditorTheme.Accent, EditorTheme.Highlight);
     }
 }

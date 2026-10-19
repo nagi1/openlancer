@@ -108,6 +108,33 @@ internal static class Chip
         return hovered >= 0 && chips[hovered].Clickable && ImGui.IsItemClicked() ? hovered : -1;
     }
 
+    /// <summary>
+    /// Paints one chip in a box on a draw list, for a view that places its chips itself. An example is the canvas of
+    /// the mission graph. The chip has the look and the rounding of <see cref="Flow"/>. A clickable chip under the
+    /// mouse gets the accent outline. The text ends with "..." when it does not fit.
+    /// </summary>
+    /// <param name="scale">The pixels of one point of the place, for example 1 in the canvas of the graph.</param>
+    public static void Paint(ImDrawListPtr drawList, ImFontPtr font, float fontSize, Vector2 min, Vector2 max, string text,
+        ChipLook look, float scale = 1, bool hovered = false, bool clickable = false)
+    {
+        drawList.AddRectFilled(min, max, ImGui.GetColorU32(look.Fill), Rounding * scale);
+        var border = clickable && hovered ? EditorTheme.AccentText : look.Border;
+        if (border.W > 0)
+        {
+            drawList.AddRect(min, max, ImGui.GetColorU32(border), Rounding * scale);
+        }
+
+        var padding = PaddingX * scale;
+        var y = min.Y + MathF.Truncate((max.Y - min.Y - fontSize) / 2);
+        TextFit.AddText(drawList, font, fontSize, new Vector2(min.X + padding, y), ImGui.GetColorU32(look.Text), text,
+            max.X - min.X - 2 * padding);
+    }
+
+    /// <summary>The width of a chip of a text in a font size, with its padding.</summary>
+    /// <param name="scale">The pixels of one point of the place.</param>
+    public static float WidthOf(ImFontPtr font, float fontSize, string text, float scale = 1) =>
+        font.CalcTextSizeA(fontSize, float.MaxValue, 0, text).X + 2 * PaddingX * scale;
+
     /// <summary>The width of the widest row of the chips, in pixels.</summary>
     /// <param name="places">The places of <see cref="Layout"/>.</param>
     /// <param name="widths">The width of each chip, in pixels.</param>

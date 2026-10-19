@@ -8,10 +8,11 @@ using OpenLancer.Data.Missions;
 namespace OpenLancer.Editor.Missions;
 
 /// <summary>
-/// The state of the mission graph of the session (sections 6.4 to 6.7 of the M6a design): the frames that the user
-/// collapsed or opened, the nodes that show their lines or all their rows, the drag offsets and the stable node ids of
-/// each mission. A change of the lens forgets the collapse and open of the user, so each lens starts with its own frames.
-/// The editor writes no file with this state (decision D530). The class makes no ImGui call.
+/// The state of the mission graph of the session (sections 6.4 to 6.7 of the M6a design). It keeps the frames that the
+/// user collapsed or opened, and the nodes that show their lines or all their rows. It also keeps the drag offsets and
+/// the stable node ids of each mission. A change of the lens forgets the collapse and open of the user, so each lens
+/// starts with its own frames. The editor writes no file with this state (decision D530). The class makes no ImGui
+/// call.
 /// </summary>
 internal sealed class GraphViewState
 {

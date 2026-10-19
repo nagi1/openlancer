@@ -104,19 +104,19 @@ public sealed record GraphPin(int Id, GraphPinKind Kind, int Slot, MissionLine? 
     /// <summary>True for an input pin, on the left of the node.</summary>
     public bool IsInput => Kind is GraphPinKind.Start or GraphPinKind.Stop or GraphPinKind.Load or GraphPinKind.Watches;
 
-    /// <summary>The label of an input pin, for its tooltip (section 13.1 of the M6a design).</summary>
-    public string Label => Kind switch
+    /// <summary>The tooltip of the pin (section 13.1 of the M6a design).</summary>
+    public string Tooltip => Kind switch
     {
-        GraphPinKind.Start => "Start",
-        GraphPinKind.Stop => "Stop",
-        GraphPinKind.Load => "Load",
-        GraphPinKind.Watches => "Watches",
-        GraphPinKind.State => "State",
-        GraphPinKind.Starts => "Starts",
-        GraphPinKind.Stops => "Stops",
-        GraphPinKind.Saves => "Checkpoint",
-        GraphPinKind.More => "More lines",
-        _ => "Line",
+        GraphPinKind.Start => "Start: triggers that start this trigger.",
+        GraphPinKind.Stop => "Stop: triggers that stop it.",
+        GraphPinKind.Load => "Load: checkpoints that continue at it after a load.",
+        GraphPinKind.Watches => "Watches: the trigger whose state the condition of this trigger waits for.",
+        GraphPinKind.State => "State: conditions that watch the state of this trigger.",
+        GraphPinKind.Starts => "The triggers that this trigger starts.",
+        GraphPinKind.Stops => "The triggers that this trigger stops.",
+        GraphPinKind.Saves => "The trigger where the mission continues after a load.",
+        GraphPinKind.More => "The lines that the row \"Show more lines\" hides.",
+        _ => "The trigger that this line names.",
     };
 }
 
@@ -138,7 +138,7 @@ public enum GraphRowKind
 /// <summary>A chip of a row that names another item of the mission (section 6.2 of the M6a design).</summary>
 /// <param name="Kind">The kind of the item, for example "Ship" or "Space cutscene".</param>
 /// <param name="Section">The section of the item, or null for a label, a file or an object of a system.</param>
-public sealed record GraphRowLink(string Kind, string Name, MissionValueKind ValueKind, MissionSection? Section)
+public sealed record GraphRowLink(string Kind, string Name, MissionSection? Section)
 {
     /// <summary>The text of the chip, for example "Ship pirate_1".</summary>
     public string Text => $"{Kind} {Name}";
@@ -149,15 +149,17 @@ public sealed record GraphRowLink(string Kind, string Name, MissionValueKind Val
 /// <param name="Mark">The OpenLancer mark, for example "OpenLancer: no effect", or null.</param>
 /// <param name="Problems">The problems of the line that show.</param>
 public sealed record GraphRow(GraphRowKind Kind, MissionLine Line, string Text, string? Mark, GraphPin? Pin,
-    IReadOnlyList<GraphRowLink> Links, IReadOnlyList<Diagnostic> Problems);
+    IReadOnlyList<GraphRowLink> Links, IReadOnlyList<Diagnostic> Problems)
+{
+    /// <summary>The tooltip of the OpenLancer mark, or null without a mark.</summary>
+    public string? MarkTip => Mark != null ? OpenLancerGap.MarkTooltip(Line.Mark) : null;
+}
 
 /// <summary>A chip of the summary level: a group of actions with its count, or a flow chip of a line.</summary>
 /// <param name="Group">The id of the action group, or null for a flow chip.</param>
 /// <param name="Tooltip">One line for each action line: the plain name and the targets.</param>
-/// <param name="Lines">The action lines of the chip.</param>
 /// <param name="Warning">True for a chip with the warning glyph, for example "Starts and stops".</param>
-public sealed record GraphChip(string? Group, string Text, string Tooltip, IReadOnlyList<MissionLine> Lines,
-    bool Warning = false, GraphPin? Pin = null);
+public sealed record GraphChip(string? Group, string Text, string Tooltip, bool Warning = false, GraphPin? Pin = null);
 
 /// <summary>A block of the graph: a node, or a frame with its blocks.</summary>
 public abstract class GraphBlock
@@ -209,9 +211,6 @@ public sealed class GraphNode : GraphBlock
     /// <summary>The frame that a collapsed node stands for, or null.</summary>
     public GraphFrame? Frame { get; internal init; }
 
-    /// <summary>The missing name of a missing node, or null.</summary>
-    public string? MissingName { get; internal init; }
-
     /// <summary>The triggers that the node stands for: one for a trigger node, the triggers of a collapsed frame.</summary>
     public IReadOnlyList<MissionTrigger> Triggers { get; internal init; } = [];
 
@@ -262,11 +261,12 @@ public sealed class GraphNode : GraphBlock
     /// <summary>The named fields of a collapsed prefab in short form, for example "Ships: 3".</summary>
     public IReadOnlyList<string> Fields { get; internal init; } = [];
 
+    /// <summary>The tooltip of each field of <see cref="Fields"/>: its label and each value on its own line (section
+    /// 6.4 of the M6a design).</summary>
+    public IReadOnlyList<string> FieldTips { get; internal init; } = [];
+
     /// <summary>The completeness line of a collapsed prefab with a missing step, or null.</summary>
     public string? Completeness { get; internal init; }
-
-    /// <summary>The system of the node, for the system filter, or null.</summary>
-    public string? System { get; internal init; }
 
     /// <summary>True when the lens fades the node to 25 percent opacity.</summary>
     public bool Faded { get; internal set; }
@@ -375,10 +375,10 @@ public sealed record GraphOptions(GraphLens Lens = GraphLens.Beats, bool ShowLin
     Func<string, string?>? SystemName = null, GraphIds? Ids = null);
 
 /// <summary>
-/// The model of the mission graph (section 6 of the M6a design): one node for each trigger, the act frames, the prefab
-/// frames and the frame "Not started by the mission", the pins, the links and the lens. The model makes no ImGui call
-/// and reads no window, so the tests and later an agent server (roadmap row MCP1) read it. The graph view draws it, and
-/// <see cref="GraphLayout"/> places it.
+/// The model of the mission graph (section 6 of the M6a design). It has one node for each trigger, the act frames, the
+/// prefab frames and the frame "Not started by the mission". It also has the pins, the links and the lens. The model
+/// makes no ImGui call and reads no window, so the tests and later an agent server (roadmap row MCP1) read it. The
+/// graph view draws it, and <see cref="GraphLayout"/> places it.
 /// </summary>
 public sealed class MissionGraph
 {
@@ -413,6 +413,12 @@ public sealed class MissionGraph
     {
         "Act_CallThorn", "Act_StaticCam", "Act_RevertCam", "Act_AddRTC", "Act_RemoveRTC", "Act_AddAmbient",
         "Act_RemoveAmbient",
+    };
+
+    /// <summary>The lines of the side list of the Cutscene lens: the space cutscenes and the base scenes.</summary>
+    private static readonly HashSet<string> CutsceneListActions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Act_CallThorn", "Act_AddRTC",
     };
 
     private readonly Dictionary<MissionTrigger, GraphNode> triggerNodes = [];
@@ -489,8 +495,8 @@ public sealed class MissionGraph
     };
 
     /// <summary>
-    /// The detail of a node in a frame of the view (decision D554): the full node in the view at a zoom of 60 percent or
-    /// more, the header only in the view below that zoom, and a stub outside the view.
+    /// The detail of a node in a frame of the view (decision D554). A node in the view is the full node at a zoom of 60
+    /// percent or more, and the header only below that zoom. A node outside the view is a stub.
     /// </summary>
     /// <param name="scale">The zoom of the view: 1 at 100 percent.</param>
     public static GraphDetail DetailOf(Vector2 min, Vector2 max, Vector2 viewMin, Vector2 viewMax, float scale)
@@ -542,24 +548,24 @@ public sealed class MissionGraph
         var actFrames = new Dictionary<MissionAct, GraphFrame>();
         foreach (var act in acts.Acts)
         {
-            var system = act.System is { } s ? Options.SystemName?.Invoke(s) is { Length: > 0 } name ? name : s : null;
-            var title = system != null ? $"Act {act.Number}: {system}" : $"Act {act.Number}";
-            var frame = new GraphFrame("a:" + act.Number.ToString(CultureInfo.InvariantCulture),
-                Id("a:" + act.Number), act.Triggers.Count > 0 ? act.Triggers.Min(t => t.Section.Index) : 0,
-                GraphFrameKind.Act, title, Walkthrough(act.Triggers.Count, act.Checkpoints)) { Act = act };
+            var key = MissionActs.KeyOf(act);
+            var frame = new GraphFrame(key, Id(key), act.Triggers.Count > 0 ? act.Triggers.Min(t => t.Section.Index) : 0,
+                GraphFrameKind.Act, ActTitle(act, Options.SystemName), Walkthrough(act.Triggers.Count, act.Checkpoints))
+            {
+                Act = act,
+            };
             actFrames[act] = frame;
             top.Add(frame);
         }
-        // The game never runs a duplicate trigger (TR4), so it goes into the frame "Not started by the mission".
-        var notStarted = triggers.Where(t => t.IsDuplicate || acts.ActOf(t) == null).ToList();
-        var notStartedFrame = new GraphFrame("a:0", Id("a:0"), int.MaxValue, GraphFrameKind.NotStarted,
-            $"Not started by the mission ({notStarted.Count.ToString(CultureInfo.InvariantCulture)})",
+        // The game never runs a duplicate trigger (TR4), so it is in the frame "Not started by the mission" too.
+        var notStarted = acts.NotStarted;
+        var notStartedFrame = new GraphFrame(MissionActs.NotStartedKey, Id(MissionActs.NotStartedKey), int.MaxValue,
+            GraphFrameKind.NotStarted, NotStartedTitle(notStarted.Count),
             "No start trigger and no checkpoint leads to these triggers.");
         if (notStarted.Count > 0)
             top.Add(notStartedFrame);
 
-        GraphFrame Home(MissionTrigger trigger) =>
-            !trigger.IsDuplicate && acts.ActOf(trigger) is { } act ? actFrames[act] : notStartedFrame;
+        GraphFrame Home(MissionTrigger trigger) => acts.ActOf(trigger) is { } act ? actFrames[act] : notStartedFrame;
 
         // A prefab frame holds the triggers that its instance claims. It is in the frame of its core trigger, or of
         // its first claimed trigger.
@@ -624,8 +630,23 @@ public sealed class MissionGraph
         }
     }
 
+    /// <summary>The title of an act: "Act {n}: {system name}", or "Act {n}" for an act without a system (section 6.4
+    /// of the M6a design). A system without a name gives its nickname.</summary>
+    /// <param name="systemName">Gives the name of a system, or null.</param>
+    public static string ActTitle(MissionAct act, Func<string, string?>? systemName)
+    {
+        var number = act.Number.ToString(CultureInfo.InvariantCulture);
+        if (act.System is not { } system)
+            return $"Act {number}";
+        return $"Act {number}: {(systemName?.Invoke(system) is { Length: > 0 } name ? name : system)}";
+    }
+
+    /// <summary>The title of the frame "Not started by the mission" with its count of triggers.</summary>
+    public static string NotStartedTitle(int count) =>
+        $"Not started by the mission ({count.ToString(CultureInfo.InvariantCulture)})";
+
     /// <summary>The walkthrough line of an act: the count of its triggers and of its checkpoints.</summary>
-    private static string Walkthrough(int triggers, int checkpoints) =>
+    public static string Walkthrough(int triggers, int checkpoints) =>
         $"{Count(triggers, "trigger", "triggers")}, {Count(checkpoints, "checkpoint", "checkpoints")}";
 
     private static string Count(int n, string one, string many) =>
@@ -702,7 +723,6 @@ public sealed class MissionGraph
             Rows = rows,
             HiddenRows = hidden,
             TargetLine = lines ? null : targetLine,
-            System = trigger.SystemHint is { } h && !MissionIndex.Is(h, "ANY") ? h : null,
         };
 
         // The input pins on the left, from the header down.
@@ -738,8 +758,8 @@ public sealed class MissionGraph
     private static float Height(int bodyLines, int leftSlots, int rightSlots) =>
         HeaderHeight + Math.Max(bodyLines, Math.Max(leftSlots, rightSlots)) * LineHeight + BottomPadding;
 
-    /// <summary>The chips of the summary level (section 6.2 of the M6a design): one chip for each action group, in group
-    /// order, then the flow chips of restart, cancel and self start.</summary>
+    /// <summary>The chips of the summary level (section 6.2 of the M6a design). They are one chip for each action
+    /// group, in group order, then the flow chips of restart, cancel and self start.</summary>
     /// <param name="slot">The next free slot of the output pins. Each chip with a pin takes the next slot.</param>
     private List<GraphChip> Chips(MissionTrigger trigger, ref int slot)
     {
@@ -764,19 +784,17 @@ public sealed class MissionGraph
                 tooltip += "\n\nThe game starts these triggers after all actions of this trigger. The order comes from " +
                            "the trigger names, not from the line order.";
             chips.Add(new GraphChip(group.Key, $"{name} {lines.Count.ToString(CultureInfo.InvariantCulture)}", tooltip,
-                lines, Pin: pinKind is { } kind ? new GraphPin(Id($"{key}|out:{kind}"), kind, slot++) : null));
+                Pin: pinKind is { } kind ? new GraphPin(Id($"{key}|out:{kind}"), kind, slot++) : null));
         }
         foreach (var link in Index.Restarts.Where(l => l.Source == trigger))
             chips.Add(new GraphChip(null, $"Restarts {link.TargetName}",
-                $"This trigger stops {link.TargetName} and then starts it again. {link.TargetName} starts from the beginning.",
-                [link.Line]));
+                $"This trigger stops {link.TargetName} and then starts it again. {link.TargetName} starts from the beginning."));
         foreach (var link in Index.Cancels.Where(l => l.Source == trigger))
             chips.Add(new GraphChip(null, $"Starts and stops {link.TargetName}",
                 $"This trigger starts {link.TargetName} and then stops it. The game does not start {link.TargetName}.",
-                [link.Line], Warning: true));
+                Warning: true));
         if (Index.SelfStarts.Contains(trigger))
-            chips.Add(new GraphChip(null, "Starts itself", "This trigger starts itself again.",
-                trigger.ActionsOf("Act_ActTrig").Where(a => MissionIndex.Is(a.Value(0), trigger.Nickname)).ToList()));
+            chips.Add(new GraphChip(null, "Starts itself", "This trigger starts itself again."));
         return chips;
     }
 
@@ -859,7 +877,7 @@ public sealed class MissionGraph
                 },
             };
             if (kind != null && !result.Any(r => r.Kind == kind && MissionIndex.Is(r.Name, reference.Name)))
-                result.Add(new GraphRowLink(kind, reference.Name, reference.Kind, reference.Section));
+                result.Add(new GraphRowLink(kind, reference.Name, reference.Section));
         }
         return result;
     }
@@ -871,19 +889,24 @@ public sealed class MissionGraph
         var nodeProblems = frame.Triggers.SelectMany(t => problems.GetValueOrDefault(t.Section.Ref) ?? []).ToList();
         var key = frame.Key + "|node";
         IReadOnlyList<string> fields = [];
+        IReadOnlyList<string> tips = [];
         string? completeness = null;
         var kind = frame.Kind == GraphFrameKind.Prefab ? GraphNodeKind.Prefab : GraphNodeKind.Act;
         if (frame.Instance is { } instance)
         {
-            fields = instance.Definition.Fields.Select(f =>
+            var values = instance.Definition.Fields.Select(f => (Field: f, Values: instance.Values(f))).ToList();
+            fields = values.Select(v =>
             {
-                var values = instance.Values(f);
-                var value = f.List != null ? values.Count.ToString(CultureInfo.InvariantCulture)
-                    : values.Count == 0 ? "None"
-                    : values.Count == 1 ? values[0].Text
-                    : $"{values[0].Text} (+{(values.Count - 1).ToString(CultureInfo.InvariantCulture)})";
-                return $"{f.Label}: {value}";
+                var value = v.Field.List != null ? v.Values.Count.ToString(CultureInfo.InvariantCulture)
+                    : v.Values.Count == 0 ? "None"
+                    : v.Values.Count == 1 ? v.Values[0].Text
+                    : $"{v.Values[0].Text} (+{(v.Values.Count - 1).ToString(CultureInfo.InvariantCulture)})";
+                return $"{v.Field.Label}: {value}";
             }).ToList();
+            // The tooltip of a field gives each value on its own line, so a list field names each item.
+            tips = values.Select(v => v.Values.Count == 0
+                ? $"{v.Field.Label}: None"
+                : $"{v.Field.Label}:\n{string.Join("\n", v.Values.Select(x => x.Text))}").ToList();
             var report = MissionCompleteness.OfInstance(Analysis, instance);
             if (!report.Complete)
                 completeness = report.Summary;
@@ -895,9 +918,9 @@ public sealed class MissionGraph
             Triggers = frame.Triggers,
             Sentence = frame.Detail,
             Fields = fields,
+            FieldTips = tips,
             Completeness = completeness,
             Problems = nodeProblems,
-            System = frame.Act?.System,
         };
         node.Parent = frame.Parent;
         var left = 0;
@@ -952,14 +975,14 @@ public sealed class MissionGraph
             if (link.Kind == MissionLinkKind.Watch)
             {
                 to = NodeOf(link.Source)!;
-                from = link.Target != null ? NodeOf(link.Target)! : Missing(missing, link.TargetName, link.Kind);
+                from = link.Target != null ? NodeOf(link.Target)! : Missing(missing, link);
                 fromPin = from.Pin(GraphPinKind.State);
                 toPin = to.Pin(GraphPinKind.Watches);
             }
             else
             {
                 from = NodeOf(link.Source)!;
-                to = link.Target != null ? NodeOf(link.Target)! : Missing(missing, link.TargetName, link.Kind);
+                to = link.Target != null ? NodeOf(link.Target)! : Missing(missing, link);
                 fromPin = OutputPin(from, link);
                 toPin = to.Pin(link.Kind switch
                 {
@@ -1003,17 +1026,20 @@ public sealed class MissionGraph
         _ => GraphPinKind.Starts,
     };
 
-    /// <summary>The node "Missing: {name}" of a trigger name that the script does not have, with the pin of a
-    /// link.</summary>
-    private GraphNode Missing(Dictionary<string, GraphNode> missing, string name, MissionLinkKind kind)
+    /// <summary>The node "Missing: {name}" of a trigger name that the script does not have, with the pin of a link.
+    /// The node has the message of rule M05 for the first line that names it (section 6.3 of the M6a design).</summary>
+    private GraphNode Missing(Dictionary<string, GraphNode> missing, MissionLink link)
     {
+        var name = link.TargetName;
+        var kind = link.Kind;
         if (!missing.TryGetValue(name.Trim(), out var node))
         {
             var key = "m:" + name.Trim().ToLowerInvariant();
+            var message = Analysis.Problems.FirstOrDefault(p => p.Rule == "M05" && Equals(p.Target, link.Line.Section.Ref) &&
+                                                                p.EntryIndex == link.Line.Entry)?.Message;
             node = new GraphNode(key, Id(key), int.MaxValue, GraphNodeKind.Missing, $"Missing: {name.Trim()}")
             {
-                MissingName = name.Trim(),
-                Sentence = "This script has no trigger with this name. The game ignores the line.",
+                Sentence = message ?? "This script has no trigger with this name. The game ignores the line.",
                 BodyLines = 1,
             };
             missing[name.Trim()] = node;
@@ -1054,13 +1080,14 @@ public sealed class MissionGraph
             node.Faded = node.Triggers.Count > 0 && !node.Triggers.Any(keeps);
     }
 
-    /// <summary>The side list of the Cutscene and Objectives lenses: the lines of the lens in path order from the start
-    /// triggers, over Start and Load links.</summary>
+    /// <summary>The side list of the Cutscene and Objectives lenses, in path order from the start triggers over Start
+    /// and Load links. The Cutscene lens lists the space cutscenes and the base scenes. The Objectives lens lists the
+    /// objective and text lines.</summary>
     private IReadOnlyList<GraphSideItem> BuildSideList()
     {
         Func<MissionLine, bool>? lists = Options.Lens switch
         {
-            GraphLens.Cutscene => l => CutsceneActions.Contains(l.Key),
+            GraphLens.Cutscene => l => CutsceneListActions.Contains(l.Key),
             GraphLens.Objectives => l => l.Name?.Group == "objective",
             _ => null,
         };
@@ -1075,8 +1102,8 @@ public sealed class MissionGraph
         return result;
     }
 
-    /// <summary>The text ids of a line: its values of the kind text id, then the text ids of the <c>type</c> line of each
-    /// objective that it names.</summary>
+    /// <summary>The text ids of a line: its values of the kind text id. Then come the text ids of the <c>type</c> line
+    /// of each objective that it names.</summary>
     private static IReadOnlyList<string> SideTextIds(MissionLine line)
     {
         var ids = line.Specs.Where(s => s.Kind == MissionValueKind.TextId).Select(line.ValueOf).OfType<string>().ToList();

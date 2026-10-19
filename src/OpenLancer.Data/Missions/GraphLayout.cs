@@ -40,7 +40,8 @@ public sealed class GraphLayout
     public const float ActGap = 160;
 
     /// <summary>A layer with more blocks than this starts a new column, so that one layer does not make a very tall
-    /// column.</summary>
+    /// column. Section 6.7 of the M6a design has one column for each layer. This wrap is an addition, because the widest
+    /// retail layer holds 90 triggers.</summary>
     public const int MaxColumn = 30;
 
     private readonly Dictionary<string, Vector2> positions = new(StringComparer.Ordinal);

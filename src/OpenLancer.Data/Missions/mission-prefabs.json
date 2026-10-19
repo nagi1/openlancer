@@ -13,20 +13,20 @@
     { "id": "missionAnswer", "label": "On mission answer", "conditions": ["Cnd_MsnResponse"] }
   ],
   "prefabs": [
-    { "id": "checkpoint", "name": "Checkpoint", "kind": "beat", "order": 1,
+    { "id": "checkpoint", "name": "Checkpoint", "coreLabel": "Save", "kind": "beat", "order": 1,
       "help": { "title": "Checkpoint", "whatItIs": "A save point, and the trigger that rebuilds the scene after a load.", "whatItWrites": "An Act_Save line and the [Trigger] section that it names." },
       "core": { "anyAction": ["Act_Save"] },
       "members": [ { "role": "restore", "label": "Restore", "rule": "saveTarget" } ],
       "fields": [
-        { "id": "savesAt", "label": "Saves at", "from": { "role": "core", "trigger": true } },
-        { "id": "restoresWith", "label": "Restores with", "from": { "role": "core", "actions": ["Act_Save"], "value": 0 } },
-        { "id": "restoreWaitsFor", "label": "Restore waits for", "from": { "role": "restore", "condition": true } }
+        { "id": "savesAt", "label": "Saves at", "from": { "role": "core", "trigger": true }, "help": "The trigger with the save line. The game saves the mission when this trigger runs." },
+        { "id": "restoresWith", "label": "Restores with", "from": { "role": "core", "actions": ["Act_Save"], "value": 0 }, "help": "The trigger where the mission continues after a load." },
+        { "id": "restoreWaitsFor", "label": "Restore waits for", "from": { "role": "restore", "condition": true }, "help": "The event that the restore trigger waits for after a load." }
       ],
       "steps": [
         { "id": "restore", "name": "Restore trigger", "requires": "restore", "rules": ["M05"], "reason": "After a load, the mission continues at this trigger." },
         { "id": "rebuild", "name": "Scene rebuild", "check": "sceneRebuild", "reason": "After a load, the scene is empty until a trigger rebuilds it." }
       ] },
-    { "id": "offer", "name": "Offer mission", "kind": "beat", "order": 2,
+    { "id": "offer", "name": "Offer mission", "coreLabel": "Accept", "kind": "beat", "order": 2,
       "help": { "title": "Offer mission", "whatItIs": "A mission offer in a bar: the offer scene, and what happens when the player accepts or declines.", "whatItWrites": "Act_AddRTC lines and [Trigger] sections with Cnd_MsnResponse." },
       "core": { "condition": "Cnd_MsnResponse", "value": "accept" },
       "members": [
@@ -34,31 +34,31 @@
         { "role": "scene", "label": "Offer scene", "rule": "offerSceneTriggers" }
       ],
       "fields": [
-        { "id": "offerScene", "label": "Offer scene", "from": { "role": "scene", "actions": ["Act_AddRTC"], "value": 0 }, "list": { "codec": "lines", "items": "base scenes" } },
-        { "id": "onAccept", "label": "On accept", "from": { "role": "core", "trigger": true } },
-        { "id": "onDecline", "label": "On decline", "from": { "role": "decline", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } }
+        { "id": "offerScene", "label": "Offer scene", "from": { "role": "scene", "actions": ["Act_AddRTC"], "value": 0 }, "list": { "codec": "lines", "items": "base scenes" }, "help": "The base scenes that show the offer to the player." },
+        { "id": "onAccept", "label": "On accept", "from": { "role": "core", "trigger": true }, "help": "The trigger that runs when the player accepts the mission." },
+        { "id": "onDecline", "label": "On decline", "from": { "role": "decline", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The triggers that run when the player declines the mission." }
       ],
       "steps": [
         { "id": "scene", "name": "Offer scene", "requires": "scene", "reason": "The player sees the offer in this scene." },
         { "id": "accept", "name": "Accept trigger", "requires": "core", "reason": "Without it, nothing happens when the player accepts." },
         { "id": "decline", "name": "Decline trigger", "requires": "decline", "reason": "Without it, the player cannot get the offer again after a decline." }
       ] },
-    { "id": "spaceCutscene", "name": "Play space cutscene", "kind": "beat", "order": 3,
+    { "id": "spaceCutscene", "name": "Play space cutscene", "coreLabel": "Play", "kind": "beat", "order": 3,
       "help": { "title": "Play space cutscene", "whatItIs": "A space cutscene: the trigger that starts it on an anchor ship, and the trigger that gives the camera back.", "whatItWrites": "An Act_CallThorn line and a later Act_RevertCam line." },
       "core": { "anyAction": ["Act_CallThorn"] },
       "members": [ { "role": "revert", "label": "Camera back", "rule": "firstRevertOnPath", "maxLinks": 6 } ],
       "fields": [
-        { "id": "file", "label": "Cutscene file", "from": { "role": "core", "actions": ["Act_CallThorn"], "value": 0 } },
-        { "id": "anchor", "label": "Anchor", "from": { "role": "core", "actions": ["Act_CallThorn"], "value": 1 } },
-        { "id": "endsWhen", "label": "Ends when", "from": { "role": "revert", "condition": true } },
-        { "id": "cameraBack", "label": "Camera back", "from": { "role": "revert", "trigger": true } }
+        { "id": "file", "label": "Cutscene file", "from": { "role": "core", "actions": ["Act_CallThorn"], "value": 0 }, "help": "The space cutscene that the trigger plays." },
+        { "id": "anchor", "label": "Anchor", "from": { "role": "core", "actions": ["Act_CallThorn"], "value": 1 }, "help": "The ship that the camera of the cutscene moves with. Without it, the anchor is the player." },
+        { "id": "endsWhen", "label": "Ends when", "from": { "role": "revert", "condition": true }, "help": "The event that the trigger with \"End camera\" waits for." },
+        { "id": "cameraBack", "label": "Camera back", "from": { "role": "revert", "trigger": true }, "help": "The trigger that gives the camera back to the player." }
       ],
       "steps": [
         { "id": "file", "name": "Cutscene file", "rules": ["M22", "M12"], "reason": "The game plays nothing without the file." },
         { "id": "anchor", "name": "Anchor", "rules": ["M06"], "reason": "The camera of the cutscene moves with the anchor ship." },
         { "id": "cameraBack", "name": "Camera back", "rules": ["G06"], "reason": "Without \"End camera\", the camera does not come back to the player." }
       ] },
-    { "id": "branch", "name": "Branch", "kind": "beat", "order": 4, "claimsCore": false,
+    { "id": "branch", "name": "Branch", "coreLabel": "Tested trigger", "kind": "beat", "order": 4, "claimsCore": false,
       "help": { "title": "Branch", "whatItIs": "An if and an else on the state of a trigger. Some watchers run when the trigger is active. The others run when it is not active.", "whatItWrites": "[Trigger] sections with Cnd_WatchTrigger, ON and OFF." },
       "core": { "watchedTarget": true },
       "members": [
@@ -66,15 +66,15 @@
         { "role": "off", "label": "If it is not active", "rule": "watchersOff" }
       ],
       "fields": [
-        { "id": "tests", "label": "Tests trigger", "from": { "role": "core", "trigger": true } },
-        { "id": "ifActive", "label": "If it is active", "from": { "role": "on", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } },
-        { "id": "ifNotActive", "label": "If it is not active", "from": { "role": "off", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } }
+        { "id": "tests", "label": "Tests trigger", "from": { "role": "core", "trigger": true }, "help": "The trigger whose state the watchers test." },
+        { "id": "ifActive", "label": "If it is active", "from": { "role": "on", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The watchers that run when the tested trigger is active." },
+        { "id": "ifNotActive", "label": "If it is not active", "from": { "role": "off", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The watchers that run when the tested trigger is not active." }
       ],
       "steps": [
         { "id": "bothPaths", "name": "Both paths", "check": "bothPaths", "reason": "A branch needs both paths." },
         { "id": "stopEachOther", "name": "Watchers stop each other", "check": "watchersStopEachOther", "reason": "Without it, both paths can run one after the other." }
       ] },
-    { "id": "ambush", "name": "Ambush", "kind": "beat", "order": 5,
+    { "id": "ambush", "name": "Ambush", "coreLabel": "Encounter", "kind": "beat", "order": 5,
       "help": { "title": "Ambush", "whatItIs": "Attackers that the mission spawns at a time or a place, and the reaction when they come.", "whatItWrites": "A [MsnRandEnc] section, Act_EnableEnc lines and a [Trigger] section with Cnd_EncLaunched." },
       "core": { "section": "MsnRandEnc" },
       "members": [
@@ -82,128 +82,128 @@
         { "role": "onSpawn", "label": "On spawn", "rule": "encounterReactions" }
       ],
       "fields": [
-        { "id": "encounter", "label": "Encounter", "from": { "role": "core", "key": "nickname" } },
-        { "id": "attackers", "label": "Attackers", "from": { "role": "core", "key": "attacker_rep_name" } },
-        { "id": "startsBy", "label": "Starts by", "from": { "role": "core", "key": "activation_type" } },
-        { "id": "armedBy", "label": "Armed by", "from": { "role": "armedBy", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } },
-        { "id": "onSpawn", "label": "On spawn", "from": { "role": "onSpawn", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } }
+        { "id": "encounter", "label": "Encounter", "from": { "role": "core", "key": "nickname" }, "help": "The random encounter that spawns the attackers." },
+        { "id": "attackers", "label": "Attackers", "from": { "role": "core", "key": "attacker_rep_name" }, "help": "The faction of the attackers." },
+        { "id": "startsBy", "label": "Starts by", "from": { "role": "core", "key": "activation_type" }, "help": "When the attackers spawn: after a time, or when the target comes near a point." },
+        { "id": "armedBy", "label": "Armed by", "from": { "role": "armedBy", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The triggers that arm the encounter. The encounter spawns only while a trigger arms it." },
+        { "id": "onSpawn", "label": "On spawn", "from": { "role": "onSpawn", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The triggers that run when the attackers spawn." }
       ],
       "steps": [
         { "id": "armed", "name": "Armed by a trigger", "requires": "armedBy", "reason": "The encounter never spawns until a trigger arms it." },
         { "id": "reaction", "name": "Reaction trigger", "requires": "onSpawn", "reason": "Without it, the attackers keep the attitudes of their faction." }
       ] },
-    { "id": "spawnWave", "name": "Spawn wave", "kind": "beat", "order": 6,
+    { "id": "spawnWave", "name": "Spawn wave", "coreLabel": "Spawn", "kind": "beat", "order": 6,
       "help": { "title": "Spawn wave", "whatItIs": "A group of ships that spawns and gets orders and sides, and the triggers that wait until the ships are destroyed.", "whatItWrites": "A [Trigger] section with spawn lines, and [Trigger] sections with Cnd_Destroyed." },
       "core": { "anyAction": ["Act_SpawnShip", "Act_SpawnFormation"] },
       "members": [ { "role": "end", "label": "End", "rule": "destroyedWatchersOfSpawned", "shared": true } ],
       "fields": [
-        { "id": "ships", "label": "Ships", "from": { "role": "core", "actions": ["Act_SpawnShip", "Act_SpawnFormation"], "value": 0 }, "list": { "codec": "lines", "items": "ships" } },
-        { "id": "spawnWhen", "label": "Spawn when", "from": { "role": "core", "condition": true } },
-        { "id": "orders", "label": "Orders", "from": { "role": "core", "actions": ["Act_GiveObjList"], "value": 1 }, "list": { "codec": "lines", "items": "orders" } },
-        { "id": "sides", "label": "Sides", "from": { "role": "core", "group": "sides" }, "list": { "codec": "lines", "items": "attitude lines" } },
-        { "id": "endsWhen", "label": "Ends when", "from": { "role": "end", "condition": true }, "list": { "codec": "triggers", "items": "triggers" } }
+        { "id": "ships", "label": "Ships", "from": { "role": "core", "actions": ["Act_SpawnShip", "Act_SpawnFormation"], "value": 0 }, "list": { "codec": "lines", "items": "ships" }, "help": "The ships and formations that the trigger spawns, one row for each spawn line." },
+        { "id": "spawnWhen", "label": "Spawn when", "from": { "role": "core", "condition": true }, "help": "The event that the spawn trigger waits for." },
+        { "id": "orders", "label": "Orders", "from": { "role": "core", "actions": ["Act_GiveObjList"], "value": 1 }, "list": { "codec": "lines", "items": "orders" }, "help": "The order lists that the trigger gives to the ships." },
+        { "id": "sides", "label": "Sides", "from": { "role": "core", "group": "sides" }, "list": { "codec": "lines", "items": "attitude lines" }, "help": "The attitude lines of the spawn trigger. They set which ships the new ships fight." },
+        { "id": "endsWhen", "label": "Ends when", "from": { "role": "end", "condition": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The triggers that wait until the ships are destroyed." }
       ],
       "steps": [
         { "id": "ships", "name": "Ships to spawn", "rules": ["M06", "M07"], "reason": "A spawn of a missing name spawns nothing." },
         { "id": "sides", "name": "Sides", "check": "sidesOfSpawned", "reason": "Without attitude lines, the ships keep the attitudes of their faction." },
         { "id": "end", "name": "End trigger", "requires": "end", "reason": "Without it, nothing happens after the ships are destroyed." }
       ] },
-    { "id": "destroyTargets", "name": "Destroy targets", "kind": "beat", "order": 7,
+    { "id": "destroyTargets", "name": "Destroy targets", "coreLabel": "Mark", "kind": "beat", "order": 7,
       "help": { "title": "Destroy targets", "whatItIs": "Objects that the player must destroy. Marks show them on the screen. A trigger waits until they are destroyed.", "whatItWrites": "Act_MarkObj lines and [Trigger] sections with Cnd_Destroyed." },
       "core": { "anyAction": ["Act_MarkObj"], "noAction": ["Act_SpawnShip", "Act_SpawnFormation", "Act_SpawnSolar", "Act_SpawnLoot", "Act_SpawnShipRel"] },
       "members": [ { "role": "done", "label": "Done", "rule": "destroyedWatchersOfMarked" } ],
       "fields": [
-        { "id": "targets", "label": "Targets", "from": { "role": "core", "actions": ["Act_MarkObj"], "value": 0 }, "list": { "codec": "lines", "items": "targets" } },
-        { "id": "doneWhen", "label": "Done when", "from": { "role": "done", "condition": true }, "list": { "codec": "triggers", "items": "triggers" } }
+        { "id": "targets", "label": "Targets", "from": { "role": "core", "actions": ["Act_MarkObj"], "value": 0 }, "list": { "codec": "lines", "items": "targets" }, "help": "The objects that the trigger marks for the player." },
+        { "id": "doneWhen", "label": "Done when", "from": { "role": "done", "condition": true }, "list": { "codec": "triggers", "items": "triggers" }, "help": "The triggers that wait until the targets are destroyed." }
       ],
       "steps": [
         { "id": "marked", "name": "Targets marked", "check": "targetsMarked", "reason": "The player finds the targets by their marks." },
         { "id": "done", "name": "Done trigger", "requires": "done", "reason": "Without it, nothing happens after the targets are destroyed." }
       ] },
-    { "id": "conversation", "name": "Conversation", "kind": "beat", "order": 8,
+    { "id": "conversation", "name": "Conversation", "coreLabel": "First line", "kind": "beat", "order": 8,
       "help": { "title": "Conversation", "whatItIs": "A chain of comm lines. Each line waits for the line before it.", "whatItWrites": "A chain of [Trigger] sections with comm lines and Cnd_CommComplete." },
       "core": { "chain": "comms" },
       "members": [ { "role": "chain", "label": "Line", "rule": "linearChain" } ],
       "fields": [
-        { "id": "lines", "label": "Lines", "from": { "role": "all", "group": "comms" }, "list": { "codec": "lines", "items": "comm lines" } },
-        { "id": "startsWhen", "label": "Starts when", "from": { "role": "core", "condition": true } }
+        { "id": "lines", "label": "Lines", "from": { "role": "all", "group": "comms" }, "list": { "codec": "lines", "items": "comm lines" }, "help": "The comm lines of the chain, in order. Each trigger waits for the line before it." },
+        { "id": "startsWhen", "label": "Starts when", "from": { "role": "core", "condition": true }, "help": "The event that the first trigger of the chain waits for." }
       ],
       "steps": [
         { "id": "commLines", "name": "Comm lines exist", "rules": ["M21"], "reason": "The game plays no sound for a missing comm line." }
       ] },
-    { "id": "success", "name": "Mission success", "kind": "beat", "order": 9,
+    { "id": "success", "name": "Mission success", "coreLabel": "Success", "kind": "beat", "order": 9,
       "help": { "title": "Mission success", "whatItIs": "The end of the mission with success: the reward, the reputation changes, the log text and the end scene.", "whatItWrites": "A [Trigger] section with Act_ChangeState = SUCCEED." },
       "core": { "actionValue": { "action": "Act_ChangeState", "value": "SUCCEED" } },
       "members": [],
       "fields": [
-        { "id": "reward", "label": "Reward", "from": { "role": "core", "actions": ["Act_AdjAcct"], "value": 0 } },
-        { "id": "reputation", "label": "Reputation changes", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": { "codec": "lines", "items": "reputation lines" } },
-        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": { "codec": "lines", "items": "log lines" } },
-        { "id": "endScene", "label": "End scene", "from": { "role": "core", "actions": ["Act_AddRTC"], "value": 0 } }
+        { "id": "reward", "label": "Reward", "from": { "role": "core", "actions": ["Act_AdjAcct"], "value": 0 }, "help": "The money that the player gets." },
+        { "id": "reputation", "label": "Reputation changes", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": { "codec": "lines", "items": "reputation lines" }, "help": "The reputation changes of the success." },
+        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": { "codec": "lines", "items": "log lines" }, "help": "The log texts that the success adds." },
+        { "id": "endScene", "label": "End scene", "from": { "role": "core", "actions": ["Act_AddRTC"], "value": 0 }, "help": "The base scene that the success adds." }
       ],
       "steps": [] },
-    { "id": "fail", "name": "Mission fail", "kind": "beat", "order": 10,
+    { "id": "fail", "name": "Mission fail", "coreLabel": "Fail", "kind": "beat", "order": 10,
       "help": { "title": "Mission fail", "whatItIs": "The end of the mission with fail, and the text that tells the player why.", "whatItWrites": "A [Trigger] section with Act_ChangeState = FAIL and a text id." },
       "core": { "actionValue": { "action": "Act_ChangeState", "value": "FAIL" } },
       "members": [],
       "fields": [
-        { "id": "failText", "label": "Fail text", "from": { "role": "core", "actions": ["Act_ChangeState"], "value": 1 } }
+        { "id": "failText", "label": "Fail text", "from": { "role": "core", "actions": ["Act_ChangeState"], "value": 1 }, "help": "The text that tells the player why the mission failed." }
       ],
       "steps": [
         { "id": "failText", "name": "Fail text", "rules": ["G04"], "reason": "The game shows this text when the mission fails." }
       ] },
-    { "id": "keepApplying", "name": "Keep applying", "kind": "beat", "order": 11,
+    { "id": "keepApplying", "name": "Keep applying", "coreLabel": "Rule", "kind": "beat", "order": 11,
       "help": { "title": "Keep applying", "whatItIs": "A rule that the game applies again and again while the trigger is active, for example \"always friendly\".", "whatItWrites": "A [Trigger] section with repeatable = true and Cnd_True." },
       "core": { "repeatable": true, "condition": "Cnd_True" },
       "members": [],
-      "fields": [ { "id": "applies", "label": "Applies", "from": { "role": "core", "allActions": true }, "list": { "codec": "lines", "items": "actions" } } ],
+      "fields": [ { "id": "applies", "label": "Applies", "from": { "role": "core", "allActions": true }, "list": { "codec": "lines", "items": "actions" }, "help": "The actions that the game runs again at each update while the trigger is active." } ],
       "steps": [] },
-    { "id": "setReputation", "name": "Set reputation", "kind": "beat", "order": 12,
+    { "id": "setReputation", "name": "Set reputation", "coreLabel": "Sides", "kind": "beat", "order": 12,
       "help": { "title": "Set reputation", "whatItIs": "A trigger that only changes attitudes and reputations.", "whatItWrites": "A [Trigger] section with Act_SetVibe or Act_SetRep lines." },
       "core": { "allNonFlowInGroup": "sides" },
       "members": [],
       "fields": [
-        { "id": "attitudes", "label": "Attitudes", "from": { "role": "core", "actions": ["Act_SetVibe", "Act_SetVibeLbl", "Act_SetVibeLblToShip", "Act_SetVibeShipToLbl"], "value": 0 }, "list": { "codec": "lines", "items": "attitude lines" } },
-        { "id": "reputation", "label": "Reputation", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": { "codec": "lines", "items": "reputation lines" } }
+        { "id": "attitudes", "label": "Attitudes", "from": { "role": "core", "actions": ["Act_SetVibe", "Act_SetVibeLbl", "Act_SetVibeLblToShip", "Act_SetVibeShipToLbl"], "value": 0 }, "list": { "codec": "lines", "items": "attitude lines" }, "help": "The attitude lines of the trigger." },
+        { "id": "reputation", "label": "Reputation", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": { "codec": "lines", "items": "reputation lines" }, "help": "The reputation lines of the trigger." }
       ],
       "steps": [] },
-    { "id": "lockGate", "name": "Lock or unlock gate", "kind": "beat", "order": 13,
+    { "id": "lockGate", "name": "Lock or unlock gate", "coreLabel": "Lock", "kind": "beat", "order": 13,
       "help": { "title": "Lock or unlock gate", "whatItIs": "A trigger that only locks or unlocks docks and gates, for the player or for other ships.", "whatItWrites": "A [Trigger] section with Act_LockDock lines." },
       "core": { "allNonFlowActions": ["Act_LockDock"] },
       "members": [],
-      "fields": [ { "id": "docks", "label": "Docks", "from": { "role": "core", "actions": ["Act_LockDock"], "value": 1 }, "list": { "codec": "lines", "items": "docks" } } ],
+      "fields": [ { "id": "docks", "label": "Docks", "from": { "role": "core", "actions": ["Act_LockDock"], "value": 1 }, "list": { "codec": "lines", "items": "docks" }, "help": "The docks, gates and jump holes that the trigger locks or unlocks." } ],
       "steps": [] },
-    { "id": "objective", "name": "Objective", "kind": "beat", "order": 14,
+    { "id": "objective", "name": "Objective", "coreLabel": "Objective", "kind": "beat", "order": 14,
       "help": { "title": "Objective", "whatItIs": "A trigger that only sets the objective and its texts.", "whatItWrites": "A [Trigger] section with objective and text lines." },
       "core": { "allNonFlowInGroup": "objective" },
       "members": [],
       "fields": [
-        { "id": "objective", "label": "Objective", "from": { "role": "core", "actions": ["Act_SetNNObj"], "value": 0 } },
-        { "id": "state", "label": "State", "from": { "role": "core", "actions": ["Act_SetNNState"], "value": 1 } },
-        { "id": "title", "label": "Title", "from": { "role": "core", "actions": ["Act_SetTitle"], "value": 0 } },
-        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": { "codec": "lines", "items": "log lines" } }
+        { "id": "objective", "label": "Objective", "from": { "role": "core", "actions": ["Act_SetNNObj"], "value": 0 }, "help": "The objective that the trigger sets." },
+        { "id": "state", "label": "State", "from": { "role": "core", "actions": ["Act_SetNNState"], "value": 1 }, "help": "The state that the trigger gives to the objective." },
+        { "id": "title", "label": "Title", "from": { "role": "core", "actions": ["Act_SetTitle"], "value": 0 }, "help": "The mission title that the trigger sets." },
+        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": { "codec": "lines", "items": "log lines" }, "help": "The log texts that the trigger adds." }
       ],
       "steps": [] },
-    { "id": "watchedState", "name": "Watched state", "kind": "beat", "order": 15,
+    { "id": "watchedState", "name": "Watched state", "coreLabel": "Watched trigger", "kind": "beat", "order": 15,
       "help": { "title": "Watched state", "whatItIs": "A trigger with a condition and no actions. Other triggers watch its state.", "whatItWrites": "A [Trigger] section with one Cnd_ line and no Act_ lines." },
       "core": { "noActions": true },
       "members": [],
-      "fields": [ { "id": "waitsFor", "label": "Waits for", "from": { "role": "core", "condition": true } } ],
+      "fields": [ { "id": "waitsFor", "label": "Waits for", "from": { "role": "core", "condition": true }, "help": "The event that the trigger waits for. Other triggers watch if it is active or has run." } ],
       "steps": [] },
-    { "id": "escort", "name": "Escort", "kind": "order",
+    { "id": "escort", "name": "Escort", "coreLabel": "Orders", "kind": "order",
       "help": { "title": "Escort", "whatItIs": "Orders that make a ship follow the player or another ship.", "whatItWrites": "An [ObjList] section with a Follow or FollowPlayer line." },
       "core": { "section": "ObjList", "anyKey": ["Follow", "FollowPlayer"] },
       "members": [ { "role": "givers", "label": "Given by", "rule": "ordersGivers" } ],
       "fields": [
-        { "id": "follows", "label": "Follows", "from": { "role": "core", "key": "Follow" } },
-        { "id": "distance", "label": "Distance", "from": { "role": "core", "key": "Follow", "value": 1 } }
+        { "id": "follows", "label": "Follows", "from": { "role": "core", "key": "Follow" }, "help": "The ship that the escort follows." },
+        { "id": "distance", "label": "Distance", "from": { "role": "core", "key": "Follow", "value": 1 }, "help": "The distance in meters that the escort keeps from the ship that it follows." }
       ],
       "steps": [] },
-    { "id": "patrol", "name": "Patrol", "kind": "order",
+    { "id": "patrol", "name": "Patrol", "coreLabel": "Orders", "kind": "order",
       "help": { "title": "Patrol", "whatItIs": "Orders that make a ship fly along two or more points.", "whatItWrites": "An [ObjList] section with GotoVec or GotoSpline lines." },
       "core": { "section": "ObjList", "minKeys": { "keys": ["GotoVec", "GotoSpline"], "count": 2 }, "noKey": ["Dock"] },
       "members": [ { "role": "givers", "label": "Given by", "rule": "ordersGivers" } ],
-      "fields": [ { "id": "waypoints", "label": "Waypoints", "from": { "role": "core", "keys": ["GotoVec", "GotoSpline"] }, "list": { "codec": "lines", "items": "waypoints" } } ],
+      "fields": [ { "id": "waypoints", "label": "Waypoints", "from": { "role": "core", "keys": ["GotoVec", "GotoSpline"] }, "list": { "codec": "lines", "items": "waypoints" }, "help": "The points that the ship flies to, in order." } ],
       "steps": [] }
   ]
 }

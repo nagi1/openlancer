@@ -8,9 +8,9 @@ using static OpenLancer.Tests.GraphTestData;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The compound layout of the mission graph (section 6.7 of the M6a design): the same graph gives the same positions,
-/// back links do not change the layers, the members of a prefab stay in one block, a collapse keeps the order of the
-/// blocks, and a drag offset stays after a layout.
+/// The compound layout of the mission graph (section 6.7 of the M6a design). The same graph gives the same positions,
+/// and back links do not change the layers. The members of a prefab stay in one block, and a collapse keeps the order
+/// of the blocks. A drag offset stays after a layout.
 /// </summary>
 public sealed class GraphLayoutTests
 {

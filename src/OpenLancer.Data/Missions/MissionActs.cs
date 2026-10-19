@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace OpenLancer.Data.Missions;
@@ -48,18 +49,34 @@ public sealed class MissionActs
     /// <summary>The triggers of the main path, from the root.</summary>
     public IReadOnlyList<MissionTrigger> MainPath { get; }
 
-    /// <summary>The triggers that no start trigger reaches over Start and Load links: the frame "Not started by the
-    /// mission".</summary>
+    /// <summary>The triggers of the frame "Not started by the mission", in file order. No start trigger reaches them
+    /// over Start and Load links. The frame also holds each duplicate trigger, because the game never runs it
+    /// (TR4).</summary>
     public IReadOnlyList<MissionTrigger> NotStarted { get; }
+
+    /// <summary>The key of the frame "Not started by the mission" in the graph and in a selection.</summary>
+    public const string NotStartedKey = "a:0";
 
     /// <summary>The act of a trigger, or null for a trigger of the frame "Not started by the mission".</summary>
     public MissionAct? ActOf(MissionTrigger trigger) => actOf.GetValueOrDefault(trigger);
+
+    /// <summary>The key of an act in the graph and in a selection, for example <c>a:2</c>.</summary>
+    public static string KeyOf(MissionAct act) => "a:" + act.Number.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>The act of a key, or null for the frame "Not started by the mission" and for a key that is not
+    /// known.</summary>
+    public MissionAct? Act(string key) => Acts.FirstOrDefault(a => KeyOf(a) == key);
+
+    /// <summary>The triggers of an act key, or of the frame "Not started by the mission". None for a key that is not
+    /// known.</summary>
+    public IReadOnlyList<MissionTrigger> TriggersOf(string key) =>
+        key == NotStartedKey ? NotStarted : Act(key)?.Triggers ?? [];
 
     /// <summary>Proposes the acts of a mission.</summary>
     public static MissionActs Propose(MissionIndex index)
     {
         var triggers = index.Triggers.Where(t => !t.IsDuplicate).ToList();
-        var notStarted = triggers.Where(t => !index.Reached.Contains(t)).ToList();
+        var notStarted = index.Triggers.Where(t => t.IsDuplicate || !index.Reached.Contains(t)).ToList();
         var roots = index.StartTriggers;
         if (roots.Count == 0)
             return new MissionActs([], [], notStarted);

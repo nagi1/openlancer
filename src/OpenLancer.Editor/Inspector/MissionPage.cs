@@ -17,11 +17,11 @@ namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
 /// The Inspector page of a mission selection (section 10 of the M6a design). From the top, it has the header line with
-/// the glyph of the kind, the chips and the info icon, the read-only note, the lead lines and the completeness panel.
-/// Then come the component sections and the INI block in the raw INI editor. It draws from the page model
-/// (<see cref="MissionPageModel"/>), so each page kind has the same frame: the mission, a trigger or a line, a prefab
-/// instance or kind, the cast, an order list, an objective, a conversation, a random encounter, a label, an act, and the
-/// cutscene and base scene links.
+/// the glyph of the kind, the chips and the info icon. Then come the read-only note, the lead lines and the
+/// completeness panel. Then come the component sections and the INI block in the raw INI editor. It draws from the page
+/// model (<see cref="MissionPageModel"/>), so each page kind has the same frame. The kinds are the mission, a trigger
+/// or a line, a prefab instance or kind and the cast. Other kinds are an order list, an objective, a conversation, a
+/// random encounter, a label, an act, and the cutscene and base scene links.
 /// </summary>
 /// <remarks>The page keeps its model and the marks of its INI block until the run of the checks, the selection or a
 /// toggle changes. So it does not make them again in each frame. The list fields are read-only in M6a, with the same
@@ -31,9 +31,6 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
     // Sizes in unscaled points.
     private const float HeaderPaddingX = 10;
     private const float IniHeight = 220;
-
-    /// <summary>The reason of the read-only list fields (section 2 of the M6a design).</summary>
-    private const string ReadOnlyReason = "This editor version shows mission scripts but does not change them.";
 
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
     private readonly Dictionary<string, ListField> lists = [];
@@ -121,9 +118,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         {
             Text = id => session.Name(id),
             CommFile = CommFile,
-            SystemName = SystemName,
+            SystemName = session.SystemName,
             NameOf = NameOf,
-            ShipBuild = ShipBuild,
         };
         var model = MissionPageModel.For(context, item);
         page = (result, item, showBaseGame, hidesOpenLancer, model);
@@ -135,8 +131,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         return model;
     }
 
-    /// <summary>The header line: the glyph of the kind, the title, the kind as a dim label, the chips and the info icon
-    /// at the right end.</summary>
+    /// <summary>The header line: the glyph of the kind, the title, the kind as a dim label and the chips. The info icon
+    /// is at the right end.</summary>
     private static void Header(MissionPageModel model)
     {
         var padding = MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale);
@@ -153,7 +149,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         if (model.HeaderChips.Count > 0)
         {
             ImGui.SameLine();
-            Chip.Flow(model.HeaderChips.Select(c => new ChipItem(c, ChipLook.Grey, ChipTip(c))).ToList());
+            Chip.Flow(model.HeaderChips.Select(c => new ChipItem(c, ChipLook.Grey, MissionPageModel.TriggerChipTip(c))).ToList());
         }
 
         ImGui.SetCursorScreenPos(new Vector2(min.X + width - InfoIcon.Width - padding,
@@ -162,14 +158,6 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         ImGui.SetCursorScreenPos(min + new Vector2(0, height));
         ImGui.Dummy(new Vector2(width, 1));
     }
-
-    /// <summary>The tooltip of a header chip of a trigger (section 13.1 of the M6a design).</summary>
-    private static string ChipTip(string chip) => chip switch
-    {
-        "Start" => "This trigger starts with the mission (InitState = ACTIVE).",
-        "Repeats" => "This trigger becomes active again each time it runs (repeatable = true).",
-        _ => "The system line of this trigger. The game does not use it. The editor uses it to place the trigger.",
-    };
 
     /// <summary>A line under the read-only note, for example "Part of: Spawn wave t_spawn" with a link.</summary>
     private void LeadLine(PageField field)
@@ -214,8 +202,11 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         grid.EndSection();
     }
 
-    /// <summary>One field: a problem, a heading, a list field, chips, a link, a struck or missing value, or a
-    /// text.</summary>
+    /// <summary>
+    /// One field: a problem, a heading, a list field, chips, a reference or the parts of a value. Else it is a link, a
+    /// struck or missing value, or a text. A value field uses the read-only state of the widget of an editable field.
+    /// So M6b only turns on the edit (section 10.1 of the M6a design).
+    /// </summary>
     private void Field(PageSection section, int index, PageField field)
     {
         if (field.Help != null && !field.Heading)
@@ -240,7 +231,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             }
 
             // The list field has its own label and rows, so it spans both columns of the section.
-            grid.FullRow(() => widget.Draw(key, list, null, ReadOnlyReason));
+            grid.FullRow(() => widget.Draw(key, list, null, MissionPageModel.ReadOnlyNote));
         }
         else if (field.Chips.Count > 0)
         {
@@ -253,6 +244,16 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
                     GoTo(link);
                 }
             });
+        }
+        else if (field.Reference is { } reference)
+        {
+            var link = field.Link;
+            grid.ReferenceTo(field.Label, new ObjectKind(reference.Kind, reference.Glyph, EditorTheme.Label),
+                reference.Nickname, reference.Name, link != null ? () => GoTo(link) : null, field.Missing);
+        }
+        else if (field.Parts.Count > 0)
+        {
+            grid.Parts(field.Label, field.Parts);
         }
         else if (field.Struck || field.Missing)
         {
@@ -276,7 +277,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         }
     }
 
-    /// <summary>A heading row, for example "Line 3: Spawn ship", with a link to the line when it has one.</summary>
+    /// <summary>A heading row, for example "Line 3: Spawn ship", with a link to the line when it has one. A heading
+    /// without a link shows its help text in its tooltip.</summary>
     private void Heading(PageField field)
     {
         if (field.Link is { } link)
@@ -290,6 +292,10 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         }
 
         grid.SubHeading($"{field.Label}: {field.Value}");
+        if (field.Help != null)
+        {
+            ImGui.SetItemTooltip(field.Help);
+        }
     }
 
     /// <summary>A value that the game ignores, struck through, or a name that does not resolve, with the "Missing" look
@@ -348,8 +354,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             return;
         }
 
-        var title = model.IniSections.Count > 0 ? "INI (all triggers)" : "INI";
-        if (!grid.BeginSection(SectionKey(model.IniSections.Count > 0 ? "iniAll" : "ini"), EditorIcons.Terminal, title,
+        if (!grid.BeginSection(SectionKey(model.IniSections.Count > 0 ? "iniAll" : "ini"), EditorIcons.Terminal, model.IniTitle,
                 model.IniSections.Count == 0, MissionSchema.Retail.Help["rawIni"]))
         {
             return;
@@ -379,8 +384,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         }
     }
 
-    /// <summary>Goes to the item of a link: a mission selection, a line of a problem, a system, a cutscene, or the action
-    /// of a bundle row.</summary>
+    /// <summary>Goes to the item of a link: a mission selection, a line of a problem, a section, a system or a
+    /// cutscene. A bundle row does its action.</summary>
     private void GoTo(object link)
     {
         var missions = window.Missions;
@@ -393,7 +398,12 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
                 missions.GoTo(line.Target, line.Entry);
                 break;
             case SectionRef target:
-                missions.GoTo(target, -1);
+                // A section outside the mission scripts, for example a ship build, shows its own page.
+                if (!missions.GoTo(target, -1))
+                {
+                    window.Selection = target;
+                }
+
                 break;
             case SystemLink system when window.Session?.GameData?.Items.Systems.Get(system.Nickname) is { } found:
                 window.OpenSystem(found);
@@ -419,13 +429,6 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             ? MissionFiles.Display(path)
             : null;
 
-    /// <summary>The name of a system of the game data, or an empty text for a system without a name. Null when the game
-    /// data has no such system.</summary>
-    private string? SystemName(string nickname) =>
-        window.Session is { GameData: { } data } session && data.Items.Systems.Get(nickname) is { } system
-            ? session.ItemName(system)
-            : null;
-
     /// <summary>The name text of an item of the game data: a system, a base, a faction or a ship archetype. Null for
     /// another kind or an item that the game data does not have.</summary>
     private string? NameOf(MissionValueKind kind, string nickname)
@@ -444,19 +447,6 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             _ => null,
         };
         return item != null ? session.ItemName(item) : null;
-    }
-
-    /// <summary>The lines of a ship build of the mission ship files by nickname, from the list of the edit view, or
-    /// null.</summary>
-    private IReadOnlyList<(string Key, string Value)>? ShipBuild(string nickname)
-    {
-        if (window.Session?.Edits is not { } edits ||
-            edits.Lists.List("npc_ship_arch")?.Find(nickname)?.Section is not { } section || edits.Get(section) is not { } view)
-        {
-            return null;
-        }
-
-        return view.Entries.Select(e => (e.Name, string.Join(", ", e.Values.Select(MissionIndex.Text)))).ToList();
     }
 
     /// <summary>Forgets the model and the texts of the profile.</summary>

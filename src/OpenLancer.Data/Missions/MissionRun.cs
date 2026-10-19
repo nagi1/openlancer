@@ -100,6 +100,17 @@ public sealed record MissionRunResult(int Generation, IReadOnlyList<MissionScrip
     /// <summary>The news items and rumors with a stage range.</summary>
     public IReadOnlyList<StoryItem> StoryItems { get; init; } = [];
 
+    /// <summary>The ship builds of <see cref="ShipFiles"/> in the edit view.</summary>
+    public NpcShipBuilds ShipBuilds { get; init; } = NpcShipBuilds.Empty;
+
+    /// <summary>The ship builds of the files in the base folder without mods (B), or null when no mod changes a file
+    /// of the ship builds. Then the base game has the builds of <see cref="ShipBuilds"/>.</summary>
+    public NpcShipBuilds? BaseShipBuilds { get; init; }
+
+    /// <summary>The names of the base game for the base-game comparisons (decision D551), or null when they are the
+    /// names of the edit view.</summary>
+    public MissionWorld? BaseWorld { get; init; }
+
     /// <summary>The problems of all scripts.</summary>
     public IEnumerable<Diagnostic> Problems => Scripts.Select(s => Analyses.GetValueOrDefault(s.Path))
         .OfType<MissionAnalysis>().SelectMany(a => a.Problems);
@@ -138,10 +149,29 @@ public static class MissionRun
         }
         var shipFiles = NpcShipFiles.Find(inputs.DataPath, folder => inputs.EditView.GetDirectories(folder),
             analyses.Values.Select(a => (a.Script.Path, (IReadOnlyList<Section>?)a.Document.Sections.Select(s => s.Section).ToList())));
+        var (shipBuilds, baseShipBuilds) = ReadShipBuilds(inputs, shipFiles, analyses);
         return new MissionRunResult(inputs.Generation, scripts, analyses, shipFiles, watch.Elapsed)
         {
             StoryItems = ReadStoryItems(inputs),
+            ShipBuilds = shipBuilds,
+            BaseShipBuilds = baseShipBuilds,
+            BaseWorld = inputs.BaseWorld,
         };
+    }
+
+    /// <summary>
+    /// The ship builds of the edit view. Also the ship builds of the base game when a mod changes, replaces or adds a
+    /// file of the ship builds (decision D551). A script that the run parsed is not parsed again.
+    /// </summary>
+    private static (NpcShipBuilds Edit, NpcShipBuilds? Base) ReadShipBuilds(MissionInputs inputs,
+        IReadOnlyList<string> shipFiles, IReadOnlyDictionary<string, MissionAnalysis> analyses)
+    {
+        var edit = NpcShipBuilds.Read(inputs.EditView, shipFiles, path => analyses.GetValueOrDefault(path)?.Document);
+        if (inputs.BaseView is not { } baseView)
+            return (edit, null);
+        var changed = shipFiles.Any(path => inputs.Ledger.ModsThatChangeFile(path).Count > 0 ||
+                                            inputs.Ledger.ReplacedBy(path) != null || !baseView.FileExists(path));
+        return (edit, changed ? NpcShipBuilds.Read(baseView, shipFiles) : null);
     }
 
     /// <summary>The news items of <c>news.ini</c> and the rumors of <c>mBases.ini</c> with a stage range. The stage

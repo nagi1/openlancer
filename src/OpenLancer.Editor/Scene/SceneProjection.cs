@@ -79,6 +79,26 @@ internal readonly struct SceneProjection
         return true;
     }
 
+    /// <summary>
+    /// The screen point of a world position, also for a position behind the camera (section 7.3 of the M6a design). A
+    /// position in front of the camera gives its projected point. A position behind the camera gives a point far
+    /// outside the scene, in the direction that the camera must turn to see it. So a line to the point ends at the edge
+    /// of the scene with an arrow.
+    /// </summary>
+    public Vector2 Toward(Vector3 position)
+    {
+        var clip = Clip(position);
+        if (clip.W > 0)
+        {
+            return Screen(clip);
+        }
+
+        // Behind the camera, X and Y of the clip position keep the side of the position, and the screen Y goes down.
+        var direction = new Vector2(clip.X, -clip.Y);
+        direction = direction.LengthSquared() > 1e-12f ? Vector2.Normalize(direction) : Vector2.UnitY;
+        return Origin + Size / 2 + direction * 4 * (Size.X + Size.Y);
+    }
+
     /// <summary>The clip position of a world position. W is the distance from the camera along the view direction.
     /// A clip position changes linearly with the world position.</summary>
     public Vector4 Clip(Vector3 position) => Vector4.Transform(new Vector4(position, 1), viewProjection);

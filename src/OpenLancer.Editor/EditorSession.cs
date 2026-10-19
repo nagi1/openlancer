@@ -167,6 +167,15 @@ internal sealed class EditorSession : IDisposable
     /// </summary>
     public string ItemName(object? item) => Texts.NameOf(item);
 
+    /// <summary>The name of a system of the game data, or an empty string for a system without a name. Null when the
+    /// game data has no system with the nickname.</summary>
+    public string? SystemName(string nickname) =>
+        GameData?.Items.Systems.Get(nickname) is { } system ? ItemName(system) : null;
+
+    /// <summary>The name of a system of the game data, or its nickname when it has no name or the game data does not
+    /// have it.</summary>
+    public string SystemLabel(string nickname) => SystemName(nickname) is { Length: > 0 } name ? name : nickname;
+
     /// <summary>The text of a text key of an item, for example <c>tradelane_space_name</c>, or an empty string (see
     /// <see cref="ItemTexts"/>).</summary>
     public string TextOf(object? item, string key) => Texts.TextOf(item, key);

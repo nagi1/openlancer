@@ -27,6 +27,14 @@ internal sealed record BundleLink(string Script, MissionBundleRow Row);
 /// <summary>A link to a space cutscene: a click opens it in the Cutscene tab. The value is the path of the line.</summary>
 internal sealed record CutsceneLink(string Value);
 
+/// <summary>A value of a page field that names an item of the script or of the game data (section 10.1 of the M6a
+/// design). The page draws it with the reference widget of the Inspector, read-only in M6a.</summary>
+/// <param name="Nickname">The name as the line gives it.</param>
+/// <param name="Name">The name text of the item, or null.</param>
+/// <param name="Glyph">The glyph of the kind of the item.</param>
+/// <param name="Kind">The kind of the item in plain words, for example "Faction".</param>
+internal sealed record PageReference(string Nickname, string? Name, char Glyph, string Kind);
+
 /// <summary>One field of a page section: a plain name and a value, with an optional help text and an item to go
 /// to.</summary>
 /// <param name="Help">The help text of the field, or null.</param>
@@ -56,6 +64,13 @@ internal sealed record PageField(string Label, string Value, string? Help = null
 
     /// <summary>True for a name that does not resolve. The value has the "Missing" look of M21.</summary>
     public bool Missing { get; init; }
+
+    /// <summary>The item that the value names, or null. The page draws it with the reference widget.</summary>
+    public PageReference? Reference { get; init; }
+
+    /// <summary>The named parts of a value of several numbers, for example the X, Y and Z of a position. The page draws
+    /// one field for each part. Empty for another value.</summary>
+    public IReadOnlyList<(string Label, string Value)> Parts { get; init; } = [];
 }
 
 /// <summary>One component section of a mission page (section 10.1 of the M6a design).</summary>
@@ -83,11 +98,6 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     /// <summary>The read-only note of each mission page (section 13.1 of the M6a design).</summary>
     public const string ReadOnlyNote = "This editor version shows mission scripts but does not change them.";
 
-    /// <summary>The note of the keys of <c>[Mission]</c> that the game does not use (decision D426).</summary>
-    public const string UnusedMissionKey =
-        "The game does not use this value. Mission titles and offers come from 'Set mission title' and 'Set mission " +
-        "offer text'.";
-
     /// <summary>The section of an id, or null.</summary>
     public PageSection? Section(string id) => Sections.FirstOrDefault(s => s.Id == id);
 
@@ -100,6 +110,9 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     /// <summary>The sections of the INI block when it shows more than one, for example all triggers of a prefab
     /// instance. Empty for the one section of <see cref="Ini"/>.</summary>
     public IReadOnlyList<SectionRef> IniSections { get; init; } = [];
+
+    /// <summary>The title of the INI block: "INI", "INI (all triggers)" or "INI (all sections)".</summary>
+    public string IniTitle { get; init; } = "INI";
 
     /// <summary>The id of a section that the page opens and scrolls to, for example the group of a selected line, or
     /// null.</summary>
@@ -135,7 +148,7 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
                 new("Next mission", MissionSummary.NextText(slot.Next),
                     $"{columns["Next mission"]} {MissionSummary.NextTooltip(slot.Next)}"),
                 new("Title text", Text(text, slot.TitleId) is { } titleText ? $"{titleText} ({slot.TitleId})" : Number(slot.TitleId),
-                    "The title of the mission that the game code shows."),
+                    schema.Notes["titleText"]),
             ], slot.Notes.Select(n => schema.SlotNotes.GetValueOrDefault(n) ?? n).ToList()));
         }
 
@@ -151,10 +164,11 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
 
         var header = analysis.Document.OfKind(MissionSectionKind.Mission).FirstOrDefault();
         var advanced = new List<PageField>();
-        foreach (var key in new[] { ("mission_title", "Mission title"), ("mission_offer", "Mission offer"), ("reward", "Reward") })
+        // The keys that the game does not use (decision D426). Their help text says where the titles come from.
+        foreach (var key in schema.Section("Mission")?.Keys.Where(k => k.Unused) ?? [])
         {
-            if (header?.Section.FirstOrDefault(e => e.Name.Equals(key.Item1, StringComparison.OrdinalIgnoreCase)) is { } line)
-                advanced.Add(new PageField(key.Item2, string.Join(", ", line.Select(MissionIndex.Text)), UnusedMissionKey));
+            if (header?.Section.FirstOrDefault(e => MissionIndex.Is(e.Name, key.Key)) is { } line)
+                advanced.Add(new PageField(key.Label, string.Join(", ", line.Select(MissionIndex.Text)), key.Help));
         }
         if (advanced.Count > 0)
             sections.Add(new PageSection("advanced", "Advanced", EditorIcons.Cog, null, advanced, [], Advanced: true));
@@ -167,8 +181,8 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     private static string FileTooltip(MissionBundleRow row) =>
         row.ActionPhrase is { } action ? $"{row.Tooltip}\nClick to {action}." : row.Tooltip;
 
-    /// <summary>The page of another section of a mission, for example <c>[MetaBehavior]</c>: the header, the read-only
-    /// note, the problems of its section and its INI block. Each other kind has its own page (see
+    /// <summary>The page of another section of a mission, for example <c>[MetaBehavior]</c>. It has the header, the
+    /// read-only note, the problems of its section and its INI block. Each other kind has its own page (see
     /// <see cref="For"/>).</summary>
     public static MissionPageModel Item(MissionAnalysis analysis, MissionRef item, bool showBaseGame)
     {
@@ -189,6 +203,7 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     internal static (string Kind, char Glyph, HelpText Help) KindOf(MissionItemKind kind, string? key, MissionSchema schema) =>
         kind switch
         {
+            MissionItemKind.Act when key == MissionActs.NotStartedKey => ("Frame", EditorIcons.EyeSlash, schema.Help["notStarted"]),
             MissionItemKind.Mission => ("Mission", EditorIcons.Route, schema.Help["mission"]),
             MissionItemKind.Trigger or MissionItemKind.Row => ("Trigger", EditorIcons.Bolt, schema.Help["trigger"]),
             MissionItemKind.Ship => ("Mission ship", EditorIcons.SpaceShuttle, schema.Help["missionShip"]),
@@ -226,7 +241,7 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
         var systems = MissionSummary.Systems(index).Order(StringComparer.OrdinalIgnoreCase).ToList();
         if (systems.Count > 0)
         {
-            fields.Add(new PageField("Systems", string.Join(", ", systems), "The systems that the mission names.")
+            fields.Add(new PageField("Systems", string.Join(", ", systems), MissionSchema.Retail.Notes["missionSystems"])
             {
                 Chips = systems.Select(nickname => SystemChip(nickname, systemName)).ToList(),
             });
@@ -282,7 +297,7 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     {
         var fields = MissionSummary.CommLines(index).Select(n => commFile(n) is { } file
             ? new PageField(n, file)
-            : new PageField(n, "Missing", "No voices file has this comm line. The game plays no sound for it.",
+            : new PageField(n, "Missing", MissionSchema.Retail.Notes["missingCommLine"],
                 Severity: DiagnosticSeverity.Error)).ToList();
         return new PageSection("voice", "Voice lines", EditorIcons.VolumeUp, MissionSchema.Retail.Help["voiceLines"],
             fields, fields.Count == 0 ? ["The script names no comm line."] : []);

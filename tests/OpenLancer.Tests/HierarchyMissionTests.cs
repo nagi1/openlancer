@@ -8,8 +8,9 @@ using Xunit;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The tree of a mission in the Hierarchy (section 9 of the M6a design): the groups, the acts with their prefabs and
-/// triggers, the cast, the labels, the links, the prefabs, the items without a system, the search and the marks.
+/// The tree of a mission in the Hierarchy (section 9 of the M6a design). The tests check the groups, the acts with
+/// their prefabs and triggers, and the cast. They also check the labels, the links, the prefabs, the items without a
+/// system, the search and the marks.
 /// </summary>
 public sealed class HierarchyMissionTests
 {
@@ -183,6 +184,32 @@ public sealed class HierarchyMissionTests
         Assert.Equal(RowProblem.None, hidden.NodeOf(lonely)!.Problem);
         Assert.Equal(RowProblem.Muted, shown.NodeOf(lonely)!.Problem);
         Assert.NotSame(hidden, shown);
+    }
+
+    /// <summary>The Logic group lists the blocks of an act in layout order, not in file order (section 9 of the M6a
+    /// design). The act rows have the titles of the graph, with the names of the systems.</summary>
+    [Fact]
+    public void TheLogicGroupHasTheLayoutOrderAndTheActTitlesOfTheGraph()
+    {
+        var analysis = GraphTestData.Analysis();
+        var tree = HierarchyModel.ForMission(analysis, TextOf, false, null,
+            s => s == "sys_a" ? "Invented A" : s == "sys_b" ? "Invented B" : null);
+        var logic = Group(tree, "logic");
+
+        Assert.Equal(["Act 1: Invented A", "Act 2: Invented B"], logic.Children.Take(2).Select(c => c.Name));
+        // t_wait starts the end trigger of the spawn wave, so the wave comes after t_wait, as in the graph.
+        Assert.Equal(["t_start", "t_wait", "Spawn wave", "t_after"], logic.Children[0].Children.Select(c => c.Name));
+        Assert.Equal(["t_spawn", "t_kill"], logic.Children[0].Children[2].Children.Select(c => c.Name));
+    }
+
+    /// <summary>The tree keeps the items of the group "System unknown", so the row menu "Show in system..." does not
+    /// look for them while it is open.</summary>
+    [Fact]
+    public void TheTreeKeepsTheItemsWithoutASystem()
+    {
+        var lost = Mission.Document.OfKind(MissionSectionKind.Ship).Single(s => s.Nickname == "s_lost").Ref;
+
+        Assert.Equal([lost], Tree().SystemUnknown);
     }
 
     [Fact]

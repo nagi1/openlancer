@@ -94,7 +94,8 @@ public sealed record PrefabList(PrefabListCodec Codec, string Items);
 
 /// <summary>A named field of a prefab, for example "Ships".</summary>
 /// <param name="List">The list data of a list field, or null for a field with one value.</param>
-public sealed record PrefabField(string Id, string Label, PrefabSource From, PrefabList? List)
+/// <param name="Help">What the field holds, in one or two sentences, for its tooltip (AGENTS.md UI rule 9).</param>
+public sealed record PrefabField(string Id, string Label, PrefabSource From, PrefabList? List, string Help)
 {
     /// <summary>
     /// The keys of the lines of a <see cref="PrefabListCodec.Lines"/> list field. They are its action keys, the actions of
@@ -128,9 +129,11 @@ public sealed record PrefabStep(string Id, string Name, string? Requires, IReadO
 /// <param name="Order">The place of a beat prefab in the order of the matcher, or 0 for an order prefab.</param>
 /// <param name="ClaimsCore">False when the core trigger stays free for a later prefab, as the watched trigger of a
 /// branch.</param>
+/// <param name="CoreLabel">The role of the core trigger in the list of the triggers of an instance, for example
+/// "Spawn" (section 10.4 of the M6a design).</param>
 public sealed record MissionPrefabDefinition(string Id, string Name, MissionPrefabKind Kind, int Order, HelpText Help,
     PrefabCore Core, IReadOnlyList<PrefabMemberRule> Members, IReadOnlyList<PrefabField> Fields,
-    IReadOnlyList<PrefabStep> Steps, bool ClaimsCore);
+    IReadOnlyList<PrefabStep> Steps, bool ClaimsCore, string CoreLabel);
 
 /// <summary>A named event: a label of a trigger from its condition (section 8.2 of the M6a design). It claims no
 /// trigger.</summary>
@@ -644,7 +647,7 @@ public sealed class MissionPrefabs
             e.GetProperty("fields").EnumerateArray().Select(ReadField).ToList(),
             e.GetProperty("steps").EnumerateArray().Select(s => new PrefabStep(Text(s, "id"), Text(s, "name"),
                 Optional(s, "requires"), Strings(s, "rules"), Optional(s, "check"), Text(s, "reason"))).ToList(),
-            !e.TryGetProperty("claimsCore", out var claims) || claims.GetBoolean());
+            !e.TryGetProperty("claimsCore", out var claims) || claims.GetBoolean(), Text(e, "coreLabel"));
     }
 
     private static PrefabCore ReadCore(JsonElement e) => new()
@@ -672,7 +675,7 @@ public sealed class MissionPrefabs
         return new PrefabField(Text(e, "id"), Text(e, "label"), new PrefabSource(Text(from, "role"), Bool(from, "trigger"),
             Bool(from, "condition"), Strings(from, "actions"), from.TryGetProperty("value", out var v) ? v.GetInt32() : 0,
             Optional(from, "key"), Optional(from, "group"), Bool(from, "allActions"), Strings(from, "keys")),
-            e.TryGetProperty("list", out var list) ? ReadList(list) : null);
+            e.TryGetProperty("list", out var list) ? ReadList(list) : null, Text(e, "help"));
     }
 
     private static PrefabList ReadList(JsonElement e) => new(Text(e, "codec") switch

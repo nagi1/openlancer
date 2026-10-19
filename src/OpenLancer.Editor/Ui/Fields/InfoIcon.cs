@@ -58,9 +58,9 @@ internal static class InfoIcon
         ImGui.SetCursorScreenPos(cursor);
     }
 
-    /// <summary>The popup of a help text, when it is open in the current id scope. A view that draws the glyph in
-    /// another place, for example in the canvas of the mission graph, opens the popup with <see cref="PopupId"/> and
-    /// calls this outside that place.</summary>
+    /// <summary>The popup of a help text, when it is open in the current id scope. A view can draw the glyph in another
+    /// place, for example in the canvas of the mission graph. Such a view opens the popup with <see cref="PopupId"/>
+    /// and calls this outside that place.</summary>
     internal static void Popup(HelpText help)
     {
         ImGui.SetNextWindowSizeConstraints(new Vector2(260, 0) * ImGuiHelper.Scale, new Vector2(420, 600) * ImGuiHelper.Scale);

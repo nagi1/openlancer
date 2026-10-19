@@ -786,14 +786,51 @@ public sealed class ScenePickerTests
     // The markers of other items that the frame appends, for example the items of the open mission.
     private readonly List<(object Item, ObjectKind Kind, uint Color, Vector3 Position)> appended = [];
 
-    /// <summary>A marker of the mission layer is a glyph, so it is in the first layer of the pick stack, before the
+    /// <summary>The overlay finds the marker of an item by its equality. So the brackets of a highlighted item of the
+    /// mission find its glyph with one lookup.</summary>
+    [Fact]
+    public void TheMarkersFindTheMarkerOfAnItem()
+    {
+        var markers = new SceneMarkers();
+        var item = new OpenLancer.Data.Missions.MissionRef(MissionTestData.Path,
+            OpenLancer.Data.Missions.MissionItemKind.Label, Key: "l_one");
+        var kind = MissionLayer.KindOf(OpenLancer.Data.Missions.PlacementKind.ShipStart);
+
+        markers.Update(Projection(), null, [(item, kind, 0u, new Vector3(0, 0, -1_000))]);
+
+        Assert.Equal(item, markers.Find(item with { })?.Item);
+        Assert.Null(markers.Find(item with { Key = "l_two" }));
+        markers.Clear();
+        Assert.Null(markers.Find(item));
+    }
+
+    /// <summary>
+    /// A position in front of the camera gives its projected point. A position behind the camera gives a point far
+    /// outside the scene, on the side where the position is (section 7.3 of the M6a design). So a connector line to an
+    /// item behind the camera ends at the edge of the scene with an arrow.
+    /// </summary>
+    [Fact]
+    public void TowardGivesThePointOrTheSideOfAPositionBehindTheCamera()
+    {
+        var projection = Projection();
+        var front = new Vector3(100, 0, -5_000);
+
+        Assert.Equal(Screen(front), projection.Toward(front));
+        // The camera looks along -Z, so +Z is behind it. A position behind and to the left is left of the scene.
+        var left = projection.Toward(new Vector3(-1_000, 0, 5_000));
+        Assert.True(left.X < Origin.X, $"{left} is not left of the scene.");
+        var below = projection.Toward(new Vector3(0, -1_000, 5_000));
+        Assert.True(below.Y > Origin.Y + Size.Y, $"{below} is not below the scene.");
+    }
+
+    /// <summary>A marker of the mission layer is a glyph. So it is in the first layer of the pick stack, before the
     /// object under it (section 7.2 of the M6a design). It shows also when the markers of the system are off.</summary>
     [Fact]
     public void AMarkerOfTheMissionLayerComesBeforeTheObjectUnderIt()
     {
         var station = Add("station", new Vector3(0, 0, -5_000), ArchetypeType.station, BoxModel(new Vector3(100)));
-        var item = new OpenLancer.Editor.Missions.MissionRef(@"DATA\MISSIONS\TEST\test.ini",
-            OpenLancer.Editor.Missions.MissionItemKind.Ship, Key: "s_one");
+        var item = new OpenLancer.Data.Missions.MissionRef(@"DATA\MISSIONS\TEST\test.ini",
+            OpenLancer.Data.Missions.MissionItemKind.Ship, Key: "s_one");
         appended.Add((item, MissionLayer.KindOf(OpenLancer.Data.Missions.PlacementKind.ShipStart),
             EditorTheme.ToAbgr(EditorTheme.MissionItem), new Vector3(0, 0, -5_000)));
 

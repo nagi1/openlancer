@@ -4,9 +4,9 @@ using OpenLancer.Editor.Ui;
 namespace OpenLancer.Editor.Missions;
 
 /// <summary>
-/// The glyphs of the mission studio: the event groups of the conditions, the action groups of the chips, the behavior
-/// prefabs and the pins of the graph. The graph, the Hierarchy and the Inspector take their glyphs from here, so each
-/// item looks the same everywhere.
+/// The glyphs of the mission studio. They show the event groups of the conditions, the action groups of the chips, the
+/// behavior prefabs and the pins of the graph. The graph, the Hierarchy and the Inspector take their glyphs from here,
+/// so each item looks the same everywhere.
 /// </summary>
 internal static class MissionGlyphs
 {
@@ -68,8 +68,8 @@ internal static class MissionGlyphs
         _ => EditorIcons.Cubes,
     };
 
-    /// <summary>The glyph of a pin (section 6.2 of the M6a design): an arrow for Start, a bar for Stop, a disk for Load
-    /// and an eye for a watch.</summary>
+    /// <summary>The glyph of a pin (section 6.2 of the M6a design). It is an arrow for Start, a bar for Stop, a disk
+    /// for Load and an eye for a watch.</summary>
     public static char OfPin(GraphPinKind kind) => kind switch
     {
         GraphPinKind.Start or GraphPinKind.Starts => EditorIcons.Play,
@@ -77,6 +77,27 @@ internal static class MissionGlyphs
         GraphPinKind.Load or GraphPinKind.Saves => EditorIcons.Save,
         GraphPinKind.Watches or GraphPinKind.State => EditorIcons.Eye,
         _ => EditorIcons.CaretRight,
+    };
+
+    /// <summary>The glyph of the kind of a name of a line, for the reference fields of the pages.</summary>
+    public static char OfValue(MissionValueKind kind) => kind switch
+    {
+        MissionValueKind.Trigger => EditorIcons.Bolt,
+        MissionValueKind.Ship or MissionValueKind.Group or MissionValueKind.Object => EditorIcons.SpaceShuttle,
+        MissionValueKind.Formation => EditorIcons.Users,
+        MissionValueKind.Solar => EditorIcons.Satellite,
+        MissionValueKind.Loot => EditorIcons.Box,
+        MissionValueKind.ObjList => EditorIcons.List,
+        MissionValueKind.Dialog => EditorIcons.Comments,
+        MissionValueKind.Objective => EditorIcons.Bullseye,
+        MissionValueKind.Npc => EditorIcons.User,
+        MissionValueKind.RandomEncounter => EditorIcons.Crosshairs,
+        MissionValueKind.System => EditorIcons.Globe,
+        MissionValueKind.Base => EditorIcons.Store,
+        MissionValueKind.Faction => EditorIcons.Users,
+        MissionValueKind.Voice or MissionValueKind.CommLine => EditorIcons.VolumeUp,
+        MissionValueKind.SpaceCutscene or MissionValueKind.BaseScene => EditorIcons.Film,
+        _ => EditorIcons.Link,
     };
 
     /// <summary>The glyph of a frame or of its collapsed node.</summary>

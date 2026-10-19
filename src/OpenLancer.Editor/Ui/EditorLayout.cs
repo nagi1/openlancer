@@ -384,8 +384,8 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     public static float StripHeight => Pixels(ToolbarHeight, ImGuiHelper.Scale);
 
     /// <summary>
-    /// Draws a toolbar strip at the cursor, as the strip of a panel, for example the Scene toolbar above the Scene part
-    /// of the Mission tab. Its buttons are flat, and a toggle that is on keeps its pressed color.
+    /// Draws a toolbar strip at the cursor, as the strip of a panel. An example is the Scene toolbar above the Scene
+    /// part of the Mission tab. Its buttons are flat, and a toggle that is on keeps its pressed color.
     /// </summary>
     public static void Strip(string id, Action draw, Vector2 size)
     {

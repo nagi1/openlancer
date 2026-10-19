@@ -239,11 +239,11 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
     }
 
     /// <summary>
-    /// The behaviors of the object (decision D247 of the M3 design): its pilot, behavior and difficulty, its reputation,
-    /// the encounters of the zones that hold its position, the mission lines that name it (section 10.18 of the M6a
-    /// design), and the other files that name it as text. The rows of keys stay bound, so a raw edit shows at once. The
-    /// other rows are read-only, and each one selects its item. A mission row opens the mission at its line, so the text
-    /// rows leave out the mission scripts. Milestone M29 adds the cutscene scripts.
+    /// The behaviors of the object (decision D247 of the M3 design). They are its pilot, behavior and difficulty, its
+    /// reputation, and the encounters of the zones that hold its position. They are also the mission lines that name it
+    /// (section 10.18 of the M6a design), and the other files that name it as text. The rows of keys stay bound, so a
+    /// raw edit shows at once. The other rows are read-only, and each one selects its item. A mission row opens the
+    /// mission at its line, so the text rows leave out the mission scripts. Milestone M29 adds the cutscene scripts.
     /// </summary>
     private void Behaviors(SystemObject obj, SectionRef? section)
     {

@@ -18,6 +18,7 @@ using LibreLancer.Shaders;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Assets;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Assets;
@@ -246,7 +247,7 @@ internal sealed partial class EditorWindow : Game
                     () => cutsceneView.Draw(frameElapsed), cutsceneView.Toolbar, padding: false),
                 new EditorPanel(MissionWorkspace.PanelId, "Mission", EditorIcons.Route,
                     () => missionView.Draw(frameElapsed), missionView.Toolbar, padding: false,
-                    tooltip: "The open mission, with the Scene beside it."),
+                    tooltip: "The graph of the open mission, with the Scene beside it."),
             ]),
             new EditorPanel("inspector", "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
                 padding: false),

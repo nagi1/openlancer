@@ -11,9 +11,9 @@ using OpenLancer.Editor.Ui.Fields;
 namespace OpenLancer.Editor.Missions;
 
 /// <summary>
-/// The Mission tab (section 7.1 of the M6a design): the graph of the open mission, or its raw INI text, beside the Scene,
-/// with a splitter between them. The graph toolbar is the strip of the tab, and the Scene toolbar is a strip above the
-/// Scene part. In the raw view, the text has the colors of the INI mode and the marks of the checks. A cursor in a
+/// The Mission tab (section 7.1 of the M6a design): the graph of the open mission, or its raw INI text, beside the
+/// Scene. A splitter is between them. The graph toolbar is the strip of the tab, and the Scene toolbar is a strip above
+/// the Scene part. In the raw view, the text has the colors of the INI mode and the marks of the checks. A cursor in a
 /// section selects its item, and a selection of an item scrolls the text to its section.
 /// </summary>
 internal sealed class MissionView : IDisposable
@@ -230,10 +230,7 @@ internal sealed class MissionView : IDisposable
 
         foreach (var (system, triggers) in missions.Open is { } open ? MissionSummary.TriggerSystems(open.Index) : [])
         {
-            var name = SystemName(system);
-            var label = name != null ? $"{name} ({system})" : system;
-            var count = triggers == 1 ? "1 trigger" : $"{triggers} triggers";
-            if (ImGui.MenuItem($"{label}: {count}", "", string.Equals(Graph.SystemFilter, system,
+            if (ImGui.MenuItem(SystemItem(window.Session, system, triggers), "", string.Equals(Graph.SystemFilter, system,
                     StringComparison.OrdinalIgnoreCase)))
             {
                 Graph.SystemFilter = system;
@@ -244,12 +241,14 @@ internal sealed class MissionView : IDisposable
         ImGui.EndPopup();
     }
 
-    /// <summary>The name of a system of the game data, or null when it has no name.</summary>
-    private string? SystemName(string nickname) =>
-        window.Session is { GameData: { } data } session && data.Items.Systems.Get(nickname) is { } system &&
-        session.ItemName(system) is { Length: > 0 } name
-            ? name
-            : null;
+    /// <summary>The text of a system of a mission in a menu: "{system name} ({nickname}): {n} triggers" (section 13.1
+    /// of the M6a design). The Systems menu of the graph and the menu "Mission systems" of the Scene use it.</summary>
+    internal static string SystemItem(EditorSession? session, string nickname, int triggers)
+    {
+        var label = session?.SystemName(nickname) is { Length: > 0 } name ? $"{name} ({nickname})" : nickname;
+        var count = triggers == 1 ? "1 trigger" : $"{triggers.ToString(System.Globalization.CultureInfo.InvariantCulture)} triggers";
+        return $"{label}: {count}";
+    }
 
     private static string Label(MissionRunResult? result, string path) =>
         result?.Scripts.FirstOrDefault(s => string.Equals(s.Path, path, StringComparison.OrdinalIgnoreCase)) is
@@ -305,6 +304,8 @@ internal sealed class MissionView : IDisposable
         ImGui.EndChild();
         if (!withScene)
         {
+            // A frame in the Scene needs the Scene part, so a request ends while the part is closed.
+            missions.PendingSceneFrame = null;
             return;
         }
 
@@ -333,7 +334,7 @@ internal sealed class MissionView : IDisposable
                     ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoScrollbar |
                     ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings))
             {
-                links.DrawLines(analysis, (origin, origin + avail));
+                links.DrawLines((origin, origin + avail));
             }
 
             ImGui.EndChild();
@@ -356,12 +357,14 @@ internal sealed class MissionView : IDisposable
     }
 
     /// <summary>The keys of the graph (decision D558). F frames the selection, and A or Home frame all. Ctrl+F goes to
-    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are off,
-    /// so Delete does nothing.</summary>
+    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are
+    /// off, so Delete does nothing. The keys work only while the graph part or one of its child windows has the focus.
+    /// So a key of the Scene part, for example A to fly left, does not move the graph. A key with Ctrl or Alt other
+    /// than Ctrl+F does nothing.</summary>
     private void Keys()
     {
         var io = ImGui.GetIO();
-        if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) || io.WantTextInput)
+        if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows) || io.WantTextInput)
         {
             return;
         }
@@ -369,6 +372,11 @@ internal sealed class MissionView : IDisposable
         if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.F, false))
         {
             focusSearch = true;
+            return;
+        }
+
+        if (io.KeyCtrl || io.KeyAlt)
+        {
             return;
         }
 
@@ -492,7 +500,7 @@ internal sealed class MissionView : IDisposable
             return;
         }
 
-        var item = MissionWorkspace.RefOf(analysis.Document.Sections[section].Ref, entry);
+        var item = MissionRef.OfSection(analysis.Document.Sections[section].Ref, entry);
         window.Selection = item;
         lastSelection = item;
     }

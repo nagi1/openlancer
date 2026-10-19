@@ -319,6 +319,13 @@ public sealed record MissionKeySpec(string Key, string Label, MissionValueKind K
         ? Values
         : [new MissionValueSpec(0, Key, Label, Kind)
         {
+            // A position and a rotation of a key have the width of their kind, as a value of a name has.
+            Width = Kind switch
+            {
+                MissionValueKind.Position => 3,
+                MissionValueKind.Rotation => 4,
+                _ => 1,
+            },
             Closed = Closed, Tokens = Tokens, Buffer = Buffer ?? DefaultBuffer(Kind), Help = Help, NoneToken = NoneToken,
             Hard = Hard,
         }];
@@ -358,7 +365,26 @@ public sealed record MissionBuffer(string Id, string What, int Max);
 /// <param name="Label">The label of the field, or null for the label of its key or value.</param>
 /// <param name="Items">The plural word of the rows, for example "ships".</param>
 /// <param name="AddLabel">The text of the Add button, or null for "Add".</param>
-public sealed record MissionListInfo(string? Label, string Items, string? AddLabel);
+/// <param name="Values">True for a key whose rows are the values of one line, for example the classes of an
+/// <c>npc_class</c> line. Else each line of the key is one row.</param>
+public sealed record MissionListInfo(string? Label, string Items, string? AddLabel, bool Values = false);
+
+/// <summary>One step of the completeness panel of a mission item (section 13.5 of the M6a design).</summary>
+/// <param name="Id">The id of the step in the rule data.</param>
+/// <param name="Name">The name of the step, for example "Ship build".</param>
+/// <param name="Rules">The check rules whose problems make the step missing.</param>
+/// <param name="Key">The key of the lines of the problems, or null for each line.</param>
+/// <param name="Check">The id of a fixed check of the data, or null.</param>
+/// <param name="Reason">Why the step is necessary, in one sentence.</param>
+public sealed record MissionStepSpec(string Id, string Name, IReadOnlyList<string> Rules, string? Key, string? Check,
+    string Reason);
+
+/// <summary>The completeness panel of a kind of mission item: its title and its steps, in order.</summary>
+public sealed record MissionItemSteps(string Title, IReadOnlyList<MissionStepSpec> Steps)
+{
+    /// <summary>The step of an id.</summary>
+    public MissionStepSpec Step(string id) => Steps.First(s => s.Id == id);
+}
 
 /// <summary>
 /// The argument schema of mission scripts (section 14.4 of the M6a design): the conditions, actions and orders with
@@ -399,6 +425,20 @@ public sealed class MissionSchema
 
     /// <summary>The help texts of the views and pages (section 13.4 of the M6a design), by id.</summary>
     public IReadOnlyDictionary<string, HelpText> Help { get; private set; } = new Dictionary<string, HelpText>();
+
+    /// <summary>The notes of the pages in plain words, by id, for example the note of a key that the game does not
+    /// use.</summary>
+    public IReadOnlyDictionary<string, string> Notes { get; private set; } = new Dictionary<string, string>();
+
+    /// <summary>The steps of the completeness panels of the mission items (section 13.5 of the M6a design). The items
+    /// are <c>mission</c>, <c>missionShip</c>, <c>conversation</c>, <c>cutsceneLink</c> and <c>baseSceneLink</c>. The
+    /// steps of the behavior prefabs are in the prefab data.</summary>
+    public IReadOnlyDictionary<string, MissionItemSteps> Completeness { get; private set; } =
+        new Dictionary<string, MissionItemSteps>();
+
+    /// <summary>The keys of a ship build (<c>[NPCShipArch]</c>) of the mission ship files. The game reads them outside the
+    /// mission script, so the checks of the script do not read them. The Mission ship page shows them.</summary>
+    public MissionSectionSpec ShipBuild { get; private set; } = new("NPCShipArch", [], false, false);
 
     public IReadOnlyList<MissionName> Conditions { get; private set; } = [];
 
@@ -457,16 +497,24 @@ public sealed class MissionSchema
     private List<ListFieldSpec> BuildLists()
     {
         var result = new List<ListFieldSpec>();
-        foreach (var section in Sections)
+        foreach (var section in Sections.Append(ShipBuild))
         {
             foreach (var key in section.Keys.Where(k => k.List != null))
             {
-                result.Add(new ListFieldSpec($"{section.Type}.{key.Key}", key.List!.Label ?? key.Label, key.Help,
-                    ListFieldCodec.RepeatedKey, [key.Key], key.ValueSpecs.Select(v => Column(v)).ToList())
-                {
-                    Items = key.List.Items,
-                    AddLabel = key.List.AddLabel,
-                });
+                // A key whose rows are the values of one line has one column of the kind of the key.
+                result.Add(key.List!.Values
+                    ? new ListFieldSpec($"{section.Type}.{key.Key}", key.List.Label ?? key.Label, key.Help,
+                        ListFieldCodec.ValueList, [key.Key], [Column(key.ValueSpecs[0] with { Index = 0, Rest = false })])
+                    {
+                        Items = key.List.Items,
+                        AddLabel = key.List.AddLabel,
+                    }
+                    : new ListFieldSpec($"{section.Type}.{key.Key}", key.List.Label ?? key.Label, key.Help,
+                        ListFieldCodec.RepeatedKey, [key.Key], key.ValueSpecs.Select(v => Column(v)).ToList())
+                    {
+                        Items = key.List.Items,
+                        AddLabel = key.List.AddLabel,
+                    });
             }
             if (section.Orders is { } orders)
             {
@@ -608,6 +656,10 @@ public sealed class MissionSchema
                     .Select((e, i) => new MissionActionGroup(Text(e, "id"), Text(e, "chip"), Text(e, "section"),
                         HelpText.Read(e.GetProperty("help")), i)).ToList(),
                 Help = root.GetProperty("help").EnumerateObject().ToDictionary(p => p.Name, p => HelpText.Read(p.Value)),
+                Notes = root.GetProperty("notes").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString()!),
+                Completeness = root.GetProperty("completeness").EnumerateObject().ToDictionary(p => p.Name,
+                    p => new MissionItemSteps(Text(p.Value, "title"),
+                        p.Value.GetProperty("steps").EnumerateArray().Select(ReadStep).ToList())),
                 Tokens = root.GetProperty("tokens").EnumerateObject().ToDictionary(p => p.Name,
                     p => new MissionTokenSet(p.Name, Strings(p.Value, "values"), Bool(p.Value, "caseSensitive"),
                         Bool(p.Value, "open"))),
@@ -622,6 +674,7 @@ public sealed class MissionSchema
             schema.Directives = root.GetProperty("objListDirectives").EnumerateArray()
                 .Select(e => ReadName(e, MissionNameKind.Directive, null)).ToList();
             schema.Sections = root.GetProperty("sections").EnumerateArray().Select(ReadSection).ToList();
+            schema.ShipBuild = ReadSection(root.GetProperty("shipBuild"));
             foreach (var name in schema.Conditions.Concat(schema.Actions))
             {
                 if (!schema.names.TryAdd(name.Name, name))
@@ -653,7 +706,7 @@ public sealed class MissionSchema
         foreach (var name in Actions.Where(n => Group(n.Group) == null))
             throw new FormatException($"The action {name.Name} has the unknown group '{name.Group}'.");
         var specs = Conditions.Concat(Actions).Concat(Directives).SelectMany(n => n.Values)
-            .Concat(Sections.SelectMany(s => s.Keys).SelectMany(k => k.ValueSpecs));
+            .Concat(Sections.Append(ShipBuild).SelectMany(s => s.Keys).SelectMany(k => k.ValueSpecs));
         foreach (var spec in specs)
         {
             if (spec.Kind == MissionValueKind.Token && (spec.Tokens == null || !Tokens.ContainsKey(spec.Tokens)))
@@ -662,6 +715,14 @@ public sealed class MissionSchema
                 throw new FormatException($"The value {spec.Name} names the unknown token set '{spec.Also}'.");
             if (spec.Buffer != null && !Buffers.ContainsKey(spec.Buffer))
                 throw new FormatException($"The value {spec.Name} names the unknown buffer '{spec.Buffer}'.");
+        }
+        var rules = MissionChecks.Rules.ToHashSet();
+        foreach (var step in Completeness.Values.SelectMany(i => i.Steps))
+        {
+            foreach (var rule in step.Rules.Where(r => !rules.Contains(r)))
+                throw new FormatException($"The step {step.Id} names the unknown rule '{rule}'.");
+            if (step.Check != null && !MissionCompleteness.ItemChecks.Contains(step.Check))
+                throw new FormatException($"The step {step.Id} names the unknown check '{step.Check}'.");
         }
         foreach (var name in Conditions.Concat(Actions).Concat(Directives))
         {
@@ -765,8 +826,12 @@ public sealed class MissionSchema
     /// <summary>The list data of a property, or null when the item has none.</summary>
     private static MissionListInfo? ReadList(JsonElement e, string name) =>
         e.TryGetProperty(name, out var list)
-            ? new MissionListInfo(Optional(list, "label"), Text(list, "items"), Optional(list, "addLabel"))
+            ? new MissionListInfo(Optional(list, "label"), Text(list, "items"), Optional(list, "addLabel"),
+                Bool(list, "values"))
             : null;
+
+    private static MissionStepSpec ReadStep(JsonElement e) => new(Text(e, "id"), Text(e, "name"), Strings(e, "rules"),
+        Optional(e, "key"), Optional(e, "check"), Text(e, "reason"));
 
     /// <summary>The buffer of a kind without its own buffer: an object name has 47 characters (TR15).</summary>
     internal static string? DefaultBuffer(MissionValueKind kind) => kind is MissionValueKind.Object or

@@ -9,7 +9,7 @@ namespace OpenLancer.DataTests;
 
 /// <summary>
 /// Retail proofs of the pages, the tree and the cross-links of the mission studio (sections 9, 10 and 7.3 of the M6a
-/// design): each item of the 14 retail story scripts gets a page, each mission gets a tree, and each trigger gets its
+/// design). Each item of the 14 retail story scripts gets a page. Each mission gets a tree, and each trigger gets its
 /// cross-link targets. No test can draw ImGui, so these tests run the models of the views over all retail items. They
 /// count items. They hold no retail text.
 /// </summary>
@@ -24,7 +24,7 @@ public sealed class MissionPagesRetailTests(ITestOutputHelper output)
         {
             var context = new PageContext(run, analysis, true, false);
             var script = analysis.Script.Path;
-            var items = analysis.Document.Sections.Select(s => MissionWorkspace.RefOf(s.Ref, -1)).ToList();
+            var items = analysis.Document.Sections.Select(s => MissionRef.OfSection(s.Ref, -1)).ToList();
             items.AddRange(analysis.Index.Triggers.SelectMany(t => t.Rows.Select(r =>
                 new MissionRef(script, MissionItemKind.Row, t.Section.Ref, Row: r.Entry))));
             items.AddRange(analysis.Index.Labels.Keys.Select(l => new MissionRef(script, MissionItemKind.Label, Key: l)));

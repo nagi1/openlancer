@@ -53,6 +53,36 @@ public sealed partial class MissionSchemaTests
         Assert.Empty(problems);
     }
 
+    /// <summary>The rule data holds the steps of the completeness panels of section 13.5 of the M6a design, in order.
+    /// So the providers of the data layer make each report (section 11.4).</summary>
+    [Fact]
+    public void TheCompletenessStepsOfTheItemsAreRuleData()
+    {
+        string[] Steps(string item) => Schema.Completeness[item].Steps.Select(s => s.Name).ToArray();
+
+        Assert.Equal(["Start trigger", "Mission success", "Fail texts", "One condition for each trigger", "Names resolve",
+            "Each trigger can start", "Cutscenes end"], Steps("mission"));
+        Assert.Equal(["Pilot and voice", "Ship build", "Archetype, loadout and pilot"], Steps("missionShip"));
+        Assert.Equal(["Comm lines exist", "Speakers in the system"], Steps("conversation"));
+        Assert.Equal(["Cutscene file", "Anchor", "Camera back"], Steps("cutsceneLink"));
+        Assert.Equal(["Scene file", "Path length"], Steps("baseSceneLink"));
+        Assert.Equal("shipBuildParts", Schema.Completeness["missionShip"].Step("buildParts").Check);
+    }
+
+    /// <summary>The classes of a ship build are one row each, from the values of one line (UI rule 3). The rule data
+    /// holds the list and its help text (decision D539).</summary>
+    [Fact]
+    public void TheClassesOfAShipBuildAreAListOfTheValuesOfOneLine()
+    {
+        var spec = Schema.KeyList("NPCShipArch", "npc_class")!;
+
+        Assert.Equal((ListFieldCodec.ValueList, "NPC classes"), (spec.Codec, spec.Label));
+        Assert.False(string.IsNullOrEmpty(spec.Help));
+        var model = ListFieldModel.Read(spec, [new ListFieldLine("npc_class",
+            [new LibreLancer.Data.Ini.StringValue("lawful"), new LibreLancer.Data.Ini.StringValue("d5")])]);
+        Assert.Equal(2, model.Rows.Count);
+    }
+
     [Fact]
     public void TheLintFindsTheBrokenRules()
     {
@@ -248,7 +278,18 @@ public sealed partial class MissionSchemaTests
             foreach (var sentence in name.Sentences.Concat(name.Suffixes))
                 yield return ($"{name.Name} sentence", sentence.Text);
         }
-        foreach (var section in Schema.Sections)
+        foreach (var (id, note) in Schema.Notes)
+            yield return ($"note {id}", note);
+        foreach (var (id, item) in Schema.Completeness)
+        {
+            yield return ($"completeness {id}", item.Title);
+            foreach (var step in item.Steps)
+            {
+                yield return ($"completeness {id} {step.Id}", step.Name);
+                yield return ($"completeness {id} {step.Id}", step.Reason);
+            }
+        }
+        foreach (var section in Schema.Sections.Append(Schema.ShipBuild))
         {
             foreach (var key in section.Keys)
             {
@@ -270,8 +311,12 @@ public sealed partial class MissionSchemaTests
                 yield return text;
             foreach (var member in prefab.Members)
                 yield return ($"prefab {prefab.Id} {member.Role}", member.Label);
+            yield return ($"prefab {prefab.Id} core", prefab.CoreLabel);
             foreach (var field in prefab.Fields)
+            {
                 yield return ($"prefab {prefab.Id} {field.Id}", field.Label);
+                yield return ($"prefab {prefab.Id} {field.Id}", field.Help);
+            }
             foreach (var step in prefab.Steps)
             {
                 yield return ($"prefab {prefab.Id} {step.Id}", step.Name);

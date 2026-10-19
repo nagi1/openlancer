@@ -135,13 +135,9 @@ internal sealed class SceneView : IDisposable
 
     private SceneProjection? lastProjection;
 
-    /// <summary>The screen point of a world position with the camera of the last frame. False when the position is
-    /// behind the camera or the scene did not draw.</summary>
-    public bool TryProject(Vector3 position, out Vector2 screen)
-    {
-        screen = default;
-        return lastProjection is { } projection && projection.Project(position, out screen, out _);
-    }
+    /// <summary>The screen point of a world position with the camera of the last frame, also behind the camera (see
+    /// <see cref="SceneProjection.Toward"/>). Null when the scene did not draw.</summary>
+    public Vector2? Toward(Vector3 position) => lastProjection?.Toward(position);
 
     /// <summary>The shared data of the open system, or null when no system is open.</summary>
     public SystemIndex? Index { get; private set; }
@@ -356,7 +352,7 @@ internal sealed class SceneView : IDisposable
             case LightSource light:
                 controller.Focus(light.Light.Position, 500);
                 break;
-            case Missions.MissionRef mission when missionLayer.PlaceOf(mission) is var (position, radius):
+            case Data.Missions.MissionRef mission when missionLayer.PlaceOf(mission) is var (position, radius):
                 controller.Focus(position, radius);
                 break;
         }
@@ -382,7 +378,7 @@ internal sealed class SceneView : IDisposable
         if (window.CenterMode != CenterMode.Mission)
         {
             overlay.Highlighted = [];
-            missionLayer.Highlight = new HashSet<Missions.MissionRef>();
+            missionLayer.Highlight = new HashSet<Data.Missions.MissionRef>();
         }
 
         // Flush A: the changes of W since the last frame, before this frame reads the scene.
@@ -445,12 +441,18 @@ internal sealed class SceneView : IDisposable
         }
         gizmo.Update(projection);
         Pick(projection, Index, activated, deactivated);
-        if (activated && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && DoubleClicked != null &&
-            scenePicker.Pick(projection, ImGui.GetMousePos(), Index,
-                new PickView(controller.Position, window.Settings.ShowZones, window.Settings.ShowNebulae,
-                    window.Settings.ShowFog)).Item is { } doubleClicked)
+        if (activated && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
         {
-            DoubleClicked(doubleClicked);
+            // The release of the second press keeps the item of the first click, which the double-click acts on.
+            cycle.DoublePress();
+            var stack = scenePicker.Pick(projection, ImGui.GetMousePos(), Index,
+                new PickView(controller.Position, window.Settings.ShowZones, window.Settings.ShowNebulae,
+                    window.Settings.ShowFog)).Items;
+            var doubleClicked = stack.FirstOrDefault(i => Equals(i, window.Selection)) ?? stack.FirstOrDefault();
+            if (doubleClicked != null)
+            {
+                DoubleClicked?.Invoke(doubleClicked);
+            }
         }
         if (viewKeys && !ImGui.GetIO().WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F))
         {
@@ -562,10 +564,10 @@ internal sealed class SceneView : IDisposable
         var item = ToolbarItems.IconWidth + spacing;
         // The system list gets the space that the other items leave, between its minimum and maximum width. The other
         // items are Frame system, the gizmo items, the view toggles, the help button and two separators.
-        // The toggle "Mission items" and the menu "Mission systems" show only for an open mission.
+        // The toggle "Mission items", its info icon and the menu "Mission systems" show only for an open mission.
         var missionToggle = !missionLayer.Active ? 0
-            : window.Missions.Open is { } open && Data.Missions.MissionSummary.TriggerSystems(open.Index).Count > 1 ? 2
-            : 1;
+            : window.Missions.Open is { } open && Data.Missions.MissionSummary.TriggerSystems(open.Index).Count > 1 ? 3
+            : 2;
         var others = (ViewOptions.Length + missionToggle + TransformGizmo.ToolbarItemCount + 2) * item +
                      2 * (1 + spacing) + spacing;
         var scale = ImGuiHelper.Scale;
@@ -591,6 +593,8 @@ internal sealed class SceneView : IDisposable
             settings.ShowMissionItems = ToolbarItems.Toggle("mission-items", EditorIcons.Flag,
                 "Mission items: show the ships, points, volumes and paths of the open mission in this system.",
                 settings.ShowMissionItems);
+            ImGui.SameLine(0, 0);
+            Ui.Fields.InfoIcon.Draw("mission-items-help", Data.Missions.MissionSchema.Retail.Help["missionItems"]);
             ImGui.SameLine();
             MissionSystems();
         }
@@ -690,10 +694,8 @@ internal sealed class SceneView : IDisposable
         foreach (var (nickname, triggers) in systems)
         {
             var system = window.Session?.GameData?.Items.Systems.Get(nickname);
-            var name = system != null && window.Session!.ItemName(system) is { Length: > 0 } text ? text : nickname;
-            var count = triggers == 1 ? "1 trigger" : $"{triggers} triggers";
-            if (ImGui.MenuItem($"{name} ({nickname}): {count}", "", System?.Nickname.Equals(nickname,
-                    StringComparison.OrdinalIgnoreCase) == true, system != null))
+            if (ImGui.MenuItem(Missions.MissionView.SystemItem(window.Session, nickname, triggers), "",
+                    System?.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase) == true, system != null))
             {
                 window.OpenSystem(system!);
             }

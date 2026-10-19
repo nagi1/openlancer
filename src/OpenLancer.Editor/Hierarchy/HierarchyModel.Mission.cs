@@ -85,39 +85,49 @@ internal sealed partial class HierarchyModel
     /// <summary>The analysis that the tree of a mission shows, or null for another tree.</summary>
     public MissionAnalysis? Analysis { get; private init; }
 
-    /// <summary>The item of the row that shows a selection: the item itself when the tree has its row, else the trigger
-    /// or the section of a selected line. Most lines have no row, so the row of their section shows them (section 7.3 of
-    /// the M6a design).</summary>
+    /// <summary>The item of the row that shows a selection: the item itself when the tree has its row. Else it is the
+    /// trigger or the section of a selected line. Most lines have no row, so the row of their section shows them
+    /// (section 7.3 of the M6a design).</summary>
     public object? RowItemOf(object? selection) =>
         NodeOf(selection) == null && selection is MissionRef { Kind: MissionItemKind.Row, Section: { } section }
-            ? MissionWorkspace.RefOf(section, -1)
+            ? MissionRef.OfSection(section, -1)
             : selection;
 
     /// <summary>True when the tree of a mission shows the base-game problems.</summary>
     private bool ShowsBaseGame { get; init; }
 
+    /// <summary>The sections of the group "System unknown" of the tree of a mission. Their rows have the menu item "Show
+    /// in system...".</summary>
+    public IReadOnlySet<Data.Editing.SectionRef> SystemUnknown { get; private init; } = new HashSet<Data.Editing.SectionRef>();
+
     /// <summary>
-    /// The tree of a mission (section 9 of the M6a design): the header row, then the groups Logic, Cast, Labels, Orders,
-    /// Objectives, Conversations, Links, Random encounters, Behavior prefabs, Placed near the player, System unknown and
-    /// Other sections. A group without items does not show. A tree of the same analysis and toggle is the tree before.
-    /// A new tree keeps the open groups and the search of the tree before for the same script.
+    /// The tree of a mission (section 9 of the M6a design). It has the header row, then the groups Logic, Cast, Labels,
+    /// Orders, Objectives, Conversations and Links. Then come the groups Random encounters, Behavior prefabs, Placed
+    /// near the player, System unknown and Other sections. A group without items does not show. A tree of the same
+    /// analysis and toggle is the tree before. A new tree keeps the open groups and the search of the tree before for
+    /// the same script.
     /// </summary>
     /// <param name="text">Gives the text of a text id, or an empty text.</param>
     /// <param name="showBaseGame">True while the base-game messages show. The rows then mark base-game problems with
     /// the lock glyph.</param>
+    /// <param name="systemName">Gives the name of a system for the act titles, or null.</param>
     public static HierarchyModel ForMission(MissionAnalysis analysis, Func<int, string> text, bool showBaseGame,
-        HierarchyModel? previous) =>
+        HierarchyModel? previous, Func<string, string?>? systemName = null) =>
         previous != null && ReferenceEquals(previous.Analysis, analysis) && previous.ShowsBaseGame == showBaseGame
             ? previous
-            : new HierarchyModel(MissionTree(analysis, text, showBaseGame), analysis.Script.Path.ToUpperInvariant(),
+            : new HierarchyModel(MissionTree(analysis, text, showBaseGame, systemName), analysis.Script.Path.ToUpperInvariant(),
                 MissionTypes, previous)
             {
                 Analysis = analysis,
                 ShowsBaseGame = showBaseGame,
+                SystemUnknown = MissionPlacements.SystemUnknown(analysis.Index).Select(s => s.Ref).ToHashSet(),
             };
 
     /// <summary>The tree of a mission.</summary>
-    internal static HierarchyNode MissionTree(MissionAnalysis analysis, Func<int, string> text, bool showBaseGame)
+    /// <param name="systemName">Gives the name of a system for the act titles, or null. The graph uses the same
+    /// titles.</param>
+    internal static HierarchyNode MissionTree(MissionAnalysis analysis, Func<int, string> text, bool showBaseGame,
+        Func<string, string?>? systemName = null)
     {
         var index = analysis.Index;
         var script = analysis.Script.Path;
@@ -132,28 +142,32 @@ internal sealed partial class HierarchyModel
         {
             var node = new HierarchyNode($"{prefix}:{section.Index.ToString(CultureInfo.InvariantCulture)}",
                 kind ?? MissionKinds.Of(section.Kind), section.Nickname ?? section.Ref.Id.ToString(), detail ?? "",
-                MissionWorkspace.RefOf(section.Ref, -1), null, Values(section))
+                MissionRef.OfSection(section.Ref, -1), null, Values(section))
             {
                 Problem = ProblemOf(problems.GetValueOrDefault(section.Ref)),
             };
             return node;
         }
 
-        // Logic: the acts and the frame "Not started by the mission", with their prefab instances and plain triggers in
-        // the order of the frames.
-        var graph = MissionGraph.Build(analysis, new GraphOptions(GraphLens.Logic));
+        // Logic: the acts and the frame "Not started by the mission", with their prefab instances and plain triggers.
+        // The order is the layout order: by layer, and in a layer from the top (section 9 of the M6a design).
+        var graph = MissionGraph.Build(analysis, new GraphOptions(GraphLens.Logic, SystemName: systemName));
+        var layout = GraphLayout.Of(graph);
         var logic = new HierarchyNode("logic", MissionKinds.Group, "Logic");
         foreach (var act in graph.Acts)
         {
             var actNode = new HierarchyNode("act:" + act.Key, MissionKinds.Act, act.Title, act.Detail,
                 GraphViewState.RefOf(script, act));
-            foreach (var block in act.Blocks)
+            foreach (var block in layout.OrderIn(act).Select(graph.Block).OfType<GraphBlock>())
             {
                 if (block is GraphFrame { Instance: { } instance } frame)
                 {
                     var prefabNode = new HierarchyNode("pf:" + frame.Key, MissionKinds.Prefab, instance.Definition.Name,
                         instance.Name, GraphViewState.RefOf(script, frame));
-                    foreach (var trigger in frame.Triggers)
+                    var order = layout.OrderIn(frame);
+                    foreach (var trigger in order.Count > 0
+                                 ? order.Select(graph.Block).OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>()
+                                 : frame.Triggers)
                     {
                         prefabNode.Add(Trigger(trigger));
                     }

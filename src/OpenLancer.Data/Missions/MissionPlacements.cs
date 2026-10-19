@@ -91,8 +91,8 @@ public enum PlacementShape
 }
 
 /// <summary>
-/// One placeable item of a mission in a system (section 7.2 of the M6a design): its kind, its shape, its system, its
-/// position and the line or section that gives it.
+/// One placeable item of a mission in a system (section 7.2 of the M6a design). It has its kind, its shape, its system,
+/// its position and the line or section that gives it.
 /// </summary>
 /// <param name="Section">The section that gives the item: the item section, the trigger, or the order list.</param>
 /// <param name="Entry">The index of the line that gives the item, or -1 for the whole section.</param>
@@ -114,24 +114,20 @@ public sealed record MissionPlacement(PlacementKind Kind, PlacementShape Shape, 
 
     /// <summary>The trigger of a line of a trigger, or null.</summary>
     public MissionTrigger? Trigger { get; init; }
-
-    /// <summary>The names of the line or section that the item uses, for the cross-links: an anchor, an object or a
-    /// ship.</summary>
-    public IReadOnlyList<string> Names { get; init; } = [];
 }
 
 /// <summary>
-/// The placeable items of a mission (section 7.2 of the M6a design): the start positions of the cast, the anchors, the
-/// spawn and move lines with positions, the volumes of the distance conditions, the objective markers, the order paths,
-/// the cameras and the cutscene anchors. The class makes no ImGui call, so the Scene, the tests and later an agent server
-/// (roadmap row MCP1) read the same items.
+/// The placeable items of a mission (section 7.2 of the M6a design). They are the start positions of the cast, the
+/// anchors, and the spawn and move lines with positions. They are also the volumes of the distance conditions, the
+/// objective markers, the order paths, the cameras and the cutscene anchors. The class makes no ImGui call, so the
+/// Scene, the tests and later an agent server (roadmap row MCP1) read the same items.
 /// </summary>
 /// <remarks>
-/// <para>The system of an item comes from its <c>system</c> line, else from the trigger that spawns or moves it, else
-/// from its conversation, as the index finds it (<see cref="MissionIndex.SystemOf"/>). A line of a trigger has the system
-/// line of its trigger. An order list has the system of the first trigger or ship that gives it.</para>
-/// <para>An item placed near the player has no position (decision D532), so it is not a placement. The Hierarchy lists it
-/// in the group "Placed near the player".</para>
+/// <para>The system of an item comes from its <c>system</c> line, else from the trigger that spawns or moves it. Else
+/// it comes from its conversation, as the index finds it (<see cref="MissionIndex.SystemOf"/>). A line of a trigger has
+/// the system line of its trigger. An order list has the system of the first trigger or ship that gives it.</para>
+/// <para>An item placed near the player has no position (decision D532), so it is not a placement. The Hierarchy lists
+/// it in the group "Placed near the player".</para>
 /// </remarks>
 public static class MissionPlacements
 {
@@ -143,7 +139,7 @@ public static class MissionPlacements
         "Cnd_CmpToPlane", "Act_RandomPopSphere", "Act_StaticCam", "Act_CallThorn",
     };
 
-    /// <summary>True when a line of a trigger can have its own place in the Scene, for example a distance volume or a
+    /// <summary>True when a line of a trigger can have its own place in the Scene. Examples are a distance volume and a
     /// spawn at a position.</summary>
     public static bool HasPlace(MissionLine line) => line.Trigger != null && PlacedKeys.Contains(line.Key.Trim());
 
@@ -172,12 +168,29 @@ public static class MissionPlacements
                                                MissionSectionKind.Loot && Anchor(s) is { } anchor &&
                                            MissionIndex.Is(anchor, "Player")).ToList();
 
-    /// <summary>The items of the cast whose system the index cannot find, in file order: ships, formations, solars and
-    /// loot without a system line, a spawn trigger with a system or a conversation.</summary>
-    public static IReadOnlyList<MissionSection> SystemUnknown(MissionIndex index) =>
-        index.Document.Sections.Where(s => s.Kind is MissionSectionKind.Ship or MissionSectionKind.Formation or
-                                               MissionSectionKind.Solar or MissionSectionKind.Loot &&
-                                           index.SystemOf(s) == null && !NearPlayer(index).Contains(s)).ToList();
+    /// <summary>The items of the cast whose system the index cannot find, in file order. Such an item is a ship, a
+    /// formation, a solar or a loot without a system line. It also has no spawn trigger with a system and no
+    /// conversation. An item placed near the player is not in the list.</summary>
+    public static IReadOnlyList<MissionSection> SystemUnknown(MissionIndex index)
+    {
+        var nearPlayer = NearPlayer(index).ToHashSet();
+        return index.Document.Sections.Where(s => s.Kind is MissionSectionKind.Ship or MissionSectionKind.Formation or
+                                                      MissionSectionKind.Solar or MissionSectionKind.Loot &&
+                                                  index.SystemOf(s) == null && !nearPlayer.Contains(s)).ToList();
+    }
+
+    /// <summary>The system of a line of a trigger: the system line of its trigger. Else it is the system of the first
+    /// item of the script that the line names. Null when the index finds none.</summary>
+    /// <param name="systemOverride">Gives the system that the user picked for an item, or null.</param>
+    public static string? SystemOfLine(MissionIndex index, MissionLine line,
+        Func<MissionSection, string?>? systemOverride = null)
+    {
+        if (line.Trigger?.SystemHint is { } hint && !MissionIndex.Is(hint, "ANY"))
+            return hint;
+        return line.References.FirstOrDefault(r => r.Section != null) is { Section: { } item }
+            ? systemOverride?.Invoke(item) ?? index.SystemOf(item)
+            : null;
+    }
 
     /// <summary>The anchor of a <c>rel_pos</c> or <c>rel_pos_obj</c> line of a section, or null.</summary>
     private static string? Anchor(MissionSection section)
@@ -205,8 +218,8 @@ public static class MissionPlacements
 
         private bool InSystem(string? itemSystem) => itemSystem != null && MissionIndex.Is(itemSystem, system);
 
-        /// <summary>The position of a name in the system: the start of an item of the script in the system, the first
-        /// member of a label with a start, or an object of the system.</summary>
+        /// <summary>The position of a name in the system. It is the start of an item of the script in the system, or of
+        /// the first member of a label with a start. Else it is an object of the system.</summary>
         public Vector3? PositionOf(string name)
         {
             if (MissionIndex.Is(name, "Player"))
@@ -278,18 +291,14 @@ public static class MissionPlacements
                         Result.Add(new MissionPlacement(PlacementKind.NearAnchor, PlacementShape.Ring, system, center,
                             section, EntryOf(section, "rel_pos"), label)
                         {
-                            Radius = range, To = dot, Names = [anchor],
+                            Radius = range, To = dot,
                         });
                     }
                     continue;
                 }
                 if (Start(section) is not { } start)
                     continue;
-                var anchorName = Line(section, "rel_pos_obj") is { Count: > 0 } obj ? MissionIndex.Text(obj[0]) : null;
-                Result.Add(new MissionPlacement(kind.Value, PlacementShape.Point, system, start, section, -1, label)
-                {
-                    Names = anchorName != null ? [anchorName] : [],
-                });
+                Result.Add(new MissionPlacement(kind.Value, PlacementShape.Point, system, start, section, -1, label));
                 if (kind == PlacementKind.FormationStart && Line(section, "formation") is { Count: > 0 } shape &&
                     formationSlots?.Invoke(MissionIndex.Text(shape[0])) is { } slots)
                 {
@@ -303,7 +312,7 @@ public static class MissionPlacements
                     objectPosition(gate) is { } end)
                 {
                     Result.Add(new MissionPlacement(PlacementKind.Arrival, PlacementShape.Line, system, start, section,
-                        EntryOf(section, "arrival_obj"), label) { To = end, Names = [gate] });
+                        EntryOf(section, "arrival_obj"), label) { To = end });
                 }
             }
         }
@@ -317,12 +326,7 @@ public static class MissionPlacements
             {
                 foreach (var line in trigger.Rows)
                 {
-                    var lineSystem = trigger.SystemHint is { } hint && !MissionIndex.Is(hint, "ANY")
-                        ? hint
-                        : line.References.FirstOrDefault(r => r.Section != null) is { Section: { } item }
-                            ? SystemOf(item)
-                            : null;
-                    if (!InSystem(lineSystem) || Placement(trigger, line) is not { } placement)
+                    if (!InSystem(SystemOfLine(index, line, systemOverride)) || Placement(trigger, line) is not { } placement)
                         continue;
                     Result.Add(placement);
                 }
@@ -343,32 +347,27 @@ public static class MissionPlacements
                     var spec = line.Name?.Value("position");
                     if (spec == null || Vector(line.Line, spec.Index) is not { } position)
                         return null;
-                    return Make(PlacementKind.Spawn, PlacementShape.Point, position, $"{name}: {line.Value(0)}") with
-                    {
-                        Names = line.Value(0) is { } spawned ? [spawned] : [],
-                    };
+                    return Make(PlacementKind.Spawn, PlacementShape.Point, position, $"{name}: {line.Value(0)}");
                 }
                 case "act_relocateship" or "act_relocateform":
                     return Vector(line.Line, 1) is { } moved
-                        ? Make(PlacementKind.Move, PlacementShape.Point, moved, $"{name}: {line.Value(0)}") with
-                        {
-                            Names = line.Value(0) is { } mover ? [mover] : [],
-                        }
+                        ? Make(PlacementKind.Move, PlacementShape.Point, moved, $"{name}: {line.Value(0)}")
                         : null;
                 case "act_moveplayer" or "act_setinitialplayerpos":
                     return Vector(line.Line, 0) is { } player
                         ? Make(PlacementKind.Move, PlacementShape.Point, player, name)
                         : null;
                 case "act_nnpath":
+                    // The line names only the end of the route. The script gives no start point, so the layer shows
+                    // the end as a point, not as a path line.
                     return line.Value(2) is { } where && objectPosition(where) is { } target
-                        ? Make(PlacementKind.Route, PlacementShape.Point, target, $"{name}: {where}") with { Names = [where] }
+                        ? Make(PlacementKind.Route, PlacementShape.Point, target, $"{name}: {where}")
                         : null;
                 case "cnd_distvec":
                     return Vector(line.Line, 2) is { } point && Number(line.Line, 5) is { } radius
                         ? Make(PlacementKind.DistanceVolume, PlacementShape.Sphere, point, name) with
                         {
                             Radius = radius, Outside = MissionIndex.Is(line.Value(0), "outside"),
-                            Names = line.Value(1) is { } watched ? [watched] : [],
                         }
                         : null;
                 case "cnd_distship":
@@ -376,14 +375,13 @@ public static class MissionPlacements
                         ? Make(PlacementKind.DistanceVolume, PlacementShape.Sphere, center, $"{name}: {other}") with
                         {
                             Radius = range, Outside = MissionIndex.Is(line.Value(0), "outside"),
-                            Names = new[] { line.Value(1), other }.OfType<string>().ToList(),
                         }
                         : null;
                 case "cnd_distcircle":
                     return line.Value(1) is { } ring && objectPosition(ring) is { } disc
                         ? Make(PlacementKind.RingPass, PlacementShape.Disc, disc, $"{name}: {ring}") with
                         {
-                            Radius = 300, Names = [ring],
+                            Radius = 300,
                         }
                         : null;
                 case "cnd_cmptoplane":
@@ -408,10 +406,7 @@ public static class MissionPlacements
                         : null;
                 case "act_callthorn":
                     return line.Value(1) is { } anchor && !MissionIndex.Is(anchor, "Player") && PositionOf(anchor) is { } at
-                        ? Make(PlacementKind.CutsceneAnchor, PlacementShape.Point, at, $"{name}: {line.Value(0)}") with
-                        {
-                            Names = [anchor],
-                        }
+                        ? Make(PlacementKind.CutsceneAnchor, PlacementShape.Point, at, $"{name}: {line.Value(0)}")
                         : null;
                 default:
                     return null;
@@ -437,13 +432,12 @@ public static class MissionPlacements
                     section.Nickname ?? section.Ref.Id.ToString())
                 {
                     To = target != null ? objectPosition(target) : null,
-                    Names = target != null ? [target] : [],
                 });
             }
         }
 
-        /// <summary>The paths of the order lists in the system: the points of GotoVec, the splines of GotoSpline, and the
-        /// range spheres of StayInRange with a point.</summary>
+        /// <summary>The paths of the order lists in the system. They are the points of GotoVec, the splines of
+        /// GotoSpline, and the range spheres of StayInRange with a point.</summary>
         public void OrderLists()
         {
             foreach (var section in index.Document.OfKind(MissionSectionKind.OrderList))
@@ -529,9 +523,8 @@ public static class MissionPlacements
             ? new Vector3(x, y, z)
             : null;
 
-    /// <summary>The direction of a heading in degrees in the plane of the system: 0 is the -Z axis, and the angle turns
-    /// to the +X axis. The editor shows the dot at this place. No reader checked the convention of the
-    /// game.</summary>
+    /// <summary>The direction of a heading in degrees in the plane of the system. 0 is the -Z axis, and the angle turns
+    /// to the +X axis. The editor shows the dot at this place. No reader checked the convention of the game.</summary>
     private static Vector3 Heading(float degrees)
     {
         var radians = degrees * MathF.PI / 180;

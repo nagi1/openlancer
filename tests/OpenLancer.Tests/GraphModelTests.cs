@@ -8,8 +8,8 @@ using static OpenLancer.Tests.GraphTestData;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The model of the mission graph (sections 6.1 to 6.5 and 18.1 of the M6a design) on a synthetic mission: the frames,
-/// the collapse and open of frames, the nodes of each lens, the links, the pins, the rows and the detail level.
+/// The model of the mission graph (sections 6.1 to 6.5 and 18.1 of the M6a design) on a synthetic mission. The tests
+/// check the frames and their collapse, the nodes of each lens, the links, the pins, the rows and the detail level.
 /// </summary>
 public sealed class GraphModelTests
 {
@@ -51,6 +51,21 @@ public sealed class GraphModelTests
         Assert.All(graph.Frames.Where(f => f.Kind == GraphFrameKind.Act), f => Assert.False(f.Collapsed));
         Assert.True(graph.Acts[2].Collapsed);
         Assert.Equal(graph.Block("p:spawnWave|t_spawn"), graph.NodeOf(graph.Index.Trigger("t_kill")!)!.Frame);
+    }
+
+    /// <summary>The node of a missing trigger has the message of rule M05 (section 6.3 of the M6a design). The tooltip
+    /// of each field of a collapsed prefab gives each value on its own line (section 6.4).</summary>
+    [Fact]
+    public void TheMissingNodeHasTheMessageOfItsRuleAndAPrefabFieldListsItsValues()
+    {
+        var graph = Graph();
+        var missing = graph.Nodes.Single(n => n.Kind == GraphNodeKind.Missing);
+        var wave = graph.Nodes.Single(n => n.Title == "Spawn wave");
+
+        Assert.Contains("names trigger 't_missing'. This script has no such trigger.", missing.Sentence);
+        Assert.Equal(wave.Fields.Count, wave.FieldTips.Count);
+        var endsWhen = wave.FieldTips[wave.Fields.ToList().FindIndex(f => f.StartsWith("Ends when"))];
+        Assert.StartsWith("Ends when:\n", endsWhen);
     }
 
     [Fact]
@@ -126,7 +141,8 @@ public sealed class GraphModelTests
         Assert.Equal(new Vector2(MissionGraph.SummaryWidth, MissionGraph.HeaderHeight + 2 * MissionGraph.LineHeight +
             MissionGraph.BottomPadding), start.Size);
         Assert.Equal("story", end.EventGroup);
-        Assert.Equal(["Start", "Stop", "Watches"], end.Pins.Where(p => p.IsInput).Select(p => p.Label));
+        Assert.Equal([GraphPinKind.Start, GraphPinKind.Stop, GraphPinKind.Watches], end.Pins.Where(p => p.IsInput).Select(p => p.Kind));
+        Assert.StartsWith("Watches: ", end.Pin(GraphPinKind.Watches)!.Tooltip);
         Assert.Equal("End mission: success", Assert.Single(end.Chips).Tooltip);
     }
 
@@ -242,10 +258,12 @@ public sealed class GraphModelTests
     public void TheCutsceneLensListsTheCutscenesInPathOrder()
     {
         var text = Script.Replace("Act_ActTrig = t_after", "Act_ActTrig = t_after\nAct_CallThorn = scripts\\a.thn")
-            .Replace("Act_Save = t_restore", "Act_Save = t_restore\nAct_CallThorn = scripts\\b.thn\nAct_RevertCam = no_params");
+            .Replace("Act_Save = t_restore",
+                "Act_Save = t_restore\nAct_CallThorn = scripts\\b.thn\nAct_RevertCam = no_params\nAct_AddRTC = scenes\\c.ini");
         var graph = Graph(GraphLens.Cutscene, analysis: Analysis(text));
 
-        Assert.Equal(["Play space cutscene: scripts\\a.thn", "Play space cutscene: scripts\\b.thn", "End camera"],
+        // The side list gives the cutscenes: the space cutscenes and the base scenes. A camera line is not a cutscene.
+        Assert.Equal(["Play space cutscene: scripts\\a.thn", "Play space cutscene: scripts\\b.thn", "Add base scene: scenes\\c.ini"],
             graph.SideList.Select(i => i.Text));
         Assert.Empty(Graph(GraphLens.Beats, analysis: Analysis(text)).SideList);
     }

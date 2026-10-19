@@ -65,6 +65,11 @@ public sealed record OpenLancerGap(string Name, int Lines, EngineMark Mark)
     /// <summary>The state of the lines, for example "no effect (2 lines)".</summary>
     public string Text => $"{MarkText(Mark)} ({(Lines == 1 ? "1 line" : $"{Lines} lines")})";
 
+    /// <summary>The tooltip of the OpenLancer mark of a line (section 13.1 of the M6a design).</summary>
+    public static string MarkTooltip(EngineMark mark) => mark == EngineMark.CannotLoad
+        ? "OpenLancer stops when it loads this line. The retail game runs it."
+        : "OpenLancer reads this line but does nothing with it. The retail game runs it.";
+
     /// <summary>The words of a mark: "cannot load", "no effect" or "never runs".</summary>
     public static string MarkText(EngineMark mark) => mark switch
     {
@@ -226,9 +231,9 @@ public static class MissionSummary
     }
 
     /// <summary>
-    /// The lines of all mission scripts of a run that name an object of a system, a base or a zone by its nickname, in
-    /// the order of the scripts and of the lines (section 10.18 of the M6a design). The Behaviors section of a system
-    /// object and the Used by sections of a base and of a zone list them.
+    /// The lines of all mission scripts of a run that name an item of a system by its nickname. The item is an object,
+    /// a base or a zone. The lines are in the order of the scripts and of the lines (section 10.18 of the M6a design).
+    /// The Behaviors section of a system object and the Used by sections of a base and of a zone list them.
     /// </summary>
     public static IReadOnlyList<MissionObjectUse> ObjectUses(MissionRunResult result, string nickname) =>
         result.Scripts.Select(s => result.Of(s.Path)).OfType<MissionAnalysis>()
@@ -236,9 +241,9 @@ public static class MissionSummary
             .ToList();
 
     /// <summary>
-    /// The systems that the triggers of a mission name, each with its trigger count, the most first (the menu "Mission
-    /// systems", section 7.4 of the M6a design). Ties keep the order of the first trigger that names the system.
-    /// <c>ANY</c> does not count.
+    /// The systems that the triggers of a mission name, each with its trigger count. The system with the most triggers
+    /// comes first (the menu "Mission systems", section 7.4 of the M6a design). Ties keep the order of the first
+    /// trigger that names the system. <c>ANY</c> does not count.
     /// </summary>
     public static IReadOnlyList<(string System, int Triggers)> TriggerSystems(MissionIndex index) =>
         index.Triggers.Where(t => !t.IsDuplicate && t.SystemHint is { } hint && !MissionIndex.Is(hint, "ANY"))
@@ -248,9 +253,9 @@ public static class MissionSummary
             .Select(s => (s.System, s.Triggers)).ToList();
 
     /// <summary>
-    /// The system that the Scene opens when a mission opens and no system is open (section 7.1 of the M6a design): the
-    /// system of the first start trigger that has one, else the system that most triggers name. Null when no trigger
-    /// names a system.
+    /// The system that the Scene opens when a mission opens and no system is open (section 7.1 of the M6a design). It
+    /// is the system of the first start trigger that has one, else the system that most triggers name. Null when no
+    /// trigger names a system.
     /// </summary>
     public static string? StartSystem(MissionIndex index) =>
         index.StartTriggers.Select(t => t.SystemHint).FirstOrDefault(h => h != null && !MissionIndex.Is(h, "ANY")) ??

@@ -69,11 +69,11 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// null.</summary>
     public (string Script, string Section)? PendingSection { get; set; }
 
-    /// <summary>True while the Mission tab shows the raw INI of the whole script in place of the graph (the view switch
-    /// "Graph" and "Raw INI", section 11.5 of the M6a design).</summary>
+    /// <summary>True while the Mission tab shows the raw INI of the whole script in place of the graph. The view switch
+    /// "Graph" and "Raw INI" sets it (section 11.5 of the M6a design).</summary>
     public bool ShowRaw { get; set; }
 
-    /// <summary>True when the graph moves its view to the selection at its next draw, for example after a click on a
+    /// <summary>True when the graph moves its view to the selection at its next draw. An example is a click on a
     /// Console message (section 12.4 of the M6a design).</summary>
     public bool PendingGraphFrame { get; set; }
 
@@ -85,8 +85,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// node.</summary>
     public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
 
-    // The systems that the user picked for items whose system the index cannot find (the Hierarchy menu "Show in
-    // system...", section 9 of the M6a design). The choice lasts until the editor closes and writes nothing.
+    // The systems that the user picked for items whose system the index cannot find. The Hierarchy menu "Show in
+    // system..." picks them (section 9 of the M6a design). The choice lasts until the editor closes and writes nothing.
     private readonly Dictionary<SectionRef, string> systemOverrides = [];
 
     /// <summary>A number that changes with each choice of "Show in system...", so the mission layer reads its items
@@ -192,8 +192,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
     /// <summary>
     /// Opens a mission: the Mission tab shows it, and its root becomes the selection of the Mission tab. When no system
-    /// is open, the Scene opens the system of the start trigger, or the system that most triggers name (section 7.1 of
-    /// the M6a design).
+    /// is open, the Scene opens the system of the start trigger. Else it opens the system that most triggers name
+    /// (section 7.1 of the M6a design).
     /// </summary>
     /// <param name="show">True to show the Mission tab.</param>
     public void OpenMission(string path, bool show)
@@ -227,7 +227,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
         }
 
         OpenMission(target.Path, show: true);
-        window.SelectInTab(CenterMode.Mission, RefOf(target, entry));
+        window.SelectInTab(CenterMode.Mission, MissionRef.OfSection(target, entry));
         PendingLine = (target, entry);
         PendingGraphFrame = true;
         return true;
@@ -252,17 +252,6 @@ internal sealed class MissionWorkspace(EditorWindow window)
         var mission = MissionRef.Of(path);
         window.Selection = mission;
         PendingSection = (mission.Script, section);
-    }
-
-    /// <summary>The selection of a section of a mission, or of a line of it.</summary>
-    /// <param name="entry">The index of the line in the section, or -1 for the whole section.</param>
-    public static MissionRef RefOf(SectionRef target, int entry)
-    {
-        var path = VfsPath.Normalize(target.Path) ?? target.Path;
-        var kind = MissionRef.KindOf(MissionSection.KindOf(target.Id.Type), line: entry >= 0);
-        return kind == MissionItemKind.Mission
-            ? MissionRef.Of(path)
-            : new MissionRef(path, kind, target, Row: kind == MissionItemKind.Row ? entry : -1);
     }
 
     /// <summary>

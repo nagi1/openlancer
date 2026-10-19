@@ -7,6 +7,7 @@ using ImGuiNET;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Missions;
@@ -138,7 +139,8 @@ internal sealed class HierarchyPanel(EditorWindow window)
                 return;
             }
 
-            tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel);
+            tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel,
+                session.SystemName);
             Show(tree, missionModel);
             missionModel = tree;
             tree.SetSearch(missionSearch);
@@ -388,8 +390,9 @@ internal sealed class HierarchyPanel(EditorWindow window)
     }
 
     /// <summary>
-    /// The mark of a row of a mission with a problem (section 9 of the M6a design): the error or warning glyph at the
-    /// right end of the row, or the muted lock glyph of a base-game problem while the base-game messages show.
+    /// The mark of a row of a mission with a problem (section 9 of the M6a design). It is the error or warning glyph at
+    /// the right end of the row. A base-game problem has the muted lock glyph of a base-game problem while the
+    /// base-game messages show.
     /// </summary>
     private static void ProblemMark(RowProblem problem, Vector2 start, float right)
     {
@@ -706,7 +709,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
     }
 
-    /// <summary>The menu of a row of a mission: frame it, copy its name, and for an item without a system, "Show in
+    /// <summary>The menu of a row of a mission: frame it, copy its name. An item without a system also has "Show in
     /// system..." (section 9 of the M6a design).</summary>
     private void MissionMenu(MissionRef item)
     {
@@ -721,9 +724,8 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.SetClipboardText(name!);
         }
 
-        if (item.Section is not { } section || window.Missions.Open is not { } analysis ||
-            analysis.Document.Find(section) is not { } found ||
-            !OpenLancer.Data.Missions.MissionPlacements.SystemUnknown(analysis.Index).Contains(found))
+        // The tree keeps the items of the group "System unknown", so the open menu does not look for them in each frame.
+        if (item.Section is not { } section || missionModel?.SystemUnknown.Contains(section) != true)
         {
             return;
         }
@@ -739,7 +741,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
         foreach (var system in window.Session?.GameData?.Items.Systems.OrderBy(s => s.Nickname,
                      StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<StarSystem>())
         {
-            var label = window.Session!.ItemName(system) is { Length: > 0 } systemName
+            var label = window.Session!.SystemName(system.Nickname) is { Length: > 0 } systemName
                 ? $"{systemName} ({system.Nickname})"
                 : system.Nickname;
             if (ImGui.MenuItem(label, "", string.Equals(current, system.Nickname, StringComparison.OrdinalIgnoreCase)))
