@@ -11,9 +11,9 @@ namespace OpenLancer.Editor.Cutscene;
 
 /// <summary>
 /// The star system behind a space script of the Cutscene tab (decisions D640, D646, D647 and D653 of the space context
-/// design): a world of its own with the render path of the Scene view. The players of the preview make the objects of
-/// their scripts in this world, and the stage draws it. The stage never shares a world or a renderer with the Scene
-/// view, and it never changes the system.
+/// design). It is a world of its own with the render path of the Scene view. The players of the preview make the
+/// objects of their scripts in this world, and the stage draws it. The stage never shares a world or a renderer with
+/// the Scene view, and it never changes the system.
 /// </summary>
 /// <remarks>
 /// The stage outlives each player that uses its world. So the workspace always disposes the clock of the preview
@@ -30,22 +30,18 @@ internal sealed class SpaceStage : IDisposable
     // The sky camera of the current draw, for the starsphere pass.
     private ICamera? sky;
 
-    private SpaceStage(string system, SystemRenderer renderer, GameWorld world)
+    private readonly SystemRenderer renderer;
+
+    private SpaceStage(SystemRenderer renderer, GameWorld world)
     {
-        System = system;
-        Renderer = renderer;
+        this.renderer = renderer;
         World = world;
         systemObjects = new HashSet<GameObject>(world.Objects);
         renderer.OpaqueHook = DrawSky;
     }
 
-    /// <summary>The nickname of the system.</summary>
-    public string System { get; }
-
     /// <summary>The world of the system. The players make the objects of their scripts in it.</summary>
     public GameWorld World { get; }
-
-    public SystemRenderer Renderer { get; }
 
     /// <summary>
     /// Loads a system of the loaded game data as <c>SceneView.Load</c> does, without the clone, because the stage
@@ -64,12 +60,12 @@ internal sealed class SpaceStage : IDisposable
             renderer.PhysicsHook = null;
             data.LoadAllSystem(system);
             world.LoadSystem(system, resources, null, false);
+            // The lights of the system include its ambient.
             renderer.LoadLights(system);
             renderer.LoadStarspheres(system);
             renderer.LoadZones(system.AsteroidFields, system.Nebulae);
             renderer.BackgroundOverride = system.BackgroundColor;
-            renderer.SystemLighting.Ambient = new Color4(system.AmbientColor, 1);
-            return new SpaceStage(system.Nickname, renderer, world);
+            return new SpaceStage(renderer, world);
         }
         catch
         {
@@ -136,9 +132,9 @@ internal sealed class SpaceStage : IDisposable
 
         ApplyVisibility(World.Objects, systemObjects, shown.Set, scriptObjects);
         sky = skyCamera;
-        Renderer.Camera = camera;
+        renderer.Camera = camera;
         World.RenderUpdate(seconds);
-        Renderer.Draw(viewport.Width, viewport.Height);
+        renderer.Draw(viewport.Width, viewport.Height);
     }
 
     /// <summary>The starsphere at the place of the engine starsphere pass (see <see cref="StarspherePass"/>).</summary>
@@ -146,16 +142,16 @@ internal sealed class SpaceStage : IDisposable
     {
         if (sky != null)
         {
-            StarspherePass.Draw(Renderer, sky, true);
+            StarspherePass.Draw(renderer, sky, true);
         }
     }
 
     /// <summary>Frees the physics world (OL-0021) and the meshes of the asteroid fields (OL-0022).</summary>
     public void Dispose()
     {
-        Renderer.OpaqueHook = null;
+        renderer.OpaqueHook = null;
         World.Dispose();
-        Renderer.Dispose();
+        renderer.Dispose();
     }
 }
 
@@ -192,6 +188,15 @@ internal sealed class StageCache<TStage> where TStage : class, IDisposable
         var stage = load();
         (Stage, Key) = (stage, (system, data));
         return stage;
+    }
+
+    /// <summary>Disposes the stage when it belongs to other game data, for example after a reload of the data.</summary>
+    public void ForgetOtherData(object data)
+    {
+        if (Key is { } key && !ReferenceEquals(key.Data, data))
+        {
+            Reset();
+        }
     }
 
     /// <summary>Disposes the stage.</summary>

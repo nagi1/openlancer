@@ -116,38 +116,54 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
             ? stages.Stage
             : null;
 
-    /// <summary>
-    /// The banners of a space context (section 3.3 of the cutscene fixes plan), in order: the main object, the
-    /// position of the mission line, a system with unsaved edits, and a system that did not load.
-    /// </summary>
-    public IEnumerable<string> SpaceBanners()
-    {
-        if (Plan?.System == null)
-        {
-            yield break;
-        }
+    /// <summary>The banners of the plan of the open context, in the order of <see cref="BannersOf"/>.</summary>
+    public IEnumerable<string> Banners() => Plan == null
+        ? []
+        : BannersOf(Plan, Visible is { InHostWorld: true } visible ? visible.MainObjectNote : null, unsavedSystem,
+            stageProblem);
 
-        if (Visible is { InHostWorld: true, MainObjectNote: { } note })
+    /// <summary>
+    /// The banners of a plan (section 3.3 of the cutscene fixes plan), in order. First come the note of the plan and
+    /// the main object. Then come the position of the mission line, a system with unsaved edits, and a system that did
+    /// not load. The banner of a system that did not load replaces the note, because the note says that the preview
+    /// shows the system.
+    /// </summary>
+    /// <param name="mainObject">The banner of the main object of a player in the stage, or null.</param>
+    /// <param name="unsaved">The banner of a system with unsaved edits, or null.</param>
+    /// <param name="stageFailed">The banner of a system that did not load, or null.</param>
+    internal static IEnumerable<string> BannersOf(PreviewPlan plan, string? mainObject, string? unsaved,
+        string? stageFailed)
+    {
+        if (plan.Note is { } note && stageFailed == null)
         {
             yield return note;
         }
 
-        if (Plan.ScriptPosition != null)
+        if (mainObject != null)
         {
-            yield return "The mission line gives a position for the script. The game moves the script to that position. " +
-                         "The preview does not.";
+            yield return mainObject;
         }
 
-        if (unsavedSystem != null)
+        if (plan.ScriptPosition != null)
         {
-            yield return unsavedSystem;
+            yield return ScriptPositionLine;
         }
 
-        if (stageProblem != null)
+        if (unsaved != null)
         {
-            yield return stageProblem;
+            yield return unsaved;
+        }
+
+        if (stageFailed != null)
+        {
+            yield return stageFailed;
         }
     }
+
+    /// <summary>The banner of a mission line of the form <c>script, x, y, z</c> (decision D650).</summary>
+    internal const string ScriptPositionLine =
+        "The mission line gives a position for the script. The game moves the script to that position. The preview " +
+        "does not.";
 
     /// <summary>The clock, or null without a preview.</summary>
     public CutsceneClock? Clock => clock;
@@ -650,12 +666,8 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
             return;
         }
 
-        if (stages.Key is { } key && !ReferenceEquals(key.Data, data))
-        {
-            // The clock of that data is gone: a reload of the data builds the context again.
-            stages.Reset();
-        }
-
+        // The clock of other data is gone: a reload of the data builds the context again.
+        FreeStageOfOtherData(data);
         if (Plan?.System is not { } system || stages.Holds(system, data) ||
             failedStage is { } failed && failed.System == system && ReferenceEquals(failed.Data, data))
         {
@@ -780,20 +792,38 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     /// <summary>
     /// The game data loaded again after a save. The sound gets a new sound manager, the contexts that fit the cutscene
     /// come again from the INI files, the plan reads the new data, and the clock builds again. So the room of a room
-    /// line that the save wrote is a choice now. The chosen context stays when it is still a choice.
+    /// line that the save wrote is a choice now. The chosen context stays when it is still a choice. The stage of the
+    /// old data goes, also when no cutscene is open.
     /// </summary>
     public void DataReplaced()
     {
-        if (Path == null || window.Session?.GameData is not { } data)
+        if (window.Session?.GameData is not { } data)
         {
             return;
         }
 
-        UseSound(data);
-        if (Context != null)
+        if (Path != null)
         {
-            Choices = MakeChoices(data);
-            SetContext(ContextAfterReload(Choices, Context));
+            UseSound(data);
+            if (Context != null)
+            {
+                Choices = MakeChoices(data);
+                SetContext(ContextAfterReload(Choices, Context));
+            }
+        }
+
+        // SetContext disposed the clock of the old data, so no player uses the old stage now.
+        FreeStageOfOtherData(data);
+    }
+
+    /// <summary>Disposes a stage of other game data, and forgets a failed load of other game data. Call it only when no
+    /// clock of that data exists.</summary>
+    private void FreeStageOfOtherData(GameDataManager data)
+    {
+        stages.ForgetOtherData(data);
+        if (failedStage is { } failed && !ReferenceEquals(failed.Data, data))
+        {
+            failedStage = null;
         }
     }
 

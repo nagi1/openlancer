@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using LibreLancer.World;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
+using OpenLancer.Runtime.Thn;
 using Xunit;
 
 namespace OpenLancer.Tests;
@@ -138,6 +140,84 @@ public sealed class SpaceStageTests
             CutsceneView.SpaceRowTooltip(key with { SystemRule = SpaceSystemRule.ActivatingTrigger, SystemSource = "t0" }));
         Assert.Equal("No rule finds the system of the mission line of the trigger t1.",
             CutsceneView.SpaceRowTooltip(key with { System = null, SystemRule = null }));
+    }
+
+    /// <summary>The tooltip of a row adds the problem of the line, also when a rule found the system. A trigger without
+    /// a nickname and a line outside a trigger name the file.</summary>
+    [Fact]
+    public void TheRowTooltipAddsTheProblemAndNamesTheFileOfATriggerWithoutANickname()
+    {
+        const string file = @"DATA\MISSIONS\MX01\mx01.ini";
+        var line = new ThnReference(file, "Trigger", "Act_CallThorn", "a.thn", 0);
+        var condition = new SpaceUse(line, "t1", "Zz02", SpaceSystemRule.Condition, "the system Zz02", "Player", null,
+            null, null, null, "The system key of the trigger names Qq99, but the game data has no such system.");
+
+        Assert.Equal("The trigger t1 plays this script. Its condition names the system Zz02. The system key of the " +
+                     "trigger names Qq99, but the game data has no such system.", CutsceneView.SpaceRowTooltip(condition));
+        Assert.Equal($"A trigger without a nickname in {file} plays this script. It runs only in Zz01.",
+            CutsceneView.SpaceRowTooltip(condition with
+            {
+                Trigger = "", System = "Zz01", SystemRule = SpaceSystemRule.TriggerKey, SystemSource = null,
+                Problem = null,
+            }));
+        Assert.Equal($"No rule finds the system of the mission line in {file}. The line is not in a [Trigger] section.",
+            CutsceneView.SpaceRowTooltip(condition with
+            {
+                Trigger = "", System = null, SystemRule = null, SystemSource = null,
+                Problem = "The line is not in a [Trigger] section.",
+            }));
+    }
+
+    /// <summary>A system without a name shows its nickname once in the context menu.</summary>
+    [Fact]
+    public void TheRowOfASystemWithoutANameShowsTheNicknameOnce()
+    {
+        Assert.Equal("Zz Two (Zz02)", CutsceneView.SpaceRow("Zz02", "Zz Two"));
+        Assert.Equal("Zz02", CutsceneView.SpaceRow("Zz02", "Zz02"));
+    }
+
+    /// <summary>
+    /// The banners come in the order of section 3.3. The banner of the position of the mission line shows also without a
+    /// system. The banner of a system that did not load replaces the note of the plan, which says that the preview
+    /// shows the system.
+    /// </summary>
+    [Fact]
+    public void TheBannersFollowTheOrderAndAFailedLoadReplacesTheNote()
+    {
+        var none = new Dictionary<string, string>();
+        var plan = new PreviewPlan(null, [@"DATA\x.thn"], @"DATA\x.thn", null, null, null, none)
+        {
+            Note = "note", System = "Zz01", ScriptPosition = new Vector3(1, 2, 3),
+        };
+
+        Assert.Equal(["note", "main", CutsceneWorkspace.ScriptPositionLine, "unsaved"],
+            CutsceneWorkspace.BannersOf(plan, "main", "unsaved", null));
+        Assert.Equal(["main", CutsceneWorkspace.ScriptPositionLine, "failed"],
+            CutsceneWorkspace.BannersOf(plan, "main", null, "failed"));
+        Assert.Equal(["no system", CutsceneWorkspace.ScriptPositionLine],
+            CutsceneWorkspace.BannersOf(plan with { Note = "no system", System = null }, null, null, null));
+        Assert.Empty(CutsceneWorkspace.BannersOf(plan with { Note = null, ScriptPosition = null }, null, null, null));
+    }
+
+    /// <summary>A reload of the game data frees the stage of the old data, also when no cutscene is open. The stage of
+    /// the current data stays.</summary>
+    [Fact]
+    public void TheCacheForgetsTheStageOfOtherData()
+    {
+        var log = new List<string>();
+        var cache = new StageCache<FakeStage>();
+        var (data, newData) = (new object(), new object());
+        var stage = cache.Get("Zz01", data, () => new FakeStage("stage", log));
+
+        cache.ForgetOtherData(data);
+        Assert.Same(stage, cache.Stage);
+        Assert.False(stage.Disposed);
+
+        cache.ForgetOtherData(newData);
+        Assert.True(stage.Disposed);
+        Assert.Null(cache.Stage);
+        Assert.Null(cache.Key);
+        cache.ForgetOtherData(newData);
     }
 
     /// <summary>The Console lines and the banners of the stage name the system (section 3.3 of the cutscene fixes

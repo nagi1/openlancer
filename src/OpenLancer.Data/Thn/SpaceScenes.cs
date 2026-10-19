@@ -81,13 +81,16 @@ public enum SpaceStartRule
     /// <summary><c>Act_RelocateShip</c>.</summary>
     Relocate,
 
-    /// <summary><c>Act_SpawnShip</c> with a position.</summary>
+    /// <summary>A line that spawns the main object at a position: <c>Act_SpawnShip</c>, or
+    /// <c>Act_SpawnFormation</c> of a formation that lists it.</summary>
     Spawn,
 
-    /// <summary>The <c>[MsnShip]</c> or <c>[MsnSolar]</c> of the main object.</summary>
+    /// <summary>The <c>[MsnShip]</c> or <c>[MsnSolar]</c> of the main object. An <c>Act_SpawnShip</c> line without a
+    /// position also puts the ship there.</summary>
     MissionObject,
 
-    /// <summary>The <c>[MsnFormation]</c> that lists the main object.</summary>
+    /// <summary>The <c>[MsnFormation]</c> that lists the main object. An <c>Act_SpawnFormation</c> line without a position
+    /// also puts the formation there. The place of the ship in the formation does not apply.</summary>
     Formation,
 
     /// <summary>The system object of the main object.</summary>
@@ -110,7 +113,7 @@ public sealed record SpacePose(Vector3 Position, Quaternion Orientation);
 /// <param name="StartRule">The rule that gave the start pose, or null.</param>
 /// <param name="StartSource">The trigger or the section that gave the start pose, or null.</param>
 /// <param name="Position">The position of the form <c>script, x, y, z</c>, or null.</param>
-/// <param name="Problem">Why the line gives no system or no start, when the data of the line is bad, or null.</param>
+/// <param name="Problem">What is wrong with the data of the line, or null. A bad line gives no system or no start.</param>
 public sealed record SpaceUse(
     ThnReference Line,
     string Trigger,
@@ -127,8 +130,15 @@ public sealed record SpaceUse(
     /// <summary>The main object of a line without value 2.</summary>
     public const string Player = "Player";
 
-    /// <summary>True when the main object is the player.</summary>
-    public bool MainObjectIsPlayer => MainObject.Equals(Player, StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// The text that tells that no rule finds the system of the line, with the problem of the line. A line outside a
+    /// trigger, or in a trigger without a nickname, names its file.
+    /// </summary>
+    public string NoSystemText =>
+        (Trigger.Length > 0
+            ? $"No rule finds the system of the mission line of the trigger {Trigger}."
+            : $"No rule finds the system of the mission line in {Line.File}.") +
+        (Problem != null ? $" {Problem}" : "");
 }
 
 /// <summary>
@@ -165,9 +175,6 @@ public sealed class SpaceScenes
         this.references = references;
         this.facts = facts;
     }
-
-    /// <summary>The facts that the rules read.</summary>
-    public SpaceFacts Facts => facts;
 
     /// <summary>
     /// The space lines of a script, one use for each system of each line (decision D642). The lines of a file in the
@@ -218,6 +225,11 @@ public sealed class SpaceScenes
 
         var section = file.Sections[line.SectionIndex];
         var trigger = Value(section, "nickname") ?? "";
+        // A trigger runs only in the system of its key. So a trigger whose key names no system of the data never runs.
+        var problem = Value(section, "system") is { } key && facts.System(key) == null
+            ? $"The system key of the trigger names {key}, but the game data has no such system. So the game never runs " +
+              "the trigger."
+            : null;
         var entry = section.Where(e => e.Name.Equals(SpaceKey, StringComparison.OrdinalIgnoreCase) && e.Count > 0 &&
                                        string.Equals(e[0].ToString(), line.Value, StringComparison.Ordinal))
             .Skip(nth).FirstOrDefault();
@@ -231,13 +243,13 @@ public sealed class SpaceScenes
             : SpaceUse.Player;
         var systems = SystemsOf(file, section, trigger);
         if (systems.Count == 0)
-            return [new SpaceUse(line, trigger, null, null, null, main, null, null, null, position)];
+            return [new SpaceUse(line, trigger, null, null, null, main, null, null, null, position, problem)];
 
         return systems.Select(s =>
         {
             var start = StartOf(file, section, trigger, main, s.System);
             return new SpaceUse(line, trigger, s.System, s.Rule, s.Source, main, start?.Pose, start?.Rule,
-                start?.Source, position);
+                start?.Source, position, problem);
         }).ToList();
     }
 
@@ -294,8 +306,8 @@ public sealed class SpaceScenes
 
     /// <summary>
     /// The start pose of the main object (decision D644). Rules a and b read the trigger and then the triggers that
-    /// activate it, nearest first. Then the mission ship or solar, the formation, and the system object of the
-    /// system.
+    /// activate it, nearest first. Then the first line of the file that spawns the main object. Then the mission ship or
+    /// solar, the formation, and the system object of the system.
     /// </summary>
     private (SpacePose Pose, SpaceStartRule Rule, string Source)? StartOf(MissionFile file, Section section,
         string trigger, string main, string system)
@@ -308,19 +320,28 @@ public sealed class SpaceScenes
             foreach (var entry in lines)
             {
                 var key = entry.Name;
-                var ship = entry.Count > 0 ? entry[0].ToString() : null;
-                var named = string.Equals(ship, main, StringComparison.OrdinalIgnoreCase);
-                (SpacePose?, SpaceStartRule) found = default;
-                if (player && Is(key, ["Act_SetInitialPlayerPos"]))
-                    found = (Pose(entry, 0, 3), SpaceStartRule.PlayerPosition);
-                else if (player && Is(key, ["Act_MovePlayer"]))
-                    found = (Pose(entry, 0, null), SpaceStartRule.PlayerPosition);
-                else if (named && Is(key, ["Act_RelocateShip"]))
-                    found = (Pose(entry, 1, 4), SpaceStartRule.Relocate);
-                else if (!player && named && Is(key, ["Act_SpawnShip"]))
-                    found = (Pose(entry, 2, 5), SpaceStartRule.Spawn);
-                if (found.Item1 is { } pose)
-                    return (pose, found.Item2, name);
+                var named = entry.Count > 0 && string.Equals(entry[0].ToString(), main, StringComparison.OrdinalIgnoreCase);
+                if (player && Is(key, ["Act_SetInitialPlayerPos"]) && Pose(entry, 0, 3) is { } initial)
+                    return (initial, SpaceStartRule.PlayerPosition, name);
+                if (player && Is(key, ["Act_MovePlayer"]) && Pose(entry, 0, null) is { } moved)
+                    return (moved, SpaceStartRule.PlayerPosition, name);
+                if (named && Is(key, ["Act_RelocateShip"]) && Pose(entry, 1, 4) is { } relocated)
+                    return (relocated, SpaceStartRule.Relocate, name);
+                if (!player && SpawnOf(file, entry, main) is { } spawn)
+                    return (spawn.Pose, spawn.Rule, spawn.Source ?? name);
+            }
+        }
+
+        // A trigger outside the chain can spawn the main object, for example with its formation before the line runs.
+        if (!player)
+        {
+            foreach (var lines in file.Sections.Where(s => s.Name.Equals("Trigger", StringComparison.OrdinalIgnoreCase)))
+            {
+                foreach (var entry in lines)
+                {
+                    if (SpawnOf(file, entry, main) is { } spawn)
+                        return (spawn.Pose, spawn.Rule, spawn.Source ?? Value(lines, "nickname") ?? "");
+                }
             }
         }
 
@@ -334,12 +355,45 @@ public sealed class SpaceScenes
         return null;
     }
 
+    /// <summary>
+    /// Where a line puts the main object when it spawns it, as the game spawns a ship. <c>Act_SpawnShip</c> names the
+    /// ship, and <c>Act_SpawnFormation</c> names a formation that lists the ship. The line gives the position and the
+    /// orientation. Else the <c>[MsnShip]</c> or the <c>[MsnFormation]</c> gives them. The source is null when the line
+    /// gives the position, else the nickname of that section. Null for another line, or without a position.
+    /// </summary>
+    private static (SpacePose Pose, SpaceStartRule Rule, string? Source)? SpawnOf(MissionFile file, Entry entry,
+        string main)
+    {
+        if (entry.Count == 0 || entry[0].ToString() is not { } name)
+            return null;
+
+        Section? section;
+        int at;
+        SpaceStartRule rule;
+        if (Is(entry.Name, ["Act_SpawnShip"]) && name.Equals(main, StringComparison.OrdinalIgnoreCase))
+            (section, at, rule) = (file.Objects.GetValueOrDefault(main), 2, SpaceStartRule.MissionObject);
+        else if (Is(entry.Name, ["Act_SpawnFormation"]) && file.Formations.TryGetValue(main, out var formation) &&
+                 name.Equals(Value(formation, "nickname"), StringComparison.OrdinalIgnoreCase))
+            (section, at, rule) = (formation, 1, SpaceStartRule.Formation);
+        else
+            return null;
+
+        var fallback = section != null ? Pose(section, "position", "orientation") : null;
+        if (Vector(entry, at) is { } position)
+        {
+            var orientation = Orientation(entry, at + 3) ?? fallback?.Orientation ?? Quaternion.Identity;
+            return (new SpacePose(position, orientation), SpaceStartRule.Spawn, null);
+        }
+
+        return fallback != null ? (fallback, rule, Value(section!, "nickname") ?? main) : null;
+    }
+
     /// <summary>The pose of a line: three numbers from an index, and an orientation of four numbers with w first from
     /// another index. A line without the orientation, or a kind of line that has none, gives the identity. Null when
     /// the position is not three numbers.</summary>
     private static SpacePose? Pose(Entry entry, int position, int? orientation) =>
         Vector(entry, position) is { } at
-            ? new SpacePose(at, orientation is { } index ? Orientation(entry, index) : Quaternion.Identity)
+            ? new SpacePose(at, (orientation is { } index ? Orientation(entry, index) : null) ?? Quaternion.Identity)
             : null;
 
     private static SpacePose? Pose(Section section, string position, string orientation)
@@ -347,8 +401,8 @@ public sealed class SpaceScenes
         var at = First(section, position) is { } line ? Vector(line, 0) : null;
         if (at == null)
             return null;
-        var turn = First(section, orientation) is { } turnLine ? Orientation(turnLine, 0) : Quaternion.Identity;
-        return new SpacePose(at.Value, turn);
+        var turn = First(section, orientation) is { } turnLine ? Orientation(turnLine, 0) : null;
+        return new SpacePose(at.Value, turn ?? Quaternion.Identity);
     }
 
     private static Vector3? Vector(Entry entry, int index) =>
@@ -357,12 +411,13 @@ public sealed class SpaceScenes
             ? new Vector3(x, y, z)
             : null;
 
-    /// <summary>A mission orientation: w, x, y and z, as the engine reads it.</summary>
-    private static Quaternion Orientation(Entry entry, int index) =>
+    /// <summary>A mission orientation: w, x, y and z, as the engine reads it. Null when the line has no four numbers
+    /// there.</summary>
+    private static Quaternion? Orientation(Entry entry, int index) =>
         entry.Count >= index + 4 && Number(entry, index) is { } w && Number(entry, index + 1) is { } x &&
         Number(entry, index + 2) is { } y && Number(entry, index + 3) is { } z
             ? new Quaternion(x, y, z, w)
-            : Quaternion.Identity;
+            : null;
 
     private static float? Number(Entry entry, int index) =>
         entry[index].TryToSingle(out var value) && float.IsFinite(value) ? value : null;

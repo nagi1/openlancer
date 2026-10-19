@@ -135,6 +135,8 @@ public sealed class SpaceScenesTests : IDisposable
         Assert.Equal(["p2", "p1"], uses.Select(u => u.SystemSource));
     }
 
+    /// <summary>A system key that names no system of the data gives no system, and the problem tells why (decision
+    /// D641).</summary>
     [Fact]
     public void ALineWithoutASystemGivesAUseWithoutASystem()
     {
@@ -142,6 +144,21 @@ public sealed class SpaceScenesTests : IDisposable
 
         Assert.Null(use.System);
         Assert.Equal("t1", use.Trigger);
+        Assert.Equal("The system key of the trigger names Qq99, but the game data has no such system. So the game " +
+                     "never runs the trigger.", use.Problem);
+        Assert.Equal($"No rule finds the system of the mission line of the trigger t1. {use.Problem}", use.NoSystemText);
+    }
+
+    /// <summary>A condition still gives the system when the system key names no system. The problem stays, for the
+    /// tooltip of the row.</summary>
+    [Fact]
+    public void AnUnknownSystemKeyKeepsItsProblemWhenAConditionGivesTheSystem()
+    {
+        var use = Assert.Single(Uses($"[Trigger]\nnickname = t1\nsystem = Qq99\nCnd_SpaceEnter = Zz02\nAct_CallThorn = {Value}\n"));
+
+        Assert.Equal("Zz02", use.System);
+        Assert.Equal(SpaceSystemRule.Condition, use.SystemRule);
+        Assert.Contains("Qq99", use.Problem);
     }
 
     /// <summary>The lines of a file in the folder of the script come first (decision D642), also when the scan reads
@@ -210,6 +227,73 @@ public sealed class SpaceScenesTests : IDisposable
         Assert.Null(none.Start);
     }
 
+    // A formation of two ships. The mission ship of the wing has a position, and the formation has its own.
+    private const string Group =
+        "[MsnShip]\nnickname = zz_wing\nposition = 1, 1, 1\n" +
+        "[MsnFormation]\nnickname = zz_group\nposition = 7, 8, 9\norientation = 0, 1, 0, 0\nship = zz_lead\nship = zz_wing\n";
+
+    /// <summary>
+    /// The game puts a ship that its formation spawns at the position of the spawn line, else at the position of the
+    /// formation. The orientation of the formation applies when the line has none. The spawn wins over the position of
+    /// the mission ship.
+    /// </summary>
+    [Fact]
+    public void TheSpawnOfTheFormationGivesTheStart()
+    {
+        var placed = Assert.Single(Uses(Group +
+            $"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_SpawnFormation = zz_group, 10, 11, 12\nAct_CallThorn = {Value}, zz_wing\n"));
+        Assert.Equal(SpaceStartRule.Spawn, placed.StartRule);
+        Assert.Equal(new SpacePose(new Vector3(10, 11, 12), new Quaternion(1, 0, 0, 0)), placed.Start);
+        Assert.Equal("t1", placed.StartSource);
+
+        var turned = Assert.Single(Uses(Group +
+            "[Trigger]\nnickname = t1\nsystem = Zz01\nAct_SpawnFormation = zz_group, 10, 11, 12, 0.6, 0, 0.8, 0\n" +
+            $"Act_CallThorn = {Value}, zz_wing\n"));
+        Assert.Equal(new Quaternion(0, 0.8f, 0, 0.6f), turned.Start!.Orientation);
+
+        var grouped = Assert.Single(Uses(Group +
+            $"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_SpawnFormation = zz_group\nAct_CallThorn = {Value}, zz_wing\n"));
+        Assert.Equal(SpaceStartRule.Formation, grouped.StartRule);
+        Assert.Equal(new Vector3(7, 8, 9), grouped.Start!.Position);
+        Assert.Equal("zz_group", grouped.StartSource);
+    }
+
+    /// <summary>A trigger outside the chain of the line can spawn the main object before the line runs. Then the first
+    /// spawn line of the file gives the start. A spawn in the chain wins.</summary>
+    [Fact]
+    public void TheFirstSpawnLineOfTheFileGivesTheStart()
+    {
+        const string spawns =
+            "[Trigger]\nnickname = early\nsystem = Zz01\nAct_SpawnFormation = zz_group, 20, 21, 22\n" +
+            "[Trigger]\nnickname = again\nsystem = Zz01\nAct_SpawnFormation = zz_group, 30, 31, 32\n";
+
+        var early = Assert.Single(Uses(Group + spawns +
+            $"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = {Value}, zz_wing\n"));
+        Assert.Equal(SpaceStartRule.Spawn, early.StartRule);
+        Assert.Equal(new Vector3(20, 21, 22), early.Start!.Position);
+        Assert.Equal("early", early.StartSource);
+
+        var chain = Assert.Single(Uses(Group + spawns +
+            "[Trigger]\nnickname = parent\nsystem = Zz01\nAct_SpawnFormation = zz_group, 40, 41, 42\nAct_ActTrig = t1\n" +
+            $"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = {Value}, zz_wing\n"));
+        Assert.Equal(new Vector3(40, 41, 42), chain.Start!.Position);
+        Assert.Equal("parent", chain.StartSource);
+
+        // A ship spawn without a position puts the ship at its mission ship. The ship spawn with a position takes the
+        // orientation of the mission ship.
+        var ship = Assert.Single(Uses(
+            "[MsnShip]\nnickname = zz_ship\nposition = 1, 2, 3\norientation = 0, 1, 0, 0\n" +
+            "[Trigger]\nnickname = early\nsystem = Zz01\nAct_SpawnShip = zz_ship, zz_orders\n" +
+            $"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = {Value}, zz_ship\n"));
+        Assert.Equal(SpaceStartRule.MissionObject, ship.StartRule);
+        Assert.Equal("zz_ship", ship.StartSource);
+        var moved = Assert.Single(Uses(
+            "[MsnShip]\nnickname = zz_ship\nposition = 1, 2, 3\norientation = 0, 1, 0, 0\n" +
+            "[Trigger]\nnickname = early\nsystem = Zz01\nAct_SpawnShip = zz_ship, zz_orders, 4, 5, 6\n" +
+            $"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = {Value}, zz_ship\n"));
+        Assert.Equal(new SpacePose(new Vector3(4, 5, 6), new Quaternion(1, 0, 0, 0)), moved.Start);
+    }
+
     /// <summary>A rule on the trigger wins over the same rule on a trigger that starts it. An orientation reads with w
     /// first.</summary>
     [Fact]
@@ -243,7 +327,6 @@ public sealed class SpaceScenesTests : IDisposable
     {
         var doubled = Assert.Single(Uses("[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = missions\\\\mx01\\\\a.thn\n"));
         Assert.Equal(SpaceUse.Player, doubled.MainObject);
-        Assert.True(doubled.MainObjectIsPlayer);
         Assert.Null(doubled.Position);
 
         var placed = Assert.Single(Uses($"[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = {Value}, 1, -2, 3\n"));

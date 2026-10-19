@@ -199,12 +199,9 @@ public sealed class ThnReferences
     public IReadOnlyList<ThnRoomUse> Rooms(string thnPath) =>
         VfsPath.Normalize(thnPath) is { } path && rooms.TryGetValue(path, out var list) ? list : NoRooms;
 
-    /// <summary>True when a mission trigger plays the script in space: <c>[Trigger] Act_CallThorn</c>. The space scene
-    /// makes no COMPOUND of the script, and uses the objects of the mission in their place (Cutscene.cs:101-113).</summary>
-    public bool InSpace(string thnPath) => UsedBy(thnPath).Any(IsSpace);
-
     /// <summary>True when the game plays the script only in space: each value that names it is an
-    /// <c>Act_CallThorn</c>, and at least one value names it.</summary>
+    /// <c>Act_CallThorn</c>, and at least one value names it. The space scene makes no COMPOUND of the script, and uses
+    /// the objects of the mission in their place (Cutscene.cs:101-113).</summary>
     public bool OnlyInSpace(string thnPath) => UsedBy(thnPath) is { Count: > 0 } uses && uses.All(IsSpace);
 
     private static bool IsSpace(ThnReference reference) => Same(reference.Key, SpaceKey);

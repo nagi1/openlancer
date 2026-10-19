@@ -162,8 +162,8 @@ internal sealed class CutsceneView
         ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
         ImGui.TextDisabled(EditorIcons.InfoCircle.ToString());
         WrappedTooltip(ContextInfo);
-        // The toggle has an effect only when a system plays behind the script (Editor UI rule 4).
-        if (workspace.Context is { Kind: PreviewContextKind.Space, System: not null })
+        // The toggle has an effect only when the stage of a system loaded behind the script (Editor UI rule 4).
+        if (workspace.Stage != null)
         {
             ImGui.SameLine();
             window.Settings.CutsceneScriptObjects = ToolbarItems.Toggle("script-objects", EditorIcons.Cubes,
@@ -576,8 +576,8 @@ internal sealed class CutsceneView
 
     /// <summary>The tooltip of the toggle "Script objects".</summary>
     internal const string ScriptObjectsTooltip =
-        "Script objects: show the objects that the script makes: ships, stations, effects and characters. The game makes " +
-        "none of them in space. It shows the mission objects in their place.";
+        "Script objects: show the ships, stations, effects and characters that the script makes. The game makes none of " +
+        "them in space. It shows the mission objects in their place.";
 
     /// <summary>
     /// The context menu: the contexts that fit the cutscene, the suggested one first. The rooms and the fidgets come
@@ -606,7 +606,7 @@ internal sealed class CutsceneView
                         space = true;
                     }
 
-                    row = choice.System is { } system ? $"{SystemName(system)} ({system})" : "No system";
+                    row = choice.System is { } system ? SpaceRow(system, SystemName(system)) : "No system";
                 }
 
                 if (ImGui.Selectable($"{row}##context{i}",
@@ -646,8 +646,14 @@ internal sealed class CutsceneView
             ? name
             : system;
 
-    /// <summary>The tooltip of a Space row: which mission line plays the script in the system, and the rule that found
-    /// the system (section 3.3 of the cutscene fixes plan).</summary>
+    /// <summary>The row of a system in the context menu (section 3.3 of the cutscene fixes plan). It shows the name and
+    /// the nickname, or only the nickname when the system has no name.</summary>
+    /// <param name="name">The name of the system, or its nickname when it has no name.</param>
+    internal static string SpaceRow(string system, string name) =>
+        name.Equals(system, StringComparison.OrdinalIgnoreCase) ? system : $"{name} ({system})";
+
+    /// <summary>The tooltip of a Space row (section 3.3 of the cutscene fixes plan). It tells which mission line plays
+    /// the script in the system, the rule that found the system, and the problem of the line.</summary>
     internal static string SpaceRowTooltip(SpaceUse? use)
     {
         if (use == null)
@@ -655,8 +661,10 @@ internal sealed class CutsceneView
             return "The game plays this script in space.";
         }
 
-        var plays = $"The trigger {use.Trigger} plays this script.";
-        return use.SystemRule switch
+        var plays = use.Trigger.Length > 0
+            ? $"The trigger {use.Trigger} plays this script."
+            : $"A trigger without a nickname in {use.Line.File} plays this script.";
+        var found = use.SystemRule switch
         {
             SpaceSystemRule.TriggerKey => $"{plays} It runs only in {use.System}.",
             SpaceSystemRule.Condition when use.SystemSource?.StartsWith("the system ", StringComparison.Ordinal) == true =>
@@ -664,9 +672,9 @@ internal sealed class CutsceneView
             SpaceSystemRule.Condition => $"{plays} Its condition names {use.SystemSource}, which is in {use.System}.",
             SpaceSystemRule.ActivatingTrigger =>
                 $"{plays} The trigger {use.SystemSource} starts it and runs only in {use.System}.",
-            _ => $"No rule finds the system of the mission line of the trigger {use.Trigger}." +
-                 (use.Problem != null ? $" {use.Problem}" : ""),
+            _ => null,
         };
+        return found == null ? use.NoSystemText : use.Problem != null ? $"{found} {use.Problem}" : found;
     }
 
     /// <summary>A tooltip of the last item that wraps at a readable width.</summary>
@@ -771,7 +779,6 @@ internal sealed class CutsceneView
         double seconds, ICamera? free)
     {
         player.Draw(seconds, viewport, screenAspect, free);
-        ICamera view = lens;
         if (free == null)
         {
             if (player.ShotLens() is not { } shot)
@@ -783,10 +790,10 @@ internal sealed class CutsceneView
                 LensCamera.SpaceShotRange);
             skyLens.Update(viewport.Width, viewport.Height, shot.Position, shot.Orientation, shot.FovH, screenAspect,
                 StarspherePass.SkyRange);
-            view = shotLens;
         }
 
-        stage.Draw(player.ScriptObjects, window.Settings.CutsceneScriptObjects, view, skyLens, viewport, seconds);
+        stage.Draw(player.ScriptObjects, window.Settings.CutsceneScriptObjects, free ?? shotLens, skyLens, viewport,
+            seconds);
     }
 
     /// <summary>
@@ -837,12 +844,7 @@ internal sealed class CutsceneView
                 $"{EditorIcons.ExclamationTriangle}  The preview cannot draw this frame: {failure.Problem.Message}");
         }
 
-        if (workspace.Plan?.Note is { } note)
-        {
-            top = Banner(drawList, origin, size.X, top, EditorTheme.Warning, $"{EditorIcons.InfoCircle}  {note}");
-        }
-
-        foreach (var banner in workspace.SpaceBanners())
+        foreach (var banner in workspace.Banners())
         {
             top = Banner(drawList, origin, size.X, top, EditorTheme.Warning, $"{EditorIcons.InfoCircle}  {banner}");
         }

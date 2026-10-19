@@ -26,6 +26,13 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
     private static readonly Lazy<ThnReferences> Retail = new(() =>
         ThnReferences.Scan(FileSystem.FromPath(GameDataPaths.RequireBase())));
 
+    // The space lines of the retail data. The Space contexts of a script come from them.
+    private static readonly Lazy<SpaceScenes> RetailSpaces = new(() =>
+    {
+        var items = RetailGame.Instance.Data.Items;
+        return new SpaceScenes(items.VFS, Retail.Value, SpaceFacts.From(items));
+    });
+
     static PreviewContextRetailTests() => AppHandler.ConsoleInit(silent: true);
 
     /// <summary>
@@ -39,7 +46,7 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         GameDataPaths.RequireBase();
         var items = RetailGame.Instance.Data.Items;
 
-        var context = PreviewContext.Suggest(AmbiDay, Retail.Value, items);
+        var context = PreviewContext.Suggest(AmbiDay, Retail.Value, items, RetailSpaces.Value);
         var plan = context.Plan(AmbiDay, items, Retail.Value);
 
         Assert.Equal(PreviewContextKind.Room, context.Kind);
@@ -66,7 +73,7 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         GameDataPaths.RequireBase();
         var items = RetailGame.Instance.Data.Items;
 
-        var context = PreviewContext.Suggest(ThnPatchRetailTests.S002xe, Retail.Value, items);
+        var context = PreviewContext.Suggest(ThnPatchRetailTests.S002xe, Retail.Value, items, RetailSpaces.Value);
         var plan = context.Plan(ThnPatchRetailTests.S002xe, items, Retail.Value);
 
         Assert.Equal(PreviewContextKind.Room, context.Kind);
@@ -97,7 +104,7 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
             r.Section.Equals("Room_Info", StringComparison.OrdinalIgnoreCase) &&
             r.Key.Equals("goodscart_script", StringComparison.OrdinalIgnoreCase)).Value)!;
 
-        var context = PreviewContext.Suggest(cart, Retail.Value, items);
+        var context = PreviewContext.Suggest(cart, Retail.Value, items, RetailSpaces.Value);
         var plan = context.Plan(cart, items, Retail.Value);
 
         Assert.Equal(PreviewContextKind.Room, context.Kind);
@@ -130,7 +137,7 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         var sceneScripts = room.SceneScripts.Select(s => s.Thn?.DataPath is { } p ? VfsPath.Normalize(p) : null)
             .OfType<string>().Distinct(VfsPath.Comparer).ToList();
 
-        var context = PreviewContext.Choices(ambient, Retail.Value, items).First(c =>
+        var context = PreviewContext.Choices(ambient, Retail.Value, items, RetailSpaces.Value).First(c =>
             c.Kind == PreviewContextKind.Room && c.Base!.Equals(use.Base, StringComparison.OrdinalIgnoreCase) &&
             c.Room!.Equals(use.Room, StringComparison.OrdinalIgnoreCase));
         var plan = context.Plan(ambient, items, Retail.Value);
@@ -158,7 +165,8 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         var items = RetailGame.Instance.Data.Items;
         const string terrain = @"DATA\SCRIPTS\BASES\Ambi_Terrain_Static_D01.thn";
         var script = Model(baseFolder, terrain);
-        var room = PreviewContext.Choices(terrain, Retail.Value, items).First(c => c.Kind == PreviewContextKind.Room);
+        var room = PreviewContext.Choices(terrain, Retail.Value, items, RetailSpaces.Value)
+            .First(c => c.Kind == PreviewContextKind.Room);
 
         var alone = PreviewContext.ScriptOnly.Plan(terrain, items, Retail.Value, script);
 
@@ -200,8 +208,8 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         var manhattan = items.Bases.Get(Manhattan)!;
         var cityscape = manhattan.Rooms.Get(Cityscape)!;
         Assert.Equal(ThnRoomHandler.CreateContext(manhattan, cityscape).Substitutions.OrderBy(p => p.Key),
-            PreviewContext.Suggest(AmbiDay, Retail.Value, items).Plan(AmbiDay, items, Retail.Value).Substitutions
-                .OrderBy(p => p.Key));
+            PreviewContext.Suggest(AmbiDay, Retail.Value, items, RetailSpaces.Value).Plan(AmbiDay, items, Retail.Value)
+                .Substitutions.OrderBy(p => p.Key));
         Assert.True(withTerrain > 0);
         output.WriteLine($"{compared} bases compared, {withTerrain} of them with terrain substitutions. Manhattan: " +
                          string.Join(", ", ThnRoomHandler.CreateContext(manhattan, cityscape).Substitutions
@@ -220,7 +228,7 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         var fidget = Retail.Value.All.First(r => r.Section.Equals("MRoom", StringComparison.OrdinalIgnoreCase));
         var path = ThnReferences.PathOf(fidget.Value)!;
 
-        var context = PreviewContext.Suggest(path, Retail.Value, items);
+        var context = PreviewContext.Suggest(path, Retail.Value, items, RetailSpaces.Value);
         var plan = context.Plan(path, items, Retail.Value);
 
         Assert.Equal(PreviewContextKind.Fidget, context.Kind);
@@ -251,10 +259,10 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         var hardpoint = VfsPath.Normalize(@"DATA\Scripts\Bases\" + Hardpoint)!;
         var fidget = ThnReferences.PathOf(
             Retail.Value.All.First(r => r.Section.Equals("MRoom", StringComparison.OrdinalIgnoreCase)).Value)!;
-        ScriptPlay PlayOf(string path) => PreviewContext.Suggest(path, Retail.Value, items)
+        ScriptPlay PlayOf(string path) => PreviewContext.Suggest(path, Retail.Value, items, RetailSpaces.Value)
             .Plan(path, items, Retail.Value).PlayOf(VfsPath.Normalize(path)!);
 
-        var set = PreviewContext.Suggest(hardpoint, Retail.Value, items);
+        var set = PreviewContext.Suggest(hardpoint, Retail.Value, items, RetailSpaces.Value);
         Assert.Equal(PreviewContextKind.Room, set.Kind);
         Assert.Equal(Manhattan, set.Base, StringComparer.OrdinalIgnoreCase);
         Assert.Equal(Cityscape, set.Room, StringComparer.OrdinalIgnoreCase);
@@ -307,8 +315,8 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
             .Select(r => ThnReferences.PathOf(r.Value)!)
             .First(p => !Retail.Value.IsFidget(p) && Retail.Value.Rooms(p).Count == 0);
 
-        var space = PreviewContext.Suggest(mission, Retail.Value, items);
-        var alone = PreviewContext.Suggest(gcs, Retail.Value, items);
+        var space = PreviewContext.Suggest(mission, Retail.Value, items, RetailSpaces.Value);
+        var alone = PreviewContext.Suggest(gcs, Retail.Value, items, RetailSpaces.Value);
 
         Assert.Equal(PreviewContextKind.Space, space.Kind);
         Assert.NotNull(space.Plan(mission, items, Retail.Value).Note);

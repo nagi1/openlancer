@@ -153,15 +153,52 @@ public sealed class PreviewContextSpaceTests : IDisposable
             plan.Note);
     }
 
-    /// <summary>Without the space lines, a mission script keeps one Space context without a system.</summary>
+    /// <summary>The Space context of a system takes the first line of that system that gives a start. The order of the
+    /// systems stays the order of their first lines.</summary>
     [Fact]
-    public void WithoutTheSpaceLinesAMissionScriptGetsOneSpaceContext()
+    public void ASystemTakesItsFirstLineThatGivesAStart()
     {
-        Choices("[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = missions\\mx01\\a.thn\n");
-        var view = FileSystem.FromPath(ws.Base);
+        var (choices, references, items) = Choices(
+            "[Trigger]\nnickname = t1\nsystem = Zz01\nAct_CallThorn = missions\\mx01\\a.thn\n" +
+            "[Trigger]\nnickname = t2\nsystem = Zz02\nAct_CallThorn = missions\\mx01\\a.thn\n" +
+            "[Trigger]\nnickname = t3\nsystem = Zz01\nAct_SetInitialPlayerPos = 1, 2, 3\n" +
+            "Act_CallThorn = missions\\mx01\\a.thn\n");
 
-        var choices = PreviewContext.Choices(Script, ThnReferences.Scan(view), new GameItemDb(view));
+        var spaces = choices.Where(c => c.Kind == PreviewContextKind.Space).ToList();
 
-        Assert.Null(Assert.Single(choices, c => c.Kind == PreviewContextKind.Space).System);
+        Assert.Equal(["Zz01", "Zz02"], spaces.Select(c => c.System));
+        Assert.Equal(["t3", "t2"], spaces.Select(c => c.Use!.Trigger));
+        Assert.Equal(new Vector3(1, 2, 3), spaces[0].Plan(Script, items, references).MainObjectStart!.Position);
+    }
+
+    /// <summary>The note of a line outside a trigger names the file and the problem. It has no advice for a
+    /// trigger.</summary>
+    [Fact]
+    public void TheNoteOfALineOutsideATriggerNamesItsFile()
+    {
+        var (choices, references, items) = Choices("[Mission]\nAct_CallThorn = missions\\mx01\\a.thn\n");
+
+        var space = Assert.Single(choices, c => c.Kind == PreviewContextKind.Space);
+        var plan = space.Plan(Script, items, references);
+
+        Assert.Equal("", space.Use!.Trigger);
+        Assert.Contains("[Trigger]", space.Use.Problem);
+        Assert.Equal($"No rule finds the system of the mission line in {space.Use.Line.File}. {space.Use.Problem} The " +
+                     "preview shows the script without a system.", plan.Note);
+    }
+
+    /// <summary>The note of a system key that names no system of the data tells the reason.</summary>
+    [Fact]
+    public void TheNoteOfAnUnknownSystemKeyTellsTheReason()
+    {
+        var (choices, references, items) = Choices(
+            "[Trigger]\nnickname = t1\nsystem = Qq99\nAct_CallThorn = missions\\mx01\\a.thn\n");
+
+        var plan = Assert.Single(choices, c => c.Kind == PreviewContextKind.Space).Plan(Script, items, references);
+
+        Assert.Equal("No rule finds the system of the mission line of the trigger t1. The system key of the trigger " +
+                     "names Qq99, but the game data has no such system. So the game never runs the trigger. The " +
+                     "preview shows the script without a system. Give the trigger a system key, or a condition that " +
+                     "names a system or a base.", plan.Note);
     }
 }

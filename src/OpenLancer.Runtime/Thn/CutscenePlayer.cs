@@ -39,7 +39,8 @@ public sealed class PreviewMeter
 /// <summary>A scene object as the Free view of the editor draws it (section 7.6 of the M8 design).</summary>
 /// <param name="Name">The name of the object: the name of its entity.</param>
 /// <param name="Type">The type of the entity of the object.</param>
-/// <param name="Pose">The pose now, as <c>GetTransform</c> gives it (ThnSceneObject.cs:34).</param>
+/// <param name="Pose">The pose now, as <c>GetTransform</c> gives it (ThnSceneObject.cs:34). After a step that failed, the
+/// pose of the last update.</param>
 /// <param name="FovH">The horizontal field of view of a camera now, as THN gives it: half the angle in degrees for a
 /// 4:3 screen (ThnCamera.cs:68-75). Null for an object that is not a camera.</param>
 /// <param name="LightColor">The color of a light now, or null.</param>
@@ -68,6 +69,10 @@ public sealed class CutscenePlayer : ICutscenePlayer
     private readonly PreviewMeter? meter;
     private readonly GameObject[] scriptObjects;
     private bool disposed;
+
+    // A step failed. The attachments of that step can stay on the objects, and a chain of them can be too deep to
+    // resolve (OL-0054). So the poses come from the last update.
+    private bool stopped;
 
     private CutscenePlayer(Cutscene cutscene, PreviewMeter? meter, bool inHostWorld, GameObject[] scriptObjects,
         string? mainObjectNote)
@@ -113,7 +118,7 @@ public sealed class CutscenePlayer : ICutscenePlayer
     /// <param name="viewport">The first viewport of the THN camera. The view sets it again for each draw.</param>
     /// <param name="meter">Counts the steps, or null.</param>
     /// <param name="hostWorld">The world of the system of a space plan, or null. With a system in the plan, the scripts
-    /// make their objects in this world, the main object stands at its start, and the static stand-ins of a local
+    /// make their objects in this world, and the main object stands at its start. The static stand-ins of a local
     /// layout follow it (decisions D644 and D658). The player does not dispose this world.</param>
     /// <exception cref="Exception">The engine cannot build the scene, or the room camera is not a CAMERA entity. The
     /// message tells why.</exception>
@@ -256,15 +261,25 @@ public sealed class CutscenePlayer : ICutscenePlayer
     /// <summary>
     /// One fixed step: <c>Cutscene._Update</c> (Cutscene.cs:398-432). In the world of a host, the cutscene does not
     /// step the world, so the step updates the objects of the scripts, for example the animations of the characters.
-    /// It never steps the objects of the host or of another player.
+    /// It never steps the objects of the host or of another player. After a step that throws, <see cref="Find"/> gives
+    /// the poses of the last update.
     /// </summary>
     public void Step(double seconds)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         var start = Stopwatch.GetTimestamp();
-        cutscene._Update(seconds);
-        foreach (var obj in scriptObjects)
-            obj.Update(seconds, cutscene.World);
+        try
+        {
+            cutscene._Update(seconds);
+            foreach (var obj in scriptObjects)
+                obj.Update(seconds, cutscene.World);
+        }
+        catch
+        {
+            stopped = true;
+            throw;
+        }
+
         meter?.Add(Stopwatch.GetElapsedTime(start));
     }
 
@@ -308,7 +323,7 @@ public sealed class CutscenePlayer : ICutscenePlayer
         ObjectDisposedException.ThrowIf(disposed, this);
         if (cutscene.GetObject(name) is not { } obj)
             return null;
-        var pose = obj.GetTransform();
+        var pose = PoseOf(obj, stopped);
         IReadOnlyList<Vector3>? path = null;
         // A scene object that a room handler makes has no entity until it binds one (ThnSceneObject.cs:20).
         var entity = (ThnEntity?)obj.Entity;
@@ -323,6 +338,14 @@ public sealed class CutscenePlayer : ICutscenePlayer
         return new PreviewObject(obj.Name, entity?.Type ?? EntityTypes.Deformable, pose, obj.Camera?.FovH,
             obj.Light?.Light.Color, path);
     }
+
+    /// <summary>The pose of a scene object now. After a step that failed, the pose of the last update: the object does
+    /// not resolve its attachments again (decision D655).</summary>
+    /// <param name="stopped">True after a step that failed.</param>
+    internal static Transform3D PoseOf(ThnSceneObject obj, bool stopped) =>
+        !stopped ? obj.GetTransform()
+        : obj.PosFromObject ? obj.Object!.Transform
+        : new Transform3D(obj.Translate, obj.Rotate);
 
     /// <summary>
     /// The voice and the actor of the scene object with a name, or null when the scene has no such object. A
