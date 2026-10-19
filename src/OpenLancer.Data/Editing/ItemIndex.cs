@@ -54,9 +54,21 @@ public enum ItemRelation
 /// <param name="Section">The <c>[BaseGood]</c> section.</param>
 /// <param name="Base">The base that sells the good.</param>
 /// <param name="Line">The position of the line among the <c>marketgood</c> lines of the section, from 0.</param>
-/// <param name="Values">The values: the good, the rank, the reputation, the minimum and maximum count, the preserve
-/// flag and the price multiplier.</param>
-public sealed record MarketLine(SectionRef Section, string Base, int Line, IReadOnlyList<ValueBase> Values);
+/// <param name="Values">The values: the good, the rank, the reputation, the minimum and maximum count, the transaction
+/// type and the price multiplier.</param>
+public sealed record MarketLine(SectionRef Section, string Base, int Line, IReadOnlyList<ValueBase> Values)
+{
+    /// <summary>The place of the transaction type in <see cref="Values"/>.</summary>
+    public const int TransactionIndex = 5;
+
+    /// <summary>The transaction type of the line, or null when the line has no sixth value or when the value is not 0,
+    /// 1 or 2.</summary>
+    public MarketTransaction? Transaction =>
+        Values.Count > TransactionIndex && Values[TransactionIndex].TryToInt32(out var type) &&
+        Enum.IsDefined((MarketTransaction)type)
+            ? (MarketTransaction)type
+            : null;
+}
 
 /// <summary>
 /// The item files of the edit view, the ship, equipment, goods and market files, with the links between their

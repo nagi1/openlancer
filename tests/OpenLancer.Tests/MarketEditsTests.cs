@@ -1,14 +1,16 @@
 using System;
 using System.IO;
 using System.Linq;
+using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Inspector;
 using Xunit;
 using static OpenLancer.Tests.ItemWorkspace;
 
 namespace OpenLancer.Tests;
 
-/// <summary>The "Sold at" edits: a base that sells a good, and the lines of the active mod.</summary>
+/// <summary>The edits of the "Markets" section: a base that sells a good, and the lines of the active mod.</summary>
 public sealed class MarketEditsTests
 {
     private const string ShipMarketPath = @"DATA\EQUIPMENT\market_ships.ini";
@@ -38,8 +40,18 @@ public sealed class MarketEditsTests
         return ws;
     }
 
+    /// <summary>All values of a line after the good.</summary>
+    private static string Values(MarketLine line) => FieldEdit.FormatLine(line.Values.Skip(1).ToList());
+
     private static string[] Bases(EditSession session, string good) =>
-        session.MarketLines(good).Select(l => $"{l.Base}: {MarketEdits.ValuesText(l)}").ToArray();
+        session.MarketLines(good).Select(l => $"{l.Base}: {Values(l)}").ToArray();
+
+    /// <summary>Adds a line that sells the good at base b1 with the values, and returns the line.</summary>
+    private static MarketLine AddedLine(EditSession session, string good, string values)
+    {
+        session.Execute(MarketEdits.AddToBase(session, good, "b1", values));
+        return session.MarketLines(good).Single(l => l.Base == "b1");
+    }
 
     [Fact]
     public void ABaseSellsAGoodWithANewSectionInTheMarketFileOfTheSameCategory()
@@ -70,7 +82,7 @@ public sealed class MarketEditsTests
         // b2 is only in market_misc.ini.
         var line = session.MarketLines("s1_package").Single(l => l.Base == "b2");
         Assert.Equal(MarketPath, line.Section.Path, ignoreCase: true);
-        Assert.Equal("0, -1, 1, 1, 0, 1, 1", MarketEdits.ValuesText(line));
+        Assert.Equal("0, -1, 1, 1, 0, 1, 1", Values(line));
     }
 
     [Fact]
@@ -129,6 +141,84 @@ public sealed class MarketEditsTests
 
         Assert.Throws<InvalidOperationException>(() =>
             MarketEdits.SetLine(session, session.MarketLines("gun1")[0], "0, -1, 1, 1, 0, 1"));
+    }
+
+    /// <summary>
+    /// The values field leaves out the transaction type, because the type has its own dropdown. An edit of the field
+    /// keeps the type of the line in its place.
+    /// </summary>
+    [Fact]
+    public void TheValuesFieldKeepsTheTransactionType()
+    {
+        using var ws = TwoMarkets();
+        var session = ws.Session("act");
+        var line = AddedLine(session, "eng1", "0, -1, 5, 5, 2, 1");
+        Assert.Equal("0, -1, 5, 5, 1", MarketEdits.FieldText(line));
+
+        session.Execute(MarketEdits.SetValues(session, line, "1, -1, 7, 7, 1.5"));
+
+        line = session.MarketLines("eng1").Single(l => l.Base == "b1");
+        Assert.Equal("1, -1, 7, 7, 2, 1.5", Values(line));
+        Assert.Equal(MarketTransaction.SellOnly, line.Transaction);
+    }
+
+    /// <summary>The dropdown changes only the sixth value. A ship line keeps its last value too.</summary>
+    [Fact]
+    public void TheTransactionTypeChangesOnlyTheSixthValue()
+    {
+        using var ws = TwoMarkets();
+        var session = ws.Session("act");
+        var gun = AddedLine(session, "eng1", "0, -1, 5, 5, 0, 1");
+        Assert.Equal(MarketTransaction.BuyAndSell, gun.Transaction);
+
+        session.Execute(MarketEdits.SetTransaction(session, gun, MarketTransaction.BuyOnly));
+        session.Execute(MarketEdits.AddToBase(session, "s1_package", "b2", MarketEdits.DefaultValues("ship")));
+        var ship = session.MarketLines("s1_package").Single(l => l.Base == "b2");
+        session.Execute(MarketEdits.SetTransaction(session, ship, MarketTransaction.SellOnly));
+
+        gun = session.MarketLines("eng1").Single(l => l.Base == "b1");
+        ship = session.MarketLines("s1_package").Single(l => l.Base == "b2");
+        Assert.Equal("0, -1, 5, 5, 1, 1", Values(gun));
+        Assert.Equal(MarketTransaction.BuyOnly, gun.Transaction);
+        Assert.Equal("0, -1, 1, 1, 2, 1, 1", Values(ship));
+        Assert.Equal("0, -1, 1, 1, 1, 1", MarketEdits.FieldText(ship));
+        Assert.Equal("Only sells", MarketSection.TransactionText(ship));
+    }
+
+    /// <summary>
+    /// A line without the sixth value gets it from the dropdown. A line without a maximum has no place for it. A value
+    /// that the game does not know shows as it is.
+    /// </summary>
+    [Fact]
+    public void ALineWithoutAKnownTransactionTypeShowsWhy()
+    {
+        using var ws = TwoMarkets();
+        var session = ws.Session("act");
+        var shortLine = AddedLine(session, "eng1", "0, -1, 5, 5");
+        Assert.Null(shortLine.Transaction);
+        Assert.Equal("Not set", MarketSection.TransactionText(shortLine));
+        Assert.Equal("0, -1, 5, 5", MarketEdits.FieldText(shortLine));
+
+        session.Execute(MarketEdits.SetTransaction(session, shortLine, MarketTransaction.BuyOnly));
+        Assert.Equal("0, -1, 5, 5, 1", Values(session.MarketLines("eng1").Single(l => l.Base == "b1")));
+
+        var unknown = AddedLine(session, "s1_hull", "0, -1, 5, 5, 7, 1");
+        Assert.Null(unknown.Transaction);
+        Assert.Equal("Unknown type 7", MarketSection.TransactionText(unknown));
+
+        session.Execute(MarketEdits.SetValues(session, unknown, "0, -1"));
+        var tooShort = session.MarketLines("s1_hull").Single(l => l.Base == "b1");
+        Assert.Throws<InvalidOperationException>(() =>
+            MarketEdits.SetTransaction(session, tooShort, MarketTransaction.SellOnly));
+    }
+
+    /// <summary>Each transaction type has its own plain name in the dropdown.</summary>
+    [Fact]
+    public void EachTransactionTypeHasItsOwnName()
+    {
+        var names = Enum.GetValues<MarketTransaction>().Select(MarketSection.Name).ToList();
+
+        Assert.Equal(["Buys and sells", "Only buys", "Only sells"], names);
     }
 
     [Fact]

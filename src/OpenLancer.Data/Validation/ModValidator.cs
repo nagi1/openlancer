@@ -41,7 +41,8 @@ public static class ModValidator
     /// <c>MarketGood</c> line as the transaction type: 0 buy and sell, 1 the base buys only, 2 the base sells only. Retail
     /// marks each ship line with min = max = 0 as type 1 on purpose. The fork keeps the type since OL-0045.
     /// </summary>
-    internal static bool ShipNotForSale(MarketGood item) => item.Min == 0 && item.Max == 0 && item.TransactionType != 1;
+    internal static bool ShipNotForSale(MarketGood item) =>
+        item.Min == 0 && item.Max == 0 && (MarketTransaction)item.TransactionType != MarketTransaction.BuyOnly;
 
     public static Report Validate(FileSystem fs)
     {
