@@ -145,11 +145,14 @@ public sealed class FieldWidgetTests
             new CompletenessStep("A", CompletenessState.Done, "r"),
             new CompletenessStep("B", CompletenessState.Missing, "r", IsError: true),
             new CompletenessStep("C", CompletenessState.Hidden, "r"),
-        ]);
+        ]) { HiddenMessages = 3 };
 
         Assert.Equal("2 of 3 steps complete", report.Summary);
         Assert.True(report.HasError);
-        Assert.Equal("1 base-game message is hidden.", report.HiddenLine);
+        Assert.Equal(1, report.HiddenCount);
+        // The line counts the base-game messages, not the steps.
+        Assert.Equal("3 base-game messages are hidden.", report.HiddenLine);
+        Assert.Null((report with { HiddenMessages = 0 }).HiddenLine);
         Assert.Equal("All 2 steps complete.", new CompletenessReport("x",
             [new CompletenessStep("A", CompletenessState.Done, "r"), new CompletenessStep("B", CompletenessState.Hidden, "r")]).Summary);
     }
@@ -262,6 +265,87 @@ public sealed class FieldWidgetTests
         // The native editor clears the marks with a new text, so the marks come again.
         Assert.Equal((true, true), state.Plan("new text", marks));
         Assert.Equal((false, true), state.Plan("new text", []));
+    }
+
+    /// <summary>An edited row keeps an empty value inside the values of its source line,
+    /// so an empty last value keeps its comma (section 11.5 of the M6a design).</summary>
+    [Fact]
+    public void AnEditedRowKeepsItsEmptyLastValue()
+    {
+        var spec = new ListFieldSpec("music", "Music", null, ListFieldCodec.RepeatedKey, ["Act_PlayMusic"],
+            [new ListColumn("Track", 0, ListColumnKind.Text), new ListColumn("Next", 1, ListColumnKind.Text)]);
+        var model = ListFieldModel.Read(spec, Lines("Act_PlayMusic = a, \n"));
+
+        var line = Assert.Single(model.Set(0, 0, "b").Write());
+        var added = model.Add(1, new ListFieldRow("Act_PlayMusic", ["c", ""], null)).Write()[1];
+
+        Assert.Equal("Act_PlayMusic = b, ", IniLines.Line(line.Key, line.Values));
+        // A new row has no source line, so its empty last cell gives no value.
+        Assert.Equal("Act_PlayMusic = c", IniLines.Line(added.Key, added.Values));
+    }
+
+    /// <summary>The INI block of one section keeps the identity of the section in its
+    /// file, so the second of two sections with one nickname finds its marks.</summary>
+    [Fact]
+    public void TheTextOfOneSectionKeepsItsIdentityInTheFile()
+    {
+        var sections = IniDocument.Parse("t.ini", Encoding.ASCII.GetBytes(
+            "[MsnShip]\nnickname = s1\n[MsnShip]\nnickname = s1\nnpc = n1\n")).Sections;
+        var second = SectionIdentity.Identify(sections)[1];
+        var problem = Diagnostic.Error("Mission", "A line.") with { Target = new SectionRef("t.ini", second), EntryIndex = 1 };
+
+        var alone = RawText.Canonical("t.ini", [sections[1]], ids: [second]);
+
+        Assert.Equal([2], IniLint.Marks(alone, [problem], showBaseGame: false).Select(m => m.Line));
+        Assert.Empty(IniLint.Marks(RawText.Canonical("t.ini", [sections[1]]), [problem], showBaseGame: false));
+        Assert.Throws<System.ArgumentException>(() => RawText.Canonical("t.ini", [sections[1]], ids: []));
+    }
+
+    /// <summary>The header line of a section that the editor cannot write as text shows the
+    /// reason (section 11.5 of the M6a design).</summary>
+    [Fact]
+    public void TheHeaderOfAReadOnlySectionShowsTheReason()
+    {
+        var section = new Section("Trigger");
+        var line = new Entry(section, "Act_DebugMsg");
+        line.Add(new StringValue("a, b"));
+        section.Add(line);
+        var raw = RawText.Canonical("t.ini", [section]);
+        var id = SectionIdentity.Identify([section])[0];
+        var problem = Diagnostic.Error("Mission", "A section.") with { Target = new SectionRef("t.ini", id) };
+
+        var note = Assert.Single(IniLint.Marks(raw, [], showBaseGame: false));
+        var both = Assert.Single(IniLint.Marks(raw, [problem], showBaseGame: false));
+
+        Assert.Equal((0, true, RawText.ReadOnlyReason), (note.Line, note.Note, note.Message));
+        Assert.Equal(("A section.\n" + RawText.ReadOnlyReason, false), (both.Message, both.Note));
+    }
+
+    [Fact]
+    public void TheRawTextIsMadeOnce()
+    {
+        var raw = RawText.Canonical("t.ini", IniDocument.Parse("t.ini", Encoding.ASCII.GetBytes("[A]\nb = 1\n")).Sections);
+
+        Assert.Same(raw.Text, raw.Text);
+        Assert.Equal("[A]\nb = 1", raw.Text);
+    }
+
+    [Fact]
+    public void TheListFieldViewNamesItsAddButtonAndItsCells()
+    {
+        var withRest = new ListColumn("More values", 1, ListColumnKind.Text, Rest: true);
+        var row = new ListFieldRow("k", ["a", "b", "", "c"], null);
+
+        Assert.Equal("Add", ListField.AddLabel(Members));
+        Assert.Equal("Add order", ListField.AddLabel(Orders with { AddLabel = "Add order" }));
+        Assert.Equal("b, c", ListField.CellText(withRest, row));
+        Assert.Equal(4, withRest.End(row.Cells.Count));
+        Assert.Equal(4, new ListColumn("Rotation", 0, ListColumnKind.Rotation).Width);
+        Assert.Equal("Fly to a point", (Orders with
+        {
+            KeyLabels = new Dictionary<string, string> { ["GotoVec"] = "Fly to a point" },
+        }).KeyLabel("gotovec"));
+        Assert.EndsWith("Right-click to copy the value.", ListField.CopyHint);
     }
 
     [Fact]

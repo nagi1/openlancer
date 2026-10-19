@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using LibreLancer.Data;
@@ -319,12 +320,68 @@ public sealed class DataLists
     {
         var roles = Files.RolesOf(path);
         var isSystem = session.IsSystemFile(path);
-        bool Gives(ListSource s) =>
-            (s is { Scoped: true, Role: null }
-                ? isSystem
-                : s.Role != null && roles.Contains(s.Role, StringComparer.OrdinalIgnoreCase)) &&
-            s.Values == null && s.Sections.Contains(sectionType, StringComparer.OrdinalIgnoreCase);
+        bool Gives(ListSource s) => GivesEntries(s, roles, isSystem) && s.Values == null &&
+                                    s.Sections.Contains(sectionType, StringComparer.OrdinalIgnoreCase);
         return rules.Lists.Values.Where(d => d.Source is { } s && Gives(s));
+    }
+
+    /// <summary>
+    /// True when the sections of a file can give entries of a list source. A scoped source without a role reads a
+    /// system file. Each other source reads the files of its role. A scoped source with a role reads one file of its
+    /// role, for example one mission script (section 14.1 of the M6a design).
+    /// </summary>
+    /// <param name="roles">The roles of the file.</param>
+    /// <param name="isSystem">True when the file is a system file.</param>
+    private static bool GivesEntries(ListSource source, IReadOnlyList<string> roles, bool isSystem) =>
+        source is { Scoped: true, Role: null }
+            ? isSystem
+            : source.Role != null && roles.Contains(source.Role, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The names of a list that the base folder without mods (B) gives and the edit view does not give (decision
+    /// D551). Only a file that a mod changes can lose a name. So the method reads only the
+    /// files of the list that a mod changes, in their version of the base folder. Each name has the last mod that
+    /// changes its file. A files list, an enum and a scoped list give no names.
+    /// </summary>
+    /// <param name="baseFiles">The file system of the base folder.</param>
+    /// <param name="modOf">Gives the last mod that changes a file, or null for a file that no mod changes.</param>
+    internal IReadOnlyDictionary<string, string> NamesOnlyInBase(string id, FileSystem baseFiles, Func<string, string?> modOf)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!rules.Lists.TryGetValue(id, out var definition) ||
+            definition.Source is not { Files: null, Scoped: false, Role: { } role } source)
+            return result;
+        var current = List(id);
+        foreach (var path in Files.Paths(role))
+        {
+            if (modOf(path) is not { } mod || BaseSections(baseFiles, path) is not { } sections)
+                continue;
+            var table = new FileTable(path, sections);
+            var types = source.Values is { } values ? [values.Section] : source.Sections;
+            foreach (var index in types.SelectMany(table.OfType))
+            {
+                var section = table.Working[index];
+                if (!Matches(section, source.Where))
+                    continue;
+                foreach (var name in Names(section, source).Where(n => current?.Find(n) == null))
+                    result.TryAdd(name, mod);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>The sections of a file of the base folder. Null when the base folder has no such INI file or the file
+    /// does not parse.</summary>
+    internal static IReadOnlyList<Section>? BaseSections(FileSystem baseFiles, string path)
+    {
+        try
+        {
+            return baseFiles.FileExists(path) ? IniDocument.Parse(path, baseFiles.ReadAllBytes(path)).Sections : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The view of one or more lists in order, for a scope, or null when none is available.</summary>
@@ -698,6 +755,7 @@ public sealed class DataLists
     private RemovedPart RemovedPartOf(EditDocument document, FileTable now)
     {
         var isSystem = session.IsSystemFile(document.Path);
+        var roles = Files.RolesOf(document.Path);
         if (removedParts.TryGetValue(document.Path, out var part) && ReferenceEquals(part.Now, now) &&
             ReferenceEquals(part.Base, document.Base) && part.IsSystem == isSystem)
             return part;
@@ -706,9 +764,7 @@ public sealed class DataLists
         foreach (var definition in rules.Lists.Values)
         {
             // A files list has no sections, so an INI file removes none of its entries.
-            if (definition.Source is not { Values: null, Files: null } source || !(source.Scoped
-                    ? isSystem
-                    : Files.Paths(source.Role!).Contains(document.Path, VfsPath.Comparer)))
+            if (definition.Source is not { Values: null, Files: null } source || !GivesEntries(source, roles, isSystem))
                 continue;
             var current = NamesOf(now, source);
             foreach (var (name, index) in NamesWithIndex(lower, source))

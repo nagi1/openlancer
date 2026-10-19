@@ -76,7 +76,7 @@ public sealed class MissionChecksTests
         var problem = Assert.Single(Rule(Check(With("[Trigger]\nnickname = t2\nCnd_True = no_params\nAct_GiveObjList = Player, ol_x\n")), "M06"));
 
         Assert.Equal("Give orders names order list 'ol_x'. This script has no such order list. The game ignores this " +
-                     "line. Pick a order list of this script.", problem.Message);
+                     "line. Pick an order list of this script.", problem.Message);
     }
 
     [Fact]
@@ -262,8 +262,8 @@ public sealed class MissionChecksTests
 
         Assert.Equal("Line 'Act_NoSuchAction' is not a key of [Trigger]. The game ignores this line. Check the name of the " +
                      "key.", Assert.Single(Rule(problems, "M24")).Message);
-        Assert.Equal("The game does not read sections of type [NoSuchSection] in a mission script. The game ignores this " +
-                     "section.", Assert.Single(Rule(problems, "M25")).Message);
+        Assert.Equal("Section type [NoSuchSection] is not a known type of a mission script. The editor does not check " +
+                     "this section. Make sure that the type name is correct.", Assert.Single(Rule(problems, "M25")).Message);
     }
 
     [Fact]
@@ -319,7 +319,61 @@ public sealed class MissionChecksTests
     {
         Assert.Equal(DiagnosticSeverity.Error, MissionChecks.SeverityOf("M05"));
         Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("G05"));
-        Assert.Equal(31, MissionChecks.Rules.Count);
+        Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("M26"));
+        Assert.Equal(32, MissionChecks.Rules.Count);
+    }
+
+    [Fact]
+    public void TheArticleOfAKindWordFollowsItsSound()
+    {
+        Assert.Equal(["an order list", "an NPC", "an objective", "an equipment item", "a ship build", "a system"],
+            new[] { "order list", "NPC", "objective", "equipment item", "ship build", "system" }.Select(MissionChecks.WithArticle));
+    }
+
+    /// <summary>A word outside a closed set of words gives a problem and a raw mark. The
+    /// game reads a word outside an open set as its default, so such a word gives none.</summary>
+    [Fact]
+    public void M26AWordOutsideAClosedSetIsAProblem()
+    {
+        var problems = Check(With("[Trigger]\nnickname = t2\nCnd_PopUpDialog = BUTTONX\nAct_ActTrig = t1\n\n" +
+                                  "[Trigger]\nnickname = t3\nCnd_True = no_params\nAct_LockDock = Player, x, lockx\n" +
+                                  "Act_ActTrig = t2\n"));
+
+        var words = Rule(problems, "M26");
+        Assert.Equal(2, words.Count);
+        Assert.StartsWith("'BUTTONX' is not a word of '", words[0].Message);
+        Assert.Contains("The effect in the game is not known. Write one of these words: YES, NO, LATER, CLOSE.",
+            words[0].Message);
+        Assert.All(words, w => Assert.Equal(DiagnosticSeverity.Warning, w.Severity));
+        Assert.Empty(Rule(Check(With("[Trigger]\nnickname = t2\nCnd_True = no_params\nAct_NNIds = 5, OTHER\n")), "M26"));
+    }
+
+    /// <summary>A name of the label rule that names no item of the script and no
+    /// object of a system gives M06 with a text for both places.</summary>
+    [Fact]
+    public void M06AMissingObjectNamesTheScriptAndTheSystems()
+    {
+        var world = World(new() { [MissionValueKind.SystemObject] = ["gate_a"] });
+        var problems = Check(With("[Trigger]\nnickname = t2\nCnd_True = no_params\nAct_LockDock = Player, gate_a, lock\n" +
+                                  "Act_LockDock = Player, gate_x, lock\n"), world);
+
+        var problem = Assert.Single(Rule(problems, "M06"));
+        Assert.Equal("Lock or unlock dock names 'gate_x'. This script has no ship, formation, solar, loot or label with " +
+                     "this name, and no system has an object with this name. The game ignores this line. Pick a name from " +
+                     "the list.", problem.Message);
+    }
+
+    /// <summary>G02 names the success line that no start trigger reaches.</summary>
+    [Fact]
+    public void G02NamesASuccessThatNoStartTriggerReaches()
+    {
+        var problems = Check("[Mission]\n\n[Trigger]\nnickname = t1\nInitState = ACTIVE\nCnd_True = no_params\n\n" +
+                             "[Trigger]\nnickname = t2\nCnd_True = no_params\nAct_ChangeState = SUCCEED\n");
+
+        var problem = Assert.Single(Rule(problems, "G02"));
+        Assert.Equal("No start trigger leads to the success line of trigger 't2'. The story cannot go to the next mission. " +
+                     "Start trigger 't2' from a trigger that runs.", problem.Message);
+        Assert.Equal(2, problem.EntryIndex);
     }
 
     /// <summary>Coverage with names that OpenLancer cannot load.</summary>

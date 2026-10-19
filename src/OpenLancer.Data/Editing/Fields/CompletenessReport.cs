@@ -56,12 +56,11 @@ public sealed record CompletenessReport(string Title, IReadOnlyList<Completeness
         ? Total == 1 ? "The step is complete." : $"All {Total} steps complete."
         : $"{Done} of {Total} {(Total == 1 ? "step" : "steps")} complete";
 
-    /// <summary>The line of the hidden steps while the base-game messages are hidden, or null when none is
-    /// hidden.</summary>
-    public string? HiddenLine => HiddenCount switch
-    {
-        0 => null,
-        1 => "1 base-game message is hidden.",
-        var n => $"{n} base-game messages are hidden.",
-    };
+    /// <summary>The number of base-game messages of the item. While the base-game messages are hidden, the panel hides
+    /// them, and its hidden steps count as done.</summary>
+    public int HiddenMessages { get; init; }
+
+    /// <summary>The dim line of the hidden base-game messages of the item, or null when it has none (section 11.4 of the
+    /// M6a design). The Problems section of a page uses the same line, so both say the same number.</summary>
+    public string? HiddenLine => BaseGameMessages.HiddenLine(HiddenMessages);
 }

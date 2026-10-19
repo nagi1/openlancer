@@ -438,11 +438,15 @@ internal sealed class ConsolePanel(EditorWindow window)
         if (ImGui.Selectable("##row", isSelected, ImGuiSelectableFlags.SpanAllColumns))
         {
             selected = entry;
-            // An entry about a section selects the section, so the Inspector shows it. An entry about a cutscene opens
-            // the cutscene and selects the element.
-            if (entry.Target != null)
+            // An entry about a mission script opens the mission in the Mission tab at the line (section 12.4 of the
+            // M6a design). An entry about another section selects the section, so the Inspector shows it. An entry about
+            // a cutscene opens the cutscene and selects the element.
+            if (entry.Target is { } target)
             {
-                window.Selection = entry.Target;
+                if (!window.Missions.GoTo(target, entry.EntryIndex))
+                {
+                    window.Selection = target;
+                }
             }
             else if (entry.Cutscene != null)
             {

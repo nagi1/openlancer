@@ -125,6 +125,79 @@ public sealed partial class MissionSchemaTests
         }
     }
 
+    /// <summary>The rule data gives the list fields (decision D540, sections 11.1 and 14.4
+    /// of the M6a design): the ship lines of a formation, the lines of a conversation, the orders of an order list and
+    /// the ships of a condition. Each spec reads lines in the retail form.</summary>
+    [Fact]
+    public void TheSchemaGivesTheListFields()
+    {
+        var members = Schema.KeyList("MsnFormation", "ship")!;
+        var lines = Schema.KeyList("Dialog", "line")!;
+        var orders = Schema.OrderList("ObjList")!;
+        var ships = Schema.ValueList("Cnd_NPCSystemEnter", "ships")!;
+
+        Assert.Equal((ListFieldCodec.RepeatedKey, "Members", "ships"), (members.Codec, members.Label, members.Items));
+        Assert.Equal((ListColumnKind.Reference, "mission_ship"), (members.Columns[0].Kind, members.Columns[0].List));
+        Assert.Equal(["Speaker", "Listener", "Comm line"], lines.Columns.Select(c => c.Name));
+        Assert.Equal("comm_line", lines.Columns[2].List);
+        Assert.Equal((ListFieldCodec.MixedKeys, "Add order"), (orders.Codec, orders.AddLabel));
+        Assert.Equal(Schema.Directives.Select(d => d.Name), orders.Keys);
+        Assert.Equal("Fly to a point", orders.KeyLabel("GotoVec"));
+        Assert.Equal([ListColumnKind.Token, ListColumnKind.Position, ListColumnKind.WholeNumber, ListColumnKind.Text],
+            orders.ColumnsOf("GotoVec").Select(c => c.Kind));
+        Assert.Equal((ListFieldCodec.ValueList, 1), (ships.Codec, ships.Prefix));
+        Assert.NotNull(Schema.KeyList("MsnShip", "label"));
+        Assert.NotNull(Schema.KeyList("MsnShip", "cargo"));
+        Assert.Null(Schema.KeyList("MsnShip", "npc"));
+        // Only an order list says "Add order".
+        Assert.All(Schema.Lists.Where(l => l != orders), l => Assert.Null(l.AddLabel));
+
+        var read = ListFieldModel.Read(orders, [new("GotoVec", Values("goto", "1", "2", "3", "100")),
+            new("nickname", Values("ol1")), new("Delay", Values("5"))]);
+        Assert.Equal(["GotoVec", "Delay"], read.Rows.Select(r => r.Key));
+        var group = ListFieldModel.Read(ships, [new("Cnd_NPCSystemEnter", Values("sys_a", "s1", "s2"))]);
+        Assert.Equal(["s1", "s2"], group.Rows.Select(r => r.Cell(0)));
+    }
+
+    /// <summary>The list fields of the behavior prefabs: a field of lines gives a mixed-keys spec with the columns of
+    /// the schema, and a field of member triggers gives a list of triggers (section 14.5 of the M6a design).</summary>
+    [Fact]
+    public void ThePrefabListFieldsHaveTheirSpecs()
+    {
+        var spawn = MissionPrefabs.Retail.Definitions.Single(d => d.Id == "spawnWave");
+        var ships = spawn.Fields.Single(f => f.Id == "ships");
+        var ends = spawn.Fields.Single(f => f.Id == "endsWhen");
+        var sides = spawn.Fields.Single(f => f.Id == "sides");
+
+        var spec = ships.Spec(Schema)!;
+        Assert.Equal((ListFieldCodec.MixedKeys, "ships"), (spec.Codec, spec.Items));
+        Assert.Equal(["Act_SpawnShip", "Act_SpawnFormation"], spec.Keys);
+        Assert.Equal("Spawn ship", spec.KeyLabel("Act_SpawnShip"));
+        Assert.Equal(PrefabListCodec.Triggers, ends.List!.Codec);
+        Assert.Null(ends.Spec(Schema));
+        Assert.Contains("Act_SetVibe", sides.Spec(Schema)!.Keys);
+        Assert.Null(spawn.Fields.Single(f => f.Id == "spawnWhen").List);
+        Assert.All(MissionPrefabs.Retail.Definitions.SelectMany(d => d.Fields).Where(f => f.List is { Codec: PrefabListCodec.Lines }),
+            f => Assert.NotEmpty(f.Spec(Schema)!.Columns));
+    }
+
+    /// <summary>The schema marks the fields that are hard to understand (section 11.3 of the
+    /// M6a design).</summary>
+    [Fact]
+    public void TheSchemaMarksTheHardFields()
+    {
+        var trigger = Schema.Section("Trigger")!;
+
+        Assert.True(trigger.Key("InitState")!.Hard);
+        Assert.True(trigger.Key("repeatable")!.Hard);
+        Assert.True(trigger.Key("repeatable")!.ValueSpecs[0].Hard);
+        Assert.False(trigger.Key("nickname")!.Hard);
+        Assert.True(Schema.Section("MsnShip")!.Key("rel_pos")!.Hard);
+    }
+
+    private static List<LibreLancer.Data.Ini.ValueBase> Values(params string[] texts) =>
+        texts.Select(t => (LibreLancer.Data.Ini.ValueBase)new LibreLancer.Data.Ini.StringValue(t)).ToList();
+
     [Fact]
     public void EachSlotNoteHasAText()
     {

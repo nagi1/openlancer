@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using LibreLancer.Data.IO;
+using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
@@ -33,42 +35,76 @@ public sealed partial class EditSession
     public MissionInputs MissionInputs(IEngineCoverage coverage)
     {
         var files = EditView.CreateFileSystem();
-        var names = new Dictionary<MissionValueKind, IEnumerable<string>>
-        {
-            [MissionValueKind.System] = ListNames("system"),
-            [MissionValueKind.Base] = ListNames("base"),
-            [MissionValueKind.SystemObject] = Nicknames.All.Where(n => !n.IsZone).Select(n => n.Name).ToList(),
-            [MissionValueKind.Faction] = ListNames("faction"),
-            [MissionValueKind.ShipArch] = ListNames("ship"),
-            [MissionValueKind.Loadout] = ListNames("loadout"),
-            [MissionValueKind.Pilot] = ListNames("pilot"),
-            [MissionValueKind.Voice] = ListNames("voice"),
-            [MissionValueKind.Good] = ListNames("good"),
-            [MissionValueKind.Equipment] = ListNames("equipment"),
-            [MissionValueKind.Head] = ListNames("head"),
-            [MissionValueKind.Body] = ListNames("body"),
-            [MissionValueKind.Accessory] = ListNames("accessory"),
-            [MissionValueKind.NpcShipArch] = ListNames("npc_ship_arch"),
-            [MissionValueKind.FormationShape] = ListNames("formation_shape"),
-            [MissionValueKind.CommLine] = ListNames("comm_line"),
-            [MissionValueKind.Fuse] = ListNames("fuse"),
-        };
+        var baseFiles = EditView.Base.OpenFileSystem();
+        var names = WorldLists.ToDictionary(l => l.Kind, l => (IEnumerable<string>)ListNames(l.List));
+        names[MissionValueKind.SystemObject] = Nicknames.All.Where(n => !n.IsZone).Select(n => n.Name).ToList();
         var ini = FreelancerIni;
         var world = new MissionWorld(names, relative =>
             DataPaths.Resolve(ini, relative) is { } path && files.FileExists(path));
+        var removed = RemovedNames(baseFiles, world);
         var targets = ActiveMod?.Manifest.Targets;
         return new MissionInputs
         {
             EditView = files,
-            BaseView = EditView.Base.OpenFileSystem(),
+            BaseView = baseFiles,
             FreelancerIni = ini,
             World = world,
+            BaseWorld = removed.Count > 0 ? world.WithRemoved(removed) : null,
             Ledger = new LedgerView(EditView.Ledger),
             Coverage = coverage,
             ActiveModId = ActiveMod?.Id,
             Options = new MissionCheckOptions(targets?.Contains(ModTargets.OpenLancer) == true),
             Generation = ++missionGeneration,
         };
+    }
+
+    /// <summary>The kinds of the checks whose names come from a data list of the edit view, with the id of the
+    /// list.</summary>
+    private static readonly (MissionValueKind Kind, string List)[] WorldLists =
+    [
+        (MissionValueKind.System, "system"), (MissionValueKind.Base, "base"), (MissionValueKind.Faction, "faction"),
+        (MissionValueKind.ShipArch, "ship"), (MissionValueKind.Loadout, "loadout"), (MissionValueKind.Pilot, "pilot"),
+        (MissionValueKind.Voice, "voice"), (MissionValueKind.Good, "good"), (MissionValueKind.Equipment, "equipment"),
+        (MissionValueKind.Head, "head"), (MissionValueKind.Body, "body"), (MissionValueKind.Accessory, "accessory"),
+        (MissionValueKind.NpcShipArch, "npc_ship_arch"), (MissionValueKind.FormationShape, "formation_shape"),
+        (MissionValueKind.CommLine, "comm_line"), (MissionValueKind.Fuse, "fuse"),
+    ];
+
+    /// <summary>
+    /// The names that the base folder without mods (B) has and the edit view does not have, by kind, each with the last
+    /// mod that changes its file (decision D551 of the M6a design). A mod removes or renames such a name, so a mission
+    /// line that names it has a problem only with the mods. Only the files that the mods change can lose a name, so a
+    /// profile without mods reads no file.
+    /// </summary>
+    private Dictionary<MissionValueKind, IReadOnlyDictionary<string, string>> RemovedNames(FileSystem baseFiles,
+        MissionWorld world)
+    {
+        var result = new Dictionary<MissionValueKind, IReadOnlyDictionary<string, string>>();
+        if (EditView.Mods.Count == 0)
+            return result;
+        var ledger = EditView.Ledger;
+        string? ModOf(string path) => ledger.ModsThatChangeFile(VfsPath.Normalize(path) ?? path) is [.., var last] ? last : null;
+        foreach (var (kind, list) in WorldLists)
+        {
+            if (Lists.NamesOnlyInBase(list, baseFiles, ModOf) is { Count: > 0 } only)
+                result[kind] = only;
+        }
+        // The objects of the system files, as the nickname index reads them: the [Object] sections.
+        var objects = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in Systems.Files)
+        {
+            if (ModOf(path) is not { } mod || DataLists.BaseSections(baseFiles, path) is not { } sections)
+                continue;
+            foreach (var section in sections.Where(s => s.Name.Equals("Object", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (ItemIndex.First(section, "nickname") is { } nickname &&
+                    !world.Has(MissionValueKind.SystemObject, nickname))
+                    objects.TryAdd(nickname.Trim(), mod);
+            }
+        }
+        if (objects.Count > 0)
+            result[MissionValueKind.SystemObject] = objects;
+        return result;
     }
 
     /// <summary>The install path of a path relative to the data folder of the edit view, or null.</summary>

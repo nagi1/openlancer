@@ -29,6 +29,13 @@ public sealed class MissionInputs
     /// <summary>The names of the game data outside the scripts, and the files.</summary>
     public MissionWorld World { get; init; } = MissionWorld.Empty;
 
+    /// <summary>
+    /// The names of the base game for the base-game runs (decision D551). They are the names of <see cref="World"/> and
+    /// the names that a mod removes or renames. Null when no mod removes or renames a name that the checks read. Then
+    /// the base-game runs use <see cref="World"/>.
+    /// </summary>
+    public MissionWorld? BaseWorld { get; init; }
+
     /// <summary>Which mod changes which script and section.</summary>
     public IMissionLedger Ledger { get; init; } = NoMods.Instance;
 
@@ -52,7 +59,8 @@ public sealed class MissionInputs
 /// <summary>The analysis of one mission script of a run.</summary>
 /// <param name="Bytes">The bytes of the script in the edit view.</param>
 /// <param name="Problems">The problems with their origins and severities.</param>
-/// <param name="BaseIndex">The index of the base-game version of a script that a mod changes, or null.</param>
+/// <param name="BaseIndex">The index of the base-game run of the script (decision D551), or null when the script has
+/// none.</param>
 public sealed record MissionAnalysis(MissionScriptInfo Script, byte[] Bytes, MissionDocument Document, MissionIndex Index,
     IReadOnlyList<Diagnostic> Problems, MissionIndex? BaseIndex)
 {
@@ -62,7 +70,7 @@ public sealed record MissionAnalysis(MissionScriptInfo Script, byte[] Bytes, Mis
     /// <summary>The acts and the frame "Not started by the mission" (section 6.4 of the M6a design).</summary>
     public MissionActs? Acts { get; init; }
 
-    /// <summary>The prefab instances of the base-game version of a changed script, or null.</summary>
+    /// <summary>The prefab instances of the base-game run of the script, or null.</summary>
     public MissionPrefabResult? BasePrefabs { get; init; }
 
     /// <summary>The install path of the mission ship file that <c>[Mission] npc_ship_file</c> names, or null.</summary>
@@ -164,6 +172,9 @@ public static class MissionRun
     }
 
     /// <summary>Reads and checks one script. Null when the file cannot be read.</summary>
+    /// <remarks>The base-game run of a script (decision D551) checks the base-game version of a script that a mod
+    /// changes. It also checks a script that no mod changes when a mod removes or renames a name that the script names.
+    /// Then the base-game run uses the names of the base game, so a problem that the mod causes shows.</remarks>
     internal static MissionAnalysis? Analyze(MissionInputs inputs, MissionScriptInfo script)
     {
         if (Read(inputs.EditView, script.Path) is not var (bytes, document))
@@ -172,13 +183,20 @@ public static class MissionRun
         var problems = MissionChecks.Run(index, inputs.Options);
         MissionIndex? baseIndex = null;
         IReadOnlyList<Diagnostic>? baseProblems = null;
+        var baseWorld = inputs.BaseWorld ?? inputs.World;
         if (script.State != MissionScriptState.BaseGame && script.InBase && inputs.BaseView is { } baseView &&
             Read(baseView, script.Path) is var (_, baseDocument))
         {
-            baseIndex = MissionIndex.Build(baseDocument, inputs.Schema, inputs.World, inputs.Coverage);
+            baseIndex = MissionIndex.Build(baseDocument, inputs.Schema, baseWorld, inputs.Coverage);
             baseProblems = MissionChecks.Run(baseIndex, inputs.Options);
         }
-        var classified = MissionOrigins.Apply(problems, baseProblems, script, inputs.Ledger, inputs.ActiveModId);
+        else if (script.State == MissionScriptState.BaseGame && inputs.BaseWorld is { } names && NamesRemovedName(index, names))
+        {
+            baseIndex = MissionIndex.Build(document, inputs.Schema, names, inputs.Coverage);
+            baseProblems = MissionChecks.Run(baseIndex, inputs.Options);
+        }
+        var classified = MissionOrigins.Apply(problems, baseProblems, script, inputs.Ledger, inputs.ActiveModId,
+            problem => RemovedNameOf(index, problem, inputs.BaseWorld));
         var prefabs = MissionPrefabs.Retail.Match(index);
         var shipFile = document.OfKind(MissionSectionKind.Mission).Select(s => ItemIndex.First(s.Section, "npc_ship_file"))
             .OfType<string>().Select(inputs.DataPath).OfType<string>().FirstOrDefault();
@@ -193,6 +211,23 @@ public static class MissionRun
             ShipFile = shipFile,
             ShipBuilds = shipBuilds,
         };
+    }
+
+    /// <summary>True when a name of the script does not resolve in the edit view because a mod removes or renames
+    /// it.</summary>
+    private static bool NamesRemovedName(MissionIndex index, MissionWorld baseWorld) =>
+        index.Lines.SelectMany(l => l.References).Any(r => r.State == MissionReferenceState.Missing &&
+                                                            baseWorld.RemovedBy(r.Kind, r.Name) != null);
+
+    /// <summary>The mod that removes or renames a name of the line of a problem, or null.</summary>
+    private static string? RemovedNameOf(MissionIndex index, Diagnostic problem, MissionWorld? baseWorld)
+    {
+        if (baseWorld == null || problem.Target is not { } target || problem.EntryIndex < 0 ||
+            index.Document.Find(target) is not { } section)
+            return null;
+        return index.LinesOf(section).Where(l => l.Entry == problem.EntryIndex).SelectMany(l => l.References)
+            .Where(r => r.State == MissionReferenceState.Missing)
+            .Select(r => baseWorld.RemovedBy(r.Kind, r.Name)).FirstOrDefault(m => m != null);
     }
 
     /// <summary>The bytes and the document of a script, or null when it cannot be read or parsed.</summary>

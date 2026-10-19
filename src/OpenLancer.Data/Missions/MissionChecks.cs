@@ -24,12 +24,12 @@ public static class MissionChecks
     /// <summary>The Console source of the mission problems (section 12.4 of the M6a design).</summary>
     public const string Source = "Mission";
 
-    /// <summary>The ids of the rules, in the order of section 13.6 of the M6a design. M24 and M25 are the lint rules of
-    /// section 11.5: unknown keys and unknown section types.</summary>
+    /// <summary>The ids of the rules, in the order of section 13.6 of the M6a design. M24, M25 and M26 are the lint rules
+    /// of section 11.5: unknown keys, unknown section types and words outside a closed set of words.</summary>
     public static readonly IReadOnlyList<string> Rules =
     [
         "M01", "M02", "M03", "M04", "M05", "M06", "M07", "M08", "M09", "M10", "M11", "M12", "M13", "M14", "M15", "M16",
-        "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25", "G01", "G02", "G03", "G04", "G05", "G06",
+        "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25", "M26", "G01", "G02", "G03", "G04", "G05", "G06",
     ];
 
     /// <summary>The rules whose problems are errors for a line of the active mod. The others are warnings.</summary>
@@ -76,8 +76,16 @@ public static class MissionChecks
         MissionValueKind.FormationShape => "formation shape",
         MissionValueKind.Head or MissionValueKind.Body or MissionValueKind.Accessory => "costume part",
         MissionValueKind.CommLine => "comm line",
+        MissionValueKind.Equipment => "equipment item",
         _ => kind.ToString().ToLowerInvariant(),
     };
+
+    /// <summary>A word with "a" or "an" before it, for example "an order list".</summary>
+    internal static string WithArticle(string word) =>
+        (word.Length > 0 && ("aeiou".Contains(char.ToLowerInvariant(word[0])) ||
+                             word.StartsWith("NPC", StringComparison.Ordinal))
+            ? "an "
+            : "a ") + word;
 
     private sealed class Context(MissionIndex index, List<Diagnostic> result)
     {
@@ -176,18 +184,32 @@ public static class MissionChecks
             switch (reference.Spec.Scope)
             {
                 case MissionKindScope.Value:
-                    // A word outside an open set of words: the game reads its default. No rule.
+                    // Only a word outside a closed set of words is missing. The game reads a word outside an open set
+                    // as its default.
+                    var words = reference.Spec.Tokens is { } set && index.Schema.Tokens.TryGetValue(set, out var tokens)
+                        ? string.Join(", ", tokens.Values)
+                        : "";
+                    Add("M26", line.Section, line.Entry,
+                        $"'{name}' is not a word of '{reference.Spec.Label}'. The effect in the game is not known. Write " +
+                        $"one of these words: {words}.", $"{owner}|{line.Key}|{name}");
                     return;
                 case MissionKindScope.Script when reference.Kind == MissionValueKind.Trigger:
                     Add("M05", line.Section, line.Entry,
                         $"{Plain(line)} names trigger '{name}'. This script has no such trigger. The game ignores this " +
                         "line. Pick a trigger of this script.", $"{owner}|{name}");
                     return;
+                case MissionKindScope.Script when reference.Kind == MissionValueKind.Object:
+                    // A name of the label rule can also name an object of a system (review finding RV39).
+                    Add("M06", line.Section, line.Entry,
+                        $"{Plain(line)} names '{name}'. This script has no ship, formation, solar, loot or label with this " +
+                        "name, and no system has an object with this name. The game ignores this line. Pick a name from " +
+                        "the list.", $"{owner}|{reference.Kind}|{name}");
+                    return;
                 case MissionKindScope.Script:
                     var kind = KindWord(reference.Kind);
                     Add("M06", line.Section, line.Entry,
                         $"{Plain(line)} names {kind} '{name}'. This script has no such {kind}. The game ignores this line. " +
-                        $"Pick a {kind} of this script.", $"{owner}|{reference.Kind}|{name}");
+                        $"Pick {WithArticle(kind)} of this script.", $"{owner}|{reference.Kind}|{name}");
                     return;
                 case MissionKindScope.File:
                     Add("M22", line.Section, line.Entry,
@@ -203,7 +225,7 @@ public static class MissionChecks
                     var world = KindWord(reference.Kind);
                     Add("M23", line.Section, line.Entry,
                         $"{Plain(line)} names {world} '{name}'. The game data has no {world} with this name. The game " +
-                        $"ignores this line. Pick a {world} from the list.", $"{owner}|{reference.Kind}|{name}");
+                        $"ignores this line. Pick {WithArticle(world)} from the list.", $"{owner}|{reference.Kind}|{name}");
                     return;
             }
         }
@@ -384,8 +406,8 @@ public static class MissionChecks
                 if (spec == null)
                 {
                     Add("M25", section, -1,
-                        $"The game does not read sections of type [{section.Type}] in a mission script. The game ignores " +
-                        "this section.", section.Ref.Id.ToString());
+                        $"Section type [{section.Type}] is not a known type of a mission script. The editor does not " +
+                        "check this section. Make sure that the type name is correct.", section.Ref.Id.ToString());
                     continue;
                 }
                 if (spec.OpenKeys)
@@ -408,9 +430,16 @@ public static class MissionChecks
                                      "with the mission.", "");
             var ends = triggers.SelectMany(t => t.ActionsOf("Act_ChangeState").Select(a => (Trigger: t, Line: a))).ToList();
             var successes = ends.Where(e => MissionIndex.Is(e.Line.Value(0), "SUCCEED")).ToList();
-            if (triggers.Count > 0 && !successes.Any(s => index.Reached.Contains(s.Trigger)))
+            if (triggers.Count > 0 && successes.Count == 0)
                 Add("G02", null, -1, "No trigger ends this mission with success. The story cannot go to the next mission. " +
                                      "Add \"End mission: success\" to one trigger.", "");
+            else if (triggers.Count > 0 && !successes.Any(s => index.Reached.Contains(s.Trigger)))
+            {
+                var (first, line) = successes[0];
+                Add("G02", first.Section, line.Entry,
+                    $"No start trigger leads to the success line of trigger '{first.Nickname}'. The story cannot go to " +
+                    $"the next mission. Start trigger '{first.Nickname}' from a trigger that runs.", first.Nickname);
+            }
             if (successes.Count > 1)
                 Add("G03", null, -1, $"This mission has {successes.Count} success lines. The story moves on at the first " +
                                      "one that runs. Keep one success line.", successes.Count.ToString(CultureInfo.InvariantCulture));

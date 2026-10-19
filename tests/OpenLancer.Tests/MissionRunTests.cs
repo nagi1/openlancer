@@ -13,8 +13,10 @@ namespace OpenLancer.Tests;
 
 /// <summary>
 /// The run of the mission checks, the origin of the problems by comparison with the base game (decision D551), and the
-/// rule that the run logs nothing (sections 12.2, 12.3 and 18.1 of the M6a design).
+/// rule that the run logs nothing (sections 12.2, 12.3 and 18.1 of the M6a design). The class captures the lines of
+/// the global engine log, so it runs alone in its collection.
 /// </summary>
+[Collection(nameof(EngineLogCollection))]
 public sealed class MissionRunTests
 {
     private const string Script = @"DATA\MISSIONS\M01A\m01a.ini";

@@ -22,8 +22,8 @@ internal sealed class RawIniEditorState
     /// <summary>The steps for the text and the marks of this frame. A step that it returns counts as done.</summary>
     public (bool SetText, bool SetMarks) Plan(string newText, IReadOnlyList<RawMark> newMarks)
     {
-        var setText = !string.Equals(text, newText, StringComparison.Ordinal);
-        var setMarks = setText || marks == null || !marks.SequenceEqual(newMarks);
+        var setText = !ReferenceEquals(text, newText) && !string.Equals(text, newText, StringComparison.Ordinal);
+        var setMarks = setText || marks == null || !ReferenceEquals(marks, newMarks) && !marks.SequenceEqual(newMarks);
         text = newText;
         marks = newMarks;
         return (setText, setMarks);
@@ -33,15 +33,25 @@ internal sealed class RawIniEditorState
     public void Reset() => (text, marks) = (null, null);
 }
 
+/// <summary>The names that the INI mode colors. The keywords are for example the actions and conditions of a mission.
+/// The declarations are for example the known keys of the section types. They compare without letter case.</summary>
+internal sealed record IniVocabulary(IReadOnlyList<string> Keywords, IReadOnlyList<string> Declarations);
+
 /// <summary>
 /// The raw INI editor (AGENTS.md UI rule 11, section 11.5 of the M6a design): the vendored color text editor in its INI
 /// mode, with the marks of the checks on the lines. A line with an error has the error color, a line with a warning has
-/// the warning color, and a line with only base-game problems has a muted color. The tooltip is the message of the
-/// check, the same text as on the field.
+/// the warning color, and a line with only base-game problems or with a note has a muted color. The tooltip is the
+/// message of the check, the same text as on the field.
 /// </summary>
-/// <remarks>When the loaded <c>cimgui.dll</c> lacks the exports of OL-0060, the editor shows the text in a read-only
-/// field with a list of the marks under it, as OL-0019 does for ImGuizmo.</remarks>
-internal sealed class RawIniEditor : IDisposable
+/// <remarks>
+/// <para>Each editor has the vocabulary of its data, for example the names of the mission schema. The native INI mode
+/// keeps one set of names for all editors. So an editor sets its vocabulary again after another editor set
+/// another one.</para>
+/// <para>When the loaded <c>cimgui.dll</c> lacks the exports of OL-0060, the editor shows the text in a read-only field
+/// with a list of the marks under it, as OL-0019 does for ImGuizmo.</para>
+/// </remarks>
+/// <param name="vocabulary">The names that the editor colors, or null for none.</param>
+internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposable
 {
     /// <summary>The Console text when the natives lack the exports (section 13.1 of the M6a design).</summary>
     public const string NeedsNewNatives =
@@ -49,15 +59,14 @@ internal sealed class RawIniEditor : IDisposable
         "again. See \"Build the submodule\" in docs/UPSTREAM.md.";
 
     private static bool? nativeReady;
-    private static bool identifiersSet;
+
+    // The vocabulary that the native INI mode has now. It is one set for all editors.
+    private static IniVocabulary? nativeVocabulary;
 
     private readonly RawIniEditorState state = new();
     private ColorTextEdit? editor;
     private int? goToLine;
     private string fallbackText = "";
-
-    /// <summary>The names in the keyword color and the declaration color of all raw editors, or null for none.</summary>
-    public static (IEnumerable<string> Keywords, IEnumerable<string> Declarations)? Identifiers { get; set; }
 
     /// <summary>Raised once when the natives lack the exports of the INI mode.</summary>
     public static event Action? FallbackShown;
@@ -93,11 +102,11 @@ internal sealed class RawIniEditor : IDisposable
             editor.SetPalette(Palette());
         }
 
-        if (!identifiersSet && Identifiers is var (keywords, declarations))
+        if (vocabulary != null && !ReferenceEquals(nativeVocabulary, vocabulary))
         {
-            editor.SetIdentifiers(ColorTextEditIdentifiers.Keywords, keywords);
-            editor.SetIdentifiers(ColorTextEditIdentifiers.Declarations, declarations);
-            identifiersSet = true;
+            editor.SetIdentifiers(ColorTextEditIdentifiers.Keywords, vocabulary.Keywords);
+            editor.SetIdentifiers(ColorTextEditIdentifiers.Declarations, vocabulary.Declarations);
+            nativeVocabulary = vocabulary;
         }
 
         var (setText, setMarks) = state.Plan(text.Text, marks);
@@ -165,7 +174,7 @@ internal sealed class RawIniEditor : IDisposable
         ImGui.EndChild();
     }
 
-    private static Vector4 MarkColor(RawMark mark) => mark.BaseGame ? EditorTheme.TextDim
+    private static Vector4 MarkColor(RawMark mark) => mark.BaseGame || mark.Note ? EditorTheme.TextDim
         : mark.Severity == DiagnosticSeverity.Error ? EditorTheme.Error
         : EditorTheme.Warning;
 
@@ -176,9 +185,9 @@ internal sealed class RawIniEditor : IDisposable
         [
             EditorTheme.Text, // text
             EditorTheme.AccentText, // keyword: actions and conditions
-            new Vector4(0.62f, 0.80f, 0.86f, 1), // declaration: known keys
-            new Vector4(0.68f, 0.80f, 0.62f, 1), // number
-            new Vector4(0.86f, 0.70f, 0.52f, 1), // string: text placeholders
+            EditorTheme.SyntaxKey, // declaration: known keys
+            EditorTheme.SyntaxNumber, // number
+            EditorTheme.SyntaxString, // string: text placeholders
             EditorTheme.TextDim, // punctuation
             EditorTheme.TextBright, // preprocessor: section headers
             EditorTheme.Text, // identifier

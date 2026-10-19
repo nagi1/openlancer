@@ -19,9 +19,9 @@ internal enum CenterMode
 /// </summary>
 /// <remarks>
 /// <para>Each tab owns a test for its own items: the Cutscene tab owns the elements of a cutscene, and the Mission tab
-/// owns the items of a mission. The Scene tab owns each other selection while it shows.</para>
-/// <para>A selection of another kind that the user made in the meantime stays, for example a section in the Database
-/// while the Cutscene tab shows. This is the rule of the cutscene editor before the Mission tab.</para>
+/// owns the items of a mission. Each other selection belongs to the tab that shows when the user makes it. Examples are
+/// a section in the Database and an object in the Scene part of the Mission tab. That tab gets it back when it shows
+/// again.</para>
 /// <para>Each tab validates its kept selection when it comes back. A selection that is not valid any more becomes the
 /// root item of the tab, or null.</para>
 /// </remarks>
@@ -60,21 +60,10 @@ internal sealed class CenterSelections
         var currentOwner = owner(current);
         if (currentOwner == mode)
             return current;
-        if (currentOwner == from || currentOwner == null && from == CenterMode.Scene)
-        {
-            slots[from] = current;
-            return valid(mode, slots[mode]);
-        }
-
-        if (currentOwner is { } other)
-        {
-            // An item of a third tab, for example an element of a cutscene that a mission link selected.
-            slots[other] = current;
-            return valid(mode, slots[mode]);
-        }
-
-        // A selection of another kind that the user made while the old tab showed stays.
-        return current;
+        // An item of the old tab or an item that no tab owns stays with the old tab, because the user made it there. An
+        // item of a third tab goes into the slot of that tab, for example an element that a mission link selected.
+        slots[currentOwner ?? from] = current;
+        return valid(mode, slots[mode]);
     }
 
     /// <summary>Keeps an item in the slot of a tab, for example the root of a cutscene that opens while the Scene tab

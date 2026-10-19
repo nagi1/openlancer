@@ -563,6 +563,28 @@ public sealed class RemovedEntriesTests
         Assert.Contains(session.SaveProblems(), p => p.Target == ListWorkspace.Li01("Li01_01") && p.Key == "loadout");
     }
 
+    /// <summary>A scoped list with a role reads the files of its role: a delete in a mission script removes a mission
+    /// trigger, and a delete in a system file removes no mission entry (section 14.1 of the M6a design).</summary>
+    [Fact]
+    public void AScopedListWithARoleReadsTheFilesOfItsRole()
+    {
+        const string script = @"DATA\MISSIONS\M01A\m01a.ini";
+        using var ws = ListWorkspace.Create(activeFiles: new()
+        {
+            [@"patches\" + script] = "[Trigger]\nnickname = t_end\nol.delete = true\n",
+            [@"patches\" + ListWorkspace.Li01Path] = "[Object]\nnickname = Li01_child\nol.delete = true\n",
+        });
+        ws.WriteBase(script, MissionTestData.Story);
+        var session = ws.Session("act");
+
+        var removed = session.Lists.Removed();
+
+        Assert.Contains(removed, r => (r.List, r.Value) == ("mission_trigger", "t_end"));
+        Assert.DoesNotContain(removed, r => r.List.StartsWith("mission_") && r.Value == "Li01_child");
+        Assert.All(removed.Where(r => r.List.StartsWith("mission_")),
+            r => Assert.Equal(script, r.LowerSection.Path, ignoreCase: true));
+    }
+
     [Fact]
     public void ADeleteRemovesTheEntryAndAnUndoBringsItBack()
     {

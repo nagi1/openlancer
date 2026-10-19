@@ -261,12 +261,14 @@ public static partial class TargetChecks
     {
         foreach (var path in scope.Changed)
         {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (section, id) in side.Each(path, "Trigger"))
             {
-                // A condition line before the nickname does not count (TR2), as in the mission checks (decision D556).
-                if (TriggerRules.EffectiveCondition(section) >= 0)
+                // The game skips a trigger without a nickname (TR2) and the second trigger with a name (TR4). A condition
+                // line before the nickname does not count (TR2). The mission checks use the same rules (decision D556).
+                if (TriggerRules.Nickname(section) is not { } trigger || !seen.Add(trigger) ||
+                    TriggerRules.EffectiveCondition(section) >= 0)
                     continue;
-                var trigger = ItemIndex.First(section, "nickname") ?? id.ToString();
                 yield return new($"trigger|{path.ToLowerInvariant()}|{id}", Problem(true, path, id, null,
                     TriggerRules.NoConditionMessage(trigger)));
             }

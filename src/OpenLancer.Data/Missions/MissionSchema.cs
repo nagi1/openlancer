@@ -132,6 +132,13 @@ public sealed record MissionValueSpec(int Index, string Name, string Label, Miss
     /// <summary>False when no reader checked the meaning of the value. The UI then shows its values only.</summary>
     public bool Checked { get; init; } = true;
 
+    /// <summary>True for a field that is hard to understand. Its label gets a help glyph (section 11.3 of the M6a
+    /// design).</summary>
+    public bool Hard { get; init; }
+
+    /// <summary>The list field of a value that repeats up to the end of the line, or null (decision D540).</summary>
+    public MissionListInfo? List { get; init; }
+
     /// <summary>The index after the last value of the spec.</summary>
     public int End => Rest ? int.MaxValue : Index + Width;
 
@@ -300,12 +307,20 @@ public sealed record MissionKeySpec(string Key, string Label, MissionValueKind K
     /// <summary>A word that means "no name", for example <c>no_ol</c>, or null.</summary>
     public string? NoneToken { get; init; }
 
+    /// <summary>True for a field that is hard to understand. Its label gets a help glyph (section 11.3 of the M6a
+    /// design).</summary>
+    public bool Hard { get; init; }
+
+    /// <summary>The list field of the lines of the key, or null for a key with one line (decision D540).</summary>
+    public MissionListInfo? List { get; init; }
+
     /// <summary>The specs of the values of a line of the key.</summary>
     public IReadOnlyList<MissionValueSpec> ValueSpecs => Values.Count > 0
         ? Values
         : [new MissionValueSpec(0, Key, Label, Kind)
         {
             Closed = Closed, Tokens = Tokens, Buffer = Buffer ?? DefaultBuffer(Kind), Help = Help, NoneToken = NoneToken,
+            Hard = Hard,
         }];
 
     private static string? DefaultBuffer(MissionValueKind kind) => MissionSchema.DefaultBuffer(kind);
@@ -317,6 +332,9 @@ public sealed record MissionKeySpec(string Key, string Label, MissionValueKind K
 /// <param name="Directives">True for <c>[ObjList]</c>: the orders are keys too.</param>
 public sealed record MissionSectionSpec(string Type, IReadOnlyList<MissionKeySpec> Keys, bool OpenKeys, bool Directives)
 {
+    /// <summary>The list field of the orders of an <c>[ObjList]</c>, or null.</summary>
+    public MissionListInfo? Orders { get; init; }
+
     public MissionKeySpec? Key(string key) =>
         Keys.FirstOrDefault(k => k.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
 }
@@ -335,6 +353,12 @@ public sealed record MissionTokenSet(string Id, IReadOnlyList<string> Values, bo
 /// <param name="What">The thing that the message names, for example "The object name".</param>
 /// <param name="Max">The most characters that the game reads.</param>
 public sealed record MissionBuffer(string Id, string What, int Max);
+
+/// <summary>The rule data of a list field (section 11.1 of the M6a design, decision D540).</summary>
+/// <param name="Label">The label of the field, or null for the label of its key or value.</param>
+/// <param name="Items">The plural word of the rows, for example "ships".</param>
+/// <param name="AddLabel">The text of the Add button, or null for "Add".</param>
+public sealed record MissionListInfo(string? Label, string Items, string? AddLabel);
 
 /// <summary>
 /// The argument schema of mission scripts (section 14.4 of the M6a design): the conditions, actions and orders with
@@ -407,6 +431,151 @@ public sealed class MissionSchema
     /// <summary>The story slot of a script path relative to the data folder, without letter case, or null.</summary>
     public StorySlot? SlotOf(string relativePath) =>
         StorySlots.FirstOrDefault(s => s.Path.Equals(relativePath, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The list fields of the rule data (section 11.1 of the M6a design, decision D540). A key with more than one line
+    /// gives a repeated-key field, for example the <c>ship</c> lines of a formation. A value that repeats up to the end
+    /// of a line gives a value-list field, for example the ships of <c>Cnd_NPCSystemEnter</c>. The orders of an order
+    /// list give a mixed-keys field. The columns come from the value specs.
+    /// </summary>
+    public IReadOnlyList<ListFieldSpec> Lists => lists ??= BuildLists();
+
+    private IReadOnlyList<ListFieldSpec>? lists;
+
+    /// <summary>The list field of a key of a section type, or null when the key has one line.</summary>
+    public ListFieldSpec? KeyList(string sectionType, string key) => ListById($"{sectionType}.{key}");
+
+    /// <summary>The list field of a value of a condition, an action or an order, or null.</summary>
+    public ListFieldSpec? ValueList(string name, string value) => ListById($"{name}.{value}");
+
+    /// <summary>The list field of the orders of a section type, or null.</summary>
+    public ListFieldSpec? OrderList(string sectionType) => ListById($"{sectionType}.orders");
+
+    private ListFieldSpec? ListById(string id) =>
+        Lists.FirstOrDefault(l => l.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+
+    private List<ListFieldSpec> BuildLists()
+    {
+        var result = new List<ListFieldSpec>();
+        foreach (var section in Sections)
+        {
+            foreach (var key in section.Keys.Where(k => k.List != null))
+            {
+                result.Add(new ListFieldSpec($"{section.Type}.{key.Key}", key.List!.Label ?? key.Label, key.Help,
+                    ListFieldCodec.RepeatedKey, [key.Key], key.ValueSpecs.Select(v => Column(v)).ToList())
+                {
+                    Items = key.List.Items,
+                    AddLabel = key.List.AddLabel,
+                });
+            }
+            if (section.Orders is { } orders)
+            {
+                result.Add(LinesList($"{section.Type}.orders", orders.Label ?? "Orders",
+                    Directives.Select(d => d.Name).ToList(), orders.Items) with { AddLabel = orders.AddLabel });
+            }
+        }
+        foreach (var name in Conditions.Concat(Actions).Concat(Directives))
+        {
+            foreach (var value in name.Values.Where(v => v.List != null))
+            {
+                // Each row is one value of the rest of the line, after the values before it.
+                result.Add(new ListFieldSpec($"{name.Name}.{value.Name}", value.List!.Label ?? value.Label, value.Help,
+                    ListFieldCodec.ValueList, [name.Name], [Column(value with { Index = 0, Rest = false })], value.Index)
+                {
+                    Items = value.List.Items,
+                    AddLabel = value.List.AddLabel,
+                });
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// A mixed-keys list field of the lines of a set of keys, with one row for each line in file order. Examples are the
+    /// orders of an order list and the spawn lines of a spawn wave. Each key has the columns of its values, and its
+    /// plain name names its rows.
+    /// </summary>
+    /// <param name="keys">The condition, action or order names.</param>
+    /// <param name="items">The plural word of the rows, for example "orders".</param>
+    public ListFieldSpec LinesList(string id, string label, IReadOnlyList<string> keys, string items)
+    {
+        var columns = new List<ListColumn>();
+        var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in keys)
+        {
+            if ((Name(key) ?? Directive(key)) is not { } name)
+                continue;
+            labels[name.Name] = name.Plain;
+            columns.AddRange(name.Values.Select(v => Column(v, name.Name)));
+        }
+        return new ListFieldSpec(id, label, null, ListFieldCodec.MixedKeys, keys, columns)
+        {
+            Items = items,
+            KeyLabels = labels,
+        };
+    }
+
+    /// <summary>The column of a value spec. A name gives a list reference. Another value gives a number, a whole number,
+    /// a word of a set, a position, a rotation or a text.</summary>
+    /// <param name="key">The key of the column set of a mixed-keys field, or null.</param>
+    public ListColumn Column(MissionValueSpec spec, string? key = null)
+    {
+        var list = ListOf(spec.Kind);
+        var kind = spec.Kind switch
+        {
+            MissionValueKind.Position => ListColumnKind.Position,
+            MissionValueKind.Rotation => ListColumnKind.Rotation,
+            MissionValueKind.WholeNumber or MissionValueKind.TextId => ListColumnKind.WholeNumber,
+            MissionValueKind.Number or MissionValueKind.Attitude =>
+                spec.Whole ? ListColumnKind.WholeNumber : ListColumnKind.Number,
+            MissionValueKind.Token or MissionValueKind.Bool => ListColumnKind.Token,
+            _ when list != null => ListColumnKind.Reference,
+            _ => ListColumnKind.Text,
+        };
+        var set = spec.Tokens is { } id ? Tokens.GetValueOrDefault(id) : null;
+        IReadOnlyList<string>? words = spec.Kind == MissionValueKind.Bool ? ["true", "false"] : set?.Values;
+        return new ListColumn(spec.Label, spec.Index, kind, kind == ListColumnKind.Reference ? list : null, words,
+            set?.CaseSensitive == true, spec.Help, Key: key, Rest: spec.Rest);
+    }
+
+    /// <summary>
+    /// The ids of the data lists of a kind, or null for a kind without a list. A kind with more than one list joins the
+    /// ids with "+" (section 14.1 of the M6a design).
+    /// </summary>
+    public static string? ListOf(MissionValueKind kind) => kind switch
+    {
+        MissionValueKind.Trigger => "mission_trigger",
+        MissionValueKind.Object => "mission_ship+mission_formation+mission_solar+mission_loot+mission_label",
+        MissionValueKind.Group => "mission_ship+mission_formation",
+        MissionValueKind.Ship => "mission_ship",
+        MissionValueKind.Formation => "mission_formation",
+        MissionValueKind.Solar => "mission_solar",
+        MissionValueKind.Loot => "mission_loot",
+        MissionValueKind.ObjList => "mission_objlist",
+        MissionValueKind.Dialog => "mission_dialog",
+        MissionValueKind.Objective => "mission_objective",
+        MissionValueKind.Npc => "mission_npc",
+        MissionValueKind.RandomEncounter => "mission_randenc",
+        MissionValueKind.System => "system",
+        MissionValueKind.Base => "base",
+        MissionValueKind.Faction => "faction",
+        MissionValueKind.ShipArch => "ship",
+        MissionValueKind.Loadout => "loadout",
+        MissionValueKind.Pilot => "pilot",
+        MissionValueKind.Voice => "voice",
+        MissionValueKind.Good => "good",
+        MissionValueKind.Equipment => "equipment",
+        MissionValueKind.Head => "head",
+        MissionValueKind.Body => "body",
+        MissionValueKind.Accessory => "accessory",
+        MissionValueKind.NpcShipArch => "npc_ship_arch",
+        MissionValueKind.FormationShape => "formation_shape",
+        MissionValueKind.CommLine => "comm_line",
+        MissionValueKind.Fuse => "fuse",
+        MissionValueKind.SpaceCutscene => "cutscene",
+        MissionValueKind.BaseScene => "base_scene",
+        _ => null,
+    };
 
     /// <summary>Where a kind finds its names.</summary>
     public static MissionKindScope ScopeOf(MissionValueKind kind) => kind switch
@@ -588,8 +757,16 @@ public sealed class MissionSchema
             Buffer = Optional(e, "buffer") ?? DefaultBuffer(kind),
             Help = Optional(e, "help"),
             Checked = !e.TryGetProperty("checked", out var c) || c.GetBoolean(),
+            Hard = Bool(e, "hard"),
+            List = ReadList(e, "list"),
         };
     }
+
+    /// <summary>The list data of a property, or null when the item has none.</summary>
+    private static MissionListInfo? ReadList(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var list)
+            ? new MissionListInfo(Optional(list, "label"), Text(list, "items"), Optional(list, "addLabel"))
+            : null;
 
     /// <summary>The buffer of a kind without its own buffer: an object name has 47 characters (TR15).</summary>
     internal static string? DefaultBuffer(MissionValueKind kind) => kind is MissionValueKind.Object or
@@ -610,8 +787,13 @@ public sealed class MissionSchema
             Buffer = Optional(k, "buffer"),
             Help = Optional(k, "help"),
             NoneToken = Optional(k, "noneToken"),
+            Hard = Bool(k, "hard"),
+            List = ReadList(k, "list"),
         }).ToList(),
-        Bool(e, "openKeys"), Bool(e, "directives"));
+        Bool(e, "openKeys"), Bool(e, "directives"))
+    {
+        Orders = ReadList(e, "orders"),
+    };
 
     private static MissionValueKind Kind(string text) =>
         Enum.TryParse<MissionValueKind>(text, ignoreCase: true, out var kind)

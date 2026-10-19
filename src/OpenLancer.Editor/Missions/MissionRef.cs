@@ -1,6 +1,7 @@
 using System;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.IO;
+using OpenLancer.Data.Missions;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -41,6 +42,24 @@ internal sealed record MissionRef(string Script, MissionItemKind Kind, SectionRe
 {
     /// <summary>The mission itself.</summary>
     public static MissionRef Of(string script) => new(VfsPath.Normalize(script) ?? script, MissionItemKind.Mission);
+
+    /// <summary>The item kind of a section kind: a section of an unknown type is another section.</summary>
+    /// <param name="line">True for a line of the section. A line of a trigger is a row.</param>
+    public static MissionItemKind KindOf(MissionSectionKind kind, bool line = false) => kind switch
+    {
+        MissionSectionKind.Mission => MissionItemKind.Mission,
+        MissionSectionKind.Trigger => line ? MissionItemKind.Row : MissionItemKind.Trigger,
+        MissionSectionKind.Ship => MissionItemKind.Ship,
+        MissionSectionKind.Formation => MissionItemKind.Formation,
+        MissionSectionKind.Solar => MissionItemKind.Solar,
+        MissionSectionKind.Loot => MissionItemKind.Loot,
+        MissionSectionKind.OrderList => MissionItemKind.OrderList,
+        MissionSectionKind.Objective => MissionItemKind.Objective,
+        MissionSectionKind.Npc => MissionItemKind.Npc,
+        MissionSectionKind.Conversation => MissionItemKind.Conversation,
+        MissionSectionKind.RandomEncounter => MissionItemKind.RandomEncounter,
+        _ => MissionItemKind.OtherSection,
+    };
 
     public bool Equals(MissionRef? other) =>
         other is not null && VfsPath.Comparer.Equals(Script, other.Script) && Kind == other.Kind &&

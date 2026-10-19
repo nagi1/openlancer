@@ -66,6 +66,57 @@ public sealed class MissionPageModelTests
         Assert.Equal(MissionPageModel.UnusedMissionKey, Assert.Single(advanced.Fields).Help);
     }
 
+    /// <summary>The systems of the Overview are chips with the names of the systems. A
+    /// click on a chip opens the system.</summary>
+    [Fact]
+    public void TheSystemsOfTheOverviewAreChips()
+    {
+        var (result, analysis) = Run(Full + "\n[MsnShip]\nnickname = s2\nsystem = sys_b\n\n[MsnSolar]\nnickname = sol1\n" +
+                                     "system = sys_a\n");
+
+        var page = MissionPageModel.Mission(result, analysis, TextOf, _ => null, false, false,
+            system => system == "sys_a" ? "Invented System" : null);
+
+        var systems = page.Section("overview")!.Fields.Single(f => f.Label == "Systems");
+        Assert.Equal(["Invented System", "sys_b"], systems.Chips.Select(c => c.Text));
+        Assert.Equal(new SystemLink("sys_a"), systems.Chips[0].Link);
+        Assert.Null(systems.Chips[1].Link);
+        Assert.Contains("(sys_a)", systems.Chips[0].Tooltip);
+    }
+
+    /// <summary>Each kind has its glyph and its info text, and a row of the Files
+    /// section does what its tooltip says.</summary>
+    [Fact]
+    public void EachKindHasItsGlyphAndTheFilesRowsAreLinks()
+    {
+        var (result, analysis) = Run(Full);
+        var page = MissionPageModel.Mission(result, analysis, TextOf, _ => null, false, false);
+        var schema = MissionSchema.Retail;
+
+        Assert.Equal(Editor.Ui.EditorIcons.Route, page.Glyph);
+        Assert.Equal(Editor.Ui.EditorIcons.Bolt, MissionPageModel.KindOf(MissionItemKind.Trigger, null, schema).Glyph);
+        Assert.Equal(schema.Help["otherSection"], MissionPageModel.KindOf(MissionItemKind.OtherSection, null, schema).Help);
+        Assert.Equal("Spawn wave", MissionPageModel.KindOf(MissionItemKind.PrefabInstance, "spawnWave|t1", schema).Help.Title);
+        Assert.Equal(Editor.Ui.EditorIcons.ExclamationTriangle, page.Section("problems")!.Glyph);
+        var files = page.Section("files")!.Fields.ToDictionary(f => f.Label);
+        Assert.IsType<BundleLink>(files["Script"].Link);
+        Assert.EndsWith("Click to open the mission.", files["Script"].Help);
+        Assert.Null(files["News and rumors"].Link);
+        Assert.DoesNotContain("Double-click", files["News and rumors"].Help);
+    }
+
+    /// <summary>The OpenLancer section lists the gaps of the report of the data layer.</summary>
+    [Fact]
+    public void TheOpenLancerSectionListsTheGaps()
+    {
+        var (result, analysis) = Run(Full);
+
+        var section = MissionPageModel.Mission(result, analysis, TextOf, _ => null, false, false).Section("openlancer")!;
+
+        Assert.Equal(MissionSummary.OpenLancer(analysis.Index).Gaps.Select(g => (g.Name, g.Text)),
+            section.Fields.Select(f => (f.Label, f.Value)));
+    }
+
     [Fact]
     public void TheOpenLancerSectionHidesForAModWithoutOpenLancer()
     {
@@ -87,7 +138,9 @@ public sealed class MissionPageModelTests
         Assert.Empty(hidden.Fields);
         Assert.Equal(["1 base-game message is hidden."], hidden.Notes);
         var field = Assert.Single(shown.Fields);
-        Assert.Equal(("G05", true), (field.Label, field.Muted));
+        // The label is the place of the problem in plain words, not the rule id (UI rule 1).
+        Assert.Equal(("Trigger t_x", true, DiagnosticSeverity.Warning), (field.Label, field.Muted, field.Severity));
+        Assert.IsType<LineLink>(field.Link);
         Assert.Empty(shown.Notes);
     }
 
@@ -106,6 +159,8 @@ public sealed class MissionPageModelTests
         Assert.Equal("Trigger", section.Title);
         Assert.False(section.Advanced);
         Assert.Equal(["Starts with the mission", "Repeats", "Starts when"], section.Fields.Select(f => f.Label));
+        // The schema marks both fields as hard, so their labels get the help glyph.
+        Assert.Equal([true, true, false], section.Fields.Select(f => f.Hard));
         Assert.Equal(["No", "Yes"], section.Fields.Take(2).Select(f => f.Value));
         Assert.DoesNotContain(page.Sections, s => s.Advanced);
         Assert.Equal(trigger.Section.Ref, page.Ini);

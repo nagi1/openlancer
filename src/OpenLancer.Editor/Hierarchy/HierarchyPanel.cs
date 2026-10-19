@@ -49,7 +49,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
     /// the search field with a clear button in it.</summary>
     public void Toolbar()
     {
-        if ((window.CenterMode == CenterMode.Cutscene))
+        if (window.CenterMode == CenterMode.Cutscene)
         {
             ToolbarItems.SearchField("search-cutscene", "Search (t:camera)", ref cutsceneSearch, -1, CutsceneSearchTip);
             return;
@@ -98,7 +98,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         HierarchyModel tree;
-        if ((window.CenterMode == CenterMode.Cutscene))
+        if (window.CenterMode == CenterMode.Cutscene)
         {
             if (window.Cutscenes.Timeline is not { } timeline)
             {
@@ -137,14 +137,14 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
-        if (!(window.CenterMode == CenterMode.Cutscene))
+        if (window.CenterMode != CenterMode.Cutscene)
         {
             FollowRename(tree);
         }
 
         Rows(tree, focused);
         // The empty space below the rows takes a tile: the asset spawns at the camera pivot.
-        if (!(window.CenterMode == CenterMode.Cutscene) && ImGui.GetContentRegionAvail().Y > 1)
+        if (window.CenterMode != CenterMode.Cutscene && ImGui.GetContentRegionAvail().Y > 1)
         {
             ImGui.Dummy(new Vector2(Math.Max(1, ImGui.GetContentRegionAvail().X), ImGui.GetContentRegionAvail().Y));
             window.AssetDrag.Hierarchy(null);
@@ -152,12 +152,13 @@ internal sealed class HierarchyPanel(EditorWindow window)
 
         if (tree.IsSearching && tree.Root.Matches == 0)
         {
-            PanelStates.Message((window.CenterMode == CenterMode.Cutscene) ? "No entity matches the search." : "No object matches the search.",
+            PanelStates.Message(
+                window.CenterMode == CenterMode.Cutscene ? "No entity matches the search." : "No object matches the search.",
                 "Esc in the search field clears it.");
         }
 
         // A right click on empty space opens the Create menu (decision D255 of the M3 design).
-        if (!(window.CenterMode == CenterMode.Cutscene) &&
+        if (window.CenterMode != CenterMode.Cutscene &&
             ImGui.BeginPopupContextWindow("##hierarchy-create", ImGuiPopupFlags.MouseButtonRight | ImGuiPopupFlags.NoOpenOverItems))
         {
             EditorTheme.PushMenuColors();
@@ -169,7 +170,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (focused && !ImGui.GetIO().WantTextInput)
         {
             Keys(tree);
-            if (!(window.CenterMode == CenterMode.Cutscene))
+            if (window.CenterMode != CenterMode.Cutscene)
             {
                 window.SceneEdits.Keys(window.Selection);
             }
@@ -309,7 +310,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.SetItemTooltip(node.Tooltip);
         }
 
-        if (!(window.CenterMode == CenterMode.Cutscene))
+        if (window.CenterMode != CenterMode.Cutscene)
         {
             DragAndDrop(node);
         }
@@ -321,7 +322,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             {
                 ContextMenu(node.Item);
             }
-            else if (!(window.CenterMode == CenterMode.Cutscene))
+            else if (window.CenterMode != CenterMode.Cutscene)
             {
                 // A group row opens the Create menu (decision D255 of the M3 design).
                 window.SceneEdits.CreateMenu(null);
@@ -333,7 +334,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
 
         // The text starts where ImGui puts the label of a tree node: after the arrow.
         var textStart = start.X + ImGui.GetFontSize() + 2 * style.FramePadding.X;
-        var section = (window.CenterMode == CenterMode.Cutscene) ? null : window.SceneEdits.SectionOf(node.Item);
+        var section = window.CenterMode == CenterMode.Cutscene ? null : window.SceneEdits.SectionOf(node.Item);
         if (section != null && section.Equals(window.SceneEdits.Renaming))
         {
             RenameField(start, textStart, right);

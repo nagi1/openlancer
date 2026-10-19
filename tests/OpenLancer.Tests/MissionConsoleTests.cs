@@ -10,7 +10,7 @@ namespace OpenLancer.Tests;
 
 /// <summary>
 /// The Console entries of the mission checks (section 12.4 of the M6a design, decision D552): each run replaces the
-/// entries of the source "Mission", and an old problem does not count as new again.
+/// entries of the set "Mission" that the run before it added, and an old problem does not count as new again.
 /// </summary>
 public sealed class MissionConsoleTests
 {
@@ -25,27 +25,63 @@ public sealed class MissionConsoleTests
         var log = new ConsoleLog();
         var other = log.AddStatus(ConsoleSeverity.Warning, "Editor", "Another message.");
 
-        log.ReplaceSource(MissionChecks.Source, [Problem("A."), Problem("B.")]);
-        log.ReplaceSource(MissionChecks.Source, [Problem("B."), Problem("C.", 2)]);
+        log.ReplaceSet(MissionChecks.Source, [Problem("A."), Problem("B.")]);
+        log.ReplaceSet(MissionChecks.Source, [Problem("B."), Problem("C.", 2)]);
 
         Assert.Equal(["B.", "C."], log.EntriesOf(MissionChecks.Source).Select(e => e.Message));
         Assert.Equal(2, log.EntriesOf(MissionChecks.Source).Last().EntryIndex);
         Assert.Equal(Target, log.EntriesOf(MissionChecks.Source).First().Target);
-        Assert.Contains(other, log.EntriesOf("Editor"));
+        Assert.Contains(other, log.Entries);
         Assert.Equal(3, log.Count(ConsoleSeverity.Warning));
+    }
+
+    /// <summary>An engine line can have the component "Mission" as its source. A new set of
+    /// the mission checks removes only the entries of the set before it.</summary>
+    [Fact]
+    public void ARunKeepsAnEngineLineWithTheSameSource()
+    {
+        var log = new ConsoleLog();
+        var engine = log.Add(ConsoleSeverity.Warning, MissionChecks.Source, "An engine line of a mission.");
+
+        log.ReplaceSet(MissionChecks.Source, [Problem("A.")]);
+        log.ReplaceSet(MissionChecks.Source, []);
+
+        Assert.Contains(engine, log.Entries);
+        Assert.False(engine.Removed);
+        Assert.Empty(log.EntriesOf(MissionChecks.Source));
+        Assert.Equal(1, log.Count(ConsoleSeverity.Warning));
+    }
+
+    /// <summary>A removed entry that still counted as unseen leaves the unseen counts, so
+    /// the badge does not count a message that the Console does not have.</summary>
+    [Fact]
+    public void ARemovedEntryLeavesTheUnseenCounts()
+    {
+        var log = new ConsoleLog();
+        log.ReplaceSet(MissionChecks.Source, [Problem("A."), Problem("B.")]);
+        Assert.Equal(2, log.UnseenWarnings);
+
+        log.ReplaceSet(MissionChecks.Source, [Problem("B.")]);
+        Assert.Equal(1, log.UnseenWarnings);
+
+        log.MarkSeen();
+        log.ReplaceSet(MissionChecks.Source, []);
+        Assert.Equal(0, log.UnseenWarnings);
+        log.ReplaceSet(MissionChecks.Source, [Problem("C.")]);
+        Assert.Equal(1, log.UnseenWarnings);
     }
 
     [Fact]
     public void AnOldProblemDoesNotCountAsNewAgain()
     {
         var log = new ConsoleLog();
-        log.ReplaceSource(MissionChecks.Source, [Problem("A.")]);
+        log.ReplaceSet(MissionChecks.Source, [Problem("A.")]);
         log.MarkSeen();
 
-        log.ReplaceSource(MissionChecks.Source, [Problem("A.")]);
+        log.ReplaceSet(MissionChecks.Source, [Problem("A.")]);
         Assert.Equal(0, log.UnseenWarnings);
 
-        log.ReplaceSource(MissionChecks.Source, [Problem("A."), Problem("New.")]);
+        log.ReplaceSet(MissionChecks.Source, [Problem("A."), Problem("New.")]);
         Assert.Equal(1, log.UnseenWarnings);
         Assert.Equal("New.", log.Last!.Message);
     }
@@ -55,9 +91,9 @@ public sealed class MissionConsoleTests
     {
         var log = new ConsoleLog();
         var older = log.AddStatus(ConsoleSeverity.Warning, "Editor", "Older.");
-        log.ReplaceSource(MissionChecks.Source, [Problem("A.")]);
+        log.ReplaceSet(MissionChecks.Source, [Problem("A.")]);
 
-        log.ReplaceSource(MissionChecks.Source, []);
+        log.ReplaceSet(MissionChecks.Source, []);
 
         Assert.Empty(log.EntriesOf(MissionChecks.Source));
         Assert.Same(older, log.Last);

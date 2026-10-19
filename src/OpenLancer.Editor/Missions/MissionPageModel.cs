@@ -6,35 +6,62 @@ using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
+using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Missions;
 
+/// <summary>A chip of a page field, for example a system of a mission.</summary>
+/// <param name="Link">The item that a click on the chip goes to, or null for a chip without a click.</param>
+internal sealed record PageChip(string Text, string Tooltip, object? Link);
+
+/// <summary>A link to a line of a mission script: the Mission tab opens the mission at the line.</summary>
+/// <param name="Entry">The index of the line in the section, or -1 for the whole section.</param>
+internal sealed record LineLink(SectionRef Target, int Entry);
+
+/// <summary>A link to a system: the Scene opens the system.</summary>
+internal sealed record SystemLink(string Nickname);
+
+/// <summary>A link to a bundle row of a mission: a click does what the row does in the Missions tab.</summary>
+internal sealed record BundleLink(string Script, MissionBundleRow Row);
+
 /// <summary>One field of a page section: a plain name and a value, with an optional help text and an item to go
 /// to.</summary>
+/// <param name="Help">The help text of the field, or null.</param>
 /// <param name="Link">The item that a click on the field selects, or null.</param>
-/// <param name="Muted">True for a base-game problem that shows muted.</param>
+/// <param name="Muted">True for a base-game problem that shows muted, with the lock glyph.</param>
+/// <param name="Severity">The severity of a problem, or null for a field that is not a problem.</param>
 internal sealed record PageField(string Label, string Value, string? Help = null, object? Link = null, bool Muted = false,
-    DiagnosticSeverity? Severity = null);
+    DiagnosticSeverity? Severity = null)
+{
+    /// <summary>The chips of the field in place of its value, for example the systems of a mission.</summary>
+    public IReadOnlyList<PageChip> Chips { get; init; } = [];
+
+    /// <summary>True for a field that the schema marks as hard to understand. Its label gets the help glyph (section
+    /// 11.3 of the M6a design).</summary>
+    public bool Hard { get; init; }
+}
 
 /// <summary>One component section of a mission page (section 10.1 of the M6a design).</summary>
 /// <param name="Id">The id of the section, for the open state in the settings.</param>
+/// <param name="Glyph">The glyph of the header.</param>
 /// <param name="Notes">Lines under the fields, for example the special rules of a slot.</param>
 /// <param name="Advanced">True for the closed Advanced section.</param>
-internal sealed record PageSection(string Id, string Title, HelpText? Help, IReadOnlyList<PageField> Fields,
+internal sealed record PageSection(string Id, string Title, char Glyph, HelpText? Help, IReadOnlyList<PageField> Fields,
     IReadOnlyList<string> Notes, bool Advanced = false);
 
 /// <summary>
 /// The model of a mission page of the Inspector (section 10.1 of the M6a design): the header, the read-only note, the
 /// completeness report, the component sections and the INI block. The page draws from it. The model makes no ImGui
-/// call, so the tests check it (review finding RV12).
+/// call, so the tests check it (review finding RV12). The queries of <see cref="MissionSummary"/> give its data.
 /// </summary>
 /// <param name="Title">The title of the header line, for example "M04: {title text}".</param>
 /// <param name="Kind">The kind label of the header line, for example "Mission".</param>
+/// <param name="Glyph">The glyph of the kind in the header line.</param>
 /// <param name="Help">The text of the info icon of the header line.</param>
 /// <param name="Completeness">The completeness report, or null for an item without parts.</param>
 /// <param name="Ini">The section of the INI block, or null.</param>
-internal sealed record MissionPageModel(string Title, string Kind, HelpText Help, CompletenessReport? Completeness,
-    IReadOnlyList<PageSection> Sections, SectionRef? Ini)
+internal sealed record MissionPageModel(string Title, string Kind, char Glyph, HelpText Help,
+    CompletenessReport? Completeness, IReadOnlyList<PageSection> Sections, SectionRef? Ini)
 {
     /// <summary>The read-only note of each mission page (section 13.1 of the M6a design).</summary>
     public const string ReadOnlyNote = "This editor version shows mission scripts but does not change them.";
@@ -52,8 +79,10 @@ internal sealed record MissionPageModel(string Title, string Kind, HelpText Help
     /// <param name="commFile">Gives the voices file of a comm line, or null when no voices file has it.</param>
     /// <param name="showBaseGame">True while the base-game messages show.</param>
     /// <param name="hidesOpenLancer">True when the active mod has a targets list without OpenLancer (UI rule 4).</param>
+    /// <param name="systemName">Gives the name of a system of the game data, or null when the game data has no such
+    /// system. Null when the page knows no system names.</param>
     public static MissionPageModel Mission(MissionRunResult result, MissionAnalysis analysis, Func<int, string> text,
-        Func<string, string?> commFile, bool showBaseGame, bool hidesOpenLancer)
+        Func<string, string?> commFile, bool showBaseGame, bool hidesOpenLancer, Func<string, string?>? systemName = null)
     {
         var schema = MissionSchema.Retail;
         var index = analysis.Index;
@@ -65,27 +94,29 @@ internal sealed record MissionPageModel(string Title, string Kind, HelpText Help
 
         if (slot != null)
         {
-            sections.Add(new PageSection("slot", "Story slot", schema.Help["storySlot"],
+            var columns = MissionsBrowserModel.Columns.ToDictionary(c => c.Name, c => c.Tooltip);
+            sections.Add(new PageSection("slot", "Story slot", EditorIcons.Route, schema.Help["storySlot"],
             [
-                new("Slot", slot.Slot, "The story slot. The game code has 14 slots in a fixed order."),
-                new("Script", MissionFiles.Display(analysis.Script.Path), "The file that the game loads for this slot."),
-                new("Start stage", Stage(slot.StartStage), "The story stage when the mission starts. News and rumors use the stage."),
-                new("Accept stage", Stage(slot.AcceptStage), "The story stage after the player accepts the mission. A success adds 1 to it."),
-                new("Next mission", MissionsBrowserModel.NextText(slot.Next),
-                    "The time when the next mission starts after a success. The game code sets it. A mod cannot change it."),
+                new("Slot", slot.Slot, columns["Slot"]),
+                new("Script", MissionFiles.Display(analysis.Script.Path), columns["Mission script"]),
+                new("Start stage", MissionSummary.Stage(slot.StartStage), columns["Start stage"]),
+                new("Accept stage", MissionSummary.Stage(slot.AcceptStage), columns["Accept stage"]),
+                new("Next mission", MissionSummary.NextText(slot.Next),
+                    $"{columns["Next mission"]} {MissionSummary.NextTooltip(slot.Next)}"),
                 new("Title text", Text(text, slot.TitleId) is { } titleText ? $"{titleText} ({slot.TitleId})" : Number(slot.TitleId),
                     "The title of the mission that the game code shows."),
             ], slot.Notes.Select(n => schema.SlotNotes.GetValueOrDefault(n) ?? n).ToList()));
         }
 
-        sections.Add(Overview(analysis));
-        sections.Add(Problems(analysis, showBaseGame));
+        sections.Add(Overview(analysis, systemName));
+        sections.Add(Problems(analysis, analysis.Problems, showBaseGame));
         if (!hidesOpenLancer)
             sections.Add(OpenLancer(index));
         sections.Add(VoiceLines(index, commFile));
         sections.Add(Texts(index, text));
-        sections.Add(new PageSection("files", "Files", schema.Help["missionFiles"],
-            MissionsBrowserModel.Bundle(result, analysis).Select(b => new PageField(b.Name, b.Value, b.Tooltip)).ToList(), []));
+        sections.Add(new PageSection("files", "Files", EditorIcons.Folder, schema.Help["missionFiles"],
+            MissionSummary.Bundle(result, analysis).Select(b => new PageField(b.Name, b.Value, FileTooltip(b),
+                b.ActionPhrase != null ? new BundleLink(analysis.Script.Path, b) : null)).ToList(), []));
 
         var header = analysis.Document.OfKind(MissionSectionKind.Mission).FirstOrDefault();
         var advanced = new List<PageField>();
@@ -95,11 +126,15 @@ internal sealed record MissionPageModel(string Title, string Kind, HelpText Help
                 advanced.Add(new PageField(key.Item2, string.Join(", ", line.Select(MissionIndex.Text)), UnusedMissionKey));
         }
         if (advanced.Count > 0)
-            sections.Add(new PageSection("advanced", "Advanced", null, advanced, [], Advanced: true));
+            sections.Add(new PageSection("advanced", "Advanced", EditorIcons.Cog, null, advanced, [], Advanced: true));
 
-        return new MissionPageModel(title, "Mission", schema.Help["mission"], MissionCompleteness.OfMission(analysis),
-            sections, header?.Ref);
+        return new MissionPageModel(title, "Mission", EditorIcons.Route, schema.Help["mission"],
+            MissionCompleteness.OfMission(analysis), sections, header?.Ref);
     }
+
+    /// <summary>The tooltip of a row of the Files section: what it holds, and what a click does.</summary>
+    private static string FileTooltip(MissionBundleRow row) =>
+        row.ActionPhrase is { } action ? $"{row.Tooltip}\nClick to {action}." : row.Tooltip;
 
     /// <summary>The page of another item of a mission in M6a: the header, the read-only note, the problems of its
     /// section and its INI block. M6a-2 gives each kind its own page.</summary>
@@ -107,49 +142,58 @@ internal sealed record MissionPageModel(string Title, string Kind, HelpText Help
     {
         var schema = MissionSchema.Retail;
         var section = item.Section is { } target ? analysis.Document.Find(target) : null;
-        var (kind, help) = KindOf(item.Kind, schema);
+        var (kind, glyph, help) = KindOf(item.Kind, item.Key, schema);
         var title = section?.Nickname ?? section?.Ref.Id.ToString() ?? item.Key ?? MissionFiles.Display(item.Script);
         if (item.Row >= 0 && section != null && item.Row < section.Section.Count)
             title = $"{title}: {section.Section[item.Row].Name}";
         var problems = analysis.Problems.Where(p => section != null && Equals(p.Target, section.Ref) &&
                                                     (item.Row < 0 || p.EntryIndex == item.Row || p.EntryIndex < 0)).ToList();
-        var sections = new List<PageSection>
-        {
-            new("problems", "Problems", schema.Help["problems"], ProblemFields(problems, showBaseGame),
-                HiddenNote(problems, showBaseGame)),
-        };
+        var sections = new List<PageSection> { Problems(analysis, problems, showBaseGame) };
         if (section?.Kind == MissionSectionKind.Trigger && analysis.Index.Trigger(section.Nickname ?? "") is { } trigger &&
             trigger.Section == section)
         {
-            sections.Insert(0, new PageSection("trigger", "Trigger", schema.Help["triggerComponent"],
+            var keys = schema.Section("Trigger");
+            PageField Key(string key, string value, string fallback) => keys?.Key(key) is { } spec
+                ? new PageField(spec.Label, value, spec.Help ?? fallback) { Hard = spec.Hard }
+                : new PageField(key, value, fallback);
+            sections.Insert(0, new PageSection("trigger", "Trigger", EditorIcons.Bolt, schema.Help["triggerComponent"],
             [
-                new("Starts with the mission", trigger.StartsActive ? "Yes" : "No",
+                Key("InitState", trigger.StartsActive ? "Yes" : "No",
                     "The game starts this trigger when the mission starts (InitState = ACTIVE)."),
-                new("Repeats", trigger.Repeats ? "Yes" : "No",
+                Key("repeatable", trigger.Repeats ? "Yes" : "No",
                     "The trigger becomes active again each time it runs (repeatable = true)."),
                 new("Starts when", trigger.Condition?.Sentence() ?? "No condition",
                     "The event that the trigger waits for. The game uses only the last condition."),
             ], []));
         }
-        return new MissionPageModel(title, kind, help, null, sections, section?.Ref);
+        return new MissionPageModel(title, kind, glyph, help, null, sections, section?.Ref);
     }
 
-    private static (string Kind, HelpText Help) KindOf(MissionItemKind kind, MissionSchema schema) => kind switch
-    {
-        MissionItemKind.Trigger or MissionItemKind.Row => ("Trigger", schema.Help["trigger"]),
-        MissionItemKind.Ship => ("Mission ship", schema.Help["missionShip"]),
-        MissionItemKind.Formation => ("Formation", schema.Help["formation"]),
-        MissionItemKind.Solar => ("Solar", schema.Help["solar"]),
-        MissionItemKind.Loot => ("Loot", schema.Help["loot"]),
-        MissionItemKind.OrderList => ("Order list", schema.Help["orderList"]),
-        MissionItemKind.Objective => ("Objective", schema.Help["objective"]),
-        MissionItemKind.Conversation => ("Conversation", schema.Help["conversation"]),
-        MissionItemKind.Npc => ("NPC", schema.Help["npc"]),
-        MissionItemKind.RandomEncounter => ("Random encounter", schema.Help["randomEncounter"]),
-        _ => ("Mission section", schema.Help["mission"]),
-    };
+    /// <summary>The kind label, the glyph and the help text of an item kind (section 10.1 of the M6a design).</summary>
+    /// <param name="key">The name of an item without a section, for example the id of a behavior prefab.</param>
+    internal static (string Kind, char Glyph, HelpText Help) KindOf(MissionItemKind kind, string? key, MissionSchema schema) =>
+        kind switch
+        {
+            MissionItemKind.Mission => ("Mission", EditorIcons.Route, schema.Help["mission"]),
+            MissionItemKind.Trigger or MissionItemKind.Row => ("Trigger", EditorIcons.Bolt, schema.Help["trigger"]),
+            MissionItemKind.Ship => ("Mission ship", EditorIcons.SpaceShuttle, schema.Help["missionShip"]),
+            MissionItemKind.Formation => ("Formation", EditorIcons.Users, schema.Help["formation"]),
+            MissionItemKind.Solar => ("Solar", EditorIcons.Satellite, schema.Help["solar"]),
+            MissionItemKind.Loot => ("Loot", EditorIcons.Box, schema.Help["loot"]),
+            MissionItemKind.OrderList => ("Order list", EditorIcons.List, schema.Help["orderList"]),
+            MissionItemKind.Objective => ("Objective", EditorIcons.Bullseye, schema.Help["objective"]),
+            MissionItemKind.Conversation => ("Conversation", EditorIcons.VolumeUp, schema.Help["conversation"]),
+            MissionItemKind.Npc => ("NPC", EditorIcons.User, schema.Help["npc"]),
+            MissionItemKind.Label => ("Label", EditorIcons.Tag, schema.Help["label"]),
+            MissionItemKind.RandomEncounter => ("Random encounter", EditorIcons.Crosshairs, schema.Help["randomEncounter"]),
+            MissionItemKind.Act => ("Act", EditorIcons.Film, schema.Help["act"]),
+            MissionItemKind.PrefabInstance or MissionItemKind.PrefabKind => ("Behavior prefab", EditorIcons.Cubes,
+                MissionPrefabs.Retail.Definitions.FirstOrDefault(d => key != null &&
+                    key.Split('|')[0].Equals(d.Id, StringComparison.OrdinalIgnoreCase))?.Help ?? schema.Help["behaviorPrefab"]),
+            _ => ("Mission section", EditorIcons.Th, schema.Help["otherSection"]),
+        };
 
-    private static PageSection Overview(MissionAnalysis analysis)
+    private static PageSection Overview(MissionAnalysis analysis, Func<string, string?>? systemName)
     {
         var index = analysis.Index;
         var fields = new List<PageField>
@@ -164,84 +208,83 @@ internal sealed record MissionPageModel(string Title, string Kind, HelpText Help
             foreach (var group in prefabs.Instances.GroupBy(i => i.Definition).OrderBy(g => g.Key.Order))
                 fields.Add(new PageField(group.Key.Name, Number(group.Count()), group.Key.Help.WhatItIs));
         }
-        var systems = MissionsBrowserModel.SystemsOf(index).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var systems = MissionSummary.Systems(index).Order(StringComparer.OrdinalIgnoreCase).ToList();
         if (systems.Count > 0)
-            fields.Add(new PageField("Systems", string.Join(", ", systems), "The systems that the mission names."));
+        {
+            fields.Add(new PageField("Systems", string.Join(", ", systems), "The systems that the mission names.")
+            {
+                Chips = systems.Select(nickname => SystemChip(nickname, systemName)).ToList(),
+            });
+        }
         foreach (var start in index.StartTriggers)
             fields.Add(new PageField("Start trigger", start.Nickname, start.Condition?.Sentence(),
                 new MissionRef(index.Document.Path, MissionItemKind.Trigger, start.Section.Ref)));
-        return new PageSection("overview", "Overview", MissionSchema.Retail.Help["overview"], fields, []);
+        return new PageSection("overview", "Overview", EditorIcons.Th, MissionSchema.Retail.Help["overview"], fields, []);
     }
 
-    private static PageSection Problems(MissionAnalysis analysis, bool showBaseGame) =>
-        new("problems", "Problems", MissionSchema.Retail.Help["problems"], ProblemFields(analysis.Problems, showBaseGame),
-            HiddenNote(analysis.Problems, showBaseGame));
-
-    private static List<PageField> ProblemFields(IReadOnlyList<Diagnostic> problems, bool showBaseGame) =>
-        problems.Where(p => showBaseGame || p.Origin?.IsBaseGame != true)
-            .Select(p => new PageField(p.Rule ?? "Problem", p.Message, p.Origin?.Text, p.Target is { } t ? (t, p.EntryIndex) : null,
-                p.Origin?.IsBaseGame == true, p.Severity)).ToList();
-
-    /// <summary>The dim line of the hidden base-game problems, or none.</summary>
-    private static List<string> HiddenNote(IReadOnlyList<Diagnostic> problems, bool showBaseGame)
+    /// <summary>The chip of a system: its name, and a link that opens it in the Scene. A system that the game data does
+    /// not have shows its nickname, without a link.</summary>
+    private static PageChip SystemChip(string nickname, Func<string, string?>? systemName)
     {
-        var hidden = showBaseGame ? 0 : problems.Count(p => p.Origin?.IsBaseGame == true);
-        return hidden switch
-        {
-            0 => [],
-            1 => ["1 base-game message is hidden."],
-            _ => [$"{hidden} base-game messages are hidden."],
-        };
+        if (systemName?.Invoke(nickname) is not { } name)
+            return new PageChip(nickname, $"{nickname}. The game data has no system with this name.", null);
+        var text = name.Length > 0 ? name : nickname;
+        return new PageChip(text, $"{text} ({nickname}). Click to open the system in the Scene.", new SystemLink(nickname));
+    }
+
+    /// <summary>The Problems section (section 10.2 of the M6a design): each problem that shows, with its place, its
+    /// message and "Go to". A base-game problem shows muted with the lock glyph while the base-game messages show
+    /// (decision D512).</summary>
+    private static PageSection Problems(MissionAnalysis analysis, IReadOnlyList<Diagnostic> problems, bool showBaseGame) =>
+        new("problems", "Problems", EditorIcons.ExclamationTriangle, MissionSchema.Retail.Help["problems"],
+            BaseGameMessages.Shown(problems, showBaseGame).Select(p => new PageField(PlaceOf(analysis, p), p.Message,
+                p.Origin?.Text, p.Target is { } t ? new LineLink(t, p.EntryIndex) : null, p.Origin?.IsBaseGame == true,
+                p.Severity)).ToList(),
+            BaseGameMessages.HiddenLine(BaseGameMessages.Hidden(problems, showBaseGame)) is { } line ? [line] : []);
+
+    /// <summary>The place of a problem in plain words, for example "Trigger t_start, line 3", or "Mission" for a
+    /// problem of the whole script.</summary>
+    internal static string PlaceOf(MissionAnalysis analysis, Diagnostic problem)
+    {
+        if (problem.Target is not { } target || analysis.Document.Find(target) is not { } section)
+            return "Mission";
+        var kind = KindOf(MissionRef.KindOf(section.Kind), null, MissionSchema.Retail).Kind;
+        var name = section.Nickname ?? section.Ref.Id.ToString();
+        return problem.EntryIndex >= 0
+            ? string.Create(CultureInfo.InvariantCulture, $"{kind} {name}, line {problem.EntryIndex + 1}")
+            : $"{kind} {name}";
     }
 
     private static PageSection OpenLancer(MissionIndex index)
     {
-        var (_, tooltip, gaps) = MissionsBrowserModel.OpenLancerOf(index);
-        var fields = gaps
-            ? tooltip.Split('\n').Skip(1).Select(line => line.Split(": ", 2)).Select(p => new PageField(p[0], p[1])).ToList()
-            : [];
-        return new PageSection("openlancer", "OpenLancer", MissionSchema.Retail.Help["openLancer"], fields,
-            gaps ? [] : ["OpenLancer runs all lines of this mission."]);
+        var report = MissionSummary.OpenLancer(index);
+        return new PageSection("openlancer", "OpenLancer", EditorIcons.Rocket, MissionSchema.Retail.Help["openLancer"],
+            report.Gaps.Select(g => new PageField(g.Name, g.Text)).ToList(),
+            report.HasGaps ? [] : ["OpenLancer runs all lines of this mission."]);
     }
 
     private static PageSection VoiceLines(MissionIndex index, Func<string, string?> commFile)
     {
-        var names = index.Lines.SelectMany(l => l.References).Where(r => r.Kind == MissionValueKind.CommLine)
-            .Select(r => r.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        var fields = names.Select(n => commFile(n) is { } file
+        var fields = MissionSummary.CommLines(index).Select(n => commFile(n) is { } file
             ? new PageField(n, file)
             : new PageField(n, "Missing", "No voices file has this comm line. The game plays no sound for it.",
                 Severity: DiagnosticSeverity.Error)).ToList();
-        return new PageSection("voice", "Voice lines", MissionSchema.Retail.Help["voiceLines"], fields,
-            fields.Count == 0 ? ["The script names no comm line."] : []);
+        return new PageSection("voice", "Voice lines", EditorIcons.VolumeUp, MissionSchema.Retail.Help["voiceLines"],
+            fields, fields.Count == 0 ? ["The script names no comm line."] : []);
     }
 
     /// <summary>The text ids of a script, grouped as titles, offers, objectives, fail texts and log lines.</summary>
     private static PageSection Texts(MissionIndex index, Func<int, string> text)
     {
-        var fields = new List<PageField>();
-        void Add(string group, IEnumerable<string?> ids)
-        {
-            foreach (var id in ids.OfType<string>().Distinct())
-                fields.Add(new PageField(group, int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) &&
-                                                Text(text, n) is { } value ? $"{value} ({id})" : id));
-        }
-        var lines = index.Triggers.Where(t => !t.IsDuplicate).SelectMany(t => t.Actions).ToList();
-        Add("Title", lines.Where(l => Is(l.Key, "Act_SetTitle")).Select(l => l.Value(0)));
-        Add("Offer", lines.Where(l => Is(l.Key, "Act_SetOffer")).Select(l => l.Value(0)));
-        Add("Objective", index.Document.OfKind(MissionSectionKind.Objective).SelectMany(o => o.Section)
-            .Where(e => Is(e.Name, "type")).SelectMany(MissionIndex.ObjectiveTextIds));
-        Add("Fail text", lines.Where(l => Is(l.Key, "Act_ChangeState") && Is(l.Value(0), "FAIL")).Select(l => l.Value(1)));
-        Add("Log line", lines.Where(l => Is(l.Key, "Act_NNIds")).Select(l => l.Value(0)));
-        return new PageSection("text", "Text", MissionSchema.Retail.Help["missionText"], fields,
+        var fields = MissionSummary.TextIds(index).Select(t => new PageField(t.Group,
+            int.TryParse(t.Id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && Text(text, n) is { } value
+                ? $"{value} ({t.Id})"
+                : t.Id)).ToList();
+        return new PageSection("text", "Text", EditorIcons.Pen, MissionSchema.Retail.Help["missionText"], fields,
             fields.Count == 0 ? ["The script names no text id."] : []);
     }
-
-    private static string Stage(int stage) => $"{StoryStages.NameOf(stage)} ({stage})";
 
     private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static string? Text(Func<int, string> text, int id) => text(id) is { Length: > 0 } value ? value : null;
-
-    private static bool Is(string? a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 }

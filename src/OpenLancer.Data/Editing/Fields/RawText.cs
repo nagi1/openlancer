@@ -34,6 +34,7 @@ public sealed class RawText
     private readonly int[] sectionOfLine;
     private readonly int[] entryOfLine;
     private readonly Dictionary<SectionIdentity, int> sectionIndex;
+    private string? text;
 
     private RawText(IReadOnlyList<string> lines, bool isFileText, string? reason, IReadOnlyList<SectionIdentity> ids,
         int[] headers, int[][] entries, IReadOnlyDictionary<int, string> readOnly)
@@ -63,8 +64,9 @@ public sealed class RawText
     /// <summary>The lines of the text, without line ends.</summary>
     public IReadOnlyList<string> Lines { get; }
 
-    /// <summary>The text with LF line ends, for the editor.</summary>
-    public string Text => string.Join('\n', Lines);
+    /// <summary>The text with LF line ends, for the editor. The text is made once, because the editor reads it in each
+    /// frame.</summary>
+    public string Text => text ??= string.Join('\n', Lines);
 
     /// <summary>True for the file text with its comments, false for the canonical text.</summary>
     public bool IsFileText { get; }
@@ -120,7 +122,11 @@ public sealed class RawText
 
     /// <summary>The canonical text of sections.</summary>
     /// <param name="reason">Why the file text is not used, or null.</param>
-    public static RawText Canonical(string path, IReadOnlyList<Section> sections, string? reason = null)
+    /// <param name="ids">The identities of the sections in their file, or null to identify them in the list. A list
+    /// with one section of a file needs the identity of the section in the file. Then the marks of its problems find
+    /// their lines, also for the second of two sections with one nickname.</param>
+    public static RawText Canonical(string path, IReadOnlyList<Section> sections, string? reason = null,
+        IReadOnlyList<SectionIdentity>? ids = null)
     {
         var lines = new List<string>();
         var headers = new int[sections.Count];
@@ -138,7 +144,9 @@ public sealed class RawText
                 lines.Add(IniLines.Line(sections[k][j]));
             }
         }
-        return new RawText(lines, false, reason, SectionIdentity.Identify(sections), headers, entries,
+        if (ids != null && ids.Count != sections.Count)
+            throw new ArgumentException("The list of identities must have one identity for each section.", nameof(ids));
+        return new RawText(lines, false, reason, ids ?? SectionIdentity.Identify(sections), headers, entries,
             ReadOnly(path, sections));
     }
 

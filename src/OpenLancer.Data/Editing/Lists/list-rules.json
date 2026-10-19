@@ -127,7 +127,7 @@
       "source": { "role": "mission", "scope": "file", "sections": ["Trigger"] } },
     { "id": "mission_ship", "label": "Mission ship", "kind": "MissionShip",
       "source": { "role": "mission", "scope": "file", "sections": ["MsnShip"] } },
-    { "id": "mission_formation", "label": "Mission formation", "kind": "MissionShip",
+    { "id": "mission_formation", "label": "Mission formation", "kind": "MissionFormation",
       "source": { "role": "mission", "scope": "file", "sections": ["MsnFormation"] } },
     { "id": "mission_solar", "label": "Mission solar", "kind": "MissionSolar",
       "source": { "role": "mission", "scope": "file", "sections": ["MsnSolar"] } },

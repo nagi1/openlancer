@@ -70,7 +70,7 @@ public sealed class MissionHdeRetailTests(ITestOutputHelper output)
             Assert.Equal(3, trigger.Conditions.Count);
             Assert.Contains(analysis.Problems, p => p.Rule == "M03" && p.Origin!.IsBaseGame);
         }
-        var rows = MissionsBrowserModel.Rows(run, showBaseGame: false);
+        var rows = MissionSummary.Rows(run, showBaseGame: false);
         Assert.Equal(16, rows.Count);
         Assert.Equal(["No slot", "No slot"], rows.Skip(14).Select(r => r.Slot));
     }
@@ -100,8 +100,9 @@ public sealed class MissionHdeRetailTests(ITestOutputHelper output)
         var problems = run.Problems.ToList();
         output.WriteLine($"{problems.Count} base-game problems.");
 
+        Assert.Equal(201, problems.Count);
         Assert.All(problems, p => Assert.True(p.Origin!.IsBaseGame, p.Message));
         Assert.DoesNotContain(problems, p => p.Severity == DiagnosticSeverity.Error);
-        Assert.All(MissionsBrowserModel.Rows(run, showBaseGame: false), r => Assert.Equal((0, 0), (r.Errors, r.Warnings)));
+        Assert.All(MissionSummary.Rows(run, showBaseGame: false), r => Assert.Equal((0, 0), (r.Errors, r.Warnings)));
     }
 }

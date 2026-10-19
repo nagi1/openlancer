@@ -114,7 +114,9 @@
     "voiceLines": { "title": "Voice lines", "whatItIs": "The comm lines that the mission plays, with the voices file of each line.", "whatItWrites": "Nothing. The comm lines are in the voices files of DATA\\AUDIO." },
     "missionText": { "title": "Text", "whatItIs": "The text ids that the mission shows: titles, offers, objectives, fail texts and log lines.", "whatItWrites": "Nothing. The texts are in the resource files of the game." },
     "missionFiles": { "title": "Files", "whatItIs": "The other files of the mission: the mission ships, the base scenes, the space cutscenes and the texts.", "whatItWrites": "Nothing. Each row names files that the mission uses." },
-    "overview": { "title": "Overview", "whatItIs": "The counts of the parts of the mission, its systems and its start triggers.", "whatItWrites": "Nothing. The editor counts the sections of the mission script." }
+    "overview": { "title": "Overview", "whatItIs": "The counts of the parts of the mission, its systems and its start triggers.", "whatItWrites": "Nothing. The editor counts the sections of the mission script." },
+    "behaviorPrefab": { "title": "Behavior prefab", "whatItIs": "A pattern of triggers that the mission repeats, for example a spawn wave. The editor finds the patterns and groups their triggers.", "whatItWrites": "Nothing in this version. The triggers of the pattern stay as [Trigger] sections." },
+    "otherSection": { "title": "Other section", "whatItIs": "A section of the mission script that has no page of its own in this version, for example [MetaBehavior] or [Constants]. The page shows its problems and its INI.", "whatItWrites": "The section itself, as the INI block shows it." }
   },
   "conditions": [
     { "name": "Cnd_True", "plain": "At once", "event": "start", "polls": true, "values": [],
@@ -453,13 +455,13 @@
     { "name": "Cnd_NPCSystemEnter", "plain": "Ships enter a system", "event": "story", "wake": ["npcSystemEnter", "npcShipCreated"], "polls": true,
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system", "also": "any" },
-        { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "help": "The ships that must be in the system together with the player." }
+        { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "list": { "items": "ships" }, "help": "The ships that must be in the system together with the player." }
       ],
       "sentences": [ { "text": "Starts when {ships} and the player are in {system}." } ], "evidence": "TR11, MSD 2.12 jumper row, fork Cnd_NPCSystemEnter" },
     { "name": "Cnd_NPCSystemExit", "plain": "Ships leave a system", "event": "story", "wake": ["npcSystemExit"], "checked": false,
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system", "also": "any" },
-        { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true }
+        { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "list": { "items": "ships" } }
       ],
       "sentences": [ { "text": "Starts when {ships} leave {system}." } ], "evidence": "MSD 2.10 (no retail line), fork Cnd_NPCSystemExit" }
   ],
@@ -894,7 +896,7 @@
       { "key": "angular_velocity", "label": "Turn rate", "kind": "position" },
       { "key": "equip_amount", "label": "Amount", "kind": "wholeNumber" },
       { "key": "health", "label": "Health", "kind": "number" },
-      { "key": "label", "label": "Label", "kind": "text" },
+      { "key": "label", "label": "Labels", "kind": "text", "list": { "items": "labels" } },
       { "key": "can_jettison", "label": "Can drop", "kind": "bool" },
       { "key": "system", "label": "System", "kind": "system" } ] },
     { "type": "MsnSolar", "keys": [
@@ -910,7 +912,7 @@
       { "key": "base", "label": "Base", "kind": "base" },
       { "key": "voice", "label": "Voice", "kind": "voice" },
       { "key": "radius", "label": "Radius", "kind": "number" },
-      { "key": "label", "label": "Label", "kind": "text" },
+      { "key": "label", "label": "Labels", "kind": "text", "list": { "items": "labels" } },
       { "key": "costume", "label": "Costume", "kind": "head", "values": [
         { "index": 0, "name": "head", "label": "Head", "kind": "head" },
         { "index": 1, "name": "body", "label": "Body", "kind": "body" },
@@ -920,44 +922,44 @@
       { "key": "nickname", "label": "Nickname", "kind": "text", "buffer": "object", "shipKey": true },
       { "key": "npc", "label": "Pilot and voice", "kind": "npc", "closed": true, "shipKey": true },
       { "key": "random_name", "label": "Random pilot name", "kind": "bool", "shipKey": true },
-      { "key": "label", "label": "Labels", "kind": "text", "shipKey": true },
+      { "key": "label", "label": "Labels", "kind": "text", "shipKey": true, "list": { "items": "labels" } },
       { "key": "init_objectives", "label": "Initial orders", "kind": "objList", "noneToken": "no_ol", "closed": true, "shipKey": true },
       { "key": "init_metabehavior", "label": "Initial behavior", "kind": "metaBehavior", "closed": true, "shipKey": true },
-      { "key": "jumper", "label": "Arrives by jump", "kind": "bool", "shipKey": true },
-      { "key": "cargo", "label": "Cargo", "kind": "good", "shipKey": true },
+      { "key": "jumper", "label": "Arrives by jump", "kind": "bool", "shipKey": true, "hard": true, "help": "True makes the ship follow the player through jumps. Then the ship can be in each system." },
+      { "key": "cargo", "label": "Cargo", "kind": "good", "shipKey": true, "list": { "items": "goods" } },
       { "key": "hit_points", "label": "Hull points", "kind": "wholeNumber", "shipKey": true },
       { "key": "radius", "label": "Spawn spacing radius", "kind": "number", "shipKey": true },
       { "key": "system", "label": "System", "kind": "system" },
       { "key": "position", "label": "Start position", "kind": "position" },
-      { "key": "rel_pos", "label": "Placed near", "kind": "number", "values": [
+      { "key": "rel_pos", "label": "Placed near", "kind": "number", "hard": true, "help": "The ship starts at a heading and a range from an object, in place of a start position.", "values": [
         { "index": 0, "name": "heading", "label": "Heading", "kind": "number" },
         { "index": 1, "name": "anchor", "label": "Anchor", "kind": "object" },
         { "index": 2, "name": "range", "label": "Range", "kind": "number", "optional": true } ] },
       { "key": "orientation", "label": "Rotation", "kind": "rotation" },
-      { "key": "arrival_obj", "label": "Arrives through", "kind": "object" },
+      { "key": "arrival_obj", "label": "Arrives through", "kind": "object", "hard": true, "help": "The object that the ship comes out of when it spawns, for example a jump gate or a base." },
       { "key": "formation", "label": "Formation shape", "kind": "formationShape" },
-      { "key": "ship", "label": "Member", "kind": "ship" } ] },
+      { "key": "ship", "label": "Member", "kind": "ship", "list": { "label": "Members", "items": "ships" } } ] },
     { "type": "MsnFormation", "shipKeys": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "buffer": "object", "shipKey": true },
       { "key": "npc", "label": "Pilot and voice", "kind": "npc", "closed": true, "shipKey": true },
       { "key": "random_name", "label": "Random pilot name", "kind": "bool", "shipKey": true },
-      { "key": "label", "label": "Labels", "kind": "text", "shipKey": true },
+      { "key": "label", "label": "Labels", "kind": "text", "shipKey": true, "list": { "items": "labels" } },
       { "key": "init_objectives", "label": "Initial orders", "kind": "objList", "noneToken": "no_ol", "closed": true, "shipKey": true },
       { "key": "init_metabehavior", "label": "Initial behavior", "kind": "metaBehavior", "closed": true, "shipKey": true },
-      { "key": "jumper", "label": "Arrives by jump", "kind": "bool", "shipKey": true },
-      { "key": "cargo", "label": "Cargo", "kind": "good", "shipKey": true },
+      { "key": "jumper", "label": "Arrives by jump", "kind": "bool", "shipKey": true, "hard": true, "help": "True makes the ship follow the player through jumps. Then the ship can be in each system." },
+      { "key": "cargo", "label": "Cargo", "kind": "good", "shipKey": true, "list": { "items": "goods" } },
       { "key": "hit_points", "label": "Hull points", "kind": "wholeNumber", "shipKey": true },
       { "key": "radius", "label": "Spawn spacing radius", "kind": "number", "shipKey": true },
       { "key": "system", "label": "System", "kind": "system" },
       { "key": "position", "label": "Start position", "kind": "position" },
-      { "key": "rel_pos", "label": "Placed near", "kind": "number", "values": [
+      { "key": "rel_pos", "label": "Placed near", "kind": "number", "hard": true, "help": "The ship starts at a heading and a range from an object, in place of a start position.", "values": [
         { "index": 0, "name": "heading", "label": "Heading", "kind": "number" },
         { "index": 1, "name": "anchor", "label": "Anchor", "kind": "object" },
         { "index": 2, "name": "range", "label": "Range", "kind": "number", "optional": true } ] },
       { "key": "orientation", "label": "Rotation", "kind": "rotation" },
-      { "key": "arrival_obj", "label": "Arrives through", "kind": "object" },
+      { "key": "arrival_obj", "label": "Arrives through", "kind": "object", "hard": true, "help": "The object that the ship comes out of when it spawns, for example a jump gate or a base." },
       { "key": "formation", "label": "Formation shape", "kind": "formationShape" },
-      { "key": "ship", "label": "Member", "kind": "ship" } ] },
+      { "key": "ship", "label": "Member", "kind": "ship", "list": { "label": "Members", "items": "ships" } } ] },
     { "type": "MsnRandEnc", "openKeys": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "buffer": "encounterName" },
       { "key": "encounter_type", "label": "Encounter type", "kind": "token", "tokens": "encounterType" } ] },
@@ -969,7 +971,7 @@
     { "type": "Dialog", "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text" },
       { "key": "system", "label": "System", "kind": "system" },
-      { "key": "line", "label": "Line", "kind": "object", "values": [
+      { "key": "line", "label": "Line", "kind": "object", "list": { "label": "Lines", "items": "lines" }, "values": [
         { "index": 0, "name": "speaker", "label": "Speaker", "kind": "object" },
         { "index": 1, "name": "listener", "label": "Listener", "kind": "object" },
         { "index": 2, "name": "line", "label": "Comm line", "kind": "commLine", "closed": true } ] } ] },
@@ -978,13 +980,13 @@
       { "key": "system", "label": "System", "kind": "system", "unused": true, "help": "The game does not use this value." },
       { "key": "MB_GotoGuide", "label": "Go to guide", "kind": "text" },
       { "key": "MB_DockGuide", "label": "Dock guide", "kind": "text" } ] },
-    { "type": "ObjList", "directives": true, "keys": [
+    { "type": "ObjList", "directives": true, "orders": { "label": "Orders", "items": "orders", "addLabel": "Add order" }, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text" },
       { "key": "system", "label": "System", "kind": "system", "unused": true, "help": "The game does not use this value." } ] },
     { "type": "Trigger", "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text" },
-      { "key": "InitState", "label": "Starts with the mission", "kind": "token", "tokens": "initState" },
-      { "key": "repeatable", "label": "Repeats", "kind": "bool" },
+      { "key": "InitState", "label": "Starts with the mission", "kind": "token", "tokens": "initState", "hard": true, "help": "ACTIVE starts the trigger when the mission starts. The game reads the last line after the nickname." },
+      { "key": "repeatable", "label": "Repeats", "kind": "bool", "hard": true, "help": "True makes the trigger active again each time it runs. The game reads the last line after the nickname." },
       { "key": "system", "label": "System", "kind": "system", "unused": true, "help": "The game does not use this value. The editor uses it to find the system of the trigger." },
       { "key": "State", "label": "State", "kind": "text" } ] }
   ],
@@ -1014,7 +1016,7 @@
       { "index": 5, "name": "more", "label": "More values", "kind": "text", "rest": true, "optional": true, "checked": false } ] },
     { "key": "FollowPlayer", "plain": "Follow the player in formation", "values": [
       { "index": 0, "name": "shape", "label": "Formation shape", "kind": "formationShape" },
-      { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "optional": true } ] },
+      { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "optional": true, "list": { "items": "ships" } } ] },
     { "key": "Trail", "plain": "Trail", "values": [
       { "index": 0, "name": "target", "label": "Target", "kind": "object" },
       { "index": 1, "name": "distance", "label": "Distance", "kind": "wholeNumber" } ] },
@@ -1035,7 +1037,7 @@
       { "index": 0, "name": "on", "label": "On", "kind": "text", "help": "Only the word true turns it on. Each other word turns it off." } ] },
     { "key": "MakeNewFormation", "plain": "Make formation", "values": [
       { "index": 0, "name": "shape", "label": "Formation shape", "kind": "formationShape" },
-      { "index": 1, "name": "members", "label": "Members", "kind": "object", "also": "addFollowers", "rest": true, "optional": true } ] },
+      { "index": 1, "name": "members", "label": "Members", "kind": "object", "also": "addFollowers", "rest": true, "optional": true, "list": { "items": "ships" } } ] },
     { "key": "SetPriority", "plain": "Set priority", "values": [
       { "index": 0, "name": "priority", "label": "Priority", "kind": "token", "tokens": "priority" } ] },
     { "key": "SetLifeTime", "plain": "Remove after a time", "values": [

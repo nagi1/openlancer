@@ -6,6 +6,8 @@ using System.Numerics;
 using System.Threading.Tasks;
 using ImGuiNET;
 using LibreLancer.ImUI;
+using OpenLancer.Data;
+using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Missions;
 using OpenLancer.Editor.Ui;
@@ -26,12 +28,18 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
 
     private static readonly float[] Widths = [60, 200, 70, 80, 150, 140, 60, 50, 70, 150];
 
+    private readonly MissionsBrowserModel model = new();
+    private readonly ValuePicker systemPicker = new();
     private string search = "";
     private bool filterErrors;
     private bool filterWarnings;
     private bool filterGaps;
     private string? filterSystem;
     private string? selected;
+    private bool pickSystem;
+
+    // The search whose matching rows opened. A new search opens the rows with matching triggers once.
+    private string openedSearch = "";
 
     // The game kind of the base folder of the profile, for the base label.
     private (string? Folder, Task<GameReport>? Report) game;
@@ -40,7 +48,9 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
     public void Reset()
     {
         selected = null;
+        filterSystem = null;
         game = default;
+        model.Reset();
     }
 
     public void Toolbar()
@@ -53,11 +63,12 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
             ImGui.OpenPopup("##filter");
         }
 
+        SystemPicker();
         FilterMenu();
         ImGui.SameLine();
         BaseGameToggle(window, missions);
         ImGui.SameLine();
-        ImGui.TextDisabled(MissionsBrowserModel.BaseLabel(GameReport()));
+        ImGui.TextDisabled(MissionSummary.BaseLabel(GameReport()));
         ImGui.SetItemTooltip("The game folder of this profile.");
         ImGui.SameLine();
         InfoIcon.Draw("help", MissionSchema.Retail.Help["missionsTab"]);
@@ -78,6 +89,10 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
         }
     }
 
+    /// <summary>True when the OpenLancer column and filter show: the active mod has no targets list without OpenLancer
+    /// (AGENTS.md UI rule 4).</summary>
+    private bool ShowsOpenLancer => window.Session?.Edits.HidesOpenLancer != true;
+
     private void FilterMenu()
     {
         if (!ImGui.BeginPopup("##filter"))
@@ -88,30 +103,53 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
         EditorTheme.PushMenuColors();
         ImGui.MenuItem("Has errors", "", ref filterErrors);
         ImGui.MenuItem("Has warnings", "", ref filterWarnings);
-        ImGui.MenuItem("Has OpenLancer gaps", "", ref filterGaps);
-        if (ImGui.BeginMenu("Uses system..."))
+        if (ShowsOpenLancer)
         {
-            if (ImGui.MenuItem("Any system", "", filterSystem == null))
-            {
-                filterSystem = null;
-            }
+            ImGui.MenuItem("Has OpenLancer gaps", "", ref filterGaps);
+        }
 
-            var systems = missions.Result?.Analyses.Values.SelectMany(a => MissionsBrowserModel.SystemsOf(a.Index))
-                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList() ?? [];
-            foreach (var system in systems)
-            {
-                if (ImGui.MenuItem(system, "", string.Equals(filterSystem, system, StringComparison.OrdinalIgnoreCase)))
-                {
-                    filterSystem = system;
-                }
-            }
+        ImGui.Separator();
+        if (ImGui.MenuItem("Uses system...", filterSystem ?? ""))
+        {
+            pickSystem = true;
+        }
 
-            ImGui.EndMenu();
+        ImGui.SetItemTooltip("Pick a system. The tab then shows only the missions that use it.");
+        if (filterSystem != null && ImGui.MenuItem("Any system"))
+        {
+            filterSystem = null;
         }
 
         EditorTheme.PopMenuColors();
         ImGui.EndPopup();
     }
+
+    /// <summary>The system picker of the filter "Uses system..." (section 5.1 of the M6a design). It is the list picker
+    /// of M21 with the systems that the missions name.</summary>
+    private void SystemPicker()
+    {
+        var open = pickSystem;
+        pickSystem = false;
+        if (missions.Result is not { } result || window.Session is not { } session)
+        {
+            return;
+        }
+
+        var picked = systemPicker.Draw("##system-picker", open, filterSystem ?? "", () =>
+        {
+            var used = model.Systems(result).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return session.Edits.Lists.List("system")?.Entries.Where(e => used.Contains(e.Value))
+                .Select(e => (e, Name(session, e))).ToList() ?? [];
+        }, none: false, ObjectKinds.StarSystem);
+        if (picked != null)
+        {
+            filterSystem = picked.Length == 0 ? null : picked;
+        }
+    }
+
+    /// <summary>The display name of a list entry: the text of its name, or its nickname.</summary>
+    private static string Name(EditorSession session, ListEntry entry) =>
+        entry.Section != null && session.SectionName(entry.Section) is { Length: > 0 } name ? name : entry.Name ?? entry.Value;
 
     public void Draw()
     {
@@ -134,29 +172,26 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
             return;
         }
 
-        var rows = MissionsBrowserModel.Rows(result, missions.ShowBaseGame)
-            .Where(r => Shows(r, result.Of(r.Script.Path))).ToList();
-        if (!ImGui.BeginTable("##missions", Widths.Length, Flags, ImGui.GetContentRegionAvail()))
+        var term = search.Trim();
+        var openMatches = term.Length > 0 && term != openedSearch;
+        openedSearch = term;
+        var rows = model.Rows(result, missions.ShowBaseGame).Where(r => Shows(result, r, term)).ToList();
+        var columns = ShowsOpenLancer ? Widths.Length : MissionsBrowserModel.OpenLancerColumn;
+        if (!ImGui.BeginTable("##missions", columns, Flags, ImGui.GetContentRegionAvail()))
         {
             return;
         }
 
         var scale = ImGuiHelper.Scale;
         ImGui.TableSetupScrollFreeze(1, 1);
-        for (var c = 0; c < Widths.Length; c++)
+        for (var c = 0; c < columns; c++)
         {
             ImGui.TableSetupColumn(MissionsBrowserModel.Columns[c].Name, ImGuiTableColumnFlags.WidthFixed, Widths[c] * scale);
         }
 
         ImGui.TableNextRow(ImGuiTableRowFlags.Headers);
-        for (var c = 0; c < Widths.Length; c++)
+        for (var c = 0; c < columns; c++)
         {
-            // The OpenLancer column shows unless the active mod has a targets list without OpenLancer (UI rule 4).
-            if (c == Widths.Length - 1 && window.Session.Edits.HidesOpenLancer)
-            {
-                continue;
-            }
-
             ImGui.TableSetColumnIndex(c);
             ImGui.TableHeader(MissionsBrowserModel.Columns[c].Name);
             ImGui.SetItemTooltip(MissionsBrowserModel.Columns[c].Tooltip);
@@ -165,27 +200,41 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
         var story = rows.Where(r => r.Script.Slot != null).ToList();
         var other = rows.Where(r => r.Script.Slot == null).ToList();
         Group("story", $"Story missions ({story.Count})", "The 14 story slots of the game code, in their fixed order.",
-            story, result, defaultOpen: true);
+            story, result, defaultOpen: true, term, openMatches);
         if (other.Count > 0)
         {
             Group("other", $"Other mission scripts ({other.Count})",
                 "Mission scripts that no story slot loads, for example test scripts and scripts of mods. The game can load " +
-                "such a script in another way, for example from a new-game file.", other, result, defaultOpen: false);
+                "such a script in another way, for example from a new-game file.", other, result, defaultOpen: false, term,
+                openMatches);
         }
 
         ImGui.EndTable();
     }
 
-    private bool Shows(MissionsBrowserRow row, MissionAnalysis? analysis) =>
-        MissionsBrowserModel.Matches(row, analysis, search.Trim()) &&
-        (!filterErrors || row.Errors > 0) && (!filterWarnings || row.Warnings > 0) && (!filterGaps || row.HasGaps) &&
+    private bool Shows(MissionRunResult result, MissionRow row, string term) =>
+        model.Matches(result, row, term) &&
+        (!filterErrors || row.Errors > 0) && (!filterWarnings || row.Warnings > 0) &&
+        (!filterGaps || !ShowsOpenLancer || row.HasGaps) &&
         (filterSystem == null || row.Systems.Contains(filterSystem));
 
-    private void Group(string id, string title, string tooltip, IReadOnlyList<MissionsBrowserRow> rows,
-        MissionRunResult result, bool defaultOpen)
+    /// <summary>The triggers of a row that match the search, or none.</summary>
+    private IReadOnlyList<MissionTrigger> Matching(MissionRunResult result, MissionRow row, string term) =>
+        result.Of(row.Script.Path) is { } analysis ? model.MatchingTriggers(result, analysis, term) : [];
+
+    /// <param name="term">The search text without blanks at its ends.</param>
+    /// <param name="openMatches">True in the first frame of a new search: the group and the rows with matching triggers
+    /// open (section 5.1 of the M6a design).</param>
+    private void Group(string id, string title, string tooltip, IReadOnlyList<MissionRow> rows, MissionRunResult result,
+        bool defaultOpen, string term, bool openMatches)
     {
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
+        if (openMatches && rows.Any(r => Matching(result, r, term).Count > 0))
+        {
+            ImGui.SetNextItemOpen(true);
+        }
+
         var open = ImGui.TreeNodeEx($"{title}###{id}",
             ImGuiTreeNodeFlags.SpanAllColumns | (defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : 0));
         ImGui.SetItemTooltip(tooltip);
@@ -196,22 +245,28 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
 
         for (var i = 0; i < rows.Count; i++)
         {
-            Row(rows[i], result, $"{id}{i}");
+            Row(rows[i], result, $"{id}{i}", term, openMatches);
         }
 
         ImGui.TreePop();
     }
 
-    private void Row(MissionsBrowserRow row, MissionRunResult result, string id)
+    private void Row(MissionRow row, MissionRunResult result, string id, string term, bool openMatches)
     {
         ImGui.PushID(id);
         ImGui.TableNextRow();
         ImGui.TableSetColumnIndex(0);
         var path = row.Script.Path;
         var analysis = result.Of(path);
+        var matching = Matching(result, row, term);
         var isSelected = string.Equals(selected, path, StringComparison.OrdinalIgnoreCase);
         var flags = ImGuiTreeNodeFlags.SpanAllColumns | ImGuiTreeNodeFlags.OpenOnArrow |
                     (isSelected ? ImGuiTreeNodeFlags.Selected : 0) | (analysis == null ? ImGuiTreeNodeFlags.Leaf : 0);
+        if (openMatches && matching.Count > 0)
+        {
+            ImGui.SetNextItemOpen(true);
+        }
+
         var open = ImGui.TreeNodeEx($"{row.Slot}###row", flags);
         if (ImGui.IsItemClicked() && !ImGui.IsItemToggledOpen())
         {
@@ -233,20 +288,20 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
         Cell(2, row.StartStage, row.StartTooltip);
         Cell(3, row.AcceptStage, row.AcceptTooltip);
         Cell(4, row.NextMission, row.NextTooltip);
-        Cell(5, row.State, null);
+        Cell(5, row.State, row.StateTooltip);
         Cell(6, row.Triggers.ToString(CultureInfo.InvariantCulture), null);
         Count(7, row.Errors, 0, EditorTheme.Error);
         Count(8, row.Warnings, row.Hidden, EditorTheme.Warning);
-        if (!window.Session!.Edits.HidesOpenLancer)
+        if (ShowsOpenLancer)
         {
-            Cell(9, row.OpenLancer, row.OpenLancerTooltip);
+            Cell(MissionsBrowserModel.OpenLancerColumn, row.OpenLancer.Text, row.OpenLancer.Tooltip);
         }
 
         if (open)
         {
             if (analysis != null)
             {
-                Triggers(analysis);
+                Triggers(matching);
                 Bundle(result, analysis);
             }
 
@@ -291,17 +346,15 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
         {
             ImGui.SameLine();
             ImGui.TextDisabled(string.Create(CultureInfo.InvariantCulture, $"({hidden:N0})"));
-            ItemTooltip.Show(hidden == 1
-                ? "1 base-game message is hidden."
-                : string.Create(CultureInfo.InvariantCulture, $"{hidden:N0} base-game messages are hidden."));
+            ItemTooltip.Show(BaseGameMessages.HiddenLine(hidden)!);
         }
     }
 
     /// <summary>The triggers that match the search, under their mission. A double-click opens the mission and selects
     /// the trigger.</summary>
-    private void Triggers(MissionAnalysis analysis)
+    private void Triggers(IReadOnlyList<MissionTrigger> matching)
     {
-        foreach (var trigger in MissionsBrowserModel.MatchingTriggers(analysis, search.Trim()))
+        foreach (var trigger in matching)
         {
             ImGui.TableNextRow();
             ImGui.TableSetColumnIndex(0);
@@ -318,7 +371,7 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
 
     private void Bundle(MissionRunResult result, MissionAnalysis analysis)
     {
-        var rows = MissionsBrowserModel.Bundle(result, analysis);
+        var rows = model.Bundle(result, analysis);
         for (var i = 0; i < rows.Count; i++)
         {
             var row = rows[i];
@@ -331,19 +384,19 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
                 Act(row, analysis);
             }
 
-            if (row.Tooltip != null)
-            {
-                ItemTooltip.Show(row.Tooltip);
-            }
+            var tooltip = BundleTooltip(row);
+            ItemTooltip.Show(tooltip);
 
-            if (row.Files.Count > 1 && ImGui.BeginPopupContextItem($"##bundle{i}"))
+            // Only a row that opens files has a menu of its files (AGENTS.md UI rule 4).
+            if (row.Action == MissionBundleAction.OpenCutscene && row.Files.Count > 1 &&
+                ImGui.BeginPopupContextItem($"##bundle{i}"))
             {
                 EditorTheme.PushMenuColors();
                 foreach (var file in row.Files)
                 {
-                    if (ImGui.MenuItem(file) && row.Action == MissionBundleAction.OpenCutscene)
+                    if (ImGui.MenuItem(file))
                     {
-                        OpenCutscene(file);
+                        missions.OpenCutscene(file);
                     }
                 }
 
@@ -351,8 +404,20 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
                 ImGui.EndPopup();
             }
 
-            Cell(1, row.Value, row.Tooltip);
+            Cell(1, row.Value, tooltip);
         }
+    }
+
+    /// <summary>The tooltip of a bundle row: what it holds, and what a double-click does.</summary>
+    internal static string BundleTooltip(MissionBundleRow row)
+    {
+        if (row.ActionPhrase is not { } action)
+        {
+            return row.Tooltip;
+        }
+
+        var pick = row.Action == MissionBundleAction.OpenCutscene && row.Files.Count > 1 ? " Right-click to pick a file." : "";
+        return $"{row.Tooltip}\nDouble-click to {action}.{pick}";
     }
 
     private void Act(MissionBundleRow row, MissionAnalysis analysis)
@@ -363,22 +428,11 @@ internal sealed class MissionsBrowser(EditorWindow window, MissionWorkspace miss
                 missions.OpenMission(analysis.Script.Path, show: true);
                 break;
             case MissionBundleAction.OpenCutscene when row.Files.Count > 0:
-                OpenCutscene(row.Files[0]);
+                missions.OpenCutscene(row.Files[0]);
                 break;
-            case MissionBundleAction.SelectMission:
-                window.Selection = MissionRef.Of(analysis.Script.Path);
+            case MissionBundleAction.ShowSection when row.Section != null:
+                missions.ShowSection(analysis.Script.Path, row.Section);
                 break;
-        }
-    }
-
-    /// <summary>Opens a space cutscene of a mission line in the Cutscene tab. The line holds a path below the data
-    /// folder.</summary>
-    private void OpenCutscene(string value)
-    {
-        if (MissionFiles.RelativeOf(value) is { } relative && window.Session?.Edits is { } edits &&
-            edits.DataPath(relative) is { } path)
-        {
-            window.Cutscenes.OpenAndShow(path);
         }
     }
 

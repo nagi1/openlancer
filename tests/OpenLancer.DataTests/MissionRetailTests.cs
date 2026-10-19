@@ -90,12 +90,12 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
         var run = Run();
         var problems = run.Problems.ToList();
 
-        Assert.Equal(629, problems.Count);
+        Assert.Equal(634, problems.Count);
         Assert.DoesNotContain(problems, p => p.Rule == "M11");
         Assert.All(problems, p => Assert.True(p.Origin!.IsBaseGame, p.Message));
         Assert.DoesNotContain(problems, p => p.Severity == DiagnosticSeverity.Error);
-        Assert.All(MissionsBrowserModel.Rows(run, showBaseGame: false), r => Assert.Equal((0, 0), (r.Errors, r.Warnings)));
-        Assert.Equal(629, MissionsBrowserModel.Rows(run, showBaseGame: false).Sum(r => r.Hidden));
+        Assert.All(MissionSummary.Rows(run, showBaseGame: false), r => Assert.Equal((0, 0), (r.Errors, r.Warnings)));
+        Assert.Equal(634, MissionSummary.Rows(run, showBaseGame: false).Sum(r => r.Hidden));
     }
 
     /// <summary>The checks on the retail lines as lines of the active mod, without a base-game run, prove that the rules
@@ -105,11 +105,14 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
     {
         var problems = Slots(Run()).SelectMany(a => MissionChecks.Run(a.Index)).ToList();
 
+        // Rule M26 finds the lock lines whose first value is no word of its closed set. The
+        // game does nothing for such a line.
         Assert.Equal(new Dictionary<string, int>
         {
             ["G05"] = 355, ["G06"] = 11, ["M03"] = 1, ["M04"] = 118, ["M05"] = 36, ["M06"] = 89, ["M07"] = 3, ["M08"] = 2,
-            ["M12"] = 10, ["M23"] = 2, ["M24"] = 1, ["M25"] = 1,
+            ["M12"] = 10, ["M23"] = 2, ["M24"] = 1, ["M25"] = 1, ["M26"] = 5,
         }, problems.GroupBy(p => p.Rule!).ToDictionary(g => g.Key, g => g.Count()));
+        Assert.All(problems.Where(p => p.Rule == "M26"), p => Assert.Equal("Act_LockDock", p.Key));
     }
 
     /// <summary>The prefab instances of the retail scripts (section 8.2 of the M6a design). The claim rule gives a trigger
@@ -144,7 +147,7 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
     [Fact]
     public void TheBrowserHasTheFourteenSlotRowsAndNoOtherScript()
     {
-        var rows = MissionsBrowserModel.Rows(Run(), showBaseGame: false);
+        var rows = MissionSummary.Rows(Run(), showBaseGame: false);
 
         Assert.Equal(14, rows.Count);
         Assert.All(rows, r => Assert.Equal("Base game", r.State));
@@ -153,7 +156,7 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
         Assert.Equal(["At once", "Worth grows by 3,500", "The story ends"],
             new[] { rows[0], rows[1], rows[13] }.Select(r => r.NextMission));
         // Since OL-0061, the engine skips the lines that it cannot build, so each retail mission loads in OpenLancer.
-        Assert.DoesNotContain(rows, r => r.OpenLancer == "Does not load");
+        Assert.DoesNotContain(rows, r => r.OpenLancer.Text == "Does not load");
     }
 
     /// <summary>The round trip contract of section 14.7: each section of each retail script gives the same entries
@@ -174,11 +177,72 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
         Assert.Equal(6, lines.Count(l => l == "BreakFormation"));
         Assert.Equal(4, lines.Count(l => l.Contains(" = = ", StringComparison.Ordinal)));
         Assert.Equal(2, lines.Count(l => l.EndsWith(", ", StringComparison.Ordinal)));
-        Assert.Contains(lines, l => l.Contains(@"\\", StringComparison.Ordinal));
+        // The other forms of section 14.7 item 5: the bare system lines, the doubled
+        // backslashes of each cutscene and base scene path, the keys with two spellings and the late repeatable lines.
+        var indexes = raws.Select(r => r.a.Index).ToList();
+        Assert.Equal(3, indexes.Sum(i => i.Lines.Count(l => l.Key.StartsWith("system", StringComparison.OrdinalIgnoreCase) &&
+                                                            l.Count == 0)));
+        // Each path of the 70 Act_CallThorn and the 68 Act_AddRTC lines, by its separators: doubled backslashes, single
+        // backslashes, or none. The doubled backslashes round trip as they are.
+        (int Doubled, int Single, int None) Paths(string key)
+        {
+            var values = indexes.SelectMany(i => i.Lines.Where(l => l.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
+                .Select(l => l.Value(0) ?? "").ToList();
+            var doubled = values.Count(v => v.Contains(@"\\", StringComparison.Ordinal));
+            var single = values.Count(v => v.Contains('\\')) - doubled;
+            return (doubled, single, values.Count - doubled - single);
+        }
+        Assert.Equal((67, 3, 0), Paths("Act_CallThorn"));
+        Assert.Equal((47, 0, 21), Paths("Act_AddRTC"));
+        Assert.Equal(17, indexes.SelectMany(i => i.Lines.Select(l => l.Key)).GroupBy(k => k, StringComparer.OrdinalIgnoreCase)
+            .Count(g => g.Distinct(StringComparer.Ordinal).Count() > 1));
+        Assert.Equal(5, indexes.SelectMany(i => i.Triggers).Count(t => LateRepeatable(t.Section.Section)));
         // The map points each entry at its line.
         var first = raws[0];
         var trigger = first.a.Index.Triggers[0].Section;
         Assert.Equal($"[{trigger.Section.Name}]", first.Raw.Lines[first.Raw.LineOf(trigger.Ref.Id, -1)!.Value]);
+    }
+
+    /// <summary>True when a section has a <c>repeatable</c> line after its first action line.</summary>
+    private static bool LateRepeatable(LibreLancer.Data.Ini.Section section)
+    {
+        var firstAction = section.ToList().FindIndex(e => TriggerRules.IsAction(e.Name));
+        return firstAction >= 0 && section.Skip(firstAction + 1).Any(e => MissionIndex.Is(e.Name, "repeatable"));
+    }
+
+    /// <summary>A ledger that marks each script as changed by one mod, so that each script gets a base-game run.</summary>
+    private sealed class AllChanged : IMissionLedger
+    {
+        public IReadOnlyList<string> ModsThatChangeFile(string path) => ["gate"];
+
+        public IReadOnlyList<string> ModsThatChangeSection(string path, OpenLancer.Data.Editing.SectionIdentity section) => [];
+
+        public string? ReplacedBy(string path) => null;
+    }
+
+    /// <summary>The performance gate of section 18.4 with the base-game runs: each of the 14 retail scripts counts as
+    /// changed, so each one gets its base-game run. The run stays under 2 s.</summary>
+    [Fact]
+    public void TheRunWithBaseGameRunsStaysUnderTheGate()
+    {
+        using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m6agatebase");
+        var inputs = workspace.Open().MissionInputs(EngineCoverage.Instance);
+        var changed = new MissionInputs
+        {
+            EditView = inputs.EditView, BaseView = inputs.EditView, FreelancerIni = inputs.FreelancerIni,
+            World = inputs.World, Ledger = new AllChanged(), Coverage = inputs.Coverage, ActiveModId = "gate",
+            Options = inputs.Options, Generation = inputs.Generation,
+        };
+
+        var watch = Stopwatch.StartNew();
+        var run = MissionRun.Execute(changed);
+        watch.Stop();
+
+        output.WriteLine($"The run of {run.Analyses.Count} changed scripts took {watch.ElapsedMilliseconds} ms.");
+        Assert.All(run.Analyses.Values, a => Assert.NotNull(a.BaseIndex));
+        // The base-game run finds each problem, so each one stays a base-game problem.
+        Assert.All(run.Problems, p => Assert.True(p.Origin!.IsBaseGame, p.Message));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(2), $"The run took {watch.ElapsedMilliseconds} ms.");
     }
 
     /// <summary>The performance gate of section 18.4: the run of the 14 retail scripts stays under 2 s. Other builds can

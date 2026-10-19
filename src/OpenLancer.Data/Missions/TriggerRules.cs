@@ -28,6 +28,14 @@ public static class TriggerRules
         return -1;
     }
 
+    /// <summary>The value of the first <c>nickname</c> line of a section, without blanks at its ends. Null when the
+    /// section has no such line or the line has no value. The game skips a trigger without a nickname.</summary>
+    public static string? Nickname(Section section) =>
+        NicknameLine(section) is >= 0 and var line && section[line].Count > 0 &&
+        MissionIndex.Text(section[line][0]) is { Length: > 0 } name
+            ? name
+            : null;
+
     /// <summary>The indexes of the condition lines after the first <c>nickname</c> line, in file order. A section
     /// without a nickname has none.</summary>
     public static IReadOnlyList<int> ConditionLines(Section section)

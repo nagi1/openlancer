@@ -64,6 +64,17 @@ internal static class EditorTheme
     /// </summary>
     public static readonly Vector4 Success = Rgb(0x6BBF59);
 
+    // The syntax colors of the raw INI editor (section 11.5 of the M6a design). The keywords use AccentText, and the
+    // section headers use TextBright.
+    /// <summary>A known key of a section type.</summary>
+    public static readonly Vector4 SyntaxKey = Rgb(0x9ECCDB);
+
+    /// <summary>A number.</summary>
+    public static readonly Vector4 SyntaxNumber = Rgb(0xADCC9E);
+
+    /// <summary>A text placeholder, for example <c>$str:</c>.</summary>
+    public static readonly Vector4 SyntaxString = Rgb(0xDBB385);
+
     // The scene.
     public static readonly Vector4 AxisX = Rgb(0xE06C6C);
     public static readonly Vector4 AxisY = Rgb(0x7CC46A);

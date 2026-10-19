@@ -9,9 +9,13 @@ namespace OpenLancer.Data.Missions;
 /// design). The UI thread makes it from the data lists of the edit view. The worker of the checks reads it only, so it
 /// holds plain sets and no session.
 /// </summary>
+/// <remarks>The world of a base-game run (decision D551) also holds the names that a mod removes or renames (see
+/// <see cref="WithRemoved"/>). A line that names such a name has a problem only with the mods. So the problem shows also
+/// in a script that no mod changes.</remarks>
 public sealed class MissionWorld
 {
     private readonly Dictionary<MissionValueKind, HashSet<string>> names = [];
+    private readonly Dictionary<MissionValueKind, Dictionary<string, string>> removed = [];
     private readonly Func<string, bool>? fileExists;
 
     /// <summary>A world without names and files. The checks of names outside the script then find nothing.</summary>
@@ -28,13 +32,48 @@ public sealed class MissionWorld
         this.fileExists = fileExists;
     }
 
+    private MissionWorld(MissionWorld world, IReadOnlyDictionary<MissionValueKind, IReadOnlyDictionary<string, string>> removed)
+    {
+        names = world.names;
+        fileExists = world.fileExists;
+        // The names compare without letter case, as the engine hash does.
+        foreach (var (kind, map) in removed.Where(p => p.Value.Count > 0))
+        {
+            var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (name, mod) in map)
+                names.TryAdd(name.Trim(), mod);
+            this.removed[kind] = names;
+        }
+    }
+
+    /// <summary>True when the world holds names that a mod removes or renames (see <see cref="WithRemoved"/>).</summary>
+    public bool HasRemovedNames => removed.Count > 0;
+
+    /// <summary>
+    /// The world of the base game for the base-game runs of the checks (decision D551 of the M6a design). It has the
+    /// names of this world and the names that a mod removes or renames.
+    /// </summary>
+    /// <param name="removed">The names of each kind that the base game has and this world does not have. Each name has
+    /// the last mod that changes its file.</param>
+    public MissionWorld WithRemoved(IReadOnlyDictionary<MissionValueKind, IReadOnlyDictionary<string, string>> removed) =>
+        new(this, removed);
+
     /// <summary>True when the world knows the names of a kind, or the files for a file kind.</summary>
     public bool Knows(MissionValueKind kind) =>
         MissionSchema.ScopeOf(kind) == MissionKindScope.File ? fileExists != null : names.ContainsKey(kind);
 
     /// <summary>True when the world has a name of a kind, without letter case.</summary>
     public bool Has(MissionValueKind kind, string name) =>
-        names.TryGetValue(kind, out var set) && set.Contains(name.Trim());
+        names.TryGetValue(kind, out var set) && set.Contains(name.Trim()) || RemovedBy(kind, name) != null;
+
+    /// <summary>
+    /// The mod that removes or renames a name of the base game, or null for a name that no mod removes. A name of the
+    /// label rule (<see cref="MissionValueKind.Object"/>) outside the script is an object of a system.
+    /// </summary>
+    public string? RemovedBy(MissionValueKind kind, string name) =>
+        removed.TryGetValue(kind == MissionValueKind.Object ? MissionValueKind.SystemObject : kind, out var map)
+            ? map.GetValueOrDefault(name.Trim())
+            : null;
 
     /// <summary>True when a file below the data folder exists. A world that does not know the files says yes.</summary>
     public bool FileExists(string relativePath) => fileExists?.Invoke(relativePath) ?? true;

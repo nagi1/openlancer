@@ -55,6 +55,8 @@ public sealed class CenterSelectionsTests
         Assert.Equal(CenterMode.Cutscene, tabs.Shown);
     }
 
+    /// <summary>A selection that no tab owns belongs to the tab that shows when the user
+    /// makes it, and that tab gets it back.</summary>
     [Fact]
     public void ADatabaseSelectionStaysWithTheTabThatShows()
     {
@@ -62,12 +64,27 @@ public sealed class CenterSelectionsTests
         tabs.Follow(CenterMode.Mission, SceneItem, Valid);
         var section = new SectionRef(@"DATA\SHIPS\shiparch.ini", new SectionIdentity("Ship", "a"));
 
-        // A Database click while the Mission tab shows selects a section. The Scene tab then shows it, and the Mission
-        // tab keeps no trigger.
-        Assert.Equal(section, tabs.Follow(CenterMode.Scene, section, Valid));
-        Assert.Null(tabs.Kept(CenterMode.Mission));
-        Assert.Equal(Mission, tabs.Follow(CenterMode.Mission, section, Valid));
-        Assert.Equal(section, tabs.Kept(CenterMode.Scene));
+        // A Database click while the Mission tab shows selects a section. The Scene tab then gets back its own item, and
+        // the Mission tab keeps the section.
+        Assert.Equal(SceneItem, tabs.Follow(CenterMode.Scene, section, Valid));
+        Assert.Equal(section, tabs.Kept(CenterMode.Mission));
+        Assert.Equal(section, tabs.Follow(CenterMode.Mission, SceneItem, Valid));
+        Assert.Equal(SceneItem, tabs.Kept(CenterMode.Scene));
+    }
+
+    /// <summary>A world item of the Scene part of the Mission tab stays with the Mission tab.
+    /// The Cutscene tab shows its own element.</summary>
+    [Fact]
+    public void AWorldItemOfTheMissionTabStaysWithTheMissionTab()
+    {
+        var tabs = Tabs();
+        var worldItem = new object();
+        tabs.Park(CenterMode.Cutscene, Element);
+        tabs.Follow(CenterMode.Mission, SceneItem, Valid);
+
+        Assert.Equal(Element, tabs.Follow(CenterMode.Cutscene, worldItem, Valid));
+        Assert.Equal(worldItem, tabs.Kept(CenterMode.Mission));
+        Assert.Equal(worldItem, tabs.Follow(CenterMode.Mission, Element, Valid));
     }
 
     [Fact]

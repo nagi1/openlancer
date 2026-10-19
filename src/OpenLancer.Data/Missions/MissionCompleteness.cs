@@ -41,7 +41,7 @@ public static class MissionCompleteness
     {
         var steps = MissionSteps.Select(s => RuleStep(s.Name, s.Reason, analysis.Problems.Where(p => p.Rule != null &&
             s.Rules.Contains(p.Rule)).ToList())).ToList();
-        return new CompletenessReport("Mission", steps);
+        return new CompletenessReport("Mission", steps) { HiddenMessages = BaseGameMessages.Count(analysis.Problems) };
     }
 
     /// <summary>The completeness of a prefab instance: the steps of its prefab.</summary>
@@ -72,7 +72,10 @@ public static class MissionCompleteness
                     : CompletenessState.Missing;
             steps.Add(new CompletenessStep(step.Name, state, step.Reason, GoTo: instance.CoreSection?.Ref));
         }
-        return new CompletenessReport(instance.Definition.Name, steps);
+        return new CompletenessReport(instance.Definition.Name, steps)
+        {
+            HiddenMessages = BaseGameMessages.Count(analysis.Problems.Where(p => p.Target != null && sections.Contains(p.Target))),
+        };
     }
 
     /// <summary>A step whose state comes from the problems of its rules.</summary>

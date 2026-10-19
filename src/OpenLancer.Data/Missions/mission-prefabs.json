@@ -34,9 +34,9 @@
         { "role": "scene", "label": "Offer scene", "rule": "offerSceneTriggers" }
       ],
       "fields": [
-        { "id": "offerScene", "label": "Offer scene", "from": { "role": "scene", "actions": ["Act_AddRTC"], "value": 0 }, "list": true },
+        { "id": "offerScene", "label": "Offer scene", "from": { "role": "scene", "actions": ["Act_AddRTC"], "value": 0 }, "list": { "codec": "lines", "items": "base scenes" } },
         { "id": "onAccept", "label": "On accept", "from": { "role": "core", "trigger": true } },
-        { "id": "onDecline", "label": "On decline", "from": { "role": "decline", "trigger": true }, "list": true }
+        { "id": "onDecline", "label": "On decline", "from": { "role": "decline", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } }
       ],
       "steps": [
         { "id": "scene", "name": "Offer scene", "requires": "scene", "reason": "The player sees the offer in this scene." },
@@ -67,8 +67,8 @@
       ],
       "fields": [
         { "id": "tests", "label": "Tests trigger", "from": { "role": "core", "trigger": true } },
-        { "id": "ifActive", "label": "If it is active", "from": { "role": "on", "trigger": true }, "list": true },
-        { "id": "ifNotActive", "label": "If it is not active", "from": { "role": "off", "trigger": true }, "list": true }
+        { "id": "ifActive", "label": "If it is active", "from": { "role": "on", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } },
+        { "id": "ifNotActive", "label": "If it is not active", "from": { "role": "off", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } }
       ],
       "steps": [
         { "id": "bothPaths", "name": "Both paths", "check": "bothPaths", "reason": "A branch needs both paths." },
@@ -85,8 +85,8 @@
         { "id": "encounter", "label": "Encounter", "from": { "role": "core", "key": "nickname" } },
         { "id": "attackers", "label": "Attackers", "from": { "role": "core", "key": "attacker_rep_name" } },
         { "id": "startsBy", "label": "Starts by", "from": { "role": "core", "key": "activation_type" } },
-        { "id": "armedBy", "label": "Armed by", "from": { "role": "armedBy", "trigger": true }, "list": true },
-        { "id": "onSpawn", "label": "On spawn", "from": { "role": "onSpawn", "trigger": true }, "list": true }
+        { "id": "armedBy", "label": "Armed by", "from": { "role": "armedBy", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } },
+        { "id": "onSpawn", "label": "On spawn", "from": { "role": "onSpawn", "trigger": true }, "list": { "codec": "triggers", "items": "triggers" } }
       ],
       "steps": [
         { "id": "armed", "name": "Armed by a trigger", "requires": "armedBy", "reason": "The encounter never spawns until a trigger arms it." },
@@ -97,11 +97,11 @@
       "core": { "anyAction": ["Act_SpawnShip", "Act_SpawnFormation"] },
       "members": [ { "role": "end", "label": "End", "rule": "destroyedWatchersOfSpawned", "shared": true } ],
       "fields": [
-        { "id": "ships", "label": "Ships", "from": { "role": "core", "actions": ["Act_SpawnShip", "Act_SpawnFormation"], "value": 0 }, "list": true },
+        { "id": "ships", "label": "Ships", "from": { "role": "core", "actions": ["Act_SpawnShip", "Act_SpawnFormation"], "value": 0 }, "list": { "codec": "lines", "items": "ships" } },
         { "id": "spawnWhen", "label": "Spawn when", "from": { "role": "core", "condition": true } },
-        { "id": "orders", "label": "Orders", "from": { "role": "core", "actions": ["Act_GiveObjList"], "value": 1 }, "list": true },
-        { "id": "sides", "label": "Sides", "from": { "role": "core", "group": "sides" }, "list": true },
-        { "id": "endsWhen", "label": "Ends when", "from": { "role": "end", "condition": true }, "list": true }
+        { "id": "orders", "label": "Orders", "from": { "role": "core", "actions": ["Act_GiveObjList"], "value": 1 }, "list": { "codec": "lines", "items": "orders" } },
+        { "id": "sides", "label": "Sides", "from": { "role": "core", "group": "sides" }, "list": { "codec": "lines", "items": "attitude lines" } },
+        { "id": "endsWhen", "label": "Ends when", "from": { "role": "end", "condition": true }, "list": { "codec": "triggers", "items": "triggers" } }
       ],
       "steps": [
         { "id": "ships", "name": "Ships to spawn", "rules": ["M06", "M07"], "reason": "A spawn of a missing name spawns nothing." },
@@ -113,8 +113,8 @@
       "core": { "anyAction": ["Act_MarkObj"], "noAction": ["Act_SpawnShip", "Act_SpawnFormation", "Act_SpawnSolar", "Act_SpawnLoot", "Act_SpawnShipRel"] },
       "members": [ { "role": "done", "label": "Done", "rule": "destroyedWatchersOfMarked" } ],
       "fields": [
-        { "id": "targets", "label": "Targets", "from": { "role": "core", "actions": ["Act_MarkObj"], "value": 0 }, "list": true },
-        { "id": "doneWhen", "label": "Done when", "from": { "role": "done", "condition": true }, "list": true }
+        { "id": "targets", "label": "Targets", "from": { "role": "core", "actions": ["Act_MarkObj"], "value": 0 }, "list": { "codec": "lines", "items": "targets" } },
+        { "id": "doneWhen", "label": "Done when", "from": { "role": "done", "condition": true }, "list": { "codec": "triggers", "items": "triggers" } }
       ],
       "steps": [
         { "id": "marked", "name": "Targets marked", "check": "targetsMarked", "reason": "The player finds the targets by their marks." },
@@ -125,7 +125,7 @@
       "core": { "chain": "comms" },
       "members": [ { "role": "chain", "label": "Line", "rule": "linearChain" } ],
       "fields": [
-        { "id": "lines", "label": "Lines", "from": { "role": "all", "group": "comms" }, "list": true },
+        { "id": "lines", "label": "Lines", "from": { "role": "all", "group": "comms" }, "list": { "codec": "lines", "items": "comm lines" } },
         { "id": "startsWhen", "label": "Starts when", "from": { "role": "core", "condition": true } }
       ],
       "steps": [
@@ -137,8 +137,8 @@
       "members": [],
       "fields": [
         { "id": "reward", "label": "Reward", "from": { "role": "core", "actions": ["Act_AdjAcct"], "value": 0 } },
-        { "id": "reputation", "label": "Reputation changes", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": true },
-        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": true },
+        { "id": "reputation", "label": "Reputation changes", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": { "codec": "lines", "items": "reputation lines" } },
+        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": { "codec": "lines", "items": "log lines" } },
         { "id": "endScene", "label": "End scene", "from": { "role": "core", "actions": ["Act_AddRTC"], "value": 0 } }
       ],
       "steps": [] },
@@ -156,22 +156,22 @@
       "help": { "title": "Keep applying", "whatItIs": "A rule that the game applies again and again while the trigger is active, for example \"always friendly\".", "whatItWrites": "A [Trigger] section with repeatable = true and Cnd_True." },
       "core": { "repeatable": true, "condition": "Cnd_True" },
       "members": [],
-      "fields": [ { "id": "applies", "label": "Applies", "from": { "role": "core", "allActions": true }, "list": true } ],
+      "fields": [ { "id": "applies", "label": "Applies", "from": { "role": "core", "allActions": true }, "list": { "codec": "lines", "items": "actions" } } ],
       "steps": [] },
     { "id": "setReputation", "name": "Set reputation", "kind": "beat", "order": 12,
       "help": { "title": "Set reputation", "whatItIs": "A trigger that only changes attitudes and reputations.", "whatItWrites": "A [Trigger] section with Act_SetVibe or Act_SetRep lines." },
       "core": { "allNonFlowInGroup": "sides" },
       "members": [],
       "fields": [
-        { "id": "attitudes", "label": "Attitudes", "from": { "role": "core", "actions": ["Act_SetVibe", "Act_SetVibeLbl", "Act_SetVibeLblToShip", "Act_SetVibeShipToLbl"], "value": 0 }, "list": true },
-        { "id": "reputation", "label": "Reputation", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": true }
+        { "id": "attitudes", "label": "Attitudes", "from": { "role": "core", "actions": ["Act_SetVibe", "Act_SetVibeLbl", "Act_SetVibeLblToShip", "Act_SetVibeShipToLbl"], "value": 0 }, "list": { "codec": "lines", "items": "attitude lines" } },
+        { "id": "reputation", "label": "Reputation", "from": { "role": "core", "actions": ["Act_SetRep"], "value": 1 }, "list": { "codec": "lines", "items": "reputation lines" } }
       ],
       "steps": [] },
     { "id": "lockGate", "name": "Lock or unlock gate", "kind": "beat", "order": 13,
       "help": { "title": "Lock or unlock gate", "whatItIs": "A trigger that only locks or unlocks docks and gates, for the player or for other ships.", "whatItWrites": "A [Trigger] section with Act_LockDock lines." },
       "core": { "allNonFlowActions": ["Act_LockDock"] },
       "members": [],
-      "fields": [ { "id": "docks", "label": "Docks", "from": { "role": "core", "actions": ["Act_LockDock"], "value": 1 }, "list": true } ],
+      "fields": [ { "id": "docks", "label": "Docks", "from": { "role": "core", "actions": ["Act_LockDock"], "value": 1 }, "list": { "codec": "lines", "items": "docks" } } ],
       "steps": [] },
     { "id": "objective", "name": "Objective", "kind": "beat", "order": 14,
       "help": { "title": "Objective", "whatItIs": "A trigger that only sets the objective and its texts.", "whatItWrites": "A [Trigger] section with objective and text lines." },
@@ -181,7 +181,7 @@
         { "id": "objective", "label": "Objective", "from": { "role": "core", "actions": ["Act_SetNNObj"], "value": 0 } },
         { "id": "state", "label": "State", "from": { "role": "core", "actions": ["Act_SetNNState"], "value": 1 } },
         { "id": "title", "label": "Title", "from": { "role": "core", "actions": ["Act_SetTitle"], "value": 0 } },
-        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": true }
+        { "id": "log", "label": "Log text", "from": { "role": "core", "actions": ["Act_NNIds"], "value": 0 }, "list": { "codec": "lines", "items": "log lines" } }
       ],
       "steps": [] },
     { "id": "watchedState", "name": "Watched state", "kind": "beat", "order": 15,
@@ -203,7 +203,7 @@
       "help": { "title": "Patrol", "whatItIs": "Orders that make a ship fly along two or more points.", "whatItWrites": "An [ObjList] section with GotoVec or GotoSpline lines." },
       "core": { "section": "ObjList", "minKeys": { "keys": ["GotoVec", "GotoSpline"], "count": 2 }, "noKey": ["Dock"] },
       "members": [ { "role": "givers", "label": "Given by", "rule": "ordersGivers" } ],
-      "fields": [ { "id": "waypoints", "label": "Waypoints", "from": { "role": "core", "keys": ["GotoVec", "GotoSpline"] }, "list": true } ],
+      "fields": [ { "id": "waypoints", "label": "Waypoints", "from": { "role": "core", "keys": ["GotoVec", "GotoSpline"] }, "list": { "codec": "lines", "items": "waypoints" } } ],
       "steps": [] }
   ]
 }

@@ -30,8 +30,8 @@ public sealed class CutsceneViewerTests
     private static readonly object SceneItem = new();
 
     /// <summary>
-    /// The Scene and the Cutscene tab each get back their own selection. A selection of the other kind that the user
-    /// made while a tab showed stays.
+    /// The Scene and the Cutscene tab each get back their own selection. A selection that no tab owns belongs to the tab
+    /// that showed when the user made it (section 4.2 of the M6a design).
     /// </summary>
     [Fact]
     public void EachCenterTabGetsBackItsOwnSelection()
@@ -52,10 +52,12 @@ public sealed class CutsceneViewerTests
         // To the Scene: the element waits, and the scene item shows.
         Assert.Equal(SceneItem, tabs.Follow(CenterMode.Scene, Element, Valid));
         Assert.Equal(Element, tabs.Kept(CenterMode.Cutscene));
-        // A Database click while the Cutscene tab showed selected a section: it stays.
+        // A Database click while the Cutscene tab showed selected a section: it stays with the Cutscene tab.
         var section = new object();
         tabs.Follow(CenterMode.Cutscene, Element, Valid);
-        Assert.Equal(section, tabs.Follow(CenterMode.Scene, section, Valid));
+        Assert.Equal(SceneItem, tabs.Follow(CenterMode.Scene, section, Valid));
+        Assert.Equal(section, tabs.Kept(CenterMode.Cutscene));
+        Assert.Equal(section, tabs.Follow(CenterMode.Cutscene, SceneItem, Valid));
     }
 
     /// <summary>The center tabs with the owners of the editor: the Cutscene tab owns the cutscene items.</summary>

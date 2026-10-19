@@ -11,6 +11,10 @@ public enum EngineMark
 
     /// <summary>The engine stops when it loads the line, so the mission does not start.</summary>
     CannotLoad,
+
+    /// <summary>The engine never runs the line. The line is an action of a trigger whose condition has no effect in the
+    /// engine, so the trigger never runs its actions. The index gives this mark, not the engine.</summary>
+    NeverRuns,
 }
 
 /// <summary>

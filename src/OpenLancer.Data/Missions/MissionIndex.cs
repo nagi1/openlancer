@@ -265,7 +265,8 @@ public sealed class MissionIndex
     public IReadOnlyList<MissionLink> Restarts { get; private set; } = [];
 
     /// <summary>The cancel lines: an <c>Act_DeactTrig</c> line whose target an <c>Act_ActTrig</c> line before it in the
-    /// same trigger starts, with no restart. The game does not start the target (TR9).</summary>
+    /// same trigger starts, and no <c>Act_ActTrig</c> line after it starts again. The game does not start the target
+    /// (TR9).</summary>
     public IReadOnlyList<MissionLink> Cancels { get; private set; } = [];
 
     /// <summary>The triggers that start themselves.</summary>
@@ -432,12 +433,13 @@ public sealed class MissionIndex
         var bySection = lines.GroupBy(l => l.Section).ToDictionary(g => g.Key, g => g.ToList());
         foreach (var section in Document.OfKind(MissionSectionKind.Trigger))
         {
-            var nicknameLine = TriggerRules.NicknameLine(section.Section);
-            if (nicknameLine < 0 || section.Nickname == null)
+            // The game skips a trigger without a nickname. The target checks use the same rule (decision D556).
+            if (TriggerRules.Nickname(section.Section) is not { } nickname)
                 continue;
-            var trigger = new MissionTrigger(section, section.Nickname, nicknameLine)
+            var nicknameLine = TriggerRules.NicknameLine(section.Section);
+            var trigger = new MissionTrigger(section, nickname, nicknameLine)
             {
-                IsDuplicate = triggerByName.ContainsKey(section.Nickname),
+                IsDuplicate = triggerByName.ContainsKey(nickname),
                 LinesBeforeNickname = Enumerable.Range(0, nicknameLine).ToList(),
             };
             var sectionLines = bySection.GetValueOrDefault(section) ?? [];
@@ -449,11 +451,19 @@ public sealed class MissionIndex
             trigger.Rows = after.Where(l => TriggerRules.IsCondition(l.Key) || TriggerRules.IsAction(l.Key)).ToList();
             var initState = after.LastOrDefault(l => Is(l.Key, "InitState"))?.Value(0);
             trigger.StartsActive = initState != null && Is(initState, "ACTIVE");
-            trigger.Repeats = after.Any(l => Is(l.Key, "repeatable") && l.Value(0) is { } value &&
-                                             value.ToLowerInvariant() is "true" or "1");
+            // The last line of a key counts, as for InitState (TR10).
+            trigger.Repeats = after.LastOrDefault(l => Is(l.Key, "repeatable"))?.Value(0) is { } value &&
+                              value.ToLowerInvariant() is "true" or "1";
             trigger.SystemHint = after.FirstOrDefault(l => Is(l.Key, "system") && l.Value(0) != null)?.Value(0);
             triggers.Add(trigger);
             triggerByName.TryAdd(trigger.Nickname, trigger);
+            // A condition that has no effect in the engine never becomes true. So the engine never runs the actions of
+            // its trigger (section 14.8 of the M6a design).
+            if (trigger.Condition?.Mark is EngineMark.NoEffect or EngineMark.CannotLoad)
+            {
+                foreach (var action in trigger.Actions.Where(a => a.Mark == EngineMark.Runs))
+                    action.Mark = EngineMark.NeverRuns;
+            }
         }
         StartTriggers = triggers.Where(t => t.StartsActive && !t.IsDuplicate).ToList();
     }
@@ -630,7 +640,8 @@ public sealed class MissionIndex
                 var before = ordered.Take(i).Where(l => Is(l.TargetName, link.TargetName)).ToList();
                 if (link.Kind == MissionLinkKind.Start && before.Any(l => l.Kind == MissionLinkKind.Stop))
                     restarts.Add(link);
-                else if (link.Kind == MissionLinkKind.Stop && before.Any(l => l.Kind == MissionLinkKind.Start))
+                else if (link.Kind == MissionLinkKind.Stop && before.Any(l => l.Kind == MissionLinkKind.Start) &&
+                         !ordered.Skip(i + 1).Any(l => l.Kind == MissionLinkKind.Start && Is(l.TargetName, link.TargetName)))
                     cancels.Add(link);
             }
             if (ordered.Any(l => l.Kind == MissionLinkKind.Start && Is(l.TargetName, group.Key.Nickname)))

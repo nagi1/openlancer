@@ -23,7 +23,9 @@ internal readonly record struct ChipLook(Vector4 Fill, Vector4 Border, Vector4 T
 
 /// <summary>One chip of a row of chips.</summary>
 /// <param name="Tooltip">The tooltip of the chip, or null.</param>
-internal readonly record struct ChipItem(string Text, ChipLook Look, string? Tooltip = null);
+/// <param name="Clickable">True for a chip that does something on a click, for example a system that opens. It gets the
+/// accent outline under the mouse.</param>
+internal readonly record struct ChipItem(string Text, ChipLook Look, string? Tooltip = null, bool Clickable = false);
 
 /// <summary>
 /// A chip: a short text in a small rounded box (decision D579 of the M11c design). The flags rows of the Inspector and
@@ -40,9 +42,10 @@ internal static class Chip
     /// <summary>
     /// Draws the chips from left to right in the caption size. They wrap at the right edge of the content region. The
     /// area of the chips is one item with the width of its widest row, so a table column that fits its content grows
-    /// to the chips, and a tooltip of the caller can follow the item. A chip with a tooltip shows it on hover.
+    /// to the chips, and a tooltip of the caller can follow the item. A chip with a tooltip shows it on hover. Returns the
+    /// index of a clickable chip that the user clicks in this frame, or -1.
     /// </summary>
-    public static void Flow(IReadOnlyList<ChipItem> chips)
+    public static int Flow(IReadOnlyList<ChipItem> chips)
     {
         var scale = ImGuiHelper.Scale;
         var font = ImGui.GetFont();
@@ -65,6 +68,7 @@ internal static class Chip
         var places = Layout(widths, available, MathF.Truncate(Gap * scale));
         var rows = 0;
         string? tooltip = null;
+        var hovered = -1;
         var mouse = ImGui.GetMousePos();
         for (var i = 0; i < chips.Count; i++)
         {
@@ -73,16 +77,23 @@ internal static class Chip
             var min = start + new Vector2(x, row * height + inset);
             var max = min + new Vector2(widths[i], height - 2 * inset);
             var look = chips[i].Look;
-            drawList.AddRectFilled(min, max, ImGui.GetColorU32(look.Fill), Rounding * scale);
-            if (look.Border.W > 0)
+            var over = mouse.X >= min.X && mouse.X < max.X && mouse.Y >= min.Y && mouse.Y < max.Y;
+            if (over)
             {
-                drawList.AddRect(min, max, ImGui.GetColorU32(look.Border), Rounding * scale);
+                hovered = i;
+            }
+
+            drawList.AddRectFilled(min, max, ImGui.GetColorU32(look.Fill), Rounding * scale);
+            var border = chips[i].Clickable && over && ImGui.IsWindowHovered() ? EditorTheme.AccentText : look.Border;
+            if (border.W > 0)
+            {
+                drawList.AddRect(min, max, ImGui.GetColorU32(border), Rounding * scale);
             }
 
             drawList.AddText(font, fontSize,
                 new Vector2(min.X + padding, min.Y + MathF.Truncate((max.Y - min.Y - sizes[i].Y) / 2)),
                 ImGui.GetColorU32(look.Text), chips[i].Text);
-            if (chips[i].Tooltip != null && mouse.X >= min.X && mouse.X < max.X && mouse.Y >= min.Y && mouse.Y < max.Y)
+            if (chips[i].Tooltip != null && over)
             {
                 tooltip = chips[i].Tooltip;
             }
@@ -93,6 +104,8 @@ internal static class Chip
         {
             ImGui.SetTooltip(tooltip);
         }
+
+        return hovered >= 0 && chips[hovered].Clickable && ImGui.IsItemClicked() ? hovered : -1;
     }
 
     /// <summary>The width of the widest row of the chips, in pixels.</summary>

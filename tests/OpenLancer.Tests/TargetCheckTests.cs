@@ -224,6 +224,22 @@ public sealed class TargetCheckTests : IDisposable
         }));
     }
 
+    /// <summary>The game skips a trigger without a nickname and the second trigger with a
+    /// name (TR2, TR4), so the target check gives no error for them, as the mission checks (decision D556).</summary>
+    [Fact]
+    public void ASkippedTriggerNeedsNoCondition()
+    {
+        var problems = CheckFiles(new()
+        {
+            [Whole(MissionPath)] = "[Mission]\nnpc_ship_file = missions\\m01\\npcships.ini\n\n" +
+                                   "[Trigger]\nnickname = t1\nCnd_True = no_params\nAct_ActTrig = t1\n\n" +
+                                   "[Trigger]\nnickname = t1\nAct_ActTrig = t1\n\n" +
+                                   "[Trigger]\nCnd_True = no_params\nAct_ActTrig = t1\n",
+        });
+
+        Assert.DoesNotContain(problems, p => p.Message.Contains("has no condition"));
+    }
+
     [Fact]
     public void AConditionBeforeTheNicknameDoesNotCount()
     {

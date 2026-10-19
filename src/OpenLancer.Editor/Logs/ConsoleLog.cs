@@ -51,6 +51,14 @@ internal sealed record ConsoleEntry(ConsoleSeverity Severity, string Source, str
     /// <summary>True after the entry left the log: <see cref="ConsoleLog.Clear"/>, or the capacity dropped it.</summary>
     internal bool Removed { get; set; }
 
+    /// <summary>The set of <see cref="ConsoleLog.ReplaceSet"/> that added the entry, or null. Only a new set of the same
+    /// name removes the entry, so an engine line with the same source stays.</summary>
+    internal string? Set { get; init; }
+
+    /// <summary>The number of the note that counted the entry as unseen, or 0 when it never counted (see
+    /// <see cref="ConsoleLog.MarkSeen"/>).</summary>
+    internal long UnseenNote { get; set; }
+
     /// <summary>The entry as one line of text, for example "[Error 12:34:56] Mods: message".</summary>
     public override string ToString() =>
         string.Create(CultureInfo.InvariantCulture, $"[{Severity} {Time:HH:mm:ss}] {Source}: {Message}");
@@ -130,6 +138,11 @@ internal sealed class ConsoleLog
 
     private EngineLineOrigins? origins;
     private long sequence;
+
+    // The number of the last note that counted an entry as unseen, and that number at the last MarkSeen. An entry whose
+    // note is above the second number still counts in the unseen counts.
+    private long notes;
+    private long seenNotes;
 
     /// <summary>The entries from the oldest to the newest.</summary>
     public IReadOnlyList<ConsoleEntry> Entries => entries;
@@ -242,25 +255,34 @@ internal sealed class ConsoleLog
     }
 
     /// <summary>
-    /// Replaces the entries of one source with the entries of new diagnostics (decision D552 of the M6a design). Each run
-    /// of the mission checks gives all its problems again, so the Console keeps one set, as Unity clears and adds its
-    /// compile errors. An entry that the old set already had (the same severity, message, section, line and origin)
-    /// does not count as new, so a save does not light the badge again for an old problem.
+    /// Replaces the entries of one set with the entries of new diagnostics (decision D552 of the M6a design). Each run of
+    /// the mission checks gives all its problems again, so the Console keeps one set, as Unity clears and adds its compile
+    /// errors. The set removes only the entries that it added, so an engine line with the same source stays. An entry
+    /// that the old set already had does not count as new: the same severity, message, section, line and origin. So a
+    /// save does not light the badge again for an old problem. The entry keeps the unseen state of the old entry. An old
+    /// entry that the new set does not have leaves the unseen counts.
     /// </summary>
-    public void ReplaceSource(string source, IReadOnlyList<Diagnostic> diagnostics)
+    /// <param name="set">The name of the set, for example the source of the diagnostics.</param>
+    public void ReplaceSet(string set, IReadOnlyList<Diagnostic> diagnostics)
     {
-        var known = new Dictionary<(ConsoleSeverity, string, SectionRef?, int, OriginKind), int>();
+        var known = new Dictionary<(ConsoleSeverity, string, SectionRef?, int, OriginKind), Queue<ConsoleEntry>>();
+        var previousLast = Last;
         var lastRemoved = false;
         for (var i = entries.Count - 1; i >= 0; i--)
         {
             var old = entries[i];
-            if (old.Source != source)
+            if (old.Set != set)
             {
                 continue;
             }
 
             var key = (old.Severity, old.Message, old.Target, old.EntryIndex, old.Origin.Kind);
-            known[key] = known.GetValueOrDefault(key) + 1;
+            if (!known.TryGetValue(key, out var same))
+            {
+                known[key] = same = new Queue<ConsoleEntry>();
+            }
+
+            same.Enqueue(old);
             counts[(int)old.Severity, Group(old.Origin)]--;
             old.Removed = true;
             lastRemoved |= ReferenceEquals(old, Last);
@@ -281,22 +303,53 @@ internal sealed class ConsoleLog
 
         foreach (var diagnostic in diagnostics)
         {
-            var entry = EntryOf(diagnostic, "");
+            var entry = EntryOf(diagnostic, "") with { Set = set };
             var key = (entry.Severity, entry.Message, entry.Target, entry.EntryIndex, entry.Origin.Kind);
-            var seen = known.TryGetValue(key, out var count) && count > 0;
-            if (seen)
+            if (known.TryGetValue(key, out var same) && same.TryDequeue(out var old))
             {
-                known[key] = count - 1;
+                entry.UnseenNote = old.UnseenNote;
+                Add(entry, note: false);
+                if (ReferenceEquals(old, previousLast))
+                {
+                    Last = entry;
+                }
             }
+            else
+            {
+                Add(entry);
+            }
+        }
 
-            Add(entry, note: !seen);
+        foreach (var gone in known.Values.SelectMany(q => q))
+        {
+            Unnote(gone);
         }
 
         Version++;
     }
 
-    /// <summary>The entries of a source, from the oldest to the newest.</summary>
-    public IEnumerable<ConsoleEntry> EntriesOf(string source) => entries.Where(e => e.Source == source);
+    /// <summary>The entries of a set of <see cref="ReplaceSet"/>, from the oldest to the newest.</summary>
+    public IEnumerable<ConsoleEntry> EntriesOf(string set) => entries.Where(e => e.Set == set);
+
+    /// <summary>Takes a removed entry out of the unseen counts when it still counts there.</summary>
+    private void Unnote(ConsoleEntry entry)
+    {
+        if (entry.UnseenNote <= seenNotes)
+        {
+            return;
+        }
+
+        if (entry.Severity == ConsoleSeverity.Warning)
+        {
+            UnseenWarnings = Math.Max(0, UnseenWarnings - 1);
+        }
+        else if (entry.Severity == ConsoleSeverity.Error)
+        {
+            UnseenErrors = Math.Max(0, UnseenErrors - 1);
+        }
+
+        entry.UnseenNote = 0;
+    }
 
     /// <summary>Counts a new entry that shows: a warning or an error adds to the unseen counts and becomes
     /// <see cref="Last"/> when it is newer.</summary>
@@ -320,6 +373,8 @@ internal sealed class ConsoleLog
         {
             UnseenErrors++;
         }
+
+        entry.UnseenNote = ++notes;
 
         if (Last == null || entry.Sequence > Last.Sequence)
         {
@@ -569,7 +624,11 @@ internal sealed class ConsoleLog
     }
 
     /// <summary>Sets the unseen counts to 0. Call it while the Console shows.</summary>
-    public void MarkSeen() => (UnseenWarnings, UnseenErrors) = (0, 0);
+    public void MarkSeen()
+    {
+        (UnseenWarnings, UnseenErrors) = (0, 0);
+        seenNotes = notes;
+    }
 
     /// <summary>True for a start or an end line of a batch. A start opens the batch. An end closes it, and its lines
     /// resolve when the base run is known.</summary>

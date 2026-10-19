@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -21,7 +22,7 @@ internal sealed class MissionView(EditorWindow window, MissionWorkspace missions
     private const float MinSceneTabWidth = 640;
     private const float MinPart = 160;
 
-    private readonly RawIniEditor raw = new();
+    private readonly RawIniEditor raw = new(MissionWorkspace.Vocabulary);
     private int lastCursor = -1;
     private object? lastSelection;
     private string? shownPath;
@@ -88,13 +89,35 @@ internal sealed class MissionView(EditorWindow window, MissionWorkspace missions
             return;
         }
 
-        if (missions.OpenPath is not { } path || missions.RawTextOf(path) is not { } text)
+        if (missions.OpenPath is not { } path || missions.Analysis(path) == null)
         {
             PanelStates.Message("No mission is open.", "Double-click a mission in the Missions tab.");
             return;
         }
 
+        if (missions.RawTextOf(path) is not { } text)
+        {
+            if (missions.RawTextError(path) is { } error)
+            {
+                PanelStates.Message("The text of this mission script cannot show.", error);
+            }
+            else
+            {
+                PanelStates.Loading("Reading the mission script");
+            }
+
+            return;
+        }
+
         var scale = ImGuiHelper.Scale;
+        if (text.CanonicalReason is { } reason)
+        {
+            // The file text was not possible, so the user learns why the comments of the file do not show.
+            ImGui.PushTextWrapPos(0);
+            ImGui.TextDisabled(CanonicalNote(reason));
+            ImGui.PopTextWrapPos();
+        }
+
         var origin = ImGui.GetCursorScreenPos();
         var avail = ImGui.GetContentRegionAvail();
         var settings = window.Settings;
@@ -132,8 +155,13 @@ internal sealed class MissionView(EditorWindow window, MissionWorkspace missions
         ImGui.EndChild();
     }
 
+    /// <summary>The note of a raw view that shows the canonical text in place of the file text.</summary>
+    /// <param name="reason">Why the file text was not possible, as a part of a sentence.</param>
+    internal static string CanonicalNote(string reason) =>
+        $"This view shows the text that the editor writes, without the comments of the file, because {reason}.";
+
     /// <summary>Scrolls the text to the line of a new selection or of a request of the Console.</summary>
-    private void Follow(string path, Data.Editing.Fields.RawText text)
+    private void Follow(string path, RawText text)
     {
         if (!string.Equals(shownPath, path, StringComparison.OrdinalIgnoreCase))
         {
@@ -141,13 +169,17 @@ internal sealed class MissionView(EditorWindow window, MissionWorkspace missions
             lastCursor = -1;
         }
 
-        if (missions.PendingLine is var (pendingPath, line) &&
-            string.Equals(pendingPath, path, StringComparison.OrdinalIgnoreCase))
+        if (missions.PendingLine is var (target, entry) &&
+            string.Equals(target.Path, path, StringComparison.OrdinalIgnoreCase))
         {
-            raw.GoToLine(line);
             missions.PendingLine = null;
-            lastCursor = line;
             lastSelection = window.Selection;
+            if (text.LineOf(target.Id, entry) is { } line)
+            {
+                raw.GoToLine(line);
+                lastCursor = line;
+            }
+
             return;
         }
 
@@ -165,7 +197,7 @@ internal sealed class MissionView(EditorWindow window, MissionWorkspace missions
     }
 
     /// <summary>A cursor in a section selects its item: the trigger, or the line of a trigger.</summary>
-    private void FollowCursor(string path, Data.Editing.Fields.RawText text)
+    private void FollowCursor(string path, RawText text)
     {
         var cursor = raw.CursorLine;
         if (cursor < 0 || cursor == lastCursor)
@@ -180,7 +212,7 @@ internal sealed class MissionView(EditorWindow window, MissionWorkspace missions
             return;
         }
 
-        var item = missions.RefOf(analysis.Document.Sections[section].Ref, entry);
+        var item = MissionWorkspace.RefOf(analysis.Document.Sections[section].Ref, entry);
         window.Selection = item;
         lastSelection = item;
     }

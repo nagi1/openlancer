@@ -77,9 +77,45 @@ public sealed record PrefabMemberRule(string Role, string Label, string Rule, bo
 public sealed record PrefabSource(string Role, bool Trigger, bool Condition, IReadOnlyList<string> Actions, int Value,
     string? Key, string? Group, bool AllActions, IReadOnlyList<string> Keys);
 
+/// <summary>How a list field of a prefab reads its rows (section 14.5 of the M6a design).</summary>
+public enum PrefabListCodec
+{
+    /// <summary>One row for each line of the field, with the columns of its key (a mixed-keys list field).</summary>
+    Lines,
+
+    /// <summary>One row for each trigger of the role of the field, for example the triggers that end a spawn
+    /// wave.</summary>
+    Triggers,
+}
+
+/// <summary>The list data of a list field of a prefab.</summary>
+/// <param name="Items">The plural word of the rows, for example "ships".</param>
+public sealed record PrefabList(PrefabListCodec Codec, string Items);
+
 /// <summary>A named field of a prefab, for example "Ships".</summary>
-/// <param name="List">True for a list field.</param>
-public sealed record PrefabField(string Id, string Label, PrefabSource From, bool List);
+/// <param name="List">The list data of a list field, or null for a field with one value.</param>
+public sealed record PrefabField(string Id, string Label, PrefabSource From, PrefabList? List)
+{
+    /// <summary>
+    /// The keys of the lines of a <see cref="PrefabListCodec.Lines"/> list field. They are its action keys, the actions of
+    /// its group, each action, or its keys of the core section.
+    /// </summary>
+    public IReadOnlyList<string> LineKeys(MissionSchema schema) =>
+        From.Keys.Count > 0 ? From.Keys
+        : From.Key != null ? [From.Key]
+        : From.Actions.Count > 0 ? From.Actions
+        : From.Group != null ? schema.Actions.Where(a => a.Group == From.Group).Select(a => a.Name).ToList()
+        : From.AllActions ? schema.Actions.Select(a => a.Name).ToList()
+        : [];
+
+    /// <summary>
+    /// The list field spec of a <see cref="PrefabListCodec.Lines"/> field (decision D540): a mixed-keys list of the lines
+    /// of its keys, with the columns of the schema. Null for a field with one value and for a list of triggers.
+    /// </summary>
+    public ListFieldSpec? Spec(MissionSchema schema) => List is { Codec: PrefabListCodec.Lines } list
+        ? schema.LinesList(Id, Label, LineKeys(schema), list.Items)
+        : null;
+}
 
 /// <summary>A completeness step of a prefab (section 13.5 of the M6a design).</summary>
 /// <param name="Requires">A role that must have a trigger, or null.</param>
@@ -635,8 +671,16 @@ public sealed class MissionPrefabs
         var from = e.GetProperty("from");
         return new PrefabField(Text(e, "id"), Text(e, "label"), new PrefabSource(Text(from, "role"), Bool(from, "trigger"),
             Bool(from, "condition"), Strings(from, "actions"), from.TryGetProperty("value", out var v) ? v.GetInt32() : 0,
-            Optional(from, "key"), Optional(from, "group"), Bool(from, "allActions"), Strings(from, "keys")), Bool(e, "list"));
+            Optional(from, "key"), Optional(from, "group"), Bool(from, "allActions"), Strings(from, "keys")),
+            e.TryGetProperty("list", out var list) ? ReadList(list) : null);
     }
+
+    private static PrefabList ReadList(JsonElement e) => new(Text(e, "codec") switch
+    {
+        "lines" => PrefabListCodec.Lines,
+        "triggers" => PrefabListCodec.Triggers,
+        var other => throw new FormatException($"The list codec '{other}' is not known."),
+    }, Text(e, "items"));
 
     private static string Text(JsonElement e, string name) =>
         e.TryGetProperty(name, out var value) && value.GetString() is { Length: > 0 } text

@@ -86,8 +86,11 @@ internal sealed class MissionFolder : IDisposable
             File.ReadAllBytes(System.IO.Path.Combine(Root, @"EXE\freelancer.ini"))).Sections;
 
     /// <summary>The inputs of a run over the folder, with another folder as the base game or none.</summary>
+    /// <param name="baseWorld">The names of the base game for the base-game runs, or null for the names of
+    /// <paramref name="world"/>.</param>
     public MissionInputs Inputs(MissionFolder? baseFolder = null, IMissionLedger? ledger = null, string? activeMod = null,
-        int generation = 0, MissionWorld? world = null, MissionCheckOptions? options = null) => new()
+        int generation = 0, MissionWorld? world = null, MissionCheckOptions? options = null,
+        MissionWorld? baseWorld = null) => new()
     {
         EditView = Files(),
         BaseView = baseFolder?.Files(),
@@ -96,6 +99,7 @@ internal sealed class MissionFolder : IDisposable
         ActiveModId = activeMod,
         Generation = generation,
         World = world ?? MissionWorld.Empty,
+        BaseWorld = baseWorld,
         Options = options ?? new MissionCheckOptions(),
     };
 

@@ -39,21 +39,35 @@ public enum ListColumnKind
 
     /// <summary>Three numbers: x, y and z.</summary>
     Position,
+
+    /// <summary>Four numbers of a rotation.</summary>
+    Rotation,
 }
 
 /// <summary>One column of a list field.</summary>
 /// <param name="Name">The plain name, for example "Ship".</param>
 /// <param name="Index">The index of the first value of the column in a row.</param>
-/// <param name="List">The id of the data list of a reference column, or null.</param>
+/// <param name="List">The id of the data list of a reference column, several ids joined with "+", or null.</param>
 /// <param name="Tokens">The words of a token column, or null.</param>
 /// <param name="CaseSensitive">True when the game compares the words with letter case (TR16).</param>
 /// <param name="Key">The key of the column set of a mixed-keys field, or null.</param>
+/// <param name="Rest">True when the column takes each value of the row from <see cref="Index"/> to the end, for example
+/// the more values of an order.</param>
 public sealed record ListColumn(string Name, int Index, ListColumnKind Kind, string? List = null,
     IReadOnlyList<string>? Tokens = null, bool CaseSensitive = false, string? Help = null, double? Min = null,
-    double? Max = null, string? Key = null)
+    double? Max = null, string? Key = null, bool Rest = false)
 {
-    /// <summary>The number of values of a cell: 3 for a position, else 1.</summary>
-    public int Width => Kind == ListColumnKind.Position ? 3 : 1;
+    /// <summary>The number of values of a cell: 3 for a position, 4 for a rotation, else 1. A rest column has at least
+    /// one value.</summary>
+    public int Width => Kind switch
+    {
+        ListColumnKind.Position => 3,
+        ListColumnKind.Rotation => 4,
+        _ => 1,
+    };
+
+    /// <summary>The index after the last value of the column in a row with a number of cells.</summary>
+    public int End(int cells) => Rest ? Math.Max(Index + Width, cells) : Index + Width;
 }
 
 /// <summary>The spec of a list field (section 11.1 of the M6a design). The rule data gives it.</summary>
@@ -63,6 +77,20 @@ public sealed record ListColumn(string Name, int Index, ListColumnKind Kind, str
 public sealed record ListFieldSpec(string Id, string Label, string? Help, ListFieldCodec Codec, IReadOnlyList<string> Keys,
     IReadOnlyList<ListColumn> Columns, int Prefix = 0)
 {
+    /// <summary>The plural word of the rows, for the empty state, for example "ships".</summary>
+    public string Items { get; init; } = "entries";
+
+    /// <summary>The text of the Add button, for example "Add order", or null for "Add".</summary>
+    public string? AddLabel { get; init; }
+
+    /// <summary>The plain name of each key of a mixed-keys field, for example "Fly to a point". The rows and the Add
+    /// menu show it.</summary>
+    public IReadOnlyDictionary<string, string> KeyLabels { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>The plain name of a key, or the key when the spec has none.</summary>
+    public string KeyLabel(string key) => KeyLabels.TryGetValue(key, out var label) ? label
+        : KeyLabels.FirstOrDefault(p => p.Key.Equals(key, StringComparison.OrdinalIgnoreCase)).Value ?? key;
+
     /// <summary>The columns of the rows of a key: the columns of its set for a mixed-keys field, else all.</summary>
     public IReadOnlyList<ListColumn> ColumnsOf(string? key) => Codec == ListFieldCodec.MixedKeys
         ? Columns.Where(c => string.Equals(c.Key, key, StringComparison.OrdinalIgnoreCase)).ToList()
@@ -217,14 +245,17 @@ public sealed class ListFieldModel
         return Rows.Select(r => new ListFieldLine(r.Key, ValuesOf(r))).ToList();
     }
 
-    /// <summary>The values of a row: its source values when no cell changed, else a value for each cell. An empty last
-    /// cell keeps its place, so the line keeps its comma.</summary>
+    /// <summary>The values of a row: its source values when no cell changed, else a value for each cell. An empty cell
+    /// inside the values of the source line keeps its place. So an empty last value keeps its comma (section 11.5 of the
+    /// M6a design). Empty cells after the values of the source line give no value, as the empty last cells of a new
+    /// row.</summary>
     private static IReadOnlyList<ValueBase> ValuesOf(ListFieldRow row)
     {
         if (!row.Changed && row.Source != null)
             return row.Source;
         var cells = row.Cells.ToList();
-        while (cells.Count > 0 && cells[^1].Length == 0)
+        var keep = row.Source?.Count ?? 0;
+        while (cells.Count > keep && cells[^1].Length == 0)
             cells.RemoveAt(cells.Count - 1);
         return cells.Select(c => (ValueBase)new StringValue(c)).ToList();
     }
@@ -244,7 +275,7 @@ public sealed class ListFieldModel
             for (var c = 0; c < columns.Count; c++)
             {
                 var column = columns[c];
-                for (var v = column.Index; v < column.Index + column.Width; v++)
+                for (var v = column.Index; v < column.End(Rows[r].Cells.Count); v++)
                 {
                     var text = Rows[r].Cell(v).Trim();
                     if (text.Length == 0)
@@ -270,7 +301,7 @@ public sealed class ListFieldModel
                 return (DiagnosticSeverity.Error,
                     $"'{text}' is not in the list of the {label} entries. The game ignores this value. Pick a value from " +
                     "the list.");
-            case ListColumnKind.Number or ListColumnKind.WholeNumber or ListColumnKind.Position:
+            case ListColumnKind.Number or ListColumnKind.WholeNumber or ListColumnKind.Position or ListColumnKind.Rotation:
                 if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
                     return (DiagnosticSeverity.Error, $"'{text}' is not a number. Write a number.");
                 if (column.Min is { } min && number < min || column.Max is { } max && number > max)

@@ -235,4 +235,69 @@ public sealed class MissionIndexTests
         Assert.False(index.TakenShips.ContainsKey("late"));
         Assert.Equal("late", Assert.Single(index.LaterMembers).Ship);
     }
+
+    /// <summary>The last <c>repeatable</c> line after the nickname counts, as for
+    /// <c>InitState</c> (TR10).</summary>
+    [Fact]
+    public void TheLastRepeatableLineCounts()
+    {
+        var index = Index("""
+            [Trigger]
+            nickname = t1
+            repeatable = true
+            repeatable = false
+            Cnd_True = no_params
+
+            [Trigger]
+            nickname = t2
+            repeatable = false
+            repeatable = true
+            Cnd_True = no_params
+            """);
+
+        Assert.False(index.Trigger("t1")!.Repeats);
+        Assert.True(index.Trigger("t2")!.Repeats);
+    }
+
+    /// <summary>A start after a stop restarts the target, so a stop between two starts is not
+    /// a cancel (TR9).</summary>
+    [Fact]
+    public void AStartAfterACancelRestartsTheTarget()
+    {
+        var index = Index("""
+            [Trigger]
+            nickname = t1
+            Cnd_True = no_params
+            Act_ActTrig = t2
+            Act_DeactTrig = t2
+            Act_ActTrig = t2
+
+            [Trigger]
+            nickname = t2
+            Cnd_True = no_params
+            """);
+
+        Assert.Empty(index.Cancels);
+        Assert.Equal(4, Assert.Single(index.Restarts).Line.Entry);
+    }
+
+    /// <summary>The game skips a trigger without a nickname value. The mission checks and the
+    /// target checks use one rule for it (decision D556).</summary>
+    [Fact]
+    public void ATriggerWithoutANicknameValueIsSkipped()
+    {
+        var index = Index("""
+            [Trigger]
+            nickname =
+            Cnd_True = no_params
+
+            [Trigger]
+            nickname = t1
+            Cnd_True = no_params
+            """);
+
+        Assert.Equal("t1", Assert.Single(index.Triggers).Nickname);
+        Assert.Null(TriggerRules.Nickname(index.Document.Sections[0].Section));
+        Assert.Equal("t1", TriggerRules.Nickname(index.Document.Sections[1].Section));
+    }
 }

@@ -811,14 +811,23 @@ internal sealed partial class EditorWindow : Game
         _ => null,
     };
 
-    /// <summary>The kept selection of a tab when it comes back: a valid cutscene item or the root of the open cutscene,
-    /// a valid mission item or the root of the open mission, or the item for the Scene.</summary>
-    private object? ValidIn(CenterMode mode, object? item) => mode switch
+    /// <summary>The kept selection of a tab when it comes back. The Cutscene tab gets a valid cutscene item or the root
+    /// of the open cutscene. The Mission tab gets a valid mission item or the root of the open mission. The Scene gets
+    /// its item. An item that no tab owns stays, for example a section of the Database.</summary>
+    private object? ValidIn(CenterMode mode, object? item)
     {
-        CenterMode.Cutscene => Cutscenes.Valid(item) ?? Cutscenes.Root,
-        CenterMode.Mission => Missions.Valid(item) ?? Missions.Root,
-        _ => item,
-    };
+        if (item != null && OwnerOf(item) != mode)
+        {
+            return item;
+        }
+
+        return mode switch
+        {
+            CenterMode.Cutscene => Cutscenes.Valid(item) ?? Cutscenes.Root,
+            CenterMode.Mission => Missions.Valid(item) ?? Missions.Root,
+            _ => item,
+        };
+    }
 
     /// <summary>
     /// Selects an item of a center tab: at once when the tab shows or the selection is an item of the tab, else when the
