@@ -82,17 +82,20 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
         Assert.Equal(17, documents.Sum(d => d.Sections.Count(s => s.Section.Name == "Objlist")));
     }
 
+    /// <summary>The baseline with a new mod whose targets hold OpenLancer. Since OL-0061, no retail line stops the load
+    /// in OpenLancer, so rule M11 finds nothing.</summary>
     [Fact]
     public void TheRetailBaselineShowsNoProblemAndHasNoError()
     {
         var run = Run();
         var problems = run.Problems.ToList();
 
-        Assert.Equal(630, problems.Count);
+        Assert.Equal(629, problems.Count);
+        Assert.DoesNotContain(problems, p => p.Rule == "M11");
         Assert.All(problems, p => Assert.True(p.Origin!.IsBaseGame, p.Message));
         Assert.DoesNotContain(problems, p => p.Severity == DiagnosticSeverity.Error);
         Assert.All(MissionsBrowserModel.Rows(run, showBaseGame: false), r => Assert.Equal((0, 0), (r.Errors, r.Warnings)));
-        Assert.Equal(630, MissionsBrowserModel.Rows(run, showBaseGame: false).Sum(r => r.Hidden));
+        Assert.Equal(629, MissionsBrowserModel.Rows(run, showBaseGame: false).Sum(r => r.Hidden));
     }
 
     /// <summary>The checks on the retail lines as lines of the active mod, without a base-game run, prove that the rules
@@ -149,6 +152,8 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
             rows.Select(r => (r.Slot, r.StartStage, r.AcceptStage)));
         Assert.Equal(["At once", "Worth grows by 3,500", "The story ends"],
             new[] { rows[0], rows[1], rows[13] }.Select(r => r.NextMission));
+        // Since OL-0061, the engine skips the lines that it cannot build, so each retail mission loads in OpenLancer.
+        Assert.DoesNotContain(rows, r => r.OpenLancer == "Does not load");
     }
 
     /// <summary>The round trip contract of section 14.7: each section of each retail script gives the same entries

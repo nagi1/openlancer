@@ -15,7 +15,8 @@ namespace OpenLancer.Runtime.Missions;
 /// D526). It reads the types of the fork at run time:
 /// <list type="bullet">
 /// <item>A name that the fork lists as unsupported (<c>ScriptedAction.Unsupported</c> and
-/// <c>ScriptedCondition.Unsupported</c>) cannot load.</item>
+/// <c>ScriptedCondition.Unsupported</c>) has no effect. Since OL-0061, the fork skips such a line with a warning, and a
+/// trigger whose only conditions it skips never runs.</item>
 /// <item>An action has no effect when its class does not override <c>Invoke</c>, because the base only logs.</item>
 /// <item>A condition has no effect when its class does not override <c>CheckCondition</c>, because the base logs once
 /// and gives false. An event condition overrides it in its base class.</item>
@@ -38,16 +39,18 @@ public sealed class EngineCoverage : IEngineCoverage
             .ToDictionary(t => t.Name, StringComparer.OrdinalIgnoreCase);
         foreach (var name in Enum.GetValues<TriggerActions>())
         {
-            marks[name.ToString()] = ScriptedAction.Unsupported.Contains(name) ? EngineMark.CannotLoad
-                : actions.TryGetValue(name.ToString(), out var type) && Overrides(type, nameof(ScriptedAction.Invoke),
-                    typeof(ScriptedAction)) ? EngineMark.Runs
+            marks[name.ToString()] = !ScriptedAction.Unsupported.Contains(name) &&
+                                     actions.TryGetValue(name.ToString(), out var type) &&
+                                     Overrides(type, nameof(ScriptedAction.Invoke), typeof(ScriptedAction))
+                ? EngineMark.Runs
                 : EngineMark.NoEffect;
         }
         foreach (var name in Enum.GetValues<TriggerConditions>())
         {
-            marks[name.ToString()] = ScriptedCondition.Unsupported.Contains(name) ? EngineMark.CannotLoad
-                : conditions.TryGetValue(name.ToString(), out var type) && Overrides(type,
-                    nameof(ScriptedCondition.CheckCondition), typeof(ScriptedCondition)) ? EngineMark.Runs
+            marks[name.ToString()] = !ScriptedCondition.Unsupported.Contains(name) &&
+                                     conditions.TryGetValue(name.ToString(), out var type) &&
+                                     Overrides(type, nameof(ScriptedCondition.CheckCondition), typeof(ScriptedCondition))
+                ? EngineMark.Runs
                 : EngineMark.NoEffect;
         }
     }
