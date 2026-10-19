@@ -250,6 +250,12 @@ internal sealed class EditorSettings
     /// </summary>
     public bool PreviewSound { get; set; } = true;
 
+    /// <summary>
+    /// The toggle "Script objects" of the Cutscene tab in a space context (decision D645 of the space context design).
+    /// It shows the objects that a space script makes as stand-ins for the mission objects. It is on by default.
+    /// </summary>
+    public bool CutsceneScriptObjects { get; set; } = true;
+
     /// <summary>The tool of the gizmo.</summary>
     [JsonIgnore]
     public GizmoTool Tool { get; set; } = DefaultTool;

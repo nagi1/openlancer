@@ -342,6 +342,8 @@ public sealed class CutsceneViewerTests
                 CutsceneWorkspace.OpenedLine(@"DATA\x.thn", 92.75, "Script only", "Timeline: 1 row."));
             Assert.Equal(@"Opened cutscene DATA\x.thn (0.5 s). Context: Script only.",
                 CutsceneWorkspace.OpenedLine(@"DATA\x.thn", 0.5, "Script only", null));
+            Assert.Equal(@"Opened cutscene DATA\x.thn (0.5 s). Context: Space: Zz01.",
+                CutsceneWorkspace.OpenedLine(@"DATA\x.thn", 0.5, "Space: Zz01", null));
         }
         finally
         {
@@ -478,6 +480,21 @@ public sealed class CutsceneViewerTests
 
         Assert.Equal(scene.Projection, lens.Projection);
         Assert.Equal(scene.View, lens.View);
+    }
+
+    /// <summary>A space script in Shot mode uses the planes of the space camera of the game: 3 and 250,000.</summary>
+    [Fact]
+    public void TheSpaceShotLensHasThePlanesOfTheSpaceCamera()
+    {
+        var lens = new LensCamera();
+
+        lens.Update(1600, 900, Vector3.Zero, Quaternion.Identity, LensCamera.DefaultFovH, 16 / 9f,
+            LensCamera.SpaceShotRange);
+
+        // A perspective projection keeps near * far / (near - far) in M43 and far / (near - far) in M33.
+        var projection = lens.Projection;
+        Assert.InRange(projection.M43 / projection.M33, 2.99f, 3.01f);
+        Assert.InRange(projection.M43 / (projection.M33 + 1), 245_000f, 255_000f);
     }
 
     /// <summary>A wider field of view or a wider screen widens the lens, as the THN camera widens the

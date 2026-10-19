@@ -18,6 +18,13 @@ namespace OpenLancer.Editor.Scene;
 /// </remarks>
 internal static class StarspherePass
 {
+    /// <summary>
+    /// The near and far planes of the sky camera. The engine gives these planes to the starsphere of a cutscene
+    /// (ThnCamera.DefaultZ). The largest retail starsphere part has a radius of 19,456 units, so the far plane is far
+    /// enough. The Scene view and the stage of the Cutscene tab use this value.
+    /// </summary>
+    public static readonly Vector2 SkyRange = new(2.5f, 1_000_000);
+
     /// <summary>What the pass draws in one frame.</summary>
     /// <param name="Stars">The starsphere models draw.</param>
     /// <param name="FogTint">The fog of the nebula that holds the camera tints the view after the stars.</param>
