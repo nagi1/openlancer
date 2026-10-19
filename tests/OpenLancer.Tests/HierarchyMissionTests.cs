@@ -154,6 +154,25 @@ public sealed class HierarchyMissionTests
     }
 
     [Fact]
+    public void ASelectedLineShowsAsTheRowOfItsTrigger()
+    {
+        var tree = Tree();
+        var start = Mission.Index.Trigger("t_start")!;
+        var spawn = new MissionRef(Script, MissionItemKind.Row, start.Section.Ref,
+            Row: start.ActionsOf("Act_SpawnShip").Single().Entry);
+
+        Assert.Null(tree.NodeOf(spawn));
+        Assert.Equal(new MissionRef(Script, MissionItemKind.Trigger, start.Section.Ref), tree.RowItemOf(spawn));
+        Assert.True(tree.Reveal(tree.RowItemOf(spawn)));
+        // A line with its own row, for example the link of a space cutscene, shows as that row.
+        var cutscene = new MissionRef(Script, MissionItemKind.Row, start.Section.Ref,
+            Row: start.ActionsOf("Act_CallThorn").Single().Entry);
+        Assert.NotNull(tree.NodeOf(cutscene));
+        Assert.Equal(cutscene, tree.RowItemOf(cutscene));
+        Assert.Equal("gate_a", tree.RowItemOf("gate_a"));
+    }
+
+    [Fact]
     public void TheMarksFollowTheProblemsAndTheToggle()
     {
         var hidden = Tree();

@@ -340,7 +340,9 @@ public sealed record GraphLink(int Id, MissionLinkKind Kind, GraphNode From, Gra
 
 /// <summary>One item of the side list of the Cutscene and Objectives lenses: a line in path order from the start
 /// trigger.</summary>
-public sealed record GraphSideItem(string Text, MissionTrigger Trigger, MissionLine Line);
+/// <param name="TextIds">The text ids of the line, and of the objective that the line names. A view shows their
+/// texts, for example the title or the log line.</param>
+public sealed record GraphSideItem(string Text, MissionTrigger Trigger, MissionLine Line, IReadOnlyList<string> TextIds);
 
 /// <summary>The stable ids of the node editor for the keys of a graph. A view keeps one map for each mission, so a node
 /// keeps its id when the graph is built again.</summary>
@@ -1068,9 +1070,25 @@ public sealed class MissionGraph
         foreach (var trigger in PathOrder(Index))
         {
             foreach (var line in trigger.Actions.Where(lists))
-                result.Add(new GraphSideItem(ActionText(line), trigger, line));
+                result.Add(new GraphSideItem(ActionText(line), trigger, line, SideTextIds(line)));
         }
         return result;
+    }
+
+    /// <summary>The text ids of a line: its values of the kind text id, then the text ids of the <c>type</c> line of each
+    /// objective that it names.</summary>
+    private static IReadOnlyList<string> SideTextIds(MissionLine line)
+    {
+        var ids = line.Specs.Where(s => s.Kind == MissionValueKind.TextId).Select(line.ValueOf).OfType<string>().ToList();
+        foreach (var reference in line.References)
+        {
+            if (reference.Section is { Kind: MissionSectionKind.Objective } objective &&
+                objective.Section.FirstOrDefault(e => MissionIndex.Is(e.Name, "type")) is { } type)
+            {
+                ids.AddRange(MissionIndex.ObjectiveTextIds(type));
+            }
+        }
+        return ids.Distinct(StringComparer.Ordinal).ToList();
     }
 
     /// <summary>The triggers that the start triggers reach, in breadth-first order over Start and Load links in file

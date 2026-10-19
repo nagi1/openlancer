@@ -101,9 +101,7 @@ internal sealed class MissionLinks(EditorWindow window, MissionWorkspace mission
         window.Scene.Overlay.Highlighted = window.Scene.Index is { } index
             ? objects.Select(o => index.ObjectsByNickname.GetValueOrDefault(o)).OfType<object>().ToList()
             : [];
-        graph.Outlined = graph.Graph is { } shown
-            ? users.Select(shown.NodeOf).OfType<GraphNode>().Select(n => n.Key).ToHashSet()
-            : new HashSet<string>();
+        graph.Outlined = graph.Graph is { } shown ? CrossLinks.OutlineOf(shown, users) : new HashSet<string>();
     }
 
     /// <summary>Forgets the sets, for example when the mission closes.</summary>

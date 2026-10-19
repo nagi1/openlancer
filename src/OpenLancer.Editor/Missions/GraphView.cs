@@ -95,6 +95,7 @@ internal sealed class GraphView : IDisposable
     private List<GraphNode> results = [];
     private int resultIndex = -1;
     private (MissionGraph? Graph, string Text) searched;
+    private (MissionGraph? Graph, IReadOnlyList<string> Labels) sideLabels = (null, []);
     private MissionTrigger? sourcesOf;
     private string? pendingTooltip;
     private HelpText? pendingInfo;
@@ -145,8 +146,8 @@ internal sealed class GraphView : IDisposable
     /// group.</summary>
     public IReadOnlyDictionary<(string Node, string Group), (Vector2 Min, Vector2 Max)> ChipRects => chipRects;
 
-    /// <summary>The nodes that the view outlines, for example the nodes that use a selected world item (section
-    /// 7.3). The Mission tab sets them in each frame.</summary>
+    /// <summary>The keys of the nodes and frames that the view outlines, for example the nodes that use a selected world
+    /// item and their prefab frames (section 7.3). The Mission tab sets them in each frame.</summary>
     public IReadOnlySet<string> Outlined { get; set; } = new HashSet<string>();
 
     /// <summary>The system of the system filter, or null for all systems. The nodes of other systems fade.</summary>
@@ -396,6 +397,7 @@ internal sealed class GraphView : IDisposable
         NodeEditor.SetCurrentEditor(null!);
         // The overlays are child windows after the canvas, so they draw over it and take the mouse first.
         SearchResults(analysis.Script.Path);
+        SideList(analysis.Script.Path, graph);
         Minimap(graph, layout);
         foreach (var (key, delta) in drags)
         {
@@ -442,9 +444,11 @@ internal sealed class GraphView : IDisposable
     private void DrawFrame(string script, GraphFrame frame, GraphLayout layout)
     {
         var size = layout.SizeOf(frame);
+        var outlined = Outlined.Contains(frame.Key);
         NodeEditor.PushStyleVar(StyleVar.NodePadding, Vector4.Zero);
+        NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, outlined ? 2.5f : 1f);
         NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(frame.Kind == GraphFrameKind.Prefab ? PrefabFill : FrameFill));
-        NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(FrameBorder));
+        NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(outlined ? EditorTheme.AccentText : FrameBorder));
         NodeEditor.BeginNode(frame.Id);
         ImGui.PushID(frame.Id);
         var origin = ImGui.GetCursorScreenPos();
@@ -478,7 +482,7 @@ internal sealed class GraphView : IDisposable
         ImGui.PopID();
         NodeEditor.EndNode();
         NodeEditor.PopStyleColor(2);
-        NodeEditor.PopStyleVar();
+        NodeEditor.PopStyleVar(2);
     }
 
     /// <summary>The help text of a frame: the prefab text, the act text, or the text of the frame "Not started by the
@@ -1389,6 +1393,93 @@ internal sealed class GraphView : IDisposable
         }
 
         ImGui.EndChild();
+    }
+
+    /// <summary>
+    /// The side list of the Cutscene and Objectives lenses at the top right of the graph (section 6.5 of the M6a design):
+    /// the lines of the lens in path order from the start triggers, with the texts of their text ids. A click frames
+    /// the trigger and selects the line.
+    /// </summary>
+    private void SideList(string script, MissionGraph graph)
+    {
+        var lens = graph.Options.Lens;
+        if (lens is not (GraphLens.Cutscene or GraphLens.Objectives))
+        {
+            return;
+        }
+
+        var scale = ImGuiHelper.Scale;
+        var items = graph.SideList;
+        var labels = SideLabels(graph);
+        var lineHeight = ImGui.GetTextLineHeightWithSpacing();
+        var width = 300 * scale;
+        // The list ends above the minimap.
+        var room = Screen.Max.Y - Screen.Min.Y - 154 * scale;
+        var height = Math.Min((Math.Max(items.Count, 1) + 1) * lineHeight + 8 * scale, room);
+        if (height < 2 * lineHeight || Screen.Max.X - Screen.Min.X < width + 16 * scale)
+        {
+            return;
+        }
+
+        ImGui.SetCursorScreenPos(new Vector2(Screen.Max.X - width - 8 * scale, Screen.Min.Y + 8 * scale));
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Panel with { W = 0.95f });
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6, 4) * scale);
+        var visible = ImGui.BeginChild("##side-list", new Vector2(width, height), ImGuiChildFlags.AlwaysUseWindowPadding);
+        ImGui.PopStyleVar();
+        ImGui.PopStyleColor();
+        if (visible)
+        {
+            var title = lens == GraphLens.Cutscene ? "Cutscenes in path order" : "Objectives in path order";
+            ImGui.TextDisabled(items.Count == 0 ? $"{title}: none" : title);
+            ImGui.SetItemTooltip("The lines in the order that the start triggers reach their triggers, over Start and Load links.");
+            for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                var row = new MissionRef(script, MissionItemKind.Row, item.Trigger.Section.Ref, Row: item.Line.Entry);
+                if (ImGui.Selectable($"{labels[i]}##side{i}", Equals(window.Selection, row)))
+                {
+                    if (graph.NodeOf(item.Trigger) is { } node)
+                    {
+                        FrameBlock(node);
+                    }
+
+                    window.Selection = row;
+                }
+
+                ImGui.SetItemTooltip($"{labels[i]}\nTrigger: {item.Trigger.Nickname}");
+            }
+        }
+
+        ImGui.EndChild();
+    }
+
+    /// <summary>The labels of the side list of a graph: the line text, and the texts of its text ids after a colon.</summary>
+    private IReadOnlyList<string> SideLabels(MissionGraph graph)
+    {
+        if (ReferenceEquals(sideLabels.Graph, graph))
+        {
+            return sideLabels.Labels;
+        }
+
+        var labels = new List<string>();
+        foreach (var item in graph.SideList)
+        {
+            var texts = new List<string>();
+            foreach (var id in item.TextIds)
+            {
+                if (window.Session is { } session &&
+                    int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ids) &&
+                    (session.Name(ids) is { Length: > 0 } name ? name : session.InfoText(ids)) is { Length: > 0 } text)
+                {
+                    texts.Add(text.ReplaceLineEndings(" "));
+                }
+            }
+
+            labels.Add(texts.Count == 0 ? item.Text : $"{item.Text}: {string.Join(" / ", texts)}");
+        }
+
+        sideLabels = (graph, labels);
+        return labels;
     }
 
     /// <summary>The minimap at the bottom right of the graph: the node rectangles and the view rectangle. A click centers

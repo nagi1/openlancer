@@ -52,6 +52,9 @@ internal sealed class MissionLayer(EditorWindow window)
 
     private (MissionAnalysis? Analysis, StarSystemKey System, int Names, int Overrides) built;
     private IReadOnlyList<(MissionRef Ref, MissionPlacement Placement)> items = [];
+
+    // The helper lines of each item, in the order of the items.
+    private IReadOnlyList<IReadOnlyList<(Vector3 A, Vector3 B)>> outlines = [];
     private Dictionary<string, IReadOnlyList<Vector3>>? slots;
     private object? slotsView;
 
@@ -88,6 +91,7 @@ internal sealed class MissionLayer(EditorWindow window)
         if (analysis == null)
         {
             items = [];
+            outlines = [];
             return;
         }
 
@@ -95,6 +99,7 @@ internal sealed class MissionLayer(EditorWindow window)
             name => index.ObjectsByNickname.GetValueOrDefault(name)?.Position, FormationSlots,
             section => window.Missions.SystemOverride(section.Ref));
         items = placements.Select(p => (RefOf(analysis.Script.Path, p), p)).ToList();
+        outlines = placements.Select(Outline).ToList();
     }
 
     /// <summary>The selection of a placement: the line of a trigger, or the section of an item.</summary>
@@ -149,52 +154,60 @@ internal sealed class MissionLayer(EditorWindow window)
     /// the line list of the renderer, so the renderer calls this in its helper hook.</summary>
     public void DrawLines(LineRenderer lines, bool toggle)
     {
-        foreach (var (item, placement) in items)
+        for (var i = 0; i < items.Count; i++)
         {
-            var highlighted = Highlight.Contains(item);
+            var highlighted = Highlight.Contains(items[i].Ref);
             if (!toggle && !highlighted)
             {
                 continue;
             }
 
             var color = highlighted ? HighlightColor : LineColor;
-            switch (placement.Shape)
+            foreach (var (a, b) in outlines[i])
             {
-                case PlacementShape.Sphere:
-                    Sphere(lines, placement.Position, placement.Radius, color, placement.Outside);
-                    break;
-                case PlacementShape.Ring:
-                    Circle(lines, placement.Position, Vector3.UnitX * placement.Radius, Vector3.UnitZ * placement.Radius,
-                        color, false);
-                    if (placement.To is { } dot)
-                    {
-                        lines.DrawLine(placement.Position, dot, color);
-                    }
-
-                    break;
-                case PlacementShape.Disc:
-                    Circle(lines, placement.Position, Vector3.UnitX * placement.Radius, Vector3.UnitY * placement.Radius,
-                        color, false);
-                    // The arrow of the pass direction, along the axis of the ring.
-                    var tip = placement.Position + Vector3.UnitZ * placement.Radius;
-                    lines.DrawLine(placement.Position - Vector3.UnitZ * placement.Radius, tip, color);
-                    lines.DrawLine(tip, tip - (Vector3.UnitZ + Vector3.UnitX) * placement.Radius * 0.3f, color);
-                    lines.DrawLine(tip, tip - (Vector3.UnitZ - Vector3.UnitX) * placement.Radius * 0.3f, color);
-                    break;
-                case PlacementShape.Plane when placement.To is { } normal:
-                    Plane(lines, placement.Position, normal, placement.Radius, color);
-                    break;
-                case PlacementShape.Line when placement.To is { } end:
-                    lines.DrawLine(placement.Position, end, color);
-                    break;
-                case PlacementShape.Path:
-                    for (var i = 1; i < placement.Points.Count; i++)
-                    {
-                        lines.DrawLine(placement.Points[i - 1], placement.Points[i], color);
-                    }
-
-                    break;
+                lines.DrawLine(a, b, color);
             }
+        }
+    }
+
+    /// <summary>
+    /// The helper lines of a placement, in world coordinates. A sphere uses the zone outline of the Scene, and an outside
+    /// sphere draws every other segment. A ring has a line to its dot. A disc has the arrow of the pass direction along
+    /// its axis. A plane is a square with a line along its normal. A line and a path are their segments. Other shapes
+    /// have no helper lines.
+    /// </summary>
+    public static IReadOnlyList<(Vector3 A, Vector3 B)> Outline(MissionPlacement placement)
+    {
+        var center = placement.Position;
+        var radius = placement.Radius;
+        switch (placement.Shape)
+        {
+            case PlacementShape.Sphere:
+                var sphere = ZoneOutline.Sphere(center, radius, Segments);
+                return placement.Outside ? sphere.Where((_, i) => i % 2 == 1).ToList() : sphere;
+            case PlacementShape.Ring:
+                var ring = ZoneOutline.Ellipse(center, Vector3.UnitX * radius, Vector3.UnitZ * radius, Segments).ToList();
+                if (placement.To is { } dot)
+                {
+                    ring.Add((center, dot));
+                }
+
+                return ring;
+            case PlacementShape.Disc:
+                var disc = ZoneOutline.Ellipse(center, Vector3.UnitX * radius, Vector3.UnitY * radius, Segments).ToList();
+                var tip = center + Vector3.UnitZ * radius;
+                disc.Add((center - Vector3.UnitZ * radius, tip));
+                disc.Add((tip, tip - (Vector3.UnitZ + Vector3.UnitX) * radius * 0.3f));
+                disc.Add((tip, tip - (Vector3.UnitZ - Vector3.UnitX) * radius * 0.3f));
+                return disc;
+            case PlacementShape.Plane when placement.To is { } normal:
+                return Plane(center, normal, radius);
+            case PlacementShape.Line when placement.To is { } end:
+                return [(center, end)];
+            case PlacementShape.Path:
+                return placement.Points.Zip(placement.Points.Skip(1), (a, b) => (A: a, B: b)).ToList();
+            default:
+                return [];
         }
     }
 
@@ -237,44 +250,21 @@ internal sealed class MissionLayer(EditorWindow window)
             ? number
             : 0;
 
-    /// <summary>A sphere as three great circles. An outside sphere is dashed.</summary>
-    private static void Sphere(LineRenderer lines, Vector3 center, float radius, Color4 color, bool dashed)
-    {
-        Circle(lines, center, Vector3.UnitX * radius, Vector3.UnitY * radius, color, dashed);
-        Circle(lines, center, Vector3.UnitX * radius, Vector3.UnitZ * radius, color, dashed);
-        Circle(lines, center, Vector3.UnitY * radius, Vector3.UnitZ * radius, color, dashed);
-    }
-
-    /// <summary>A circle through center + u and center + v, as line segments, dashed or solid.</summary>
-    private static void Circle(LineRenderer lines, Vector3 center, Vector3 u, Vector3 v, Color4 color, bool dashed)
-    {
-        var previous = center + u;
-        for (var i = 1; i <= Segments; i++)
-        {
-            var angle = 2 * MathF.PI * i / Segments;
-            var point = center + MathF.Cos(angle) * u + MathF.Sin(angle) * v;
-            if (!dashed || i % 2 == 0)
-            {
-                lines.DrawLine(previous, point, color);
-            }
-
-            previous = point;
-        }
-    }
-
     /// <summary>A square of a plane around a point, with a line along its normal.</summary>
-    private static void Plane(LineRenderer lines, Vector3 center, Vector3 normal, float size, Color4 color)
+    private static List<(Vector3 A, Vector3 B)> Plane(Vector3 center, Vector3 normal, float size)
     {
         var helper = MathF.Abs(normal.Y) < 0.9f ? Vector3.UnitY : Vector3.UnitX;
         var u = Vector3.Normalize(Vector3.Cross(normal, helper)) * size;
         var v = Vector3.Normalize(Vector3.Cross(normal, u)) * size;
         var corners = new[] { center + u + v, center - u + v, center - u - v, center + u - v };
+        var lines = new List<(Vector3 A, Vector3 B)>();
         for (var i = 0; i < 4; i++)
         {
-            lines.DrawLine(corners[i], corners[(i + 1) % 4], color);
+            lines.Add((corners[i], corners[(i + 1) % 4]));
         }
 
-        lines.DrawLine(center, center + normal * size * 0.3f, color);
+        lines.Add((center, center + normal * size * 0.3f));
+        return lines;
     }
 
     /// <summary>Forgets the placements, for example when the system closes.</summary>
@@ -282,6 +272,7 @@ internal sealed class MissionLayer(EditorWindow window)
     {
         built = default;
         items = [];
+        outlines = [];
         slots = null;
         slotsView = null;
     }

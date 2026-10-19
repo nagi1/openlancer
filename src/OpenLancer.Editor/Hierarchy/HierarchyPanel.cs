@@ -50,6 +50,9 @@ internal sealed class HierarchyPanel(EditorWindow window)
     // The selection at the last frame. A different selection that another panel made opens the tree to its row.
     private object? lastSeenSelection;
 
+    // The item of the row that shows the selection in this frame, for example the trigger of a selected line.
+    private object? rowSelection;
+
     // The row to scroll to in the next frame, and true to put it in the middle of the panel.
     private (object Item, bool Center)? scrollRequest;
 
@@ -156,12 +159,13 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         var selection = window.Selection;
+        rowSelection = tree.RowItemOf(selection);
         if (!Equals(selection, lastSeenSelection))
         {
             lastSeenSelection = selection;
-            if (tree.Reveal(selection))
+            if (tree.Reveal(rowSelection))
             {
-                scrollRequest = (selection!, true);
+                scrollRequest = (rowSelection!, true);
             }
         }
 
@@ -315,7 +319,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             flags |= ImGuiTreeNodeFlags.OpenOnArrow;
         }
 
-        if (node.Item != null && node.Item.Equals(window.Selection))
+        if (node.Item != null && node.Item.Equals(rowSelection))
         {
             flags |= ImGuiTreeNodeFlags.Selected;
         }

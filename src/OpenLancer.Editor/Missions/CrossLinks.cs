@@ -163,6 +163,26 @@ internal static class CrossLinks
             : new CrossLinkSource(node.Key, null, null);
     }
 
+    /// <summary>The keys of the blocks that the graph outlines for the triggers of a world item (world to graph): the node
+    /// that shows each trigger, and each open prefab frame that holds such a node.</summary>
+    public static IReadOnlySet<string> OutlineOf(MissionGraph graph, IEnumerable<MissionTrigger> triggers)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in triggers.Select(graph.NodeOf).OfType<GraphNode>())
+        {
+            keys.Add(node.Key);
+            for (var frame = node.Parent; frame != null; frame = frame.Parent)
+            {
+                if (frame.Kind == GraphFrameKind.Prefab)
+                {
+                    keys.Add(frame.Key);
+                }
+            }
+        }
+
+        return keys;
+    }
+
     /// <summary>
     /// The lines that name a world item (world to graph): a mission ship, formation, solar, loot, order list or objective
     /// names its section, a line of the mission layer is its own line, and an object of a system names its nickname.

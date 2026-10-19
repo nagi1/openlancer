@@ -29,10 +29,10 @@ internal static class ZoneOutline
         switch (zone.Shape)
         {
             case ShapeKind.Sphere:
-                Ellipses(lines, new Vector3(size.X), segments);
+                Ellipses(lines, Vector3.Zero, new Vector3(size.X), segments);
                 break;
             case ShapeKind.Ellipsoid:
-                Ellipses(lines, size, segments);
+                Ellipses(lines, Vector3.Zero, size, segments);
                 break;
             case ShapeKind.Box:
                 BoxEdges(lines, size / 2);
@@ -54,14 +54,31 @@ internal static class ZoneOutline
         return lines;
     }
 
+    /// <summary>The segments of a sphere outline in world coordinates: three circles through its radius, one in each
+    /// axis plane. The mission layer of the Scene draws its volumes with it (section 7.2 of the M6a design).</summary>
+    public static IReadOnlyList<(Vector3 A, Vector3 B)> Sphere(Vector3 center, float radius, int segments = 64)
+    {
+        var lines = new List<(Vector3 A, Vector3 B)>();
+        Ellipses(lines, center, new Vector3(radius), segments);
+        return lines;
+    }
+
+    /// <summary>The segments of an ellipse through center + u and center + v, in world coordinates.</summary>
+    public static IReadOnlyList<(Vector3 A, Vector3 B)> Ellipse(Vector3 center, Vector3 u, Vector3 v, int segments = 64)
+    {
+        var lines = new List<(Vector3 A, Vector3 B)>();
+        Ellipse(lines, center, u, v, segments);
+        return lines;
+    }
+
     private static Vector3 World(Zone zone, Vector3 local) =>
         zone.Position + Vector3.TransformNormal(local, zone.RotationMatrix);
 
-    private static void Ellipses(List<(Vector3, Vector3)> lines, Vector3 radii, int segments)
+    private static void Ellipses(List<(Vector3, Vector3)> lines, Vector3 center, Vector3 radii, int segments)
     {
-        Ellipse(lines, Vector3.Zero, Vector3.UnitX * radii.X, Vector3.UnitY * radii.Y, segments);
-        Ellipse(lines, Vector3.Zero, Vector3.UnitX * radii.X, Vector3.UnitZ * radii.Z, segments);
-        Ellipse(lines, Vector3.Zero, Vector3.UnitY * radii.Y, Vector3.UnitZ * radii.Z, segments);
+        Ellipse(lines, center, Vector3.UnitX * radii.X, Vector3.UnitY * radii.Y, segments);
+        Ellipse(lines, center, Vector3.UnitX * radii.X, Vector3.UnitZ * radii.Z, segments);
+        Ellipse(lines, center, Vector3.UnitY * radii.Y, Vector3.UnitZ * radii.Z, segments);
     }
 
     private static void BoxEdges(List<(Vector3, Vector3)> lines, Vector3 half)

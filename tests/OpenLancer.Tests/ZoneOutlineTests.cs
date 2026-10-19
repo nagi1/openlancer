@@ -37,6 +37,19 @@ public sealed class ZoneOutlineTests
         Assert.All(sphere.SelectMany(l => new[] { l.A, l.B }), p => Assert.Equal(500, p.Length(), 1));
     }
 
+    /// <summary>A sphere at a point gives three circles around that point, as a sphere zone does.</summary>
+    [Fact]
+    public void ASphereAtAPointGivesThreeCirclesAroundIt()
+    {
+        var center = new Vector3(100, -200, 300);
+        var lines = ZoneOutline.Sphere(center, 500, 16);
+
+        Assert.Equal(3 * 16, lines.Count);
+        Assert.All(lines.SelectMany(l => new[] { l.A, l.B }), p => Assert.Equal(500, Vector3.Distance(p, center), 1));
+        var zone = ZoneOutline.Lines(Zone(ShapeKind.Sphere, new Vector3(500, 0, 0), center), 16);
+        Assert.All(zone.Zip(lines), pair => Assert.True(Vector3.Distance(pair.First.A, pair.Second.A) < 0.01f));
+    }
+
     [Fact]
     public void ABoxGivesTwelveEdges()
     {

@@ -250,6 +250,18 @@ public sealed class GraphModelTests
         Assert.Empty(Graph(GraphLens.Beats, analysis: Analysis(text)).SideList);
     }
 
+    [Fact]
+    public void TheObjectivesSideListGivesTheTextIdsOfEachLine()
+    {
+        var text = Script.Replace("Act_ActTrig = t_wait", "Act_ActTrig = t_wait\nAct_SetTitle = 2001\nAct_SetNNObj = obj1")
+            .Replace("Act_Save = t_restore", "Act_Save = t_restore\nAct_NNIds = 2003, HISTORY") +
+            "\n\n[NNObjective]\nnickname = obj1\nstate = HIDDEN\ntype = ids, 2002\n";
+        var graph = Graph(GraphLens.Objectives, analysis: Analysis(text));
+
+        Assert.Equal(["t_start", "t_start", "t_save"], graph.SideList.Select(i => i.Trigger.Nickname));
+        Assert.Equal(["2001", "2002", "2003"], graph.SideList.Select(i => string.Join(",", i.TextIds)));
+    }
+
     [Theory]
     [InlineData(0, 0, 1.0f, GraphDetail.Full)]
     [InlineData(0, 0, 0.6f, GraphDetail.Full)]

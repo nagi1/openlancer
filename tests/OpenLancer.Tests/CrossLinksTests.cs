@@ -152,6 +152,27 @@ public sealed class CrossLinksTests
     }
 
     [Fact]
+    public void TheOutlineOfAWorldItemHasItsNodesAndTheirPrefabFrames()
+    {
+        var users = MissionUses.TriggersOf(CrossLinks.LinesUsing(Mission, SectionRef("s_one", MissionSectionKind.Ship)));
+        var logic = MissionGraph.Build(Mission, new GraphOptions(GraphLens.Logic));
+        var beats = MissionGraph.Build(Mission, new GraphOptions(GraphLens.Beats));
+        var wave = logic.Frames.Single(f => f.Instance?.Definition.Id == "spawnWave");
+
+        var outline = CrossLinks.OutlineOf(logic, users);
+
+        Assert.Contains(MissionGraph.KeyOf(Trigger("t_start")), outline);
+        Assert.Contains(MissionGraph.KeyOf(Trigger("t_near")), outline);
+        // The spawn trigger is in the open frame of the spawn wave, so the frame gets the outline too. An act frame
+        // does not.
+        Assert.Contains(wave.Key, outline);
+        Assert.DoesNotContain(logic.Frames.Where(f => f.Kind != GraphFrameKind.Prefab), f => outline.Contains(f.Key));
+        // A collapsed frame is one node, and that node gets the outline.
+        Assert.Contains(beats.NodeOf(Trigger("t_start"))!.Key, CrossLinks.OutlineOf(beats, users));
+        Assert.Empty(CrossLinks.OutlineOf(logic, []));
+    }
+
+    [Fact]
     public void AConnectorLineEndsAtTheEdgesWithArrows()
     {
         var graph = (new Vector2(0, 0), new Vector2(400, 300));

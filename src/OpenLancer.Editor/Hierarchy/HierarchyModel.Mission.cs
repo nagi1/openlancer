@@ -85,6 +85,14 @@ internal sealed partial class HierarchyModel
     /// <summary>The analysis that the tree of a mission shows, or null for another tree.</summary>
     public MissionAnalysis? Analysis { get; private init; }
 
+    /// <summary>The item of the row that shows a selection: the item itself when the tree has its row, else the trigger
+    /// or the section of a selected line. Most lines have no row, so the row of their section shows them (section 7.3 of
+    /// the M6a design).</summary>
+    public object? RowItemOf(object? selection) =>
+        NodeOf(selection) == null && selection is MissionRef { Kind: MissionItemKind.Row, Section: { } section }
+            ? MissionWorkspace.RefOf(section, -1)
+            : selection;
+
     /// <summary>True when the tree of a mission shows the base-game problems.</summary>
     private bool ShowsBaseGame { get; init; }
 
