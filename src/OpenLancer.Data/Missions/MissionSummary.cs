@@ -214,6 +214,27 @@ public static class MissionSummary
         return systems;
     }
 
+    /// <summary>
+    /// The systems that the triggers of a mission name, each with its trigger count, the most first (the menu "Mission
+    /// systems", section 7.4 of the M6a design). Ties keep the order of the first trigger that names the system.
+    /// <c>ANY</c> does not count.
+    /// </summary>
+    public static IReadOnlyList<(string System, int Triggers)> TriggerSystems(MissionIndex index) =>
+        index.Triggers.Where(t => !t.IsDuplicate && t.SystemHint is { } hint && !MissionIndex.Is(hint, "ANY"))
+            .GroupBy(t => t.SystemHint!, StringComparer.OrdinalIgnoreCase)
+            .Select((g, order) => (System: g.Key, Triggers: g.Count(), Order: order))
+            .OrderByDescending(s => s.Triggers).ThenBy(s => s.Order)
+            .Select(s => (s.System, s.Triggers)).ToList();
+
+    /// <summary>
+    /// The system that the Scene opens when a mission opens and no system is open (section 7.1 of the M6a design): the
+    /// system of the first start trigger that has one, else the system that most triggers name. Null when no trigger
+    /// names a system.
+    /// </summary>
+    public static string? StartSystem(MissionIndex index) =>
+        index.StartTriggers.Select(t => t.SystemHint).FirstOrDefault(h => h != null && !MissionIndex.Is(h, "ANY")) ??
+        TriggerSystems(index).Select(s => s.System).FirstOrDefault();
+
     /// <summary>True when the row matches the search text: the slot, the path, or a trigger of the search.</summary>
     /// <param name="triggers">The triggers that match the search (see <see cref="MatchingTriggers"/>).</param>
     public static bool Matches(MissionRow row, IReadOnlyList<MissionTrigger> triggers, string search) =>

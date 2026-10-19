@@ -138,4 +138,12 @@ internal static class EditorIcons
     public const char GripLines = '\uf7a4';
     public const char Check = Icons.Check;
     public const char Sync = '\uf021';
+
+    // The mission graph and the mission layer of the Scene (milestone M6a).
+    public const char Flag = '\uf024';
+    public const char Bell = '\uf0f3';
+    public const char Music = '\uf001';
+    public const char CodeBranch = '\uf126';
+    public const char Comments = '\uf086';
+    public const char ProjectDiagram = '\uf542';
 }

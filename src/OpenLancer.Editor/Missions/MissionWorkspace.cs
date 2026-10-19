@@ -69,6 +69,22 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// null.</summary>
     public (string Script, string Section)? PendingSection { get; set; }
 
+    /// <summary>True while the Mission tab shows the raw INI of the whole script in place of the graph (the view switch
+    /// "Graph" and "Raw INI", section 11.5 of the M6a design).</summary>
+    public bool ShowRaw { get; set; }
+
+    /// <summary>True when the graph moves its view to the selection at its next draw, for example after a click on a
+    /// Console message (section 12.4 of the M6a design).</summary>
+    public bool PendingGraphFrame { get; set; }
+
+    /// <summary>The item whose world items the Scene part frames at its next draw, or null (section 7.3 of the M6a
+    /// design).</summary>
+    public MissionRef? PendingSceneFrame { get; set; }
+
+    /// <summary>Asks the Scene part to frame the world items of a mission item, for example after a double-click on a
+    /// node.</summary>
+    public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
+
     /// <summary>True while the base-game messages show (decision D527). One setting for the Console and the mission
     /// views.</summary>
     public bool ShowBaseGame => window.Settings.ShowBaseGameMessages;
@@ -143,6 +159,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
         OpenPath = null;
         PendingLine = null;
         PendingSection = null;
+        PendingSceneFrame = null;
+        PendingGraphFrame = false;
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();
@@ -154,11 +172,23 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <summary>The analysis of a script, or null.</summary>
     public MissionAnalysis? Analysis(string path) => Result?.Of(path);
 
-    /// <summary>Opens a mission: the Mission tab shows it, and its root becomes the selection of the Mission tab.</summary>
+    /// <summary>
+    /// Opens a mission: the Mission tab shows it, and its root becomes the selection of the Mission tab. When no system
+    /// is open, the Scene opens the system of the start trigger, or the system that most triggers name (section 7.1 of
+    /// the M6a design).
+    /// </summary>
     /// <param name="show">True to show the Mission tab.</param>
     public void OpenMission(string path, bool show)
     {
         OpenPath = VfsPath.Normalize(path) ?? path;
+        if (window.Scene.System == null && Analysis(OpenPath)?.Index is { } index &&
+            MissionSummary.StartSystem(index) is { } nickname &&
+            window.Session?.GameData?.Items.Systems.Get(nickname) is { } system)
+        {
+            // The open of a system clears the selection, so it comes before the selection of the mission.
+            window.OpenSystem(system);
+        }
+
         window.SelectInTab(CenterMode.Mission, Root!);
         if (show)
         {
@@ -181,6 +211,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
         OpenMission(target.Path, show: true);
         window.SelectInTab(CenterMode.Mission, RefOf(target, entry));
         PendingLine = (target, entry);
+        PendingGraphFrame = true;
         return true;
     }
 

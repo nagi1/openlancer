@@ -201,6 +201,45 @@ public sealed class MissionSummaryTests
         Assert.Equal((1, 1), MissionSummary.StoryItems(result, slots[4]));
     }
 
+    /// <summary>The system that the Scene opens with a mission (section 7.1 of the M6a design), and the menu "Mission
+    /// systems" (section 7.4).</summary>
+    [Fact]
+    public void TheStartSystemIsTheSystemOfTheStartTriggerOrTheMostNamedSystem()
+    {
+        const string text = """
+            [Trigger]
+            nickname = t_start
+            InitState = ACTIVE
+            Cnd_True = no_params
+
+            [Trigger]
+            nickname = t_a
+            system = sys_a
+            Cnd_True = no_params
+
+            [Trigger]
+            nickname = t_b1
+            system = sys_b
+            Cnd_True = no_params
+
+            [Trigger]
+            nickname = t_b2
+            system = SYS_B
+            Cnd_True = no_params
+
+            [Trigger]
+            nickname = t_any
+            system = ANY
+            Cnd_True = no_params
+            """;
+
+        Assert.Equal([("sys_b", 2), ("sys_a", 1)], MissionSummary.TriggerSystems(Index(text)));
+        Assert.Equal("sys_b", MissionSummary.StartSystem(Index(text)));
+        Assert.Equal("sys_c", MissionSummary.StartSystem(Index(text.Replace("InitState = ACTIVE",
+            "InitState = ACTIVE\nsystem = sys_c"))));
+        Assert.Null(MissionSummary.StartSystem(Index("[Trigger]\nnickname = t\nCnd_True = no_params\n")));
+    }
+
     [Fact]
     public void TheBaseLabelNamesTheGameAndItsVersion()
     {

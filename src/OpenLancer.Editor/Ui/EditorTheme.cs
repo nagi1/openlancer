@@ -109,6 +109,13 @@ internal static class EditorTheme
     }
 
     /// <summary>
+    /// Writes the style again at a scale. The node editor of the engine restores the LibreLancer style when its canvas
+    /// starts, ends, stops or goes on, and its canvas draws at the scale 1. So the mission graph calls this after each of
+    /// these calls, with 1 in the canvas and the UI scale outside it.
+    /// </summary>
+    public static void Reapply(float scale) => Apply(ImGui.GetStyle(), scale);
+
+    /// <summary>
     /// Pushes the menu colors. The normal hover color (white at alpha 16) is almost invisible on the popup background,
     /// so a hovered menu item uses the selection color. Call <see cref="PopMenuColors"/> after the menu.
     /// </summary>

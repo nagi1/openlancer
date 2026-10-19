@@ -54,6 +54,26 @@ public sealed class EditorOptionsTests
         Assert.False(options.Bench);
     }
 
+    /// <summary>The frame bench of the mission graph (section 18.4 of the M6a design) takes the install paths of mission
+    /// scripts.</summary>
+    [Fact]
+    public void TheMissionBenchScriptsParse()
+    {
+        var options = EditorOptions.Parse(["retail.json", "--bench-mission", @"DATA\MISSIONS\M10\m10.ini"]);
+
+        Assert.Equal([@"DATA\MISSIONS\M10\m10.ini"], options.BenchMissions);
+        Assert.Empty(options.BenchCutscenes);
+        Assert.True(options.Bench);
+    }
+
+    [Theory]
+    [InlineData("--bench-mission")]
+    [InlineData("a.json", "--bench-mission", @"DATA\a.ini", "--bench-cutscene", @"DATA\a.thn")]
+    public void AWrongCommandLineOfTheMissionBenchThrows(params string[] args)
+    {
+        Assert.Throws<ArgumentException>(() => EditorOptions.Parse(args));
+    }
+
     [Fact]
     public void AGoodCommandLineHasNoProblem()
     {

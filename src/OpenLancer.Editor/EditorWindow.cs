@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -73,6 +74,7 @@ internal sealed partial class EditorWindow : Game
     private MissionsBrowser missionsBrowser = null!;
     private MissionView missionView = null!;
     private CutsceneBench? bench;
+    private MissionBench? missionBench;
     private readonly PlayMenu playMenu;
 
     // The base run of the Console: the engine lines of the base folder without mods (decision D516 of the console
@@ -303,7 +305,15 @@ internal sealed partial class EditorWindow : Game
     /// </summary>
     private void StartBench()
     {
-        bench = new CutsceneBench(this, Cutscenes, options.BenchCutscenes);
+        if (options.BenchMissions.Count > 0)
+        {
+            missionBench = new MissionBench(this, missionView, options.BenchMissions);
+        }
+        else
+        {
+            bench = new CutsceneBench(this, Cutscenes, options.BenchCutscenes);
+        }
+
         if (options.Profile == null)
         {
             FLLog.Error(CutsceneBench.Component, "The bench needs a profile file on the command line.");
@@ -569,6 +579,7 @@ internal sealed partial class EditorWindow : Game
         timeline.Reset();
         cutsceneBrowser.Reset();
         missionsBrowser.Reset();
+        missionView.Reset();
         Missions.Reset();
         centerSelections.Reset();
         hierarchy.Reset();
@@ -654,8 +665,9 @@ internal sealed partial class EditorWindow : Game
             OpenSystem(system);
         }
 
-        // The checks of the mission scripts run after each load (section 12.3 of the M6a design).
-        if (!options.Bench)
+        // The checks of the mission scripts run after each load (section 12.3 of the M6a design). The cutscene bench
+        // measures the preview alone, so it runs no check.
+        if (!options.Bench || options.BenchMissions.Count > 0)
         {
             Missions.Run();
         }
@@ -722,6 +734,7 @@ internal sealed partial class EditorWindow : Game
 
     protected override void Draw(double elapsed)
     {
+        var frameStart = Stopwatch.GetTimestamp();
         RenderContext.ReplaceViewport(0, 0, Width, Height);
         RenderContext.ClearColor = EditorTheme.Backdrop;
         RenderContext.ClearAll();
@@ -759,6 +772,8 @@ internal sealed partial class EditorWindow : Game
 
         ImGui.PopFont();
         gui.Render(RenderContext);
+        // The mission bench measures the work of the frame, without the wait for the screen.
+        missionBench?.Update(Stopwatch.GetElapsedTime(frameStart));
 
         // ImGui has no .ini file here, so it asks the editor to save its state, a few seconds after a change.
         var io = ImGui.GetIO();

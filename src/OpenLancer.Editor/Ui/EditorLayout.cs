@@ -378,14 +378,23 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
     /// <summary>
     /// Draws the toolbar strip of a panel. Its buttons are flat, and a toggle that is on keeps its pressed color.
     /// </summary>
-    private static void Toolbar(EditorPanel panel, Action draw, Vector2 size)
+    private static void Toolbar(EditorPanel panel, Action draw, Vector2 size) => Strip(panel.ToolbarId, draw, size);
+
+    /// <summary>The height of a toolbar strip, in pixels.</summary>
+    public static float StripHeight => Pixels(ToolbarHeight, ImGuiHelper.Scale);
+
+    /// <summary>
+    /// Draws a toolbar strip at the cursor, as the strip of a panel, for example the Scene toolbar above the Scene part
+    /// of the Mission tab. Its buttons are flat, and a toggle that is on keeps its pressed color.
+    /// </summary>
+    public static void Strip(string id, Action draw, Vector2 size)
     {
         // The items are centered vertically in the strip.
         var padding = new Vector2(Pixels(ToolbarPaddingX, ImGuiHelper.Scale),
             MathF.Truncate((size.Y - ImGui.GetFrameHeight()) / 2));
         ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Toolbar);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, padding);
-        var visible = ImGui.BeginChild(panel.ToolbarId, size, ImGuiChildFlags.AlwaysUseWindowPadding,
+        var visible = ImGui.BeginChild(id, size, ImGuiChildFlags.AlwaysUseWindowPadding,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         ImGui.PopStyleVar();
         ImGui.PopStyleColor();

@@ -13,6 +13,9 @@ namespace OpenLancer.Editor.Ui.Fields;
 /// </summary>
 internal static class InfoIcon
 {
+    /// <summary>The id of the popup in the id scope of the icon.</summary>
+    public const string PopupId = "##info-popup";
+
     /// <summary>The width of the icon, in pixels.</summary>
     public static float Width => ImGui.GetFrameHeight();
 
@@ -25,7 +28,7 @@ internal static class InfoIcon
         var min = ImGui.GetCursorScreenPos();
         if (ImGui.InvisibleButton("##info", size))
         {
-            ImGui.OpenPopup("##info-popup");
+            ImGui.OpenPopup(PopupId);
         }
 
         var hovered = ImGui.IsItemHovered();
@@ -33,7 +36,7 @@ internal static class InfoIcon
         var glyphSize = ImGui.CalcTextSize(glyph);
         ImGui.GetWindowDrawList().AddText(min + (size - glyphSize) / 2,
             ImGui.GetColorU32(hovered ? EditorTheme.AccentText : EditorTheme.TextDim), glyph);
-        if (hovered && !ImGui.IsPopupOpen("##info-popup"))
+        if (hovered && !ImGui.IsPopupOpen(PopupId))
         {
             ImGui.SetTooltip(help.FirstSentence);
         }
@@ -55,10 +58,13 @@ internal static class InfoIcon
         ImGui.SetCursorScreenPos(cursor);
     }
 
-    private static void Popup(HelpText help)
+    /// <summary>The popup of a help text, when it is open in the current id scope. A view that draws the glyph in
+    /// another place, for example in the canvas of the mission graph, opens the popup with <see cref="PopupId"/> and
+    /// calls this outside that place.</summary>
+    internal static void Popup(HelpText help)
     {
         ImGui.SetNextWindowSizeConstraints(new Vector2(260, 0) * ImGuiHelper.Scale, new Vector2(420, 600) * ImGuiHelper.Scale);
-        if (!ImGui.BeginPopup("##info-popup"))
+        if (!ImGui.BeginPopup(PopupId))
         {
             return;
         }

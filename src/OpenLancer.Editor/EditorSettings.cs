@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using OpenLancer.Data;
 using OpenLancer.Data.Games;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Runtime.Scene;
@@ -169,6 +170,27 @@ internal sealed class EditorSettings
 
     /// <summary>True when the Mission tab shows the Scene beside the mission (decision D522 of the M6a design).</summary>
     public bool MissionShowScene { get; set; } = true;
+
+    /// <summary>The lens of the mission graph (section 6.5 of the M6a design).</summary>
+    [JsonIgnore]
+    public GraphLens MissionLens { get; set; } = GraphLens.Beats;
+
+    // The file holds the lens by name. A name that this editor does not know gives the default.
+    [JsonInclude]
+    [JsonPropertyName(nameof(MissionLens))]
+    private string MissionLensName
+    {
+        get => MissionLens.ToString();
+        set => MissionLens = Named(value, GraphLens.Beats);
+    }
+
+    /// <summary>True when each node of the mission graph shows its condition line and its action lines ("Show lines",
+    /// decision D523 of the M6a design).</summary>
+    public bool MissionShowLines { get; set; }
+
+    /// <summary>True when the Scene shows the items of the open mission (the toggle "Mission items", section 7.2 of the
+    /// M6a design).</summary>
+    public bool ShowMissionItems { get; set; } = true;
 
     /// <summary>The id of the category of the Assets panel that shows, for example "solars/station" (milestone
     /// M23).</summary>
