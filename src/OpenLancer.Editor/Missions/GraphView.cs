@@ -84,6 +84,18 @@ internal sealed class GraphView : IDisposable
 
     // The block that shows the selection in this frame, or null.
     private GraphBlock? selectedBlock;
+
+    // The navigation of section 6.6: the focus of the path view or the neighbor view, the search and the system filter.
+    private GraphPath? pathFocus;
+    private MissionTrigger? neighborFocus;
+    private IReadOnlySet<GraphNode>? focusNodes;
+    private HashSet<GraphNode> pathNodes = [];
+    private HashSet<MissionLink> pathLinks = [];
+    private string searchText = "";
+    private List<GraphNode> results = [];
+    private int resultIndex = -1;
+    private (MissionGraph? Graph, string Text) searched;
+    private MissionTrigger? sourcesOf;
     private string? pendingTooltip;
     private HelpText? pendingInfo;
     private HelpText? openInfo;
@@ -137,8 +149,66 @@ internal sealed class GraphView : IDisposable
     /// 7.3). The Mission tab sets them in each frame.</summary>
     public IReadOnlySet<string> Outlined { get; set; } = new HashSet<string>();
 
-    /// <summary>The opacity of each node that a focus changes, for example the neighbor view, or null.</summary>
-    public Func<GraphNode, float?>? Focus { get; set; }
+    /// <summary>The system of the system filter, or null for all systems. The nodes of other systems fade.</summary>
+    public string? SystemFilter { get; set; }
+
+    /// <summary>True while the path view or the neighbor view shows. Esc ends it.</summary>
+    public bool HasFocus => pathFocus != null || neighborFocus != null;
+
+    /// <summary>Ends the path view and the neighbor view.</summary>
+    public void EndFocus()
+    {
+        pathFocus = null;
+        neighborFocus = null;
+    }
+
+    /// <summary>The text of the search of the graph (section 6.6 of the M6a design).</summary>
+    public string SearchText
+    {
+        get => searchText;
+        set
+        {
+            if (searchText != value)
+            {
+                searchText = value;
+                resultIndex = -1;
+            }
+        }
+    }
+
+    /// <summary>The nodes that match the search, in file order.</summary>
+    public IReadOnlyList<GraphNode> Results
+    {
+        get
+        {
+            if (Graph == null)
+            {
+                return [];
+            }
+
+            if (!ReferenceEquals(searched.Graph, Graph) || searched.Text != searchText)
+            {
+                results = GraphNavigation.Search(Graph, searchText).ToList();
+                searched = (Graph, searchText);
+                resultIndex = Math.Min(resultIndex, results.Count - 1);
+            }
+
+            return results;
+        }
+    }
+
+    /// <summary>Frames the next result of the search (Enter), or the result before it (Shift+Enter).</summary>
+    public void NextResult(int step)
+    {
+        var list = Results;
+        if (list.Count == 0)
+        {
+            return;
+        }
+
+        resultIndex = ((resultIndex < 0 && step < 0 ? 0 : resultIndex) + step + list.Count) % list.Count;
+        FrameBlock(list[resultIndex]);
+    }
 
     /// <summary>Moves the view so that the whole graph shows, at the next frame.</summary>
     public void FrameAll() => pending = Navigation.Content;
@@ -270,6 +340,7 @@ internal sealed class GraphView : IDisposable
         var zoom = NodeEditor.GetCurrentZoom();
         var scale = zoom > 0 ? 1 / zoom : 1;
         View = (viewMin, viewMax, scale);
+        Focus(graph);
         selectedBlock = window.Selection is MissionRef selection &&
                         string.Equals(selection.Script, analysis.Script.Path, StringComparison.OrdinalIgnoreCase)
             ? GraphViewState.BlockOf(graph, selection)
@@ -306,6 +377,9 @@ internal sealed class GraphView : IDisposable
         }
 
         Info();
+        Sources(analysis.Script.Path, graph);
+        SearchResults(analysis.Script.Path);
+        Minimap(graph, layout);
         NodeEditor.Resume();
         EditorTheme.Reapply(1);
         NodeEditor.End();
@@ -411,14 +485,16 @@ internal sealed class GraphView : IDisposable
     /// <summary>One node at its detail level.</summary>
     private void DrawNode(string script, GraphNode node, GraphDetail detail)
     {
-        var alpha = Focus?.Invoke(node) ?? (node.Faded ? MissionGraph.FadeAlpha : 1);
+        var alpha = Alpha(node);
         var selected = ReferenceEquals(node, selectedBlock);
+        var outlined = Outlined.Contains(node.Key) || pathNodes.Contains(node) ||
+                       searchText.Length > 0 && results.Contains(node);
         var border = selected ? EditorTheme.Accent
-            : Outlined.Contains(node.Key) ? EditorTheme.AccentText
+            : outlined ? EditorTheme.AccentText
             : node.Kind == GraphNodeKind.Missing ? EditorTheme.Error with { W = 0.6f }
             : NodeBorder;
         NodeEditor.PushStyleVar(StyleVar.NodePadding, Vector4.Zero);
-        NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, Outlined.Contains(node.Key) ? 2.5f : 1f);
+        NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, outlined ? 2.5f : 1f);
         NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(NodeFill with { W = alpha }));
         NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(border with { W = border.W * alpha }));
         NodeEditor.BeginNode(node.Id);
@@ -928,8 +1004,14 @@ internal sealed class GraphView : IDisposable
             MissionLinkKind.Load => (LightGrey, 2f),
             _ => (MidGrey, 1f),
         };
-        var faded = (Focus?.Invoke(link.From) ?? (link.From.Faded ? MissionGraph.FadeAlpha : 1)) < 1 ||
-                    (Focus?.Invoke(link.To) ?? (link.To.Faded ? MissionGraph.FadeAlpha : 1)) < 1;
+        var faded = Alpha(link.From) < 1 || Alpha(link.To) < 1;
+        // The links of the path view have a bold line.
+        if (link.Sources.Any(pathLinks.Contains))
+        {
+            thickness *= 2.5f;
+            faded = false;
+        }
+
         NodeEditor.Link(link.Id, link.FromPin.Id, link.ToPin.Id,
             (VertexDiffuse)new Color4(color with { W = faded ? MissionGraph.FadeAlpha : 1 }), thickness);
     }
@@ -1125,6 +1207,23 @@ internal sealed class GraphView : IDisposable
             state.SetLines(script, node.Key, !lines);
         }
 
+        if (ImGui.MenuItem("Show the path from a start trigger"))
+        {
+            neighborFocus = null;
+            pathFocus = GraphNavigation.PathFromStart(Graph!.Index, trigger) ?? new GraphPath([trigger], []);
+        }
+
+        if (ImGui.MenuItem("List what starts or stops this trigger"))
+        {
+            sourcesOf = trigger;
+        }
+
+        if (ImGui.MenuItem("Show only this trigger and its neighbors"))
+        {
+            pathFocus = null;
+            neighborFocus = trigger;
+        }
+
         if (ImGui.MenuItem("Frame in the Scene"))
         {
             missions.FrameInScene(new MissionRef(script, MissionItemKind.Trigger, trigger.Section.Ref));
@@ -1140,6 +1239,171 @@ internal sealed class GraphView : IDisposable
         {
             ImGui.SetClipboardText(trigger.Nickname);
         }
+    }
+
+    /// <summary>The focus sets of this frame: the nodes and links of the path view, or the nodes of the neighbor
+    /// view.</summary>
+    private void Focus(MissionGraph graph)
+    {
+        pathNodes = pathFocus?.Triggers.Select(graph.NodeOf).OfType<GraphNode>().ToHashSet() ?? [];
+        pathLinks = pathFocus?.Links.ToHashSet() ?? [];
+        focusNodes = pathFocus != null ? pathNodes
+            : neighborFocus != null && graph.NodeOf(neighborFocus) is { } node ? GraphNavigation.Neighbors(graph, node)
+            : null;
+        _ = Results;
+    }
+
+    /// <summary>The opacity of a node: the fade of the lens, of the system filter and of the path or neighbor
+    /// view.</summary>
+    private float Alpha(GraphNode node)
+    {
+        if (focusNodes != null)
+        {
+            return focusNodes.Contains(node) ? 1 : MissionGraph.FadeAlpha;
+        }
+
+        if (node.Faded || SystemFilter != null && GraphNavigation.OutsideSystem(node, SystemFilter))
+        {
+            return MissionGraph.FadeAlpha;
+        }
+
+        return 1;
+    }
+
+    /// <summary>The list of the node menu "List what starts or stops this trigger": the sources of the pins Start,
+    /// Stop, Load and Watches. A click frames the source.</summary>
+    private void Sources(string script, MissionGraph graph)
+    {
+        if (sourcesOf != null)
+        {
+            ImGui.OpenPopup("##graph-sources");
+        }
+
+        var trigger = sourcesOf;
+        sourcesOf = null;
+        if (trigger != null)
+        {
+            openSources = trigger;
+        }
+
+        if (openSources == null || !ImGui.BeginPopup("##graph-sources"))
+        {
+            return;
+        }
+
+        EditorTheme.PushMenuColors();
+        var sources = GraphNavigation.Sources(graph.Index, openSources);
+        ImGui.TextDisabled($"What starts or stops {openSources.Nickname}");
+        ImGui.Separator();
+        foreach (var (title, links) in new[]
+                 {
+                     ("Start", sources.Start), ("Stop", sources.Stop), ("Load", sources.Load), ("Watches", sources.Watches),
+                 })
+        {
+            foreach (var link in links)
+            {
+                var other = title == "Watches" ? link.Target : link.Source;
+                var name = other?.Nickname ?? $"Missing: {link.TargetName}";
+                var line = (link.Line.Entry + 1).ToString(CultureInfo.InvariantCulture);
+                if (ImGui.Selectable($"{title}: {name} (line {line} of {link.Source.Nickname})##{title}{link.Line.Entry}{link.Source.Section.Index}") &&
+                    other != null && graph.NodeOf(other) is { } node)
+                {
+                    FrameBlock(node);
+                    window.Selection = new MissionRef(script, MissionItemKind.Trigger, other.Section.Ref);
+                }
+            }
+        }
+
+        if (!sources.All.Any())
+        {
+            ImGui.TextDisabled("No trigger starts, stops, loads or watches this trigger.");
+        }
+
+        EditorTheme.PopMenuColors();
+        ImGui.EndPopup();
+    }
+
+    private MissionTrigger? openSources;
+
+    /// <summary>The results of the search under the search field, at the top-left of the graph: the count and the first
+    /// results. A click frames a result.</summary>
+    private void SearchResults(string script)
+    {
+        if (searchText.Trim().Length == 0)
+        {
+            return;
+        }
+
+        var scale = ImGuiHelper.Scale;
+        var list = Results;
+        var drawList = ImGui.GetWindowDrawList();
+        var min = Screen.Min + new Vector2(8, 8) * scale;
+        var shown = Math.Min(list.Count, 10);
+        var lineHeight = ImGui.GetTextLineHeightWithSpacing();
+        var size = new Vector2(280 * scale, (shown + 1) * lineHeight + 8 * scale);
+        drawList.AddRectFilled(min, min + size, EditorTheme.ToAbgr(EditorTheme.Panel with { W = 0.95f }), 4 * scale);
+        ImGui.SetCursorScreenPos(min + new Vector2(6, 4) * scale);
+        ImGui.TextDisabled(list.Count == 0 ? "No trigger matches the search."
+            : list.Count == 1 ? "1 result" : $"{list.Count.ToString(CultureInfo.InvariantCulture)} results");
+        for (var i = 0; i < shown; i++)
+        {
+            ImGui.SetCursorScreenPos(min + new Vector2(6 * scale, 4 * scale + (i + 1) * lineHeight));
+            if (ImGui.Selectable($"{list[i].Title}##result{i}", i == resultIndex, ImGuiSelectableFlags.None,
+                    new Vector2(size.X - 12 * scale, 0)))
+            {
+                resultIndex = i;
+                FrameBlock(list[i]);
+                if (GraphViewState.RefOf(script, list[i]) is { } item)
+                {
+                    window.Selection = item;
+                }
+            }
+        }
+    }
+
+    /// <summary>The minimap at the bottom right of the graph: the node rectangles and the view rectangle. A click centers
+    /// the nearest node (section 6.6 of the M6a design).</summary>
+    private void Minimap(MissionGraph graph, GraphLayout layout)
+    {
+        if (graph.Nodes.Count == 0)
+        {
+            return;
+        }
+
+        var scale = ImGuiHelper.Scale;
+        var size = new Vector2(200, 130) * scale;
+        var max = Screen.Max - new Vector2(8, 8) * scale;
+        var min = max - size;
+        if (min.X < Screen.Min.X || min.Y < Screen.Min.Y)
+        {
+            return;
+        }
+
+        var map = new GraphMinimap(layout.Bounds, (min + new Vector2(4) * scale, max - new Vector2(4) * scale));
+        var drawList = ImGui.GetWindowDrawList();
+        drawList.AddRectFilled(min, max, EditorTheme.ToAbgr(EditorTheme.Backdrop with { W = 0.85f }), 4 * scale);
+        drawList.AddRect(min, max, EditorTheme.ToAbgr(EditorTheme.Border), 4 * scale);
+        foreach (var node in graph.Nodes)
+        {
+            var (a, b) = layout.RectOf(node);
+            var color = ReferenceEquals(node, selectedBlock) ? EditorTheme.Accent
+                : Alpha(node) < 1 ? EditorTheme.TextDim with { W = 0.3f }
+                : EditorTheme.TextDim;
+            drawList.AddRectFilled(map.ToScreen(a), Vector2.Max(map.ToScreen(b), map.ToScreen(a) + Vector2.One),
+                EditorTheme.ToAbgr(color));
+        }
+
+        drawList.PushClipRect(min, max, true);
+        drawList.AddRect(map.ToScreen(View.Min), map.ToScreen(View.Max), EditorTheme.ToAbgr(EditorTheme.AccentText));
+        drawList.PopClipRect();
+        ImGui.SetCursorScreenPos(min);
+        if (ImGui.InvisibleButton("##minimap", size) &&
+            GraphNavigation.Nearest(graph, layout, map.ToCanvas(ImGui.GetMousePos())) is { } nearest)
+        {
+            FrameBlock(nearest);
+        }
+
+        ImGui.SetItemTooltip("Click to center the nearest trigger.");
     }
 
     /// <summary>A small info glyph in the canvas. A hover shows the first sentence, and a click opens the popup of the

@@ -23,6 +23,7 @@ internal sealed class MissionView : IDisposable
     private const float MinSceneTabWidth = 640;
     private const float MinPart = 160;
     private const float LensWidth = 150;
+    private const float SearchWidth = 200;
 
     /// <summary>The share of the width of the mission part, by default 55 percent (decision D522).</summary>
     public const float DefaultSplit = 0.55f;
@@ -33,6 +34,9 @@ internal sealed class MissionView : IDisposable
     private int lastCursor = -1;
     private object? lastSelection;
     private string? shownPath;
+
+    // True when the search field of the graph takes the keyboard in the next frame: Ctrl+F, or after Enter.
+    private bool focusSearch;
 
     public MissionView(EditorWindow window, MissionWorkspace missions)
     {
@@ -163,7 +167,80 @@ internal sealed class MissionView : IDisposable
         {
             Graph.FrameAll();
         }
+
+        ImGui.SameLine();
+        SearchField(scale);
+        ImGui.SameLine();
+        SystemsMenu();
     }
+
+    /// <summary>The search of the graph (section 6.6 of the M6a design): the results list under the field. Enter frames
+    /// the next result, and Shift+Enter the one before.</summary>
+    private void SearchField(float scale)
+    {
+        ImGui.SetNextItemWidth(SearchWidth * scale);
+        if (focusSearch)
+        {
+            ImGui.SetKeyboardFocusHere();
+            focusSearch = false;
+        }
+
+        var text = Graph.SearchText;
+        var enter = ImGui.InputTextWithHint("##graph-search", "Search triggers and values", ref text, 128,
+            ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.EscapeClearsAll);
+        ImGui.SetItemTooltip("Search the nicknames and the values of the triggers. Enter frames the next result, and " +
+                             "Shift+Enter the one before. Shortcut: Ctrl+F.");
+        Graph.SearchText = text;
+        if (enter)
+        {
+            Graph.NextResult(ImGui.GetIO().KeyShift ? -1 : 1);
+            focusSearch = true;
+        }
+    }
+
+    /// <summary>The menu "Systems": the systems of the mission. A system fades the triggers of the other
+    /// systems.</summary>
+    private void SystemsMenu()
+    {
+        var on = Graph.SystemFilter != null;
+        if (ToolbarItems.Toggle("systems", EditorIcons.Filter, "Systems: fade the triggers of other systems.", on) != on)
+        {
+            ImGui.OpenPopup("##systems");
+        }
+
+        if (!ImGui.BeginPopup("##systems"))
+        {
+            return;
+        }
+
+        EditorTheme.PushMenuColors();
+        if (ImGui.MenuItem("All systems", "", Graph.SystemFilter == null))
+        {
+            Graph.SystemFilter = null;
+        }
+
+        foreach (var (system, triggers) in missions.Open is { } open ? MissionSummary.TriggerSystems(open.Index) : [])
+        {
+            var name = SystemName(system);
+            var label = name != null ? $"{name} ({system})" : system;
+            var count = triggers == 1 ? "1 trigger" : $"{triggers} triggers";
+            if (ImGui.MenuItem($"{label}: {count}", "", string.Equals(Graph.SystemFilter, system,
+                    StringComparison.OrdinalIgnoreCase)))
+            {
+                Graph.SystemFilter = system;
+            }
+        }
+
+        EditorTheme.PopMenuColors();
+        ImGui.EndPopup();
+    }
+
+    /// <summary>The name of a system of the game data, or null when it has no name.</summary>
+    private string? SystemName(string nickname) =>
+        window.Session is { GameData: { } data } session && data.Items.Systems.Get(nickname) is { } system &&
+        session.ItemName(system) is { Length: > 0 } name
+            ? name
+            : null;
 
     private static string Label(MissionRunResult? result, string path) =>
         result?.Scripts.FirstOrDefault(s => string.Equals(s.Path, path, StringComparison.OrdinalIgnoreCase)) is
@@ -253,13 +330,26 @@ internal sealed class MissionView : IDisposable
         Keys();
     }
 
-    /// <summary>The keys of the graph (decision D558): F frames the selection, and A or Home frame all. The node editor
-    /// shortcuts that change data are off, so Delete does nothing.</summary>
+    /// <summary>The keys of the graph (decision D558): F frames the selection, A or Home frame all, Ctrl+F goes to the
+    /// search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are off, so
+    /// Delete does nothing.</summary>
     private void Keys()
     {
-        if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) || ImGui.GetIO().WantTextInput)
+        var io = ImGui.GetIO();
+        if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) || io.WantTextInput)
         {
             return;
+        }
+
+        if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.F, false))
+        {
+            focusSearch = true;
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape, false) && Graph.HasFocus)
+        {
+            Graph.EndFocus();
         }
 
         if (ImGui.IsKeyPressed(ImGuiKey.F, false))
