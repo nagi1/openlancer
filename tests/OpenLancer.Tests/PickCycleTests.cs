@@ -43,6 +43,18 @@ public sealed class PickCycleTests
         }
     }
 
+    /// <summary>An item of the open mission is a value: each frame makes a new item with the same value. The cycle
+    /// compares the items by their equality, so it goes on (section 7.2 of the M6a design).</summary>
+    [Fact]
+    public void AValueItemCyclesByItsEquality()
+    {
+        static object[] Values() => ["first value", "second value"];
+        var (_, first) = cycle.Click(Values(), Place, Pose, null, false);
+
+        Assert.Equal((true, "second value"), cycle.Click(Values(), Place, Pose, string.Concat("first", " value"), false));
+        Assert.Equal("first value", first);
+    }
+
     [Fact]
     public void AClickFivePixelsAwayStartsAgain()
     {

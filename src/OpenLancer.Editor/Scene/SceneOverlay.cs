@@ -54,6 +54,10 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     /// <summary>The markers of this frame. The picker finds the marker under the mouse in them.</summary>
     public SceneMarkers Markers { get; } = new();
 
+    /// <summary>Gives the label of an item that has no name in the game data, for example an item of the open mission,
+    /// or null.</summary>
+    public Func<object, string?>? Labels { get; set; }
+
     /// <summary>Forgets the markers and the cached labels. Call it when a system opens or closes.</summary>
     public void Reset()
     {
@@ -103,7 +107,7 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
             }
         }
 
-        if (hovered != null && !ReferenceEquals(hovered, window.Selection))
+        if (hovered != null && !Equals(hovered, window.Selection))
         {
             DrawBrackets(drawList, hovered, HoverColor, HoverThickness);
         }
@@ -224,8 +228,24 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
             _ => SceneItems.ZoneOf(item)?.Position,
         };
         min = max = default;
-        if (position == null || index?.KindOf(item) is not { } kind ||
-            !projection.Project(position.Value, out var screen, out _))
+        if (position == null)
+        {
+            // An item without a position in the system, for example an item of the open mission, has the box of its
+            // marker.
+            foreach (var marker in Markers.Items)
+            {
+                if (Equals(marker.Item, item))
+                {
+                    var markerHalf = new Vector2(GlyphBoxHalf(marker.Kind));
+                    (min, max) = (marker.Screen - markerHalf, marker.Screen + markerHalf);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if (index?.KindOf(item) is not { } kind || !projection.Project(position.Value, out var screen, out _))
         {
             return false;
         }
@@ -389,7 +409,7 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
 
     /// <summary>2 for the selected item, 1 for the hovered item and 0 for all other items.</summary>
     private int Highlight(object item, object? hovered) =>
-        ReferenceEquals(item, window.Selection) ? 2 : ReferenceEquals(item, hovered) ? 1 : 0;
+        Equals(item, window.Selection) ? 2 : Equals(item, hovered) ? 1 : 0;
 
     /// <summary>
     /// True when the label of a marker can go in a rectangle: it covers no placed label, not the axis widget, and no
@@ -407,7 +427,7 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
 
         foreach (var glyph in labelledGlyphs)
         {
-            if (glyph.Priority >= marker.Kind.LabelPriority && !ReferenceEquals(glyph.Item, marker.Item) &&
+            if (glyph.Priority >= marker.Kind.LabelPriority && !Equals(glyph.Item, marker.Item) &&
                 Overlaps(min, max, glyph.Min, glyph.Max))
             {
                 return false;
@@ -428,8 +448,8 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     {
         if (!labels.TryGetValue(item, out var label))
         {
-            var text = window.Session?.ItemName(item) is { Length: > 0 } name ? name
-                : SceneItems.FallbackName(item) ?? item.ToString() ?? "";
+            var text = Labels?.Invoke(item) ?? (window.Session?.ItemName(item) is { Length: > 0 } name ? name
+                : SceneItems.FallbackName(item) ?? item.ToString() ?? "");
             label = (text, ImGuiHelper.Roboto.CalcTextSizeA(fontSize, float.MaxValue, 0, text));
             labels[item] = label;
         }

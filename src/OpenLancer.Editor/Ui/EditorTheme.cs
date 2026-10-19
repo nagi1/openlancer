@@ -75,6 +75,10 @@ internal static class EditorTheme
     /// <summary>A text placeholder, for example <c>$str:</c>.</summary>
     public static readonly Vector4 SyntaxString = Rgb(0xDBB385);
 
+    /// <summary>The items of the open mission in the Scene (decision D557 of the M6a design). Its hue differs by 25
+    /// degrees or more from each other color of the theme and of the kinds, so no other meaning uses it.</summary>
+    public static readonly Vector4 MissionItem = Rgb(0xF07AB4);
+
     // The scene.
     public static readonly Vector4 AxisX = Rgb(0xE06C6C);
     public static readonly Vector4 AxisY = Rgb(0x7CC46A);

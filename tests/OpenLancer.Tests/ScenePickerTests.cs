@@ -12,6 +12,7 @@ using LibreLancer.Render.Cameras;
 using LibreLancer.World;
 using OpenLancer.Editor;
 using OpenLancer.Editor.Scene;
+using OpenLancer.Editor.Ui;
 using Xunit;
 using Encounter = LibreLancer.Data.Schema.Universe.Encounter;
 
@@ -782,6 +783,26 @@ public sealed class ScenePickerTests
 
     private object? Item(Vector2 mouse) => Pick(mouse).Item;
 
+    // The markers of other items that the frame appends, for example the items of the open mission.
+    private readonly List<(object Item, ObjectKind Kind, uint Color, Vector3 Position)> appended = [];
+
+    /// <summary>A marker of the mission layer is a glyph, so it is in the first layer of the pick stack, before the
+    /// object under it (section 7.2 of the M6a design). It shows also when the markers of the system are off.</summary>
+    [Fact]
+    public void AMarkerOfTheMissionLayerComesBeforeTheObjectUnderIt()
+    {
+        var station = Add("station", new Vector3(0, 0, -5_000), ArchetypeType.station, BoxModel(new Vector3(100)));
+        var item = new OpenLancer.Editor.Missions.MissionRef(@"DATA\MISSIONS\TEST\test.ini",
+            OpenLancer.Editor.Missions.MissionItemKind.Ship, Key: "s_one");
+        appended.Add((item, MissionLayer.KindOf(OpenLancer.Data.Missions.PlacementKind.ShipStart),
+            EditorTheme.ToAbgr(EditorTheme.MissionItem), new Vector3(0, 0, -5_000)));
+
+        var stack = Pick(Center).Items;
+
+        Assert.Equal(item, stack[0]);
+        Assert.Same(station, stack[1]);
+    }
+
     private ScenePick Pick(Vector2 mouse)
     {
         var projection = Projection();
@@ -795,6 +816,7 @@ public sealed class ScenePickerTests
         axes.Update(projection);
         var markers = new SceneMarkers();
         markers.Update(projection, index, settings, selection);
+        markers.Append(projection, selection, appended);
         return new ScenePicker(axes, markers, objects).Pick(projection, mouse, index,
             new PickView(eye, settings.ShowZones, settings.ShowNebulae, settings.ShowFog));
     }

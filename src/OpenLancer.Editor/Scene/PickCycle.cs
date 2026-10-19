@@ -10,8 +10,8 @@ internal readonly record struct CameraPose(Vector3 Position, Quaternion Orientat
 /// The click cycle of the Scene (section 6.4 of the M22 design). A click again at the same place, or an Alt+click
 /// anywhere, selects the next item of the pick stack (see <see cref="ScenePicker"/>). Unity selects the next object
 /// under the mouse when the user clicks again at the same place. Alt+click also reaches the zone behind an object from
-/// another place. The cycle keeps the place, the camera pose, the stack and the item of the last pick. This class has
-/// no ImGui call.
+/// another place. The cycle keeps the place, the camera pose, the stack and the item of the last pick. An item compares
+/// by its equality, so a value such as an item of a mission can be in the stack. This class has no ImGui call.
 /// </summary>
 internal sealed class PickCycle
 {
@@ -43,7 +43,7 @@ internal sealed class PickCycle
             return alt ? (false, selection) : (true, null);
         }
 
-        var next = alt || IsSamePlace(mouse) && cameraPose == pose && ReferenceEquals(selection, picked);
+        var next = alt || IsSamePlace(mouse) && cameraPose == pose && Equals(selection, picked);
         var at = next ? IndexOf(items, selection) : -1;
         var item = items[(at + 1) % items.Count];
         place = mouse;
@@ -61,7 +61,7 @@ internal sealed class PickCycle
     public string? Hint(Vector2 mouse, object? selection)
     {
         var at = IndexOf(stack, picked);
-        if (stack.Count < 2 || at < 0 || !IsSamePlace(mouse) || !ReferenceEquals(selection, picked))
+        if (stack.Count < 2 || at < 0 || !IsSamePlace(mouse) || !Equals(selection, picked))
         {
             return null;
         }
@@ -84,7 +84,7 @@ internal sealed class PickCycle
     {
         for (var i = 0; i < items.Count; i++)
         {
-            if (ReferenceEquals(items[i], item))
+            if (Equals(items[i], item))
             {
                 return i;
             }

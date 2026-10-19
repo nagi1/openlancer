@@ -1,0 +1,77 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Numerics;
+using OpenLancer.Data.Editing;
+using OpenLancer.Data.Missions;
+using Xunit;
+
+namespace OpenLancer.DataTests;
+
+/// <summary>
+/// Retail proofs of the mission layer of the Scene (sections 7.2 and 18.2 of the M6a design): the count of placeable
+/// items of each kind in Li01 over the 14 retail story scripts. The tests count items. They hold no retail text.
+/// </summary>
+public sealed class MissionLayerRetailTests(ITestOutputHelper output)
+{
+    /// <summary>The positions of the objects of a system and the slots of the formation shapes, from the edit view of a
+    /// retail session.</summary>
+    private static (Dictionary<string, Vector3> Objects, Dictionary<string, IReadOnlyList<Vector3>> Slots) World(
+        string system)
+    {
+        using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m6alayer");
+        var session = workspace.Open();
+        var objects = new Dictionary<string, Vector3>(StringComparer.OrdinalIgnoreCase);
+        foreach (var section in session.Sections(session.SystemPath(system)!))
+        {
+            if (session.Get(section) is { } view && section.Id.Type.Equals("Object", StringComparison.OrdinalIgnoreCase) &&
+                Value(view, "nickname") is { } nickname && Vector(view, "pos") is { } position)
+                objects[nickname] = position;
+        }
+        var slots = new Dictionary<string, IReadOnlyList<Vector3>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var section in session.Sections(session.DataPath(@"MISSIONS\formations.ini")!))
+        {
+            if (session.Get(section) is { } view && Value(view, "nickname") is { } shape)
+                slots.TryAdd(shape, view.Entries.Where(e => e.Name.Equals("pos", StringComparison.OrdinalIgnoreCase) &&
+                                                            e.Values.Count >= 3)
+                    .Select(e => new Vector3(Number(e, 0), Number(e, 1), Number(e, 2))).ToList());
+        }
+        return (objects, slots);
+    }
+
+    private static string? Value(SectionView view, string key) =>
+        view.Entries.FirstOrDefault(e => e.Name.Equals(key, StringComparison.OrdinalIgnoreCase)) is { Values.Count: > 0 } entry
+            ? MissionIndex.Text(entry.Values[0])
+            : null;
+
+    private static Vector3? Vector(SectionView view, string key) =>
+        view.Entries.FirstOrDefault(e => e.Name.Equals(key, StringComparison.OrdinalIgnoreCase)) is { Values.Count: >= 3 } entry
+            ? new Vector3(Number(entry, 0), Number(entry, 1), Number(entry, 2))
+            : null;
+
+    private static float Number(EntryView entry, int index) =>
+        float.TryParse(MissionIndex.Text(entry.Values[index]), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : 0;
+
+    [Fact]
+    public void TheCountOfPlaceableItemsOfEachKindInLi01()
+    {
+        var (objects, slots) = World("li01");
+        var run = RetailMissions.Run();
+        var placements = run.Scripts.Where(s => s.Slot != null).Select(s => run.Of(s.Path)!)
+            .SelectMany(a => MissionPlacements.In(a.Index, "Li01", name => objects.TryGetValue(name, out var p) ? p : null,
+                shape => slots.GetValueOrDefault(shape)))
+            .ToList();
+        var counts = Enum.GetValues<PlacementKind>().ToDictionary(k => k, k => placements.Count(p => p.Kind == k));
+        var text = string.Join(" ", counts.Select(c => $"{c.Key}:{c.Value}"));
+
+        output.WriteLine(text);
+        Assert.True(objects.Count > 100, $"Li01 has {objects.Count} objects.");
+        Assert.All(placements, p => Assert.Equal("Li01", p.System));
+        Assert.Equal("ShipStart:47 FormationStart:34 FormationMember:34 SolarStart:9 LootStart:0 NearAnchor:0 " +
+                     "Arrival:0 Spawn:71 Move:67 Route:2 DistanceVolume:73 RingPass:0 Plane:0 TrafficArea:23 " +
+                     "ObjectiveMarker:51 OrderPath:118 FixedCamera:1 CutsceneAnchor:4", text);
+    }
+}

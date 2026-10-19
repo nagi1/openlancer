@@ -58,6 +58,7 @@ internal sealed class SceneView : IDisposable
     private readonly ScenePicker scenePicker;
     private readonly PickCycle cycle = new();
     private readonly TransformGizmo transform;
+    private readonly MissionLayer missionLayer;
     private SystemRenderer? renderer;
     private GameWorld? world;
     private GameResourceManager? resources;
@@ -80,6 +81,8 @@ internal sealed class SceneView : IDisposable
     {
         this.window = window;
         overlay = new SceneOverlay(window, objects);
+        missionLayer = new MissionLayer(window);
+        overlay.Labels = missionLayer.Label;
         picker = new SystemPicker(window);
         scenePicker = new ScenePicker(gizmo, overlay.Markers, objects);
         transform = new TransformGizmo(window, (session, item) => item is SectionRef section
@@ -111,6 +114,10 @@ internal sealed class SceneView : IDisposable
     ];
 
     public StarSystem? System { get; private set; }
+
+    /// <summary>The mission layer: the items of the open mission in the open system (section 7.2 of the M6a
+    /// design).</summary>
+    public MissionLayer MissionItems => missionLayer;
 
     /// <summary>The shared data of the open system, or null when no system is open.</summary>
     public SystemIndex? Index { get; private set; }
@@ -278,6 +285,7 @@ internal sealed class SceneView : IDisposable
         sync = null;
         objects.Clear();
         overlay.Reset();
+        missionLayer.Reset();
         picker.Reset();
         cycle.Reset();
         world?.Dispose();
@@ -321,6 +329,9 @@ internal sealed class SceneView : IDisposable
                 break;
             case LightSource light:
                 controller.Focus(light.Light.Position, 500);
+                break;
+            case Missions.MissionRef mission when missionLayer.PlaceOf(mission) is var (position, radius):
+                controller.Focus(position, radius);
                 break;
         }
     }
@@ -388,6 +399,13 @@ internal sealed class SceneView : IDisposable
         controller.Apply(camera, sky, width, height);
         var projection = new SceneProjection(camera, origin, size, ImGuiHelper.Scale);
         overlay.Update(projection, Index);
+        // The items of the open mission are markers too, so the picker and the pick cycle find them (section 7.2 of the
+        // M6a design). They have their own toggle, "Mission items".
+        if (missionLayer.Active)
+        {
+            missionLayer.Update(Index, NamesVersion);
+            overlay.Markers.Append(projection, window.Selection, missionLayer.Markers(window.Settings.ShowMissionItems));
+        }
         gizmo.Update(projection);
         Pick(projection, Index, activated, deactivated);
         if (viewKeys && !ImGui.GetIO().WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F))
@@ -500,7 +518,9 @@ internal sealed class SceneView : IDisposable
         var item = ToolbarItems.IconWidth + spacing;
         // The system list gets the space that the other items leave, between its minimum and maximum width. The other
         // items are Frame system, the gizmo items, the view toggles, the help button and two separators.
-        var others = (ViewOptions.Length + TransformGizmo.ToolbarItemCount + 2) * item + 2 * (1 + spacing) + spacing;
+        var missionToggle = missionLayer.Active ? 1 : 0;
+        var others = (ViewOptions.Length + missionToggle + TransformGizmo.ToolbarItemCount + 2) * item +
+                     2 * (1 + spacing) + spacing;
         var scale = ImGuiHelper.Scale;
         picker.Draw(Math.Clamp(ImGui.GetContentRegionAvail().X - others, SystemPicker.MinWidth * scale,
             SystemPicker.MaxWidth * scale));
@@ -517,6 +537,15 @@ internal sealed class SceneView : IDisposable
         ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
+
+        // The toggle "Mission items" has an effect only while a mission is open, so it shows only then (UI rule 4).
+        if (missionLayer.Active)
+        {
+            settings.ShowMissionItems = ToolbarItems.Toggle("mission-items", EditorIcons.Flag,
+                "Mission items: show the ships, points, volumes and paths of the open mission in this system.",
+                settings.ShowMissionItems);
+            ImGui.SameLine();
+        }
 
         // The toggles that do not fit go into a menu behind a More button, so that the help button stays in view.
         // Each toggle takes one item width, and the help button takes the last one.
@@ -708,6 +737,11 @@ internal sealed class SceneView : IDisposable
     {
         DrawZones();
         DrawLines();
+        if (missionLayer.Active && renderer != null)
+        {
+            missionLayer.DrawLines(renderer.DebugRenderer, window.Settings.ShowMissionItems);
+        }
+
         DrawSelection();
     }
 

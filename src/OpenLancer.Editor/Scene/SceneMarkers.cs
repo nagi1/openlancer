@@ -122,6 +122,27 @@ internal sealed class SceneMarkers
     }
 
     /// <summary>
+    /// Adds the markers of other items to the markers of the frame, for example the items of the open mission (section
+    /// 7.2 of the M6a design). So the picker and the pick cycle find them too. An item compares with the selection by its
+    /// equality.
+    /// </summary>
+    public void Append(SceneProjection projection, object? selection,
+        IEnumerable<(object Item, ObjectKind Kind, uint Color, Vector3 Position)> items)
+    {
+        scale = projection.UiScale;
+        var before = markers.Count;
+        foreach (var (item, kind, color, position) in items)
+        {
+            Add(projection, selection, item, kind, color, position, false);
+        }
+
+        if (markers.Count != before)
+        {
+            markers.Sort((a, b) => b.Depth.CompareTo(a.Depth));
+        }
+    }
+
+    /// <summary>
     /// Adds the marker of an item when it is in view and not faded out. The selected item never fades, so its marker
     /// stays in view. A hidden item draws at half opacity.
     /// </summary>
