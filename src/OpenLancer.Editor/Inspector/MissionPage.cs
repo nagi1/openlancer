@@ -239,9 +239,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
                 lists[key] = widget = new ListField();
             }
 
-            ImGui.Indent(MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale));
-            widget.Draw(key, list, null, ReadOnlyReason);
-            ImGui.Unindent(MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale));
+            // The list field has its own label and rows, so it spans both columns of the section.
+            grid.FullRow(() => widget.Draw(key, list, null, ReadOnlyReason));
         }
         else if (field.Chips.Count > 0)
         {

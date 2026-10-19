@@ -216,6 +216,17 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         igTableFullRowEnd();
     }
 
+    /// <summary>A row that spans the two columns, for a widget that has its own label, for example a list field
+    /// (section 11.1 of the M6a design).</summary>
+    public void FullRow(Action draw)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        igTableFullRowBegin();
+        draw();
+        igTableFullRowEnd();
+    }
+
     /// <summary>A heading that spans the two columns, with a line after it.</summary>
     public void SubHeading(string text)
     {

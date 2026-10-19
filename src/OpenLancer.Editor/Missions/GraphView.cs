@@ -266,10 +266,17 @@ internal sealed class GraphView : IDisposable
             SystemName);
         Graph = MissionGraph.Build(analysis, options);
         Layout = GraphLayout.Of(Graph, state.Offsets(analysis.Script.Path));
-        // Another mission shows the whole graph first.
+        // The path view and the neighbor view hold the triggers of one analysis, so a new analysis ends them. Another
+        // mission shows the whole graph first, with all its systems.
+        if (!ReferenceEquals(builtAnalysis, analysis))
+        {
+            EndFocus();
+        }
+
         if (!string.Equals(builtAnalysis?.Script.Path, analysis.Script.Path, StringComparison.OrdinalIgnoreCase))
         {
             pending = Navigation.Content;
+            SystemFilter = null;
         }
 
         builtAnalysis = analysis;
@@ -378,8 +385,6 @@ internal sealed class GraphView : IDisposable
 
         Info();
         Sources(analysis.Script.Path, graph);
-        SearchResults(analysis.Script.Path);
-        Minimap(graph, layout);
         NodeEditor.Resume();
         EditorTheme.Reapply(1);
         NodeEditor.End();
@@ -389,6 +394,9 @@ internal sealed class GraphView : IDisposable
         DoubleClicks(analysis.Script.Path);
         // The engine method takes null to clear the current editor.
         NodeEditor.SetCurrentEditor(null!);
+        // The overlays are child windows after the canvas, so they draw over it and take the mouse first.
+        SearchResults(analysis.Script.Path);
+        Minimap(graph, layout);
         foreach (var (key, delta) in drags)
         {
             state.Dragged(analysis.Script.Path, key, delta);
@@ -1352,29 +1360,35 @@ internal sealed class GraphView : IDisposable
 
         var scale = ImGuiHelper.Scale;
         var list = Results;
-        var drawList = ImGui.GetWindowDrawList();
-        var min = Screen.Min + new Vector2(8, 8) * scale;
         var shown = Math.Min(list.Count, 10);
         var lineHeight = ImGui.GetTextLineHeightWithSpacing();
         var size = new Vector2(280 * scale, (shown + 1) * lineHeight + 8 * scale);
-        drawList.AddRectFilled(min, min + size, EditorTheme.ToAbgr(EditorTheme.Panel with { W = 0.95f }), 4 * scale);
-        ImGui.SetCursorScreenPos(min + new Vector2(6, 4) * scale);
-        ImGui.TextDisabled(list.Count == 0 ? "No trigger matches the search."
-            : list.Count == 1 ? "1 result" : $"{list.Count.ToString(CultureInfo.InvariantCulture)} results");
-        for (var i = 0; i < shown; i++)
+        ImGui.SetCursorScreenPos(Screen.Min + new Vector2(8, 8) * scale);
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Panel with { W = 0.95f });
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6, 4) * scale);
+        var visible = ImGui.BeginChild("##search-results", size, ImGuiChildFlags.AlwaysUseWindowPadding,
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+        ImGui.PopStyleVar();
+        ImGui.PopStyleColor();
+        if (visible)
         {
-            ImGui.SetCursorScreenPos(min + new Vector2(6 * scale, 4 * scale + (i + 1) * lineHeight));
-            if (ImGui.Selectable($"{list[i].Title}##result{i}", i == resultIndex, ImGuiSelectableFlags.None,
-                    new Vector2(size.X - 12 * scale, 0)))
+            ImGui.TextDisabled(list.Count == 0 ? "No trigger matches the search."
+                : list.Count == 1 ? "1 result" : $"{list.Count.ToString(CultureInfo.InvariantCulture)} results");
+            for (var i = 0; i < shown; i++)
             {
-                resultIndex = i;
-                FrameBlock(list[i]);
-                if (GraphViewState.RefOf(script, list[i]) is { } item)
+                if (ImGui.Selectable($"{list[i].Title}##result{i}", i == resultIndex))
                 {
-                    window.Selection = item;
+                    resultIndex = i;
+                    FrameBlock(list[i]);
+                    if (GraphViewState.RefOf(script, list[i]) is { } item)
+                    {
+                        window.Selection = item;
+                    }
                 }
             }
         }
+
+        ImGui.EndChild();
     }
 
     /// <summary>The minimap at the bottom right of the graph: the node rectangles and the view rectangle. A click centers
@@ -1396,6 +1410,14 @@ internal sealed class GraphView : IDisposable
         }
 
         var map = new GraphMinimap(layout.Bounds, (min + new Vector2(4) * scale, max - new Vector2(4) * scale));
+        ImGui.SetCursorScreenPos(min);
+        if (!ImGui.BeginChild("##minimap-window", size, ImGuiChildFlags.None,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+        {
+            ImGui.EndChild();
+            return;
+        }
+
         var drawList = ImGui.GetWindowDrawList();
         drawList.AddRectFilled(min, max, EditorTheme.ToAbgr(EditorTheme.Backdrop with { W = 0.85f }), 4 * scale);
         drawList.AddRect(min, max, EditorTheme.ToAbgr(EditorTheme.Border), 4 * scale);
@@ -1420,6 +1442,7 @@ internal sealed class GraphView : IDisposable
         }
 
         ImGui.SetItemTooltip("Click to center the nearest trigger.");
+        ImGui.EndChild();
     }
 
     /// <summary>A small info glyph in the canvas. A hover shows the first sentence, and a click opens the popup of the

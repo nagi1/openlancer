@@ -324,10 +324,19 @@ internal sealed class MissionView : IDisposable
         }
 
         ImGui.EndChild();
-        // The connector lines draw on the window of the tab after both parts, so they go over both.
+        // The connector lines draw on a child window after both parts. Thus they go over both parts and under the
+        // popups. The child window takes no mouse input.
         if (!missions.ShowRaw)
         {
-            links.DrawLines(analysis, (origin, origin + avail));
+            ImGui.SetCursorScreenPos(origin);
+            if (ImGui.BeginChild("##connector-lines", avail, ImGuiChildFlags.None,
+                    ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoBackground | ImGuiWindowFlags.NoScrollbar |
+                    ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings))
+            {
+                links.DrawLines(analysis, (origin, origin + avail));
+            }
+
+            ImGui.EndChild();
         }
     }
 

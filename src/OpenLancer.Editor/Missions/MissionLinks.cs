@@ -127,7 +127,6 @@ internal sealed class MissionLinks(EditorWindow window, MissionWorkspace mission
             return;
         }
 
-        var scale = ImGuiHelper.Scale;
         EditorLayout.Strip("##uses-bar", () =>
         {
             var count = users.Count == 1 ? "1 trigger uses" : $"{users.Count.ToString(CultureInfo.InvariantCulture)} triggers use";
@@ -144,7 +143,7 @@ internal sealed class MissionLinks(EditorWindow window, MissionWorkspace mission
             {
                 Step(1);
             }
-        }, new Vector2(ImGui.GetContentRegionAvail().X, MathF.Truncate(EditorLayout.StripHeight / scale * scale)));
+        }, new Vector2(ImGui.GetContentRegionAvail().X, EditorLayout.StripHeight));
     }
 
     /// <summary>Frames the next trigger that uses the world item, or the one before it, and selects its line.</summary>
@@ -227,8 +226,8 @@ internal sealed class MissionLinks(EditorWindow window, MissionWorkspace mission
     }
 
     /// <summary>
-    /// Draws the connector lines from the rows or chips of the graph to the items in the Scene part, on the window of
-    /// the Mission tab, after both parts drew. At most 24 lines draw. An item in another system ends at a chip "In
+    /// Draws the connector lines from the rows or chips of the graph to the items in the Scene part, on the current
+    /// window. The Mission tab calls it in a child window after both parts drew. At most 24 lines draw. An item in another system ends at a chip "In
     /// {system name}" at the top of the Scene part. A double-click on a line frames its item in the Scene part.
     /// </summary>
     public void DrawLines(MissionAnalysis analysis, (Vector2 Min, Vector2 Max) tab)
