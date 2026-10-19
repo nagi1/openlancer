@@ -7,7 +7,8 @@ using Xunit;
 
 namespace OpenLancer.Tests;
 
-/// <summary>The JSON form of the result and the errors of the command layer (section 4.0.6 of the M6b design).</summary>
+/// <summary>The JSON form of the result and the errors of the command layer (section 4.0.6 of the M6b
+/// design).</summary>
 public sealed class EditResultJsonTests
 {
     [Fact]

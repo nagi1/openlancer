@@ -22,14 +22,15 @@ namespace OpenLancer.Data.Editing.Lists;
 /// <para>The rule data (see <see cref="ListRules"/>) maps a value of a key of a section type to a list. A list is
 /// available when its files have at least one file in the edit view, or when it is an enum. An unavailable list gives
 /// no result, so a synthetic profile without the files of a role gets no list check.</para>
-/// <para>Each cache keeps the revision of W at its last check (see <see cref="EditSession.CacheRevision"/>). A call at the same
-/// revision returns at once. At a new revision, a cache compares the W states of its own files only, so an edit of one
+/// <para>Each cache keeps the revision of W at its last check (see <see cref="EditSession.CacheRevision"/>). A call at
+/// the same revision returns at once. At a new revision, a cache compares the W states of its own files only, so an edit of one
 /// file builds again only the lists and the reverse index parts of that file.</para>
 /// <para>"Missing" is a pure function of W: no state stores it. So an undo of a delete heals each referrer at once
 /// (decision D81). "Unusable" is a pure function of W too, so one undo of the edit that made an entry unusable heals
 /// each line that names it.</para>
 /// <para>A file that the active mod replaces with a whole file has its lower data in W. The lists read such a file as
-/// the edit view gives it, so they hold its entries.</para>
+/// the edit view gives it, so they hold its entries. A whole mission file of the active mod is a document of the kind
+/// "whole file" whose W has the data of the mod, so the lists read its W.</para>
 /// </remarks>
 public sealed class DataLists
 {

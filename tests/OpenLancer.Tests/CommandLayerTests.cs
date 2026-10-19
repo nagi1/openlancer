@@ -9,9 +9,9 @@ using Xunit;
 namespace OpenLancer.Tests;
 
 /// <summary>
-/// The places of the shared command layer (section 4.0.2 of the M6b design, MCP1 section 12.1 item 3): OpenLancer.Data
-/// and OpenLancer.Studio make no ImGui call and have no reference to the MCP SDK, and OpenLancer.Data has no reference to
-/// OpenLancer.Studio.
+/// The places of the shared command layer (section 4.0.2 of the M6b design, MCP1 section 12.1 item 3):
+/// OpenLancer.Data and OpenLancer.Studio make no ImGui call and have no reference to the MCP SDK, and OpenLancer.Data
+/// has no reference to OpenLancer.Studio.
 /// </summary>
 public sealed class CommandLayerTests
 {

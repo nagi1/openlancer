@@ -216,30 +216,38 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
     /// changes, and the edits stay unsaved (review finding F1).
     /// </summary>
     /// <remarks>
-    /// <para>The engine reads the lines of an <c>[ObjList]</c> section of a mission in order. In
-    /// <c>[ObjList] nickname = avoid</c> of m02.ini, the <c>system</c> line comes before the key line. A change of such a
-    /// section writes all lines except the key line, and the merge puts them as one block at the place of the first line
-    /// that they replace. So no patch can change the section and keep its order, and the editor takes no edit of it.</para>
-    /// <para>The mod has a hand-written patch that changes the section, and the merge replaces that line in place. When
-    /// an edit changes m02.ini, the writer writes the line of the hand-written patch again (a pinned line, review
-    /// finding F3), and the self-check refuses the patch. So the test needs no test seam. When the writer can write
-    /// such a section, the test needs another trigger.</para>
+    /// <para>The engine reads the lines of a <c>[Trigger]</c> section in order. Outside the mission files, a change of
+    /// such a section writes all lines except the key line, and the merge puts them as one block at the place of the
+    /// first line that they replace. So when a line comes before the key line, no patch can change the section and keep
+    /// its order, and the editor takes no edit of it. In a mission file, the writer writes such a section with
+    /// <c>ol.replace</c> (milestone M6b), so the retail scripts cannot give this case any more. A lower mod adds a file
+    /// outside the mission files with such a section.</para>
+    /// <para>The active mod has a hand-written patch that changes the section, and the merge replaces that line in
+    /// place. When an edit changes the file, the writer writes the line of the hand-written patch again (a pinned line,
+    /// review finding F3), and the self-check refuses the patch. So the test needs no test seam.</para>
     /// </remarks>
     [Fact]
     public void AFileThatFailsTheSelfCheckStopsTheWholeSave()
     {
         var baseFolder = GameDataPaths.RequireBase();
-        using var workspace = new RetailWorkspace(baseFolder, ModId, ModName);
-        var objList = new SectionRef(@"DATA\MISSIONS\M02\m02.ini", new SectionIdentity("ObjList", "avoid"));
+        const string orderPath = @"DATA\proof_order.ini";
+        var lowerMod = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"), "proof_lower");
+        Directory.CreateDirectory(Path.Combine(lowerMod, Mod.FilesFolder, "DATA"));
+        File.WriteAllText(Path.Combine(lowerMod, ModManifest.FileName), """{ "id": "proof_lower", "formatVersion": 1 }""");
+        File.WriteAllText(Path.Combine(lowerMod, Mod.FilesFolder, orderPath),
+            "[Trigger]\r\nsystem = proof_system\r\nnickname = avoid\r\nCnd_True = no_params\r\nAvoidance = false\r\n");
+        using var workspace = new RetailWorkspace(baseFolder, ModId, ModName, [lowerMod]);
+        Directory.Delete(Path.GetDirectoryName(lowerMod)!, true);
+        var objList = new SectionRef(orderPath, new SectionIdentity("Trigger", "avoid"));
         var handWritten = Path.Combine(workspace.ModFolder, Mod.PatchesFolder, objList.Path);
         Directory.CreateDirectory(Path.GetDirectoryName(handWritten)!);
-        File.WriteAllText(handWritten, "[ObjList]\r\nnickname = avoid\r\nAvoidance = false\r\n");
+        File.WriteAllText(handWritten, "[Trigger]\r\nnickname = avoid\r\nAvoidance = true\r\n");
         var session = workspace.Open();
-        Assert.Equal(["system", "nickname", "Avoidance"], session.Get(objList)!.Entries.Select(e => e.Name));
+        Assert.Equal(["system", "nickname", "Cnd_True", "Avoidance"], session.Get(objList)!.Entries.Select(e => e.Name));
         Assert.EndsWith("a patch keeps that order only when the 'nickname' line is the first line.",
             session.Get(objList)!.ReadOnlyReason);
         Assert.Throws<InvalidOperationException>(() =>
-            session.Execute(EditCommand.SetLines(objList, "Avoidance", [[new StringValue("true")]])));
+            session.Execute(EditCommand.SetLines(objList, "Avoidance", [[new StringValue("false")]])));
         var items = Edit(session);
         AssertSaved(session.Save());
         var saved = Files(workspace.ModFolder);
@@ -247,10 +255,10 @@ public sealed class EditorEndToEndTests(ITestOutputHelper output)
         session.Execute(ItemEdits.SetText(session, items.Gun, "ids_name", GunName + " Mk II",
             ItemEdits.SharedText(session, items.Gun, "ids_name")));
         session.Execute(EditCommand.SetLines(items.GunGood, "price", [[new Int32Value(600)]]));
-        session.Execute(EditCommand.AddSection(objList.Path, "ObjList",
+        session.Execute(EditCommand.AddSection(objList.Path, "Trigger",
         [
             new("nickname", [new StringValue("proof_avoid")]),
-            new("system", [new StringValue("Li01")]),
+            new("Cnd_True", [new StringValue("no_params")]),
             new("Avoidance", [new StringValue("true")]),
         ]));
         var result = session.Save();

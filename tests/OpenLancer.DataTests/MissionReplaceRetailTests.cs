@@ -48,8 +48,8 @@ public sealed class MissionReplaceRetailTests(ITestOutputHelper output)
 
     /// <summary>
     /// The sections with a line before their key line were read-only before M6b, because a patch by names could not
-    /// keep their order: 116 triggers and 198 order lists in vanilla, 100 triggers and 163 order lists in HD Edition. Now
-    /// each of them is editable, except a section whose nickname repeats.
+    /// keep their order: 116 triggers and 198 order lists in vanilla, 100 triggers and 163 order lists in HD Edition.
+    /// Now each of them is editable, except a section whose nickname repeats.
     /// </summary>
     [Fact]
     public void TheSectionsWithALineBeforeTheKeyLineAreEditable()
