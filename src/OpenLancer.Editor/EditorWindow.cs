@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
 using ImGuiNET;
 using LibreLancer;
 using LibreLancer.Data;
@@ -441,7 +440,7 @@ internal sealed partial class EditorWindow : Game
             Settings.Save();
             var fileSystem = edits.EditView.CreateFileSystem();
             var repo = edits.ActiveMod == null ? null : RepoCheck.RepoRoot(edits.ActiveMod.Folder);
-            var session = new EditorSession(edits, new GameResourceManager(this, fileSystem), repo);
+            var session = new EditorSession(edits, new GameResourceManager(this, fileSystem), repo, this);
             Session = session;
             edits = null;
             Log.Origins = new EngineLineOrigins(session.Edits);
@@ -456,21 +455,21 @@ internal sealed partial class EditorWindow : Game
             Edits.OfferRecovery();
             // The engine lines of the load form a batch, which the Console compares with the base run.
             var batch = BeginConsoleBatch();
-            Task.Run(() =>
+            session.Loads.Load(() =>
             {
                 try
                 {
                     var data = new GameDataManager(new GameItemDb(fileSystem), session.Resources);
                     data.LoadData(this);
-                    QueueUIThread(() => DataLoaded(session, data));
+                    return () => DataLoaded(session, data);
                 }
                 catch (Exception e)
                 {
-                    QueueUIThread(() =>
+                    return () =>
                     {
                         session.LoadEnded(null);
                         Log.Add(ConsoleSeverity.Error, EditorSource, $"The game data did not load: {e.Message}");
-                    });
+                    };
                 }
                 finally
                 {

@@ -841,6 +841,8 @@ Each save shows its result in the status bar and as the last Console line of the
 
 Above the result, the Console lists the files that the save wrote and deleted, or the problems that stopped it. After a save that changed files, the game data loads again in the background, and `oltool validate --active <mod> --json` checks the save in its own process. One validation runs at a time. The oltool process reads the files of the mod, so a save of new edits stops the validation of the save before it, before the save moves files. When that save then changes no file, the stopped validation starts again. The Console labels each result with the number of its save. A click on a problem of a cutscene opens the cutscene and selects the element of the problem (see "The validation of cutscenes").
 
+One load of the game data runs at a time, because each load fills the same resources. A save can come while the game data loads, for example a save of the restored edits of an earlier session before the first load ends. The save writes its files at once. The game data then loads again with the saved files after the running load, and the Console tells it. More saves during one load give only one more load.
+
 When a file does not move into place, for example because a program uses it, the save is not complete. The game data then does not load again, and no validation runs. The next save completes the files first. Then the game data loads again, and the validation runs.
 
 While the game of Play runs, a save whose validation finds no errors also reloads the game. See [PLAY.md](PLAY.md).
