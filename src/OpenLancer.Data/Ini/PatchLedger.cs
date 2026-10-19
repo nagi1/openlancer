@@ -159,6 +159,20 @@ internal sealed class PatchLedger
             .ToList();
     }
 
+    /// <summary>
+    /// The mod whose whole file gives the content of a file, or null: the mod of the last whole-file override, when no
+    /// mod changes a section or renames one after it (section 5.1 of the M6a design).
+    /// </summary>
+    public string? ReplacedBy(string path)
+    {
+        if (!files.TryGetValue(path, out var log) || log.Overrides.Count == 0)
+            return null;
+        var last = log.LastOverride;
+        var later = log.Sections.Values.SelectMany(c => c).Any(c => c.Sequence > last) ||
+                    log.Renames.Any(r => r.Sequence > last);
+        return later ? null : log.Overrides[^1].ModId;
+    }
+
     private FileLog Log(string path)
     {
         if (!files.TryGetValue(path, out var log))

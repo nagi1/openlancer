@@ -49,6 +49,11 @@ public sealed class ListRulesTests
         // The nebula and asteroid field files that the system files name (milestone M3).
         ["nebula_files"] = typeof(Nebula),
         ["field_files"] = typeof(AsteroidField),
+        // The mission scripts, the NPC ship builds and the formation shapes (section 14.1 of the M6a design).
+        ["mission"] = typeof(LibreLancer.Data.Schema.Missions.MissionIni),
+        ["mission_ships"] = typeof(LibreLancer.Data.Schema.Missions.NPCShipIni),
+        ["specific_npc"] = typeof(LibreLancer.Data.Schema.Missions.SpecificNPCIni),
+        ["formations"] = typeof(LibreLancer.Data.Schema.Missions.FormationsIni),
     };
 
     /// <summary>The section classes of the files that the engine reads itself and gives section by section to a
@@ -144,7 +149,7 @@ public sealed class ListRulesTests
                 continue;
             }
 
-            var role = source.Scoped ? "system" : source.Role!;
+            var role = source.Scoped ? source.Role ?? "system" : source.Role!;
             Assert.True(Rules.Roles.ContainsKey(role), list.Id);
             if (!Rules.Roles[role].Engine)
                 continue;

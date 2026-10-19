@@ -5,6 +5,7 @@ using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Export;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.PlayCopies;
 using OpenLancer.Data.Validation;
@@ -214,12 +215,26 @@ public sealed class TargetCheckTests : IDisposable
         }));
 
         Assert.Equal(DiagnosticSeverity.Error, problem.Severity);
-        Assert.Equal("[Trigger] nickname = t2: the trigger has no condition. The game crashes when it runs the trigger. " +
-                     "Add a condition, for example Cnd_True = no_params.", problem.Message);
+        // The mission check M01 gives the same text (decision D556 of the M6a design).
+        Assert.Equal("Trigger 't2' has no condition. The game stops when this trigger starts. Add one condition, for " +
+                     "example Cnd_True = no_params.", problem.Message);
         Assert.Empty(CheckFiles(new()
         {
             [Patch(MissionPath)] = "[Trigger]\nol.new = true\nnickname = t2\nCnd_True = no_params\nAct_ActTrig = t1\n",
         }));
+    }
+
+    [Fact]
+    public void AConditionBeforeTheNicknameDoesNotCount()
+    {
+        // The retail game ignores each line before the nickname (TR2), so the trigger has no condition.
+        var problem = Assert.Single(CheckFiles(new()
+        {
+            [Patch(MissionPath)] = "[Trigger]\nol.new = true\nCnd_True = no_params\nnickname = t2\nAct_ActTrig = t1\n",
+        }));
+
+        Assert.Equal(DiagnosticSeverity.Error, problem.Severity);
+        Assert.Equal(TriggerRules.NoConditionMessage("t2"), problem.Message);
     }
 
     [Fact]
@@ -299,8 +314,9 @@ public sealed class TargetCheckTests : IDisposable
         var warning = Assert.Single(Check(GoodsMod("[Good]\nnickname = g2\ncombinable = yes\n")));
 
         Assert.Equal(DiagnosticSeverity.Warning, warning.Severity);
-        Assert.Equal("[Good] nickname = g2 combinable = yes: the game reads only true, false, 1 and 0 here. It reads " +
-                     "false and logs an error.", warning.Message);
+        // The mission check M14 gives the same text after the place (decision D556 of the M6a design).
+        Assert.Equal("[Good] nickname = g2 combinable: 'yes' is not true or false. The game reads only true, 1, false " +
+                     "and 0. For another value, it uses false. Pick true or false.", warning.Message);
 
         var crash = Assert.Single(CheckFiles(new() { [Patch(WeaponsPath)] = "[Munition]\nnickname = msl_ammo\nforce_gun_ori = no\n" }));
         Assert.Equal(DiagnosticSeverity.Error, crash.Severity);

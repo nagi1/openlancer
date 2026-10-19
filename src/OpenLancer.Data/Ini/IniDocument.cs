@@ -99,13 +99,7 @@ internal sealed class IniDocument
     /// Writes the file as canonical text for the retail game (milestone M11), also for a binary file. Each value has the
     /// text of <see cref="RetailText.Of"/>. The lines end with CR LF, and the text has the code page of text files.
     /// </summary>
-    public byte[] ToText()
-    {
-        using var stream = new MemoryStream();
-        IniWriter.WriteIni(stream, Sections.Select(s =>
-            CopySection(s, (value, line) => new StringValue(RetailText.Of(value)) { Entry = line })));
-        return stream.ToArray();
-    }
+    public byte[] ToText() => TextEncoding.GetBytes(IniLines.Text(Sections));
 
     /// <summary>
     /// A copy of a section for the text writer, with the text of <see cref="TextOf"/> for each value. The text writer

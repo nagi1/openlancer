@@ -150,6 +150,8 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         };
         // The preview builds again with the new data (section 8.4 of the M8 design).
         Cutscenes.DataReplaced();
+        // The checks of the mission scripts run again after each reload (section 12.3 of the M6a design).
+        Missions.Run();
         // The scene keeps the game data of the open. A section that waits for the reload shows only in a new open of the
         // system (decision D282 of the M23 design).
         if (Scene.WaitsForReload)
@@ -226,7 +228,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         // The actions on the items of the open system (milestone M3). Their keys belong to the Hierarchy and the Scene,
         // as in Unity.
         ImGui.Separator();
-        if (ImGui.BeginMenu($"{EditorIcons.Plus}   Create", session != null && !CutsceneMode))
+        if (ImGui.BeginMenu($"{EditorIcons.Plus}   Create", session != null && CenterMode != CenterMode.Cutscene))
         {
             EditorTheme.PushMenuColors();
             SceneEdits.CreateMenu(null);

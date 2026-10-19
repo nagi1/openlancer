@@ -27,6 +27,18 @@ public sealed record Diagnostic(DiagnosticSeverity Severity, string Source, stri
     /// <summary>The place in a cutscene that the problem is about, or null.</summary>
     public ThnLocation? Cutscene { get; init; }
 
+    /// <summary>The index of the line in the section of <see cref="Target"/> that the problem is about, or -1 for the
+    /// whole section (section 12.1 of the M6a design). The raw INI editor, the graph and the fields find the line with
+    /// it.</summary>
+    public int EntryIndex { get; init; } = -1;
+
+    /// <summary>The id of the rule of a mission check, for example <c>M05</c>, or null.</summary>
+    public string? Rule { get; init; }
+
+    /// <summary>A text that names the problem without its place in the file, for example <c>G05|tr_attack</c>, or null.
+    /// The origin of a mission problem compares the subjects of the base-game run (decision D551).</summary>
+    public string? Subject { get; init; }
+
     /// <summary>Who causes the problem, or null when the check does not know it (section 3.6 of the console filter
     /// design). The Console shows a problem of the origin base game only on request.</summary>
     public MessageOrigin? Origin { get; init; }

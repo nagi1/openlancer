@@ -114,7 +114,7 @@ internal sealed class AssetDrag(EditorWindow window)
     /// <param name="item">The item of the row, or null for a group row and for the empty space.</param>
     public void Hierarchy(object? item)
     {
-        if (window.CutsceneMode || !ImGui.BeginDragDropTarget())
+        if (window.CenterMode == CenterMode.Cutscene || !ImGui.BeginDragDropTarget())
             return;
         if (Payload(AssetType) is AssetRow row)
         {

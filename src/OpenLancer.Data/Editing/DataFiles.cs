@@ -27,21 +27,27 @@ internal sealed class DataFiles
     private readonly SystemFiles systems;
     private readonly RoomFiles rooms;
     private readonly FieldFiles fields;
+    private readonly Func<IReadOnlyList<string>> missionFiles;
+    private readonly Func<IReadOnlyList<string>> npcShipFiles;
     private readonly Dictionary<string, IReadOnlyList<string>> fixedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<string>> fixedRoles = new(VfsPath.Comparer);
 
     /// <param name="freelancerIni">The sections of <c>freelancer.ini</c> of the edit view.</param>
+    /// <param name="missionFiles">Gives the mission scripts of the edit view (section 14.1 of the M6a design).</param>
+    /// <param name="npcShipFiles">Gives the files of the NPC ship builds of the edit view.</param>
     public DataFiles(IReadOnlyList<Section> freelancerIni, ListRules rules, SystemFiles systems, RoomFiles rooms,
-        FieldFiles fields)
+        FieldFiles fields, Func<IReadOnlyList<string>>? missionFiles = null, Func<IReadOnlyList<string>>? npcShipFiles = null)
     {
         this.rules = rules;
         this.systems = systems;
         this.rooms = rooms;
         this.fields = fields;
+        this.missionFiles = missionFiles ?? (() => []);
+        this.npcShipFiles = npcShipFiles ?? (() => []);
         var entries = DataPaths.Entries(freelancerIni).ToList();
         foreach (var role in rules.Roles.Values)
         {
-            if (role.Universe || role.SystemFiles || role.RoomFiles || role.FieldFiles != null)
+            if (role.Dynamic)
                 continue;
             var paths = Resolve(freelancerIni, entries, role);
             fixedPaths[role.Name] = paths;
@@ -66,6 +72,10 @@ internal sealed class DataFiles
             return systems.UniversePath is { } universe ? [universe] : [];
         if (definition.FieldFiles != null)
             return fields.Files(definition.FieldFiles);
+        if (definition.MissionFiles)
+            return missionFiles();
+        if (definition.NpcShipFiles)
+            return npcShipFiles();
         return definition.SystemFiles ? systems.Files : definition.RoomFiles ? rooms.Files : [];
     }
 
@@ -87,7 +97,9 @@ internal sealed class DataFiles
         {
             if (role.Universe && systems.UniversePath is { } universe && VfsPath.Comparer.Equals(universe, normal) ||
                 role.SystemFiles && systems.IsSystemFile(normal) || role.RoomFiles && rooms.Contains(normal) ||
-                role.FieldFiles != null && fields.Contains(role.FieldFiles, normal))
+                role.FieldFiles != null && fields.Contains(role.FieldFiles, normal) ||
+                role.MissionFiles && missionFiles().Contains(normal, VfsPath.Comparer) ||
+                role.NpcShipFiles && npcShipFiles().Contains(normal, VfsPath.Comparer))
                 result.Add(role.Name);
         }
         return result;

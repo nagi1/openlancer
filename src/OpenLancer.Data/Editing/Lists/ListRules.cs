@@ -187,8 +187,17 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
 /// of the M8b design).</param>
 /// <param name="FieldFiles">For the nebula or asteroid field files: the section type of the system files whose
 /// <c>file</c> lines name the files, <c>Nebula</c> or <c>Asteroids</c> (milestone M3). Null for another role.</param>
+/// <param name="MissionFiles">True for the mission scripts of <c>MissionFiles</c> (section 14.1 of the M6a
+/// design).</param>
+/// <param name="NpcShipFiles">True for the files of the NPC ship builds of <c>NpcShipFiles</c> (section 14.1 of the M6a
+/// design).</param>
 internal sealed record RoleDefinition(string Name, string? Data, bool Last, string? Fallback,
-    IReadOnlyList<string> Paths, bool Engine, bool Universe, bool SystemFiles, bool RoomFiles, string? FieldFiles = null);
+    IReadOnlyList<string> Paths, bool Engine, bool Universe, bool SystemFiles, bool RoomFiles, string? FieldFiles = null,
+    bool MissionFiles = false, bool NpcShipFiles = false)
+{
+    /// <summary>True when the files of the role change in a session, so the editor finds them at each use.</summary>
+    public bool Dynamic => Universe || SystemFiles || RoomFiles || FieldFiles != null || MissionFiles || NpcShipFiles;
+}
 
 /// <summary>A template of Create in the Scene (decision D233 of the M3 design).</summary>
 /// <param name="Id">The id, for example <c>station</c>.</param>
@@ -201,7 +210,9 @@ internal sealed record SceneTemplateDefinition(string Id, string Label, IReadOnl
     string? Then);
 
 /// <summary>Where the entries of a list come from (section 6.4 of the M21 design).</summary>
-/// <param name="Role">The role of the files, or null for a scoped list.</param>
+/// <param name="Role">The role of the files. A scoped list without a role reads the sections of a system file. A scoped
+/// list with a role reads the sections of one file of the role, for example one mission script (section 14.1 of the M6a
+/// design).</param>
 /// <param name="Sections">The section types whose sections give the entries.</param>
 /// <param name="Keys">The keys that give the names, or null for the key entry of the section type.</param>
 /// <param name="Where">Key values that a section must have, for example <c>type = FLOAT</c>.</param>
@@ -369,7 +380,7 @@ internal sealed class ListRules
     private static RoleDefinition ReadRole(string name, JsonElement e) => new(name,
         String(e, "data"), Bool(e, "last"), String(e, "fallback"), Strings(e, "paths"),
         !e.TryGetProperty("engine", out var engine) || engine.GetBoolean(), Bool(e, "universe"), Bool(e, "systemFiles"),
-        Bool(e, "roomFiles"), String(e, "fieldFiles"));
+        Bool(e, "roomFiles"), String(e, "fieldFiles"), Bool(e, "missionFiles"), Bool(e, "npcShipFiles"));
 
     private static AssetCategoryDefinition ReadAssetCategory(JsonElement e) => new(e.GetProperty("id").GetString()!,
         e.GetProperty("label").GetString()!, String(e, "kind"), String(e, "list"), String(e, "split"));

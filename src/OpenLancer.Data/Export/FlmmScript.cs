@@ -124,7 +124,7 @@ internal sealed partial class FlmmScript
                 Refuse(file.Path, $"it changes [{section.Name}] of freelancer.ini. The package can only add [Data] lines");
                 return;
             }
-            data.AddRange(pair.Inserted.Select(j => (section[j].Name, IniTextEdit.Line(section[j].Name, section[j]))));
+            data.AddRange(pair.Inserted.Select(j => (section[j].Name, IniLines.Line(section[j].Name, section[j]))));
         }
         if (diff.Removed.Count > 0 || diff.Added.Count > 0)
         {
@@ -223,11 +223,11 @@ internal sealed partial class FlmmScript
                     return $"the line '{raw.Lines[line]}' is not unique in its section";
                 var merged = section[pair.MergedOf[i]];
                 ops.Add(("sectionreplace", anchor.Text, raw.Lines[line],
-                    raw.Indent(line) + IniTextEdit.Line(raw.RawKey(line), merged) + raw.Comment(line)));
+                    raw.Indent(line) + IniLines.Line(raw.RawKey(line), merged) + raw.Comment(line)));
             }
             if (pair.Inserted.Any())
                 ops.Add(("sectionappend", anchor.Text, null,
-                    anchor.Source(pair.Inserted.Select(j => IniTextEdit.Line(section[j].Name, section[j])), eol)));
+                    anchor.Source(pair.Inserted.Select(j => IniLines.Line(section[j].Name, section[j])), eol)));
         }
 
         foreach (var m in diff.Added)
@@ -239,10 +239,10 @@ internal sealed partial class FlmmScript
             {
                 ops.Add(("sectionappend", market.Text, null, market.Source(
                     section.Where(e => !e.Name.Equals("base", StringComparison.OrdinalIgnoreCase))
-                        .Select(e => IniTextEdit.Line(e.Name, e)), eol)));
+                        .Select(e => IniLines.Line(e.Name, e)), eol)));
                 continue;
             }
-            ops.Add(("append", "", null, eol + string.Join(eol, IniTextEdit.SectionLines(section)) + eol));
+            ops.Add(("append", "", null, eol + string.Join(eol, IniLines.SectionLines(section)) + eol));
         }
         return null;
     }

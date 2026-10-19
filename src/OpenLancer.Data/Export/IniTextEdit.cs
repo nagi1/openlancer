@@ -192,7 +192,7 @@ internal static class IniTextEdit
             foreach (var i in pair.Changed)
             {
                 var line = section.Entries[i];
-                replaced[line] = raw.Indent(line) + Line(raw.RawKey(line), mergedSection[pair.MergedOf[i]]) +
+                replaced[line] = raw.Indent(line) + IniLines.Line(raw.RawKey(line), mergedSection[pair.MergedOf[i]]) +
                                  raw.Comment(line);
             }
             // An inserted line goes after the line of the merged entry before it, or after the header.
@@ -204,7 +204,7 @@ internal static class IniTextEdit
                     anchor = section.Entries[pair.BaseOf[j]];
                     continue;
                 }
-                After(anchor).Add(raw.Indent(anchor) + Line(mergedSection[j].Name, mergedSection[j]));
+                After(anchor).Add(raw.Indent(anchor) + IniLines.Line(mergedSection[j]));
             }
             lastLine[pair.Merged] = section.Entries.Where(e => !removed[e]).DefaultIfEmpty(section.Header).Max();
         }
@@ -227,7 +227,7 @@ internal static class IniTextEdit
         var anchorOf = new Dictionary<int, int>();
         foreach (var m in diff.Added)
         {
-            var lines = SectionLines(merged.Sections[m]);
+            var lines = IniLines.SectionLines(merged.Sections[m]);
             var anchor = m == 0 ? -1 : lastLine.TryGetValue(m - 1, out var line) ? line : anchorOf.GetValueOrDefault(m - 1, -1);
             anchorOf[m] = anchor;
             if (anchor < 0)
@@ -268,15 +268,6 @@ internal static class IniTextEdit
             ? new Result(bytes, null)
             : Canonical(merged, "the edited text does not give the merged sections");
     }
-
-    /// <summary>The text of an entry line, without its indent and comment: <c>key = value, value</c>, or the key alone
-    /// for an entry without a value.</summary>
-    internal static string Line(string key, Entry entry) =>
-        entry.Count == 0 ? key : key + " = " + string.Join(", ", entry.Select(RetailText.Of));
-
-    /// <summary>The lines of a new section: its header and its entries.</summary>
-    internal static List<string> SectionLines(Section section) =>
-        [$"[{section.Name}]", .. section.Select(e => Line(e.Name, e))];
 
     /// <summary>True when two lists of sections have the same names, the same entry names and the same value texts.
     /// Names compare without letter case.</summary>

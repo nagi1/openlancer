@@ -11,8 +11,10 @@ using LibreLancer;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Editor.Ui.Fields;
 
 namespace OpenLancer.Editor.Inspector;
 
@@ -61,6 +63,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     private float labelWidth;
     private int row;
     private string? nextNote;
+    private (string Text, bool Hard)? nextHelp;
 
     [LibraryImport("cimgui")]
     private static partial void igTableFullRowBegin();
@@ -94,7 +97,15 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// </summary>
     /// <param name="key">The key of the open state in the settings, "Type.Section".</param>
     /// <param name="defaultOpen">The open state until the user opens or closes the section.</param>
-    public bool BeginSection(string key, char icon, string title, bool defaultOpen = true)
+    public bool BeginSection(string key, char icon, string title, bool defaultOpen = true) =>
+        BeginSection(key, icon, title, defaultOpen, null);
+
+    /// <summary>
+    /// Draws a section header with an info icon at its right end (AGENTS.md UI rule 10, section 11.2 of the M6a
+    /// design). Returns true when the section is open. Then draw its rows and call <see cref="EndSection"/>.
+    /// </summary>
+    /// <param name="help">The text of the info icon, or null for a header without an icon.</param>
+    public bool BeginSection(string key, char icon, string title, bool defaultOpen, HelpText? help)
     {
         var scale = ImGuiHelper.Scale;
         // A chip of the components strip asks for its section: it opens, and the page scrolls to it (milestone M3).
@@ -130,6 +141,11 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         {
             settings.InspectorFoldouts[key] = open;
             settings.Save();
+        }
+
+        if (help != null)
+        {
+            InfoIcon.AtRightEnd($"##info-{key}", help);
         }
 
         ImGui.PopStyleVar(3);
@@ -179,6 +195,26 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// field that needs an explanation, for example a field that the engine does not use.
     /// </summary>
     public void SetNextNote(string note) => nextNote = note;
+
+    /// <summary>
+    /// Gives the next row a help text (AGENTS.md UI rule 9, section 11.3 of the M6a design): the tooltip of its label
+    /// shows it. A field that is hard to understand also gets the dim glyph <see cref="EditorIcons.QuestionCircle"/>
+    /// after its label.
+    /// </summary>
+    /// <param name="hard">True for a field that the schema marks as hard.</param>
+    public void Help(string text, bool hard = false) => nextHelp = (text, hard);
+
+    /// <summary>A dim text that spans the two columns and wraps, for example a note of a section.</summary>
+    public void NoteRow(string text)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        igTableFullRowBegin();
+        ImGui.PushTextWrapPos(0);
+        ImGui.TextDisabled(text);
+        ImGui.PopTextWrapPos();
+        igTableFullRowEnd();
+    }
 
     /// <summary>A heading that spans the two columns, with a line after it.</summary>
     public void SubHeading(string text)
@@ -576,6 +612,8 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         row++;
         var note = nextNote;
         nextNote = null;
+        var help = nextHelp;
+        nextHelp = null;
 
         // A long label is cut at the column edge. The tooltip shows all of it, the INI key and the note.
         ImGui.AlignTextToFramePadding();
@@ -598,6 +636,13 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             hovered |= ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip);
         }
 
+        if (help is { Hard: true })
+        {
+            ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
+            ImGui.TextDisabled(EditorIcons.QuestionCircle.ToString());
+            hovered |= ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip);
+        }
+
         if (hovered)
         {
             var tooltip = new StringBuilder(label);
@@ -614,6 +659,11 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             if (note != null)
             {
                 tooltip.Append("\n\n").Append(note);
+            }
+
+            if (help is { } helpText)
+            {
+                tooltip.Append("\n\n").Append(helpText.Text);
             }
 
             ImGui.SetTooltip(tooltip.ToString());

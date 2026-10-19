@@ -118,7 +118,7 @@ public static partial class FormatChecks
     {
         var label = $"{place.Id} {entry.Name}";
         var texts = entry.Select(RetailText.Of).ToList();
-        var line = IniTextEdit.Line(entry.Name, entry);
+        var line = IniLines.Line(entry);
         var longest = texts.Select(Encoding).Prepend(Encoding(entry.Name)).Max();
         if (longest > MaxLineBytes)
             problems.Add(Problem(true, path, place, entry.Name,

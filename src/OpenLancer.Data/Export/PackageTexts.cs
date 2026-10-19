@@ -412,7 +412,7 @@ public static class PackageTexts
             var section = file.Diff.MergedSections[pair.Merged];
             foreach (var j in pair.Inserted)
             {
-                var line = IniTextEdit.Line(section[j].Name, section[j]);
+                var line = IniLines.Line(section[j].Name, section[j]);
                 if (section.Name.Equals("Resources", StringComparison.OrdinalIgnoreCase))
                 {
                     var number = section.Take(j + 1).Count(e => e.Name.Equals("DLL", StringComparison.OrdinalIgnoreCase));
@@ -476,9 +476,9 @@ public static class PackageTexts
             foreach (var i in pair.Changed)
                 yield return $"{label}: {old[i].Name} {Values(old[i])} -> {Values(section[pair.MergedOf[i]])}.";
             foreach (var i in pair.Removed)
-                yield return $"{label}: removed {IniTextEdit.Line(old[i].Name, old[i])}.";
+                yield return $"{label}: removed {IniLines.Line(old[i].Name, old[i])}.";
             foreach (var j in pair.Inserted)
-                yield return $"{label}: new {IniTextEdit.Line(section[j].Name, section[j])}.";
+                yield return $"{label}: new {IniLines.Line(section[j].Name, section[j])}.";
         }
         foreach (var m in diff.Added)
         {

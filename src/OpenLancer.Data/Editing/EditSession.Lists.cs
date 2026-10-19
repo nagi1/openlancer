@@ -26,7 +26,8 @@ public sealed partial class EditSession
     internal SectionTable Table => table ??= new SectionTable(OpenDocument);
 
     /// <summary>The files of each role of the rule data.</summary>
-    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ruleData, Systems, Rooms, FieldFiles);
+    internal DataFiles DataFiles => dataFiles ??= new DataFiles(FreelancerIni, ruleData, Systems, Rooms, FieldFiles,
+        () => MissionScriptPaths, () => MissionShipPaths);
 
     /// <summary>The rule data of the lists: the retail rules, or the rules of a test.</summary>
     private ListRules ruleData = ListRules.Retail;

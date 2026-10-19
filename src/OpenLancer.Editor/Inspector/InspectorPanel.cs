@@ -15,6 +15,7 @@ using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 
@@ -24,7 +25,7 @@ namespace OpenLancer.Editor.Inspector;
 /// Shows the selected item: a header block with its glyph, name and nickname, then the page for its type and the raw
 /// fields. The rows of ships, equipment, goods and the other sections of the item files edit the active mod.
 /// </summary>
-internal sealed class InspectorPanel
+internal sealed class InspectorPanel : IDisposable
 {
     // Sizes in unscaled points.
     private const float HeaderHeight = 52;
@@ -54,6 +55,7 @@ internal sealed class InspectorPanel
     private readonly SchemaPage schemaPage;
     private readonly ThnPage thnPage;
     private readonly AssetPage assetPage;
+    private readonly MissionPage missionPage;
 
     public InspectorPanel(EditorWindow window)
     {
@@ -71,6 +73,7 @@ internal sealed class InspectorPanel
         schemaPage = new SchemaPage(window, grid);
         thnPage = new ThnPage(window, grid);
         assetPage = new AssetPage(window);
+        missionPage = new MissionPage(window, grid);
     }
 
     /// <summary>True while a field edit or a drag of a curve point is open. The edit history waits for its end. A save
@@ -94,7 +97,11 @@ internal sealed class InspectorPanel
         equipmentPage.Reset();
         starSystemPage.Reset();
         fieldPage.Reset();
+        missionPage.Reset();
     }
+
+    /// <summary>Frees the native editors of the pages.</summary>
+    public void Dispose() => missionPage.Dispose();
 
     public void Draw(object? item)
     {
@@ -103,6 +110,14 @@ internal sealed class InspectorPanel
         if (item == null)
         {
             PanelStates.Message("Nothing selected.", "Select an object in the Hierarchy, the Scene or the Database.");
+            return;
+        }
+
+        // A mission item has the page of the mission studio, with its own header line (section 10.1 of the M6a
+        // design).
+        if (item is MissionRef mission)
+        {
+            missionPage.Draw(mission);
             return;
         }
 

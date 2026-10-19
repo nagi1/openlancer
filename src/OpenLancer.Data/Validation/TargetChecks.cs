@@ -9,6 +9,7 @@ using LibreLancer.Data.IO;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Ini;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Overlay;
 
@@ -262,11 +263,12 @@ public static partial class TargetChecks
         {
             foreach (var (section, id) in side.Each(path, "Trigger"))
             {
-                if (section.Any(e => e.Name.StartsWith("Cnd_", StringComparison.OrdinalIgnoreCase)))
+                // A condition line before the nickname does not count (TR2), as in the mission checks (decision D556).
+                if (TriggerRules.EffectiveCondition(section) >= 0)
                     continue;
+                var trigger = ItemIndex.First(section, "nickname") ?? id.ToString();
                 yield return new($"trigger|{path.ToLowerInvariant()}|{id}", Problem(true, path, id, null,
-                    $"{id}: the trigger has no condition. The game crashes when it runs the trigger. Add a condition, " +
-                    "for example Cnd_True = no_params."));
+                    TriggerRules.NoConditionMessage(trigger)));
             }
         }
     }
@@ -360,12 +362,15 @@ public static partial class TargetChecks
                                 "in lowercase. It keeps the default value."));
                         continue;
                     }
-                    if (text.ToLowerInvariant() is "true" or "false" or "1" or "0")
+                    if (TriggerRules.ReadsAsBool(text))
                         continue;
                     var crash = CrashBooleans.Contains(entry.Name);
-                    yield return new(key, Problem(crash, path, ids[i], entry.Name,
-                        $"{ids[i]} {entry.Name} = {text}: the game reads only true, false, 1 and 0 here. " +
-                        (crash ? "The game can crash with another value." : "It reads false and logs an error.")));
+                    // The mission checks give the same text for rule M14 (decision D556). The prefix names the line,
+                    // because the output of oltool shows only the message.
+                    yield return new(key, Problem(crash, path, ids[i], entry.Name, crash
+                        ? $"{ids[i]} {entry.Name} = {text}: the game reads only true, false, 1 and 0 here. The game can " +
+                          "crash with another value."
+                        : $"{ids[i]} {entry.Name}: {TriggerRules.BooleanMessage(text)}"));
                 }
             }
         }
@@ -562,26 +567,11 @@ public static partial class TargetChecks
         /// <item>each changed file with an <c>[NPCShipArch]</c>.</item>
         /// </list>
         /// </summary>
-        private static List<string> FindNpcFiles(CheckView view, HashSet<string> changed, Side without, Side with)
-        {
-            var result = new List<string>();
-            foreach (var side in new[] { without, with })
-            {
-                result.AddRange(new[] { side.DataPath(@"MISSIONS\npcships.ini"), side.DataPath(@"MISSIONS\npcships_test.ini") }
-                    .OfType<string>());
-                if (side.DataPath("MISSIONS") is { } missions)
-                    result.AddRange(view.Folders(missions).Select(f => VfsPath.Normalize($@"{missions}\{f}\npcships.ini"))
-                        .OfType<string>());
-                foreach (var path in changed)
-                {
-                    if (side.Each(path, "NPCShipArch").Any())
-                        result.Add(path);
-                    result.AddRange(side.Each(path, "Mission").Select(s => ItemIndex.First(s.Section, "npc_ship_file"))
-                        .OfType<string>().Select(side.DataPath).OfType<string>());
-                }
-            }
-            return result.Distinct(VfsPath.Comparer).Order(StringComparer.OrdinalIgnoreCase).ToList();
-        }
+        private static List<string> FindNpcFiles(CheckView view, HashSet<string> changed, Side without, Side with) =>
+            new[] { without, with }
+                .SelectMany(side => NpcShipFiles.Find(side.DataPath, view.Folders,
+                    changed.Select(p => (p, side.Sections(p)))))
+                .Distinct(VfsPath.Comparer).Order(StringComparer.OrdinalIgnoreCase).ToList();
 
         private static List<string> Both(Side without, Side with, Func<Side, IEnumerable<string>> paths) =>
             paths(without).Union(paths(with), VfsPath.Comparer).ToList();

@@ -28,10 +28,12 @@ using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Mods;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Editor.Ui.Fields;
 using OpenLancer.Runtime;
 using OpenLancer.Runtime.Strings;
 using OpenLancer.Runtime.Thn;
@@ -68,6 +70,8 @@ internal sealed partial class EditorWindow : Game
     private CutsceneView cutsceneView = null!;
     private TimelinePanel timeline = null!;
     private CutsceneBrowser cutsceneBrowser = null!;
+    private MissionsBrowser missionsBrowser = null!;
+    private MissionView missionView = null!;
     private CutsceneBench? bench;
     private readonly PlayMenu playMenu;
 
@@ -101,6 +105,8 @@ internal sealed partial class EditorWindow : Game
         gameLinkWindow = new GameLinkWindow(this);
         newProfileDialog = new NewProfileDialog(this);
         Cutscenes = new CutsceneWorkspace(this);
+        Missions = new MissionWorkspace(this);
+        centerSelections = new CenterSelections(OwnerOf);
         Edits = new EditController(this);
         SceneEdits = new SceneEdits(this);
         AssetDrag = new AssetDrag(this);
@@ -123,6 +129,12 @@ internal sealed partial class EditorWindow : Game
     /// <summary>The open cutscene and its preview.</summary>
     public CutsceneWorkspace Cutscenes { get; }
 
+    /// <summary>The mission scripts, the checks and the open mission (milestone M6a).</summary>
+    public MissionWorkspace Missions { get; }
+
+    // One kept selection for each tab of the center group (decision D550 of the M6a design).
+    private readonly CenterSelections centerSelections;
+
     public EditorSettings Settings { get; }
 
     /// <summary>The exit code of the process: 1 after a bench with a failed script, else 0.</summary>
@@ -134,16 +146,17 @@ internal sealed partial class EditorWindow : Game
     /// <summary>
     /// The selected item: a system object, zone, light, ship, equipment, system, a section of an item file
     /// (<see cref="SectionRef"/>), or the open cutscene or an element of it (<see cref="CutsceneRoot"/> and
-    /// <see cref="OpenLancer.Data.Thn.ThnRef"/>). The Scene and the Cutscene tab each keep their own selection while the
-    /// other one shows (see <see cref="CutsceneWorkspace.FollowCenterTab"/>).
+    /// <see cref="OpenLancer.Data.Thn.ThnRef"/>), or an item of a mission (<see cref="MissionRef"/>). The Scene, the
+    /// Cutscene and the Mission tab each keep their own selection while another one shows (see
+    /// <see cref="CenterSelections"/>).
     /// </summary>
     public object? Selection { get; set; }
 
     /// <summary>
-    /// True while the Cutscene tab is the shown tab of the center group. The Hierarchy then shows the open cutscene
-    /// (section 7.4 of the M8 design). It is set at the start of each frame.
+    /// The shown tab of the center group: Scene, Cutscene or Mission (decision D550 of the M6a design). It is set at the
+    /// start of each frame. In Cutscene mode, the Hierarchy shows the open cutscene (section 7.4 of the M8 design).
     /// </summary>
-    public bool CutsceneMode { get; private set; }
+    public CenterMode CenterMode { get; private set; }
 
     /// <summary>The edits of the open profile, the saves and what follows a save.</summary>
     public EditController Edits { get; }
@@ -217,6 +230,10 @@ internal sealed partial class EditorWindow : Game
         cutsceneView = new CutsceneView(this, Cutscenes);
         timeline = new TimelinePanel(this, Cutscenes);
         cutsceneBrowser = new CutsceneBrowser(this, Cutscenes);
+        missionsBrowser = new MissionsBrowser(this, Missions);
+        missionView = new MissionView(this, Missions);
+        // An older cimgui.dll lacks the exports of the raw INI editor. The Console then gets one info entry.
+        RawIniEditor.FallbackShown += () => Log.Add(ConsoleSeverity.Info, EditorSource, RawIniEditor.NeedsNewNatives);
         layout = new EditorLayout(Settings,
             new EditorPanel("hierarchy", "Hierarchy", EditorIcons.List, hierarchy.Draw, hierarchy.Toolbar),
             new EditorPanelGroup("center",
@@ -225,6 +242,9 @@ internal sealed partial class EditorWindow : Game
                     padding: false),
                 new EditorPanel(CutsceneView.PanelId, "Cutscene", EditorIcons.Film,
                     () => cutsceneView.Draw(frameElapsed), cutsceneView.Toolbar, padding: false),
+                new EditorPanel(MissionWorkspace.PanelId, "Mission", EditorIcons.Route,
+                    () => missionView.Draw(frameElapsed), missionView.Toolbar, padding: false,
+                    tooltip: "The open mission, with the Scene beside it."),
             ]),
             new EditorPanel("inspector", "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
                 padding: false),
@@ -241,6 +261,9 @@ internal sealed partial class EditorWindow : Game
                     padding: false),
                 new EditorPanel(CutsceneBrowser.PanelId, "Cutscenes", EditorIcons.Film, cutsceneBrowser.Draw,
                     cutsceneBrowser.Toolbar, padding: false),
+                new EditorPanel(MissionWorkspace.BrowserId, "Missions", EditorIcons.Route, missionsBrowser.Draw,
+                    missionsBrowser.Toolbar, padding: false,
+                    tooltip: "The mission scripts of the game data and the mods. Double-click a mission to open it."),
             ]));
         statusBar = new StatusBar(this);
         welcome = new WelcomeScreen(this);
@@ -321,6 +344,8 @@ internal sealed partial class EditorWindow : Game
 
         Edits.Dispose();
         Mods.Dispose();
+        inspector?.Dispose();
+        missionView?.Dispose();
         baseRun.Dispose();
         Cutscenes.Dispose();
         assets?.Dispose();
@@ -543,6 +568,9 @@ internal sealed partial class EditorWindow : Game
         cutsceneView.Reset();
         timeline.Reset();
         cutsceneBrowser.Reset();
+        missionsBrowser.Reset();
+        Missions.Reset();
+        centerSelections.Reset();
         hierarchy.Reset();
         inspector.Reset();
         database.Reset();
@@ -625,6 +653,12 @@ internal sealed partial class EditorWindow : Game
         {
             OpenSystem(system);
         }
+
+        // The checks of the mission scripts run after each load (section 12.3 of the M6a design).
+        if (!options.Bench)
+        {
+            Missions.Run();
+        }
     }
 
     protected override void Update(double elapsed) => Scene.Update(elapsed);
@@ -700,7 +734,7 @@ internal sealed partial class EditorWindow : Game
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;
-        CutsceneFrame(elapsed);
+        CenterFrame(elapsed);
         var position = new Vector2(0, menuHeight);
         var size = new Vector2(Width, Height - menuHeight - statusHeight);
         if (Session == null)
@@ -744,16 +778,20 @@ internal sealed partial class EditorWindow : Game
     }
 
     /// <summary>
-    /// The cutscene part of a frame, before the panels draw, with the tabs that showed in the last frame: the
-    /// selection follows the center tab, and while the Cutscene tab or the Timeline shows, the preview reads its keys
-    /// and runs its clock. So the Timeline plays the preview also while the Scene tab shows. While neither tab shows,
-    /// the preview waits, and its sound stops.
+    /// The center part of a frame, before the panels draw, with the tabs that showed in the last frame: the selection
+    /// follows the center tab (decision D550 of the M6a design), and while the Cutscene tab or the Timeline shows, the
+    /// preview reads its keys and runs its clock. So the Timeline plays the preview also while the Scene tab shows.
+    /// While neither tab shows, the preview waits, and its sound stops.
     /// </summary>
-    private void CutsceneFrame(double elapsed)
+    private void CenterFrame(double elapsed)
     {
-        CutsceneMode = Session != null && layout.IsShown(CutsceneView.PanelId);
-        Cutscenes.FollowCenterTab(CutsceneMode);
-        if (CutsceneMode || layout.IsShown(TimelinePanel.PanelId))
+        CenterMode = Session == null ? CenterMode.Scene
+            : layout.IsShown(CutsceneView.PanelId) ? CenterMode.Cutscene
+            : layout.IsShown(MissionWorkspace.PanelId) ? CenterMode.Mission
+            : CenterMode.Scene;
+        Cutscenes.ValidateSelection(CenterMode == CenterMode.Cutscene);
+        Selection = centerSelections.Follow(CenterMode, Selection, ValidIn);
+        if (CenterMode == CenterMode.Cutscene || layout.IsShown(TimelinePanel.PanelId))
         {
             Cutscenes.Keys(IsFocused(CutsceneView.PanelId) || IsFocused(TimelinePanel.PanelId));
             Cutscenes.Frame(elapsed);
@@ -762,6 +800,38 @@ internal sealed partial class EditorWindow : Game
         {
             Cutscenes.Wait();
         }
+    }
+
+    /// <summary>The tab of the center group that owns a selection: the Cutscene tab for the elements of a cutscene, the
+    /// Mission tab for the items of a mission, or null for each other selection.</summary>
+    private static CenterMode? OwnerOf(object? item) => item switch
+    {
+        _ when CutsceneWorkspace.IsCutsceneItem(item) => CenterMode.Cutscene,
+        MissionRef => CenterMode.Mission,
+        _ => null,
+    };
+
+    /// <summary>The kept selection of a tab when it comes back: a valid cutscene item or the root of the open cutscene,
+    /// a valid mission item or the root of the open mission, or the item for the Scene.</summary>
+    private object? ValidIn(CenterMode mode, object? item) => mode switch
+    {
+        CenterMode.Cutscene => Cutscenes.Valid(item) ?? Cutscenes.Root,
+        CenterMode.Mission => Missions.Valid(item) ?? Missions.Root,
+        _ => item,
+    };
+
+    /// <summary>
+    /// Selects an item of a center tab: at once when the tab shows or the selection is an item of the tab, else when the
+    /// tab shows next. The other tabs keep their selections.
+    /// </summary>
+    public void SelectInTab(CenterMode mode, object item)
+    {
+        if (CenterMode == mode || OwnerOf(Selection) == mode)
+        {
+            Selection = item;
+        }
+
+        centerSelections.Park(mode, item);
     }
 
     /// <summary>

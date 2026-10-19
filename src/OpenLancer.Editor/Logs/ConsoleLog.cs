@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using LibreLancer;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
@@ -26,6 +27,10 @@ internal sealed record ConsoleEntry(ConsoleSeverity Severity, string Source, str
     /// <summary>The place in a cutscene that the message is about, or null. A click on the entry opens the cutscene
     /// and selects the element.</summary>
     public ThnLocation? Cutscene { get; init; }
+
+    /// <summary>The index of the line in the section of <see cref="Target"/>, or -1 for the whole section (section 12.4
+    /// of the M6a design). A click on a mission problem selects the line.</summary>
+    public int EntryIndex { get; init; } = -1;
 
     /// <summary>Who causes the message (decision D500 of the console filter design). An engine line of a load has the
     /// origin pending until it resolves.</summary>
@@ -208,7 +213,8 @@ internal sealed class ConsoleLog
     }
 
     /// <summary>Adds an entry. When the log is full, the oldest entry goes.</summary>
-    private ConsoleEntry Add(ConsoleEntry entry)
+    /// <param name="note">False for an entry that the log had before, so that it does not count as new.</param>
+    private ConsoleEntry Add(ConsoleEntry entry, bool note = true)
     {
         if (entries.Count == Capacity)
         {
@@ -227,13 +233,70 @@ internal sealed class ConsoleLog
             engineLines.Add(text);
         }
 
-        if (Group(entry.Origin) == Shown)
+        if (note && Group(entry.Origin) == Shown)
         {
             Note(entry);
         }
 
         return entry;
     }
+
+    /// <summary>
+    /// Replaces the entries of one source with the entries of new diagnostics (decision D552 of the M6a design). Each run
+    /// of the mission checks gives all its problems again, so the Console keeps one set, as Unity clears and adds its
+    /// compile errors. An entry that the old set already had (the same severity, message, section, line and origin)
+    /// does not count as new, so a save does not light the badge again for an old problem.
+    /// </summary>
+    public void ReplaceSource(string source, IReadOnlyList<Diagnostic> diagnostics)
+    {
+        var known = new Dictionary<(ConsoleSeverity, string, SectionRef?, int, OriginKind), int>();
+        var lastRemoved = false;
+        for (var i = entries.Count - 1; i >= 0; i--)
+        {
+            var old = entries[i];
+            if (old.Source != source)
+            {
+                continue;
+            }
+
+            var key = (old.Severity, old.Message, old.Target, old.EntryIndex, old.Origin.Kind);
+            known[key] = known.GetValueOrDefault(key) + 1;
+            counts[(int)old.Severity, Group(old.Origin)]--;
+            old.Removed = true;
+            lastRemoved |= ReferenceEquals(old, Last);
+            entries.RemoveAt(i);
+        }
+
+        if (lastRemoved)
+        {
+            Last = null;
+            for (var i = entries.Count - 1; i >= 0 && Last == null; i--)
+            {
+                if (entries[i].Severity != ConsoleSeverity.Info && Group(entries[i].Origin) == Shown)
+                {
+                    Last = entries[i];
+                }
+            }
+        }
+
+        foreach (var diagnostic in diagnostics)
+        {
+            var entry = EntryOf(diagnostic, "");
+            var key = (entry.Severity, entry.Message, entry.Target, entry.EntryIndex, entry.Origin.Kind);
+            var seen = known.TryGetValue(key, out var count) && count > 0;
+            if (seen)
+            {
+                known[key] = count - 1;
+            }
+
+            Add(entry, note: !seen);
+        }
+
+        Version++;
+    }
+
+    /// <summary>The entries of a source, from the oldest to the newest.</summary>
+    public IEnumerable<ConsoleEntry> EntriesOf(string source) => entries.Where(e => e.Source == source);
 
     /// <summary>Counts a new entry that shows: a warning or an error adds to the unseen counts and becomes
     /// <see cref="Last"/> when it is newer.</summary>
@@ -266,14 +329,17 @@ internal sealed class ConsoleLog
 
     /// <summary>Adds a diagnostic of the mods, with its section, its place in a cutscene and its origin.</summary>
     /// <param name="prefix">Text before the message, for example the number of a save, or an empty text.</param>
-    public ConsoleEntry Add(Diagnostic diagnostic, string prefix = "") =>
-        Add(new ConsoleEntry(diagnostic.Severity == DiagnosticSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning,
+    public ConsoleEntry Add(Diagnostic diagnostic, string prefix = "") => Add(EntryOf(diagnostic, prefix));
+
+    private static ConsoleEntry EntryOf(Diagnostic diagnostic, string prefix) =>
+        new(diagnostic.Severity == DiagnosticSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning,
             diagnostic.Source, prefix + diagnostic.Message, DateTime.Now)
         {
             Target = diagnostic.Target,
             Cutscene = diagnostic.Cutscene,
             Origin = diagnostic.Origin ?? MessageOrigin.OpenLancer,
-        });
+            EntryIndex = diagnostic.EntryIndex,
+        };
 
     /// <summary>
     /// Starts a batch of engine lines: the lines that FLLog gives after this call, up to the end line of

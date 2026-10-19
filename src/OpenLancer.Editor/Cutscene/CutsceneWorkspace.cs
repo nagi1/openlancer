@@ -28,7 +28,7 @@ internal sealed record CutsceneRoot(string Path);
 /// </summary>
 /// <remarks>The Hierarchy and the Inspector follow the shown tab of the center group (section 7.1): the Scene shows the
 /// system and its selection, and the Cutscene tab shows the open cutscene and its selection. So each of the two keeps
-/// its selection while the other one shows (see <see cref="Swap"/>).</remarks>
+/// its selection while the other one shows (see <see cref="CenterSelections"/>).</remarks>
 internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposable
 {
     /// <summary>The time budget of the catch-up in a frame while the user drags or types, and at other times (section
@@ -60,11 +60,6 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     // The timeline of W, made again when W or the context changes, and at the end of a gesture, which pinned the
     // sub-rows of the bars.
     private (ThnScriptModel? Working, ScriptPlay Play, TimelineModel? Model, bool Pinned) timeline;
-
-    // The selection of the tab of the center group that does not show, and the tab that showed in the last frame.
-    private object? parkedScene;
-    private object? parkedCutscene;
-    private bool cutsceneShown;
 
     // The sound of the preview (section 5.3 of the M8b design): the engine output, the scheduler, and the timeline
     // whose cues the scheduler has. A null timeline makes the next frame set the cues and start their decode.
@@ -205,46 +200,18 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
             $"Opened cutscene {path} ({duration:0.###} s). Context: {context}. {timeline}").TrimEnd();
 
     /// <summary>
-    /// Follows the shown tab of the center group: each of the Scene and the Cutscene tab gets back its own selection.
-    /// A selection of the other kind that the user made in the meantime, for example a section in the Database while
-    /// the Cutscene tab shows, stays. Call it once in each frame, before the panels draw.
+    /// Keeps a cutscene selection valid in each frame, before the panels draw: when an undo removed the element or some
+    /// events of a set, or another cutscene opened, the selection becomes the valid part, or the root of the open
+    /// cutscene while the Cutscene tab shows. The center group keeps one selection for each tab (see
+    /// <see cref="CenterSelections"/>).
     /// </summary>
     /// <param name="shown">True when the Cutscene tab is the shown tab of the center group.</param>
-    public void FollowCenterTab(bool shown)
+    public void ValidateSelection(bool shown)
     {
         if (window.Selection is { } current && IsCutsceneItem(current) && !Equals(Valid(current), current))
         {
-            // An undo removed the element or some events of a set, or another cutscene opened.
             window.Selection = Valid(current) ?? (shown ? Root : null);
         }
-
-        if (shown == cutsceneShown)
-        {
-            return;
-        }
-
-        cutsceneShown = shown;
-        (window.Selection, parkedScene, parkedCutscene) =
-            Swap(shown, window.Selection, parkedScene, Valid(parkedCutscene) ?? Root);
-    }
-
-    /// <summary>
-    /// The selections after the center group shows the other tab: the selection to show, and the selections of the
-    /// Scene and of the Cutscene tab to keep.
-    /// </summary>
-    /// <param name="toCutscene">True when the Cutscene tab shows now.</param>
-    /// <param name="current">The selection before the change.</param>
-    /// <param name="scene">The kept selection of the Scene.</param>
-    /// <param name="cutscene">The kept selection of the Cutscene tab, valid for the open cutscene, or null.</param>
-    internal static (object? Selection, object? Scene, object? Cutscene) Swap(bool toCutscene, object? current,
-        object? scene, object? cutscene)
-    {
-        if (toCutscene)
-        {
-            return IsCutsceneItem(current) ? (current, scene, cutscene) : (cutscene, current, cutscene);
-        }
-
-        return IsCutsceneItem(current) ? (scene, scene, current) : (current, scene, cutscene);
     }
 
     /// <summary>True for a selection that the Cutscene tab shows: an element, events or the root of a
@@ -378,15 +345,7 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
 
     /// <summary>Selects an item of the open cutscene in the Cutscene tab: at once when it shows, else when it shows
     /// next. The Scene keeps its selection.</summary>
-    private void Select(object item)
-    {
-        if (cutsceneShown || IsCutsceneItem(window.Selection))
-        {
-            window.Selection = item;
-        }
-
-        parkedCutscene = item;
-    }
+    private void Select(object item) => window.SelectInTab(CenterMode.Cutscene, item);
 
     /// <summary>Opens a cutscene, and shows it in the Cutscene tab and in the Timeline. When it does not open, the
     /// Console tells why.</summary>
@@ -742,7 +701,6 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         scan = default;
         scripts = (null, []);
         categories.Reset();
-        (parkedScene, parkedCutscene, cutsceneShown) = (null, null, false);
     }
 
     /// <summary>Closes the cutscene and frees the audio of the window.</summary>

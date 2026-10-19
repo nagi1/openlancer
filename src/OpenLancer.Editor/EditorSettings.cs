@@ -163,6 +163,13 @@ internal sealed class EditorSettings
     /// </summary>
     public bool ShowBaseGameMessages { get; set; }
 
+    /// <summary>The share of the width of the Mission tab for the mission part beside the Scene, from 0.1 to 0.9
+    /// (decision D522 of the M6a design).</summary>
+    public float MissionSplit { get; set; } = Missions.MissionView.DefaultSplit;
+
+    /// <summary>True when the Mission tab shows the Scene beside the mission (decision D522 of the M6a design).</summary>
+    public bool MissionShowScene { get; set; } = true;
+
     /// <summary>The id of the category of the Assets panel that shows, for example "solars/station" (milestone
     /// M23).</summary>
     public string AssetsCategory { get; set; } = DefaultAssetsCategory;
@@ -365,6 +372,9 @@ internal sealed class EditorSettings
         settings.RotateStep = ValidStep(settings.RotateStep, DefaultRotateStep);
         settings.SizeStep = ValidStep(settings.SizeStep, DefaultSizeStep);
         settings.CutsceneMoveStep = ValidStep(settings.CutsceneMoveStep, DefaultCutsceneMoveStep);
+        settings.MissionSplit = float.IsFinite(settings.MissionSplit)
+            ? Math.Clamp(settings.MissionSplit, 0.1f, 0.9f)
+            : Missions.MissionView.DefaultSplit;
 
         if (settings.LegacyLastProfile is { Length: > 0 } last && settings.RecentProfiles.Count == 0)
         {

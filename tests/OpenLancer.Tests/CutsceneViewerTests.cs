@@ -37,18 +37,34 @@ public sealed class CutsceneViewerTests
     public void EachCenterTabGetsBackItsOwnSelection()
     {
         // To the Cutscene tab: the scene item waits, and the kept element shows.
-        Assert.Equal((Element, SceneItem, Element), CutsceneWorkspace.Swap(true, SceneItem, null, Element));
+        var tabs = Tabs();
+        tabs.Park(CenterMode.Cutscene, Element);
+        Assert.Equal(Element, tabs.Follow(CenterMode.Cutscene, SceneItem, Valid));
+        Assert.Equal(SceneItem, tabs.Kept(CenterMode.Scene));
         // Without a kept element, the cutscene shows.
-        Assert.Equal((Root, SceneItem, Root), CutsceneWorkspace.Swap(true, SceneItem, null, Root));
+        Assert.Equal(Root, Tabs().Follow(CenterMode.Cutscene, SceneItem, Valid));
         // A Timeline click while the Scene showed selected an element: it stays.
-        Assert.Equal((Element, SceneItem, Root), CutsceneWorkspace.Swap(true, Element, SceneItem, Root));
+        tabs = Tabs();
+        tabs.Park(CenterMode.Scene, SceneItem);
+        Assert.Equal(Element, tabs.Follow(CenterMode.Cutscene, Element, Valid));
+        Assert.Equal(SceneItem, tabs.Kept(CenterMode.Scene));
 
         // To the Scene: the element waits, and the scene item shows.
-        Assert.Equal((SceneItem, SceneItem, Element), CutsceneWorkspace.Swap(false, Element, SceneItem, Root));
+        Assert.Equal(SceneItem, tabs.Follow(CenterMode.Scene, Element, Valid));
+        Assert.Equal(Element, tabs.Kept(CenterMode.Cutscene));
         // A Database click while the Cutscene tab showed selected a section: it stays.
         var section = new object();
-        Assert.Equal((section, SceneItem, Root), CutsceneWorkspace.Swap(false, section, SceneItem, Root));
+        tabs.Follow(CenterMode.Cutscene, Element, Valid);
+        Assert.Equal(section, tabs.Follow(CenterMode.Scene, section, Valid));
     }
+
+    /// <summary>The center tabs with the owners of the editor: the Cutscene tab owns the cutscene items.</summary>
+    private static CenterSelections Tabs() =>
+        new(item => CutsceneWorkspace.IsCutsceneItem(item) ? CenterMode.Cutscene : null);
+
+    /// <summary>A kept cutscene item, or the root of the open cutscene, as the editor validates it.</summary>
+    private static object? Valid(CenterMode mode, object? item) =>
+        mode == CenterMode.Cutscene ? item ?? Root : item;
 
     [Theory]
     [InlineData(@"DATA\SCRIPTS\BASES\Li_01_Cityscape_ambi_day_01.thn", "Bases")]

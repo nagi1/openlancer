@@ -320,7 +320,9 @@ public sealed class DataLists
         var roles = Files.RolesOf(path);
         var isSystem = session.IsSystemFile(path);
         bool Gives(ListSource s) =>
-            (s.Scoped ? isSystem : s.Role != null && roles.Contains(s.Role, StringComparer.OrdinalIgnoreCase)) &&
+            (s is { Scoped: true, Role: null }
+                ? isSystem
+                : s.Role != null && roles.Contains(s.Role, StringComparer.OrdinalIgnoreCase)) &&
             s.Values == null && s.Sections.Contains(sectionType, StringComparer.OrdinalIgnoreCase);
         return rules.Lists.Values.Where(d => d.Source is { } s && Gives(s));
     }
