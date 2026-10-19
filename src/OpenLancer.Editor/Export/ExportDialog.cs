@@ -12,6 +12,7 @@ using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Mods;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Strings;
@@ -30,12 +31,18 @@ namespace OpenLancer.Editor.Export;
 /// version and targets. It shows the publish checklist, and it writes into the version folder of the output root
 /// (decision D566). Between the prepare and the write, the same-version guard of the publish history asks in the dialog
 /// (decision D568). After the write, the dialog records the export in the history (decision D590).</para>
+/// <para>The tasks of the export are in an <see cref="ExportRun"/>, which the editor updates in each frame. So a close
+/// of the dialog with Escape while the export runs does not stop the export or its record in the history.</para>
 /// </remarks>
-internal sealed class ExportDialog(EditorWindow window) : ModalDialog
+internal sealed class ExportDialog : ModalDialog
 {
     /// <summary>The source of the Console lines of the export.</summary>
     public const string Source = "Export";
 
+    private const string ReadingFiles = "reading the files of the mod...";
+
+    private readonly EditorWindow window;
+    private readonly ExportRun run = new();
     private Mod? mod;
     private string? loadError;
     private string workspace = "";
@@ -44,16 +51,13 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     private bool dropIn = true;
     private bool flmm = true;
     private string folder = "";
-    private Task<GuardedExport>? preparing;
     private GuardedExport? asking;
-    private Task<ExportResult>? writing;
-
-    // The export that writes or wrote, for its record in the history, and true after the answer "Replace version".
-    private GuardedExport? guarded;
-    private bool replace;
 
     // The texts of the header, read when the mod loads: the line below the display name and the checklist summary.
+    // The fingerprints of the checklist read each file of the mod, so they come from a worker thread.
     private string modLine = "";
+    private PublishSettings settings = PublishSettings.Empty;
+    private Task<ChecklistFiles>? checklistRead;
     private string checklistSummary = "";
     private ExportResult? result;
     private RecordResult? recorded;
@@ -62,12 +66,27 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     // The retail target whose export the game plays after the export, or null for Export alone.
     private ExportTarget? playTarget;
 
+    public ExportDialog(EditorWindow window)
+    {
+        this.window = window;
+        run.Prepared += Prepared;
+        run.Written += Finish;
+        run.Failed += Failed;
+    }
+
+    /// <summary>What the publish checklist reads from the files of the mod.</summary>
+    private sealed record ChecklistFiles(PublishHistory History, string Content, string Page);
+
     protected override string Title => mod == null
         ? "Export mod###export"
         : $"Export mod: {mod.Manifest.Name} ({mod.Id}), version {mod.Manifest.Version}###export";
 
-    /// <summary>True while the export prepares or writes.</summary>
-    public bool Running => preparing != null || writing != null;
+    /// <summary>True while the export prepares or writes, also after a close of the dialog.</summary>
+    public bool Running => run.Running;
+
+    /// <summary>Takes the results of the tasks of the export. The editor calls it in each frame, also while the dialog
+    /// is closed.</summary>
+    public void Update() => run.Update();
 
     /// <summary>Shows the dialog for a mod. The dialog loads the mod from its folder.</summary>
     /// <param name="workspace">The workspace of the mod, which holds the default output root and the publish
@@ -77,9 +96,7 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     {
         this.workspace = workspace;
         bases = reports;
-        (result, recorded, error, asking, preparing, writing, playTarget, guarded) =
-            (null, null, null, null, null, null, null, null);
-        replace = false;
+        (result, recorded, error, asking, playTarget) = (null, null, null, null, null);
         Load(modFolder);
         if (mod is { } loaded)
         {
@@ -114,25 +131,47 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
             return;
         }
 
-        var settings = PublishSettings.Load(mod.Folder).Settings;
+        settings = PublishSettings.Load(mod.Folder).Settings;
         var summary = settings.Summary.Split('\n')[0];
         modLine = $"Mod id: {mod.Id}. Version {mod.Manifest.Version}." + (summary.Length > 0 ? $" {summary}" : "");
-        var history = PublishHistory.Load(PublishHistory.FolderOf(workspace, mod.Id), mod.Id).History;
-        var fingerprints = new ModFingerprint();
-        string content = "", page = "";
+        var (loaded, read, historyFolder) = (mod, settings, PublishHistory.FolderOf(workspace, mod.Id));
+        var fingerprints = window.Mods.Fingerprints;
+        checklistSummary = ReadingFiles;
+        checklistRead = Task.Run(() => ReadChecklistFiles(loaded, read, historyFolder, fingerprints));
+    }
+
+    /// <summary>The history and the fingerprints of a mod for the publish checklist. It runs on a worker thread, with
+    /// the file hashes of the Mods window, so that a new open of the dialog reads only the changed files.</summary>
+    private static ChecklistFiles ReadChecklistFiles(Mod mod, PublishSettings settings, string historyFolder,
+        ModFingerprint fingerprints)
+    {
+        var history = PublishHistory.Load(historyFolder, mod.Id).History;
         try
         {
-            content = fingerprints.Content(mod.Manifest, mod.Folder);
-            page = fingerprints.Page(mod.Manifest, mod.Folder, settings);
+            return new ChecklistFiles(history, fingerprints.Content(mod.Manifest, mod.Folder),
+                fingerprints.Page(mod.Manifest, mod.Folder, settings));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // A file that OpenLancer cannot read now. The checklist then counts no check and no export.
+            return new ChecklistFiles(history, "", "");
+        }
+    }
+
+    /// <summary>Takes the files of the checklist when the worker thread read them, and counts the steps with the rules
+    /// of the Mods window.</summary>
+    private void ChecklistRead(Mod loaded)
+    {
+        if (checklistRead is not { IsCompleted: true } read)
+        {
+            return;
         }
 
-        checklistSummary = PublishChecklist.Of(new ChecklistInput(mod.Manifest, settings, history, content, page,
-            t => BaseOf(t, bases) is { } report ? TargetCheck.BaseKey(report) : null,
-            [.. ExportTarget.All.Where(t => t.IsRetail && BaseOf(t, bases) is { ExePath: not null })])).Summary;
+        checklistRead = null;
+        checklistSummary = read.IsCompletedSuccessfully
+            ? PublishChecklist.Of(window.Mods.ChecklistInputOf(loaded.Manifest, settings, read.Result.History,
+                read.Result.Content, read.Result.Page)).Summary
+            : $"OpenLancer could not read the mod: {ErrorText.Of(read.Exception!.GetBaseException())}";
     }
 
     /// <summary>The check of the linked game that is the base of a retail target, or null.</summary>
@@ -151,22 +190,11 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
             return;
         }
 
-        if (preparing is { IsCompleted: true } prepared)
-        {
-            preparing = null;
-            Prepared(prepared);
-        }
-
-        if (writing is { IsCompleted: true } written)
-        {
-            writing = null;
-            Finish(written);
-        }
-
-        if (preparing != null || writing != null)
+        ChecklistRead(mod);
+        if (run.Running)
         {
             Header(mod);
-            ImGui.Text(preparing != null ? "Checking the mod..." : "Writing the packages...");
+            ImGui.Text(run.Preparing ? "Checking the mod..." : "Writing the packages...");
             return;
         }
 
@@ -246,6 +274,22 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         ImGui.Separator();
     }
 
+    /// <summary>Escape or the close button of the title bar while the export runs: the export goes on without the
+    /// dialog. A prepare then writes nothing, and a write still records its packages in the history.</summary>
+    protected override void Cancelled()
+    {
+        asking = null;
+        if (!run.Running)
+        {
+            return;
+        }
+
+        window.Log.Add(ConsoleSeverity.Info, Source, run.Preparing
+            ? "You closed the Export dialog. The export stops after the check of the mod and writes no package."
+            : "You closed the Export dialog. The export writes its packages, and the Console shows the result.");
+        run.Close();
+    }
+
     /// <summary>Closes the dialog and shows the mod in the Mods window, at a field of the Settings tab.</summary>
     private void OpenMods(PublishField? field)
     {
@@ -300,7 +344,6 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     {
         error = null;
         playTarget = play;
-        replace = false;
         var chosen = ExportTarget.All.Where(t => targets.Contains(t.Id)).ToList();
         window.Settings.SetExport(exported.Folder, new ExportChoices([.. chosen.Select(t => t.Id)], dropIn, flmm, folder));
         window.Settings.Save();
@@ -309,7 +352,7 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         foreach (var problem in publishProblems)
             window.Log.Add(ConsoleSeverity.Warning, Source, $"{exported.Folder}: {problem}");
         var location = Location(exported);
-        preparing = Task.Run(() => GuardedExport.Prepare(request, location, DateTime.UtcNow));
+        run.Prepare(() => GuardedExport.Prepare(request, location, DateTime.UtcNow));
     }
 
     /// <summary>The publish history of a mod in the workspace of the dialog (decision D565).</summary>
@@ -340,15 +383,8 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
 
     /// <summary>After the prepare: a history that does not load stops the export, a conflict asks in the dialog, and
     /// else the write starts.</summary>
-    private void Prepared(Task<GuardedExport> task)
+    private void Prepared(GuardedExport export)
     {
-        if (task.Exception?.GetBaseException() is { } failure)
-        {
-            Failed(ErrorText.Of(failure));
-            return;
-        }
-
-        var export = task.Result;
         if (export.Refusal is { } refusal)
         {
             Failed(refusal);
@@ -365,7 +401,7 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
 
         if (export.Guard.Kind == GuardKind.None)
         {
-            Write(export);
+            Write(export, replace: false);
             return;
         }
 
@@ -384,11 +420,8 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         ImGui.TextWrapped(guard.Text);
         Problem(error);
         ImGui.Spacing();
-        var choices = GuardChoices(guard, NextVersion(export), () => ExportAsNext(export), () =>
-        {
-            replace = true;
-            Write(export);
-        }, () => asking = null);
+        var choices = GuardChoices(guard, NextVersion(export), () => ExportAsNext(export),
+            () => Write(export, replace: true), () => asking = null);
         for (var i = 0; i < choices.Count; i++)
         {
             if (i > 0)
@@ -439,22 +472,16 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     /// <summary>
     /// "Export as &lt;next&gt;": applies the draft of the Mods window first, when it has changes. Then it writes the
     /// next patch version into mod.json and a changelog entry into publish.json, loads the mod again and prepares the
-    /// export again.
+    /// export again. The write guard of the Mods window applies to both writes.
     /// </summary>
     private void ExportAsNext(GuardedExport export)
     {
         var exported = mod!;
         var mods = window.Mods;
-        var context = mods.WriteContext();
-        var holds = mods.SessionHolds(exported.Folder);
-        if (mods.Draft is { HasChanges: true } draft && GameFolders.Same(draft.ModFolder, exported.Folder))
+        if ((mods.WriteBlock(exported.Folder) ?? mods.ApplyBeforeExport(exported.Folder)) is { } block)
         {
-            var applied = draft.Apply(context, holds);
-            if (applied.State != ApplyState.Applied)
-            {
-                error = applied.Message;
-                return;
-            }
+            error = block;
+            return;
         }
 
         PublishDraft increase;
@@ -474,10 +501,10 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
             return;
         }
 
-        var result = increase.Apply(context, holds);
+        var result = increase.Apply(mods.WriteContext(), mods.SessionHolds(exported.Folder));
         if (result.State != ApplyState.Applied)
         {
-            error = result.Message;
+            error = ModsWindow.ApplyRefusal(result);
             return;
         }
 
@@ -490,11 +517,11 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
     }
 
     /// <summary>Writes the packages on a worker thread.</summary>
-    private void Write(GuardedExport export)
+    /// <param name="replace">True after the answer "Replace version".</param>
+    private void Write(GuardedExport export, bool replace)
     {
         asking = null;
-        guarded = export;
-        writing = Task.Run(export.Write);
+        run.Write(export, replace);
     }
 
     private void Failed(string reason)
@@ -503,44 +530,36 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         window.Log.Add(ConsoleSeverity.Error, Source, reason);
     }
 
-    /// <summary>Takes the result of the write, records it in the history, and writes the problems and the summary to the
-    /// Console.</summary>
-    private void Finish(Task<ExportResult> task)
+    /// <summary>Takes the result of the write and its record in the history, and writes the problems and the summary
+    /// to the Console. Export and play starts the game only while the dialog is open.</summary>
+    private void Finish(ExportWritten written)
     {
-        if (task.Exception?.GetBaseException() is { } failure)
-        {
-            Failed(ErrorText.Of(failure));
-            return;
-        }
-
-        result = task.Result;
-        foreach (var problem in result.Problems)
+        var done = written.Result;
+        result = done;
+        recorded = written.Record;
+        foreach (var problem in done.Problems)
             window.Log.Add(problem);
-        var written = result.Packages.Count(p => p.Path != null);
-        window.Log.Add(result.Succeeded ? ConsoleSeverity.Info : ConsoleSeverity.Error, Source, result.Succeeded
-            ? $"The export wrote {written} packages to {result.OutputFolder}."
+        var count = done.Packages.Count(p => p.Path != null);
+        window.Log.Add(done.Succeeded ? ConsoleSeverity.Info : ConsoleSeverity.Error, Source, done.Succeeded
+            ? $"The export wrote {count} packages to {done.OutputFolder}."
             : ModExport.Stopped);
-        if (guarded != null)
-        {
-            var (record, warnings) = guarded.RecordExport(result, replace);
-            recorded = record;
-            foreach (var warning in warnings)
-                window.Log.Add(ConsoleSeverity.Warning, Source, warning);
-            foreach (var line in record?.Messages(result.Version) ?? [])
-                window.Log.Add(ConsoleSeverity.Info, Source, line);
-            guarded = null;
-        }
+        foreach (var warning in written.Warnings)
+            window.Log.Add(ConsoleSeverity.Warning, Source, warning);
+        foreach (var line in written.Record?.Messages(done.Version) ?? [])
+            window.Log.Add(ConsoleSeverity.Info, Source, line);
 
         window.Mods.Refresh();
-        if (playTarget is { } play && mod != null)
-        {
-            if (result.Builds.TryGetValue(play, out var files) && result.Packages.Where(p => p.Target == play).All(p => p.Path != null) &&
-                BaseOf(play, bases) is { } game)
-                window.GamePlay.PlayExport(game, files, new PlayedMod(mod.Id, mod.Manifest.Name, mod.Folder,
-                    PublishHistory.FolderOf(workspace, mod.Id), result.Content));
-            else
-                window.Log.Add(ConsoleSeverity.Error, Source, $"Play did not start. The export for {play.Name} did not complete.");
-        }
+        if (playTarget is not { } play || mod == null)
+            return;
+        if (written.Closed)
+            window.Log.Add(ConsoleSeverity.Info, Source, "Play did not start, because you closed the Export dialog.");
+        else if (done.Builds.TryGetValue(play, out var files) &&
+                 done.Packages.Where(p => p.Target == play).All(p => p.Path != null) && BaseOf(play, bases) is { } game)
+            window.GamePlay.PlayExport(game, files, new PlayedMod(mod.Id, mod.Manifest.Name, mod.Folder,
+                PublishHistory.FolderOf(workspace, mod.Id), done.Content));
+        else
+            window.Log.Add(ConsoleSeverity.Error, Source,
+                $"Play did not start. The export for {play.Name} did not complete.");
     }
 
     /// <summary>The result in place of the buttons: a line for each package, the number of warnings, the next step

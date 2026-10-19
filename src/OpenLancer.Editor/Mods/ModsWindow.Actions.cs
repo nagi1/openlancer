@@ -27,24 +27,45 @@ internal sealed partial class ModsWindow
     // The prepare of "Play this mod alone" on a worker thread.
     private (ModRow Row, PlayTarget Target, Task<PreparedExport> Task)? playPrepare;
 
+    /// <summary>The reason of an action that waits while Play in the game installs the mods into a play copy.</summary>
+    private const string InstallingText =
+        "Play in the game installs the mods into a play copy now. Wait until the game starts.";
+
+    /// <summary>The reason of an action that waits while an export runs.</summary>
+    private const string ExportRunsText = "An export runs now. Wait until it ends.";
+
+    /// <summary>The reason of Apply in the Export dialog when a file changed on disk. The dialog cannot ask the
+    /// question of the Mods window.</summary>
+    private const string ChangedBeforeExport =
+        "A file of the mod changed outside the Mods window. Click Apply in the Mods window and answer its question. " +
+        "Then export again.";
+
     /// <summary>
     /// Why an action cannot change the files of a mod now, or null (section 10.3 of the M11c design): a play copy
-    /// installs, an export runs, or the write guard refuses the mod (decision D587).
+    /// installs, an export runs, or the write guard refuses the mod (decision D587). The window keeps the result of the
+    /// guard until the next scan.
     /// </summary>
-    public string? WriteBlock(ModRow row)
+    public string? WriteBlock(string folder)
     {
-        if (window.GamePlay.Installing)
+        if (ChangeBlock() is { } busy)
         {
-            return "Play in the game installs the mods into a play copy now. Wait until the game starts.";
+            return busy;
         }
 
-        if (window.ExportRuns)
+        var key = Path.GetFullPath(folder);
+        if (!guards.TryGetValue(key, out var guard))
         {
-            return "An export runs now. Wait until it ends.";
+            guard = ModWrite.Guard(key, WriteContext());
+            guards[key] = guard;
         }
 
-        return ModWrite.Guard(row.Folder, WriteContext());
+        return guard;
     }
+
+    /// <summary>Why an action cannot change a mod or the profile file now, or null: a play copy installs or an export
+    /// runs.</summary>
+    private string? ChangeBlock() =>
+        window.GamePlay.Installing ? InstallingText : window.ExportRuns ? ExportRunsText : null;
 
     /// <summary>
     /// Apply of the publish draft (section 10.7 of the M11c design). A file that changed on disk asks: Load again,
@@ -52,6 +73,49 @@ internal sealed partial class ModsWindow
     /// profile again. <paramref name="done"/> runs when Apply wrote the files.
     /// </summary>
     public void ApplyDraft(Action? done = null) => Apply(done, replace: false);
+
+    /// <summary>
+    /// Apply of the draft of a mod before "Export as &lt;next&gt;" of the Export dialog (section 13.2 of the M11c
+    /// design). The Export dialog cannot show a second question. So a file that changed on disk stops the apply with a
+    /// reason. The question about unused images and the new open of the profile wait until no dialog is open and no
+    /// export runs.
+    /// </summary>
+    /// <returns>The reason why the draft did not apply, or null when it applied or has no changes.</returns>
+    public string? ApplyBeforeExport(string folder)
+    {
+        if (Draft is not { HasChanges: true } draft || !GameFolders.Same(draft.ModFolder, folder))
+        {
+            return null;
+        }
+
+        var result = draft.Apply(WriteContext(), SessionHolds(folder));
+        if (result.State != ApplyState.Applied)
+        {
+            return ApplyRefusal(result);
+        }
+
+        Applied(draft);
+        afterApply = (draft, result);
+        return null;
+    }
+
+    /// <summary>The reason of an Apply that did not write, for a place that cannot ask the question of a file that
+    /// changed on disk.</summary>
+    public static string ApplyRefusal(ApplyResult result) =>
+        result.State == ApplyState.ChangedOnDisk ? ChangedBeforeExport : result.Message ?? "";
+
+    /// <summary>Runs the steps of an Apply of the Export dialog that need a question, after the dialog
+    /// closed.</summary>
+    private void AfterExportApply()
+    {
+        if (afterApply is not { } follow || window.ExportRuns || window.DialogOpen)
+        {
+            return;
+        }
+
+        afterApply = null;
+        FollowUp(follow.Draft, follow.Result, null);
+    }
 
     private void Apply(Action? done, bool replace)
     {
@@ -61,8 +125,7 @@ internal sealed partial class ModsWindow
             return;
         }
 
-        var row = rows.FirstOrDefault(r => GameFolders.Same(r.Folder, draft.ModFolder));
-        if (row != null && WriteBlock(row) is { } block)
+        if (WriteBlock(draft.ModFolder) is { } block)
         {
             Refused(block);
             return;
@@ -90,8 +153,22 @@ internal sealed partial class ModsWindow
             return;
         }
 
+        Applied(draft);
+        FollowUp(draft, result, done);
+    }
+
+    /// <summary>The Console line of an Apply that wrote the files, and a new scan.</summary>
+    private void Applied(PublishDraft draft)
+    {
         window.Log.Add(ConsoleSeverity.Info, Source, $"Applied the publish settings of {draft.Applied.Name} ({draft.ModId}).");
         Refresh();
+    }
+
+    /// <summary>The steps after an Apply: the question about unused images, then a new open of the profile when the
+    /// targets of a mod of the profile changed. Delete is permanent, so "Keep the files" is the default button, and
+    /// Escape keeps the files too.</summary>
+    private void FollowUp(PublishDraft draft, ApplyResult result, Action? done)
+    {
         var reopen = result.ReopenProfile && InOpenProfile(draft.ModFolder);
         Action finish = reopen ? () => window.ReopenProfile(done) : () => done?.Invoke();
         if (result.UnusedImages.Count == 0)
@@ -114,8 +191,8 @@ internal sealed partial class ModsWindow
                 Refresh();
                 finish();
             }),
-            new Choice("Keep the files", finish),
-        ]);
+            new Choice("Keep the files", finish) { Default = true },
+        ], cancel: finish);
     }
 
     /// <summary>Shows the reason why an action did not run, and writes it to the Console.</summary>
@@ -141,8 +218,8 @@ internal sealed partial class ModsWindow
         }
 
         window.Log.Add(result.Errors > 0 ? ConsoleSeverity.Warning : ConsoleSeverity.Info, Source,
-            $"Checked {result.Folder}: {Count(result.Errors, "error")}, {Count(result.WarningCount, "warning")}. " +
-            "Show in Console lists them.");
+            $"Checked {result.Folder}: {Plural.Count(result.Errors, "error")}, " +
+            $"{Plural.Count(result.WarningCount, "warning")}. Show in Console lists them.");
         Refresh();
     }
 
@@ -157,8 +234,8 @@ internal sealed partial class ModsWindow
         else
         {
             window.Log.Add(ConsoleSeverity.Info, Source,
-                $"The check of {row.Id} at {PublishMessages.Time(result.Time)} found {Count(result.Errors, "error")} " +
-                $"and {Count(result.WarningCount, "warning")}:");
+                $"The check of {row.Id} at {PublishMessages.Time(result.Time)} found " +
+                $"{Plural.Count(result.Errors, "error")} and {Plural.Count(result.WarningCount, "warning")}:");
             foreach (var problem in result.Problems)
             {
                 window.Log.Add(problem);
@@ -305,22 +382,22 @@ internal sealed partial class ModsWindow
         window.GamePlay.PlayExport(done.Target.Game, files, mod, alone: true);
     }
 
-    /// <summary>Export... of a mod (section 12.6 of the M11c design). A draft with changes asks first, because the
-    /// export uses the applied settings.</summary>
-    public void Export(ModRow row)
+    /// <summary>Export... of a mod (section 12.6 of the M11c design), also from Mod &gt; Export mod. A draft with
+    /// changes asks first, because the export uses the applied settings.</summary>
+    public void Export(string folder)
     {
-        if (Draft is { HasChanges: true } draft && GameFolders.Same(draft.ModFolder, row.Folder))
+        if (Draft is { HasChanges: true } draft && GameFolders.Same(draft.ModFolder, folder))
         {
             window.Choice.Show("Export mod", "Apply the publish settings first? The export uses the applied settings.",
             [
-                new Choice("Apply", () => ApplyDraft(() => window.ShowExport(row.Folder))),
-                new Choice("Export without them", () => window.ShowExport(row.Folder)),
+                new Choice("Apply", () => ApplyDraft(() => window.ShowExport(folder))),
+                new Choice("Export without them", () => window.ShowExport(folder)),
                 new Choice("Cancel", () => { }),
             ]);
             return;
         }
 
-        window.ShowExport(row.Folder);
+        window.ShowExport(folder);
     }
 
     /// <summary>Opens the folder of the last export of a mod, or its output root.</summary>
@@ -369,7 +446,8 @@ internal sealed partial class ModsWindow
     }
 
     /// <summary>Why the window cannot change the profile file now, or null: the profile is in a game folder, or in the
-    /// OpenLancer repo without the allowance (decisions D584 and D587).</summary>
+    /// OpenLancer repo without the allowance (decisions D584 and D587). Also while the game data of the profile loads,
+    /// a play copy installs or an export runs (section 10.3 of the M11c design).</summary>
     public string? ProfileBlock()
     {
         if (window.Session?.Profile.FilePath is not { } path)
@@ -382,9 +460,13 @@ internal sealed partial class ModsWindow
             return guard;
         }
 
-        return RepoCheck.RepoRoot(Path.GetDirectoryName(path)!) != null && !repoAllowed.Contains(path)
-            ? "This profile is part of the OpenLancer repo. Its file is a tracked file. Allow edits of this repo profile first."
-            : null;
+        if (ProfileNeedsAllowance)
+        {
+            return "This profile is part of the OpenLancer repo. Its file is a tracked file. " +
+                   "Allow edits of this repo profile first.";
+        }
+
+        return ChangeBlock() ?? (window.CanChangeProfile ? null : EditorWindow.ProfileLoading);
     }
 
     /// <summary>True when the open profile is a file of the OpenLancer repo whose edits the user did not allow.</summary>
@@ -399,6 +481,8 @@ internal sealed partial class ModsWindow
         if (window.Session?.Profile.FilePath is { } path)
         {
             repoAllowed.Add(path);
+            window.Log.Add(ConsoleSeverity.Warning, Source,
+                $"Allowed the edits of the repo profile {path} until the editor closes.");
         }
     }
 
@@ -467,44 +551,64 @@ internal sealed partial class ModsWindow
         });
     }
 
-    /// <summary>Opens the Rename dialog of a mod (section 12.3 of the M11c design).</summary>
-    public void Rename(ModRow row) => renameDialog.Show(row);
+    /// <summary>Opens the Rename dialog of a mod (section 12.3 of the M11c design). The rename changes the selected
+    /// mod, so the question about the publish draft runs first (decision D571).</summary>
+    public void Rename(ModRow row) => AskDraft(() => renameDialog.Show(WithAppliedName(row)));
 
-    /// <summary>The request of a rename of a mod.</summary>
+    /// <summary>Why Rename cannot run now, or null: the write guard and the busy states of <see cref="WriteBlock"/>,
+    /// and the load of the game data of the open profile. The rename closes the session of a mod of the profile, and a
+    /// session that loads cannot close.</summary>
+    public string? RenameBlock(ModRow row) =>
+        WriteBlock(row.Folder) ??
+        (!window.CanChangeProfile && InOpenProfile(row.Folder) ? EditorWindow.ProfileLoading : null);
+
+    /// <summary>The request of a rename of a mod, with the workspace and the game folders of the open
+    /// profile.</summary>
     internal RenameRequest RenameRequestOf(ModRow row, string newId) =>
         new(row.Folder, newId, Workspace)
         {
             RecentProfiles = [.. window.Settings.RecentProfiles.Select(r => r.Path)],
             GameRoots = GameRoots(),
-            Busy = window.GamePlay.Busy || window.ExportRuns || playPrepare != null,
+            Busy = RenameBusy(row.Folder),
             SessionHolds = SessionHolds(row.Folder),
         };
+
+    /// <summary>True while a game of a play copy prepares or runs, an export runs, or a check of the mod runs or waits.
+    /// A check writes the publish history of the old id.</summary>
+    internal bool RenameBusy(string folder) =>
+        window.GamePlay.Busy || window.ExportRuns || playPrepare != null || Checks.IsBusyWith(folder);
+
+    /// <summary>The changes of the settings of the editor for a planned rename, for the plan of the dialog.</summary>
+    internal IReadOnlyList<string> RenameSettingsChanges(RenamePlan plan, RenameRequest request) =>
+        window.Settings.RenameChanges(plan, request.Workspace);
 
     /// <summary>
     /// Runs a rename after the plan dialog. When the mod is in the open profile, the leave question runs and the
     /// session closes first, so that the editor releases the lock of the mod. Then the editor changes its settings and
     /// opens the profile again.
     /// </summary>
-    internal void RunRename(ModRow row, string newId)
+    /// <param name="request">The request of the plan that the dialog showed. It keeps the workspace and the game
+    /// folders of the open profile, because the workspace of the window changes when the session closes.</param>
+    internal void RunRename(RenameRequest request)
     {
         var profile = window.Session?.Profile.FilePath;
-        if (profile == null || !InOpenProfile(row.Folder))
+        if (profile == null || !InOpenProfile(request.ModFolder))
         {
-            RenameNow(row, newId, profile);
+            RenameNow(request, null);
             return;
         }
 
         window.Leave("renaming the mod", () =>
         {
             window.CloseProfileNow();
-            RenameNow(row, newId, profile);
+            RenameNow(request, profile);
         });
     }
 
-    private void RenameNow(ModRow row, string newId, string? reopen)
+    private void RenameNow(RenameRequest request, string? reopen)
     {
         // The session is closed now, so the plan runs again without its lock.
-        var plan = ModFolderRename.Plan(RenameRequestOf(row, newId));
+        var plan = ModFolderRename.Plan(request with { Busy = RenameBusy(request.ModFolder), SessionHolds = false });
         var result = ModFolderRename.Run(plan);
         foreach (var line in result.Log)
         {
@@ -513,7 +617,7 @@ internal sealed partial class ModsWindow
 
         if (result.Done)
         {
-            window.Settings.RenameMod(plan, Workspace);
+            window.Settings.RenameMod(plan, request.Workspace);
             window.Settings.Save();
             if (Draft != null && GameFolders.Same(Draft.ModFolder, plan.OldFolder))
             {
@@ -536,13 +640,22 @@ internal sealed partial class ModsWindow
         Refresh();
     }
 
-    /// <summary>Opens the Duplicate dialog of a mod (section 12.2 of the M11c design).</summary>
-    public void Duplicate(ModRow row) => duplicateDialog.Show(row);
+    /// <summary>Opens the Duplicate dialog of a mod (section 12.2 of the M11c design). The window then selects the
+    /// copy, so the question about the publish draft runs first (decision D571).</summary>
+    public void Duplicate(ModRow row) => AskDraft(() => duplicateDialog.Show(WithAppliedName(row)));
+
+    /// <summary>The row with the applied display name of the draft. Apply in the question about the draft can change
+    /// the name, and the scan that reads the new name ends later.</summary>
+    private ModRow WithAppliedName(ModRow row) =>
+        Draft is { } draft && row.Manifest is { } manifest && GameFolders.Same(draft.ModFolder, row.Folder)
+            ? row with { Manifest = manifest with { Name = draft.Applied.Name } }
+            : row;
 
     /// <summary>The mods folder of the workspace.</summary>
     public string ModsFolder => Path.Combine(Workspace, ModWorkspace.ModsFolder);
 
-    /// <summary>Selects a new mod of the window, for example a copy, and reads the mods again.</summary>
+    /// <summary>Selects a new mod of the window, for example a copy, and reads the mods again. The caller asks about
+    /// the draft before it makes the mod.</summary>
     internal void Created(string folder)
     {
         Select(folder);
@@ -552,6 +665,4 @@ internal sealed partial class ModsWindow
     /// <summary>New mod... (section 12.1 of the M11c design): with an open profile, the mod goes into the profile and
     /// becomes the active mod, as Mod &gt; New mod does. Without a profile, it goes into the mods folder only.</summary>
     private void NewMod() => AskDraft(() => window.NewModFromModsWindow(Created));
-
-    private static string Count(int number, string noun) => number == 1 ? $"1 {noun}" : $"{number} {noun}s";
 }

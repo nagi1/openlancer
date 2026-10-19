@@ -6,10 +6,12 @@ using System.Numerics;
 using System.Threading.Tasks;
 using ImGuiNET;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Dialogs;
+using OpenLancer.Editor.Export;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 
@@ -42,6 +44,11 @@ internal sealed partial class ModsWindow : IDisposable
     private const float SplitterWidth = 4;
     private const float RowGlyphGap = 4;
 
+    // The part of the height of the detail page below the header that the steps of the checklist can take, and the
+    // lowest height of the steps in lines.
+    private const float ChecklistShare = 0.35f;
+    private const float MinChecklistLines = 3;
+
     private readonly EditorWindow window;
     private readonly ModFingerprint fingerprints = new();
     private readonly ModHeader header;
@@ -59,6 +66,18 @@ internal sealed partial class ModsWindow : IDisposable
     // The content of each mod that an automatic check checked in this run, so that a check that does not complete
     // does not run again in each frame.
     private readonly Dictionary<string, string> autoChecked = new(StringComparer.OrdinalIgnoreCase);
+
+    // The reason of the write guard for each mod folder (decision D587), or null. The guard reads the disk, so the
+    // window keeps each result until the next scan.
+    private readonly Dictionary<string, string?> guards = new(StringComparer.OrdinalIgnoreCase);
+
+    // True for each mod folder in the OpenLancer repo (decision D584). The check walks the folders above the mod, so
+    // the window keeps each result until the next scan.
+    private readonly Dictionary<string, bool> repoMods = new(StringComparer.OrdinalIgnoreCase);
+
+    // The steps of an Apply of the Export dialog that need a question: the unused images and a new open of the
+    // profile. They run when no dialog is open and no export runs.
+    private (PublishDraft Draft, ApplyResult Result)? afterApply;
 
     private bool open;
     private bool focus;
@@ -91,9 +110,6 @@ internal sealed partial class ModsWindow : IDisposable
         markDialog = new MarkPublishedDialog(window, this);
     }
 
-    /// <summary>True while the window shows.</summary>
-    public bool IsOpen => open;
-
     /// <summary>True while a dialog of the window is open.</summary>
     public bool DialogOpen => renameDialog.IsOpen || duplicateDialog.IsOpen || markDialog.IsOpen;
 
@@ -102,6 +118,10 @@ internal sealed partial class ModsWindow : IDisposable
 
     /// <summary>The thumbnails of the screenshots (decision D592).</summary>
     public ScreenshotThumbnails Thumbnails { get; }
+
+    /// <summary>The fingerprints of the mods, with the hash of each file that a scan read. One instance serves several
+    /// threads.</summary>
+    public ModFingerprint Fingerprints => fingerprints;
 
     /// <summary>The publish draft of the selected mod, or null when no mod is selected or its mod.json does not
     /// load.</summary>
@@ -156,7 +176,12 @@ internal sealed partial class ModsWindow : IDisposable
     }
 
     /// <summary>Reads the mods again from the disk on a worker thread.</summary>
-    public void Refresh() => scanWanted = true;
+    public void Refresh()
+    {
+        scanWanted = true;
+        guards.Clear();
+        repoMods.Clear();
+    }
 
     /// <summary>
     /// Runs an action after the question about the publish draft (decision D571): Apply, Revert or Cancel. Without a
@@ -203,6 +228,19 @@ internal sealed partial class ModsWindow : IDisposable
     public bool SessionHolds(string folder) =>
         window.Session?.Edits is { HoldsLock: true, ActiveMod: { } mod } && GameFolders.Same(mod.Folder, folder);
 
+    /// <summary>True when the mod is in the OpenLancer repo (decision D584).</summary>
+    public bool IsRepoMod(string folder)
+    {
+        var key = Path.GetFullPath(folder);
+        if (!repoMods.TryGetValue(key, out var repo))
+        {
+            repo = RepoCheck.RepoRoot(key) != null;
+            repoMods[key] = repo;
+        }
+
+        return repo;
+    }
+
     /// <summary>True when the user allowed the edits of a repo mod in this run (decision D584).</summary>
     public bool RepoAllowed(string folder) => WriteContext().RepoAllowed(folder);
 
@@ -210,11 +248,29 @@ internal sealed partial class ModsWindow : IDisposable
     public void AllowRepo(string folder)
     {
         repoAllowed.Add(Path.GetFullPath(folder));
+        guards.Clear();
         window.Log.Add(ConsoleSeverity.Warning, Source, $"Allowed the edits of the repo mod {folder} until the editor closes.");
     }
 
     /// <summary>Opens the dialog "Mark as published" for a version of a mod.</summary>
     public void ShowMarkDialog(ModRow row, string version) => markDialog.Show(row, version);
+
+    /// <summary>
+    /// What the publish checklist of a mod reads (section 11 of the M11c design): the files of the mod, the history,
+    /// the base of each retail target, and the targets that "Play this mod alone" can start. The Mods window and the
+    /// Export dialog use it, so both count the same steps.
+    /// </summary>
+    public ChecklistInput ChecklistInputOf(ModManifest manifest, PublishSettings settings, PublishHistory history,
+        string content, string page)
+    {
+        var reports = LinkedReports;
+        return new ChecklistInput(manifest, settings, history, content, page,
+            target => ExportDialog.BaseOf(target, reports) is { } report ? TargetCheck.BaseKey(report) : null,
+            [
+                .. PlayGames(manifest).Select(g => ExportTarget.Find(g.Game.Target ?? "")).OfType<ExportTarget>()
+                    .Distinct(),
+            ]);
+    }
 
     /// <summary>Opens the Settings tab and the field (a Go to of the checklist).</summary>
     public void GoTo(PublishField field)
@@ -228,6 +284,7 @@ internal sealed partial class ModsWindow : IDisposable
         Checks.Update();
         Thumbnails.Frame();
         PlayPrepared();
+        AfterExportApply();
         Scan();
         renameDialog.Draw();
         duplicateDialog.Draw();
@@ -651,7 +708,10 @@ internal sealed partial class ModsWindow : IDisposable
         }
 
         CardLayout.Divider();
-        checklist.Draw(row);
+        // The steps of the checklist get a part of the page at most, so that the tabs keep their room (section 10.1 of
+        // the M11c design). More steps scroll.
+        checklist.Draw(row, MathF.Max(MinChecklistLines * ImGui.GetFrameHeightWithSpacing(),
+            ChecklistShare * ImGui.GetContentRegionAvail().Y));
         CardLayout.Divider();
         if (row.HistoryProblem is { } problem)
         {

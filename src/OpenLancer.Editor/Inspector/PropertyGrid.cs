@@ -33,6 +33,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     private const float BodyTop = 4;
     private const float AxisPrefixWidth = 14;
     private static readonly Vector2 CellPadding = new(4, 1);
+    private const float OriginBarWidth = 3;
 
     // The Unity label width: 45% of the Inspector width less 40 points, and at least 140 points for the 15 point font.
     private const float LabelFraction = 0.45f;
@@ -66,6 +67,20 @@ internal sealed partial class PropertyGrid(EditorWindow window)
 
     [LibraryImport("cimgui")]
     private static partial void igTableFullRowEnd();
+
+    /// <summary>
+    /// Draws the blue bar at the left edge of a label cell: the active mod sets the value, or the field has an edit
+    /// that is not saved or applied (AGENTS.md UI rule 7). The Inspector and the publish page of the Mods window use
+    /// it.
+    /// </summary>
+    /// <param name="labelMin">The top-left corner of the label text, in screen pixels.</param>
+    internal static void ChangedBar(Vector2 labelMin)
+    {
+        var x = labelMin.X - MathF.Truncate(CellPadding.X * ImGuiHelper.Scale);
+        ImGui.GetWindowDrawList().AddRectFilled(new Vector2(x, labelMin.Y),
+            new Vector2(x + MathF.Truncate(OriginBarWidth * ImGuiHelper.Scale), labelMin.Y + ImGui.GetFrameHeight()),
+            ImGui.GetColorU32(EditorTheme.Accent));
+    }
 
     /// <summary>
     /// The width of the label column, in pixels, for an Inspector that is <paramref name="width"/> pixels wide.

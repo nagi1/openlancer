@@ -39,6 +39,49 @@ public static class ScreenshotRules
         return null;
     }
 
+    /// <summary>
+    /// The full path of a screenshot of the list in the mod folder, or null when the entry breaks the path rule of
+    /// <see cref="PathProblem"/> or its path leaves the mod folder. It reads no file, so a rooted path or a path of
+    /// another computer never opens.
+    /// </summary>
+    public static string? PathIn(string modFolder, string file)
+    {
+        if (PathProblem(file) != null)
+            return null;
+        try
+        {
+            var path = Path.GetFullPath(Path.Combine(modFolder, file.Replace('/', Path.DirectorySeparatorChar)));
+            return PathRules.IsInside(path, Path.GetFullPath(modFolder)) ? path : null;
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The bytes of an image for a thumbnail of the editor, or null when a rule refuses the file (decision D586): the
+    /// real path of the file, after links, is not in <paramref name="modFolder"/>, or the bytes are not a PNG or JPEG
+    /// image with 8,192 pixels or fewer on each side. A file that OpenLancer cannot read gives null too.
+    /// </summary>
+    /// <param name="modFolder">The folder that the image must be in, or null for an image that the user picked in the
+    /// file dialog of Add images.</param>
+    /// <remarks>The game file rule does not apply, because a thumbnail does not leave the editor.</remarks>
+    public static byte[]? ThumbnailBytes(string path, string? modFolder)
+    {
+        try
+        {
+            if (modFolder != null && !PathRules.IsInside(PathRules.RealPath(path), PathRules.RealPath(modFolder)))
+                return null;
+            var bytes = File.ReadAllBytes(path);
+            return ImageSize(bytes) is { } size && size.Width <= MaxSide && size.Height <= MaxSide ? bytes : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The reason why a screenshot of the list cannot go into an export, or null when it passes.</summary>
     /// <param name="gameRoots">The game folders to refuse: the base of the profile and the linked games. A folder
     /// with <c>EXE\freelancer.ini</c> above the image is a game folder too.</param>
@@ -48,11 +91,8 @@ public static class ScreenshotRules
     /// <param name="builds">The builds of the game file rule, or null for the embedded manifests.</param>
     internal static string? Check(string modFolder, string file, IReadOnlyCollection<string> gameRoots, KnownBuilds? builds)
     {
-        if (PathProblem(file) is { } problem)
-            return problem;
-        var path = Path.GetFullPath(Path.Combine(modFolder, file.Replace('/', Path.DirectorySeparatorChar)));
-        if (!PathRules.IsInside(path, modFolder))
-            return PublishMessages.ImageOutsideFolder(file);
+        if (PathIn(modFolder, file) is not { } path)
+            return PathProblem(file) ?? PublishMessages.ImageOutsideFolder(file);
         if (!File.Exists(path))
             return PublishMessages.ImageMissing(file);
         try

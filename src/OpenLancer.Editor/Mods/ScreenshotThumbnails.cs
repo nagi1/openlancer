@@ -8,6 +8,7 @@ using LibreLancer;
 using LibreLancer.Graphics;
 using LibreLancer.ImageLib;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Publishing;
 
 namespace OpenLancer.Editor.Mods;
 
@@ -17,8 +18,13 @@ namespace OpenLancer.Editor.Mods;
 /// a decode on a worker could flip another image (finding R9). The window keeps a copy of at most 256 pixels on the long
 /// side until it closes.
 /// </summary>
-/// <remarks>The images decode with the row order of the Assets panel, the bottom row first. So the draw uses the same
-/// texture coordinates as the Assets panel.</remarks>
+/// <remarks>
+/// <para>The images decode with the row order of the Assets panel, the bottom row first. So the draw uses the same
+/// texture coordinates as the Assets panel.</para>
+/// <para>An image of the list of a mod passes the path rule of decision D586 before the window opens it, and its real
+/// path must be in the mod folder. So a hand-written <c>publish.json</c> cannot make the editor open a file outside the
+/// mod, for example a path of another computer.</para>
+/// </remarks>
 internal sealed class ScreenshotThumbnails(Game game) : IDisposable
 {
     /// <summary>The longest side of a thumbnail, in pixels.</summary>
@@ -30,14 +36,25 @@ internal sealed class ScreenshotThumbnails(Game game) : IDisposable
     // The size and the last write time of each file at its decode.
     private readonly Dictionary<string, (long Length, DateTime Written)> stamps = new(StringComparer.OrdinalIgnoreCase);
 
-    private readonly List<string> wanted = [];
+    // The paths that wait for their decode, each with the folder that its real path must be in, or null.
+    private readonly List<(string Path, string? Root)> wanted = [];
 
     /// <summary>The texture coordinates of the top-left and the bottom-right corner of a thumbnail.</summary>
     public static (Vector2 Min, Vector2 Max) Uv => (new Vector2(0, 1), new Vector2(1, 0));
 
+    /// <summary>The thumbnail of a screenshot of the list of a mod, or null. An entry that breaks the path rule or
+    /// whose path leaves the mod folder gets no thumbnail and opens no file.</summary>
+    /// <param name="file">The path of the entry in <c>publish.json</c>, for example
+    /// <c>publish/screenshots/dock.png</c>.</param>
+    public (ImTextureRef Ref, Vector2 Size)? Of(string modFolder, string file) =>
+        ScreenshotRules.PathIn(modFolder, file) is { } path ? Get(path, modFolder) : null;
+
     /// <summary>The texture of the thumbnail of an image file and its size in pixels, or null. A thumbnail that is not
-    /// ready yet goes into the queue of the next frames. An image that does not decode gives null.</summary>
-    public (ImTextureRef Ref, Vector2 Size)? Get(string path)
+    /// ready yet goes into the queue of the next frames. An image that does not pass the rules or does not decode gives
+    /// null.</summary>
+    /// <param name="root">The folder that the real path of the file must be in, or null for a file that the user picked
+    /// in the file dialog.</param>
+    public (ImTextureRef Ref, Vector2 Size)? Get(string path, string? root)
     {
         var key = Path.GetFullPath(path);
         if (images.TryGetValue(key, out var image))
@@ -45,9 +62,9 @@ internal sealed class ScreenshotThumbnails(Game game) : IDisposable
             return image is { } ready ? (ready.Ref, ready.Size) : null;
         }
 
-        if (!wanted.Contains(key, StringComparer.OrdinalIgnoreCase))
+        if (!wanted.Any(w => string.Equals(w.Path, key, StringComparison.OrdinalIgnoreCase)))
         {
-            wanted.Add(key);
+            wanted.Add((key, root));
         }
 
         return null;
@@ -61,12 +78,19 @@ internal sealed class ScreenshotThumbnails(Game game) : IDisposable
             return;
         }
 
-        var path = wanted[0];
+        var (path, root) = wanted[0];
         wanted.RemoveAt(0);
         stamps[path] = Stamp(path);
+        // The rules read the size from the header, so an image above 8,192 pixels on a side does not decode.
+        if (ScreenshotRules.ThumbnailBytes(path, root) is not { } bytes)
+        {
+            images[path] = null;
+            return;
+        }
+
         try
         {
-            using var stream = File.OpenRead(path);
+            using var stream = new MemoryStream(bytes);
             var image = Generic.ImageFromStream(stream, flip: true);
             var (data, width, height) = Shrink(image.Data, image.Width, image.Height, MaxSide);
             var texture = new Texture2D(game.RenderContext, width, height);

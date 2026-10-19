@@ -50,9 +50,12 @@ internal static class ReorderableList
     /// caller adds entries from a file dialog.</param>
     /// <param name="addLabel">The text of the Add button, for example "Add author".</param>
     /// <param name="readOnly">The reason why the list cannot change, or null. A read-only list shows its rows
-    /// disabled, with the reason in the tooltip.</param>
+    /// disabled, with the reason in the tooltip of each row and of Add.</param>
+    /// <param name="locked">Gives the reason why one entry cannot move or go, or null. The drag handle, Move up, Move
+    /// down and Remove of a locked entry are disabled, with the reason in their tooltips. The row draws the fields of a
+    /// locked entry read-only itself, for example the changelog entry of a published version.</param>
     public static unsafe IReadOnlyList<T>? Draw<T>(string id, IReadOnlyList<T> items, Row<T> row, Func<T>? newItem,
-        string? addLabel, string? readOnly = null)
+        string? addLabel, string? readOnly = null, Func<T, string?>? locked = null)
     {
         ImGui.PushID(id);
         // ImGui keeps a payload type of at most 32 bytes. The id of the list keeps a drag in its own list.
@@ -65,7 +68,9 @@ internal static class ReorderableList
         for (var i = 0; i < items.Count; i++)
         {
             ImGui.PushID(i);
+            var fixedReason = readOnly == null ? locked?.Invoke(items[i]) : null;
             ImGui.BeginGroup();
+            ImGui.BeginDisabled(fixedReason != null);
             ImGui.Button($"{EditorIcons.GripLines}##grip", new Vector2(buttonWidth, 0));
             if (ImGui.BeginDragDropSource())
             {
@@ -75,7 +80,8 @@ internal static class ReorderableList
                 ImGui.EndDragDropSource();
             }
 
-            ImGui.SetItemTooltip("Drag the entry to another place in the list.");
+            ImGui.EndDisabled();
+            ItemTooltip.Show(fixedReason ?? "Drag the entry to another place in the list.");
             ImGui.SameLine();
             var fieldsWidth = ImGui.GetContentRegionAvail().X - 3 * (buttonWidth + style.ItemInnerSpacing.X) -
                               style.ItemSpacing.X;
@@ -90,24 +96,30 @@ internal static class ReorderableList
             }
 
             ImGui.SameLine();
-            if (RowButton(EditorIcons.ArrowUp, "Move up", i > 0))
+            if (RowButton(EditorIcons.ArrowUp, fixedReason ?? "Move up", fixedReason == null && i > 0))
             {
                 edit = ListEdit.Move(i, i - 1);
             }
 
             ImGui.SameLine(0, style.ItemInnerSpacing.X);
-            if (RowButton(EditorIcons.ArrowDown, "Move down", i < items.Count - 1))
+            var last = i == items.Count - 1;
+            if (RowButton(EditorIcons.ArrowDown, fixedReason ?? "Move down", fixedReason == null && !last))
             {
                 edit = ListEdit.Move(i, i + 1);
             }
 
             ImGui.SameLine(0, style.ItemInnerSpacing.X);
-            if (RowButton(EditorIcons.TrashAlt, "Remove", true))
+            if (RowButton(EditorIcons.TrashAlt, fixedReason ?? "Remove", fixedReason == null))
             {
                 edit = ListEdit.Remove(i);
             }
 
             ImGui.EndGroup();
+            if (readOnly != null)
+            {
+                ItemTooltip.Show(readOnly);
+            }
+
             if (ImGui.BeginDragDropTarget())
             {
                 var payload = ImGui.AcceptDragDropPayload(payloadType);
@@ -128,21 +140,29 @@ internal static class ReorderableList
         }
 
         ImGui.EndDisabled();
-        if (readOnly != null && newItem != null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        if (readOnly != null && newItem != null)
         {
-            ImGui.SetTooltip(readOnly);
+            ItemTooltip.Show(readOnly);
         }
 
         ImGui.PopID();
-        return edit is { } done ? Apply(result ?? items, done, newItem!) : result;
+        return edit is { } done ? Apply(result ?? items, done, newItem!, locked) : result;
     }
 
     /// <summary>The list after an edit. A move to the same place, or of an entry that is not in the list, changes
-    /// nothing.</summary>
+    /// nothing. A Remove or a move of a locked entry changes nothing too.</summary>
     /// <param name="newItem">The entry of Add.</param>
-    internal static IReadOnlyList<T> Apply<T>(IReadOnlyList<T> items, ListEdit edit, Func<T> newItem)
+    /// <param name="locked">Gives the reason why an entry cannot move or go, or null.</param>
+    internal static IReadOnlyList<T> Apply<T>(IReadOnlyList<T> items, ListEdit edit, Func<T> newItem,
+        Func<T, string?>? locked = null)
     {
         var list = new List<T>(items);
+        if (edit.Kind != ListEditKind.Add && edit.Index >= 0 && edit.Index < list.Count &&
+            locked?.Invoke(list[edit.Index]) != null)
+        {
+            return list;
+        }
+
         switch (edit.Kind)
         {
             case ListEditKind.Add:
@@ -168,11 +188,7 @@ internal static class ReorderableList
         ImGui.BeginDisabled(!enabled);
         var clicked = ImGui.Button(glyph.ToString(), new Vector2(ImGui.GetFrameHeight(), 0));
         ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled | ImGuiHoveredFlags.ForTooltip))
-        {
-            ImGui.SetTooltip(tooltip);
-        }
-
+        ItemTooltip.Show(tooltip);
         return clicked;
     }
 }

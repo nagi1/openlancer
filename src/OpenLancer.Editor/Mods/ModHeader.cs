@@ -79,10 +79,11 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
         var exportBlock = window.ExportBlock;
         if (CardLayout.Button(new CardButton("Export...", Primary: true, Enabled: exportBlock == null)))
         {
-            mods.Export(row);
+            mods.Export(row.Folder);
         }
 
-        Tooltip(exportBlock ?? "Make the packages of this mod for its target games, and the texts of the Nexus page.");
+        ItemTooltip.Show(exportBlock ??
+                         "Make the packages of this mod for its target games, and the texts of the Nexus page.");
         ImGui.SameLine();
         if (ImGui.Button($"{EditorIcons.Play}  Play {EditorIcons.CaretDown}"))
         {
@@ -116,7 +117,8 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
         if (games.Count == 0)
         {
             ImGui.MenuItem("No linked game can play this mod", false);
-            ImGui.SetItemTooltip("Link a game folder with its game program of a target game of the mod in File > Game link.");
+            ItemTooltip.Show("Play needs a linked game folder of a target game of the mod, with its game program. " +
+                             "Link the game folder in File > Game link.");
             return;
         }
 
@@ -128,8 +130,8 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
                 mods.PlayAlone(row, game);
             }
 
-            Tooltip(block ?? $"Install the build of this mod for {game.Name} into the play copy of {game.Root}, and " +
-                    "start the game. The play copy then holds this mod alone.");
+            ItemTooltip.Show(block ?? $"Install the build of this mod for {game.Name} into the play copy of " +
+                             $"{game.Root}, and start the game. The play copy then holds this mod alone.");
         }
     }
 
@@ -144,7 +146,8 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
             window.SetActiveMod(row.Id);
         }
 
-        Tooltip(!inProfile ? "Add the mod to the profile first. The active mod is a mod of the open profile."
+        ItemTooltip.Show(!inProfile ? "Add the mod to the profile first. The active mod is a mod of the open profile."
+            : !window.CanChangeProfile ? EditorWindow.ProfileLoading
             : "The editor saves your edits into the active mod.");
         ImGui.Separator();
         if (ImGui.MenuItem("Duplicate..."))
@@ -153,21 +156,26 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
         }
 
         ImGui.SetItemTooltip("Make a copy of the mod with a new id and a new display name. The copy is not in a profile.");
-        var writeBlock = mods.WriteBlock(row);
-        if (ImGui.MenuItem("Rename...", "", false, writeBlock == null))
+        var renameBlock = mods.RenameBlock(row);
+        if (ImGui.MenuItem("Rename...", "", false, renameBlock == null))
         {
             mods.Rename(row);
         }
 
-        Tooltip(writeBlock ?? "Give the mod a new id and a new folder name.");
+        ItemTooltip.Show(renameBlock ?? "Give the mod a new id and a new folder name.");
         ImGui.Separator();
-        var profileBlock = mods.ProfileBlock();
-        if (session != null && mods.ProfileNeedsAllowance && ImGui.MenuItem("Allow edits of this repo profile"))
+        if (session != null && mods.ProfileNeedsAllowance)
         {
-            mods.AllowProfile();
+            if (ImGui.MenuItem("Allow edits of this repo profile"))
+            {
+                mods.AllowProfile();
+            }
+
+            ItemTooltip.Show("The profile file is a tracked file of the OpenLancer repo. Allow Add to profile and " +
+                             "Remove from profile for this file until the editor closes.");
         }
 
-        var changeBlock = profileBlock ?? (window.CanChangeProfile ? null : "The game data of the open profile is loading.");
+        var changeBlock = mods.ProfileBlock();
         if (inProfile)
         {
             if (ImGui.MenuItem("Remove from profile", "", false, changeBlock == null))
@@ -175,7 +183,7 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
                 mods.RemoveFromProfile(row);
             }
 
-            Tooltip(changeBlock ?? "Remove the mod from the profile. The folder of the mod stays.");
+            ItemTooltip.Show(changeBlock ?? "Remove the mod from the profile. The folder of the mod stays.");
         }
         else
         {
@@ -184,7 +192,7 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
                 mods.AddToProfile(row);
             }
 
-            Tooltip(changeBlock ?? "Add the mod to the end of the load order of the profile.");
+            ItemTooltip.Show(changeBlock ?? "Add the mod to the end of the load order of the profile.");
         }
 
         ImGui.Separator();
@@ -204,14 +212,5 @@ internal sealed class ModHeader(EditorWindow window, ModsWindow mods)
         }
 
         ImGui.SetItemTooltip("Write the problems of the last check of the mod to the Console.");
-    }
-
-    /// <summary>The tooltip of the last item, also when it is disabled.</summary>
-    private static void Tooltip(string text)
-    {
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled | ImGuiHoveredFlags.ForTooltip))
-        {
-            ImGui.SetTooltip(text);
-        }
     }
 }

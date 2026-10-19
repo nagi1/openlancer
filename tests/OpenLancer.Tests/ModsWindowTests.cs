@@ -87,5 +87,17 @@ public sealed class ModsWindowTests
         Assert.Empty(ModsWindow.PlayGamesOf(all with { DependsOn = ["base"] }, targets));
     }
 
+    /// <summary>"Export as next" of the Export dialog cannot ask the question of a file that changed on disk. It tells
+    /// the user to apply in the Mods window, and it gives a refusal as it is.</summary>
+    [Fact]
+    public void AnApplyOfTheExportDialogGivesAReason()
+    {
+        var changed = new ApplyResult(ApplyState.ChangedOnDisk, PublishMessages.FileChanged("mod.json"), false, []);
+
+        Assert.StartsWith("A file of the mod changed outside the Mods window. Click Apply in the Mods window",
+            ModsWindow.ApplyRefusal(changed));
+        Assert.Equal("No.", ModsWindow.ApplyRefusal(ApplyResult.Refused("No.")));
+    }
+
     private static IEnumerable<string> Ids(IEnumerable<ModRow> rows) => rows.Select(r => r.Id);
 }

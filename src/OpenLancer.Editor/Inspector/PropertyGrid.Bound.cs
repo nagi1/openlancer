@@ -39,7 +39,6 @@ namespace OpenLancer.Editor.Inspector;
 internal sealed partial class PropertyGrid
 {
     // Sizes in unscaled points.
-    private const float OriginBarWidth = 3;
     private const int MultilineRows = 4;
 
     private readonly Dictionary<SectionRef, BoundSection?> boundSections = [];
@@ -588,11 +587,7 @@ internal sealed partial class PropertyGrid
     {
         if (field.Origin == ValueOrigin.ActiveMod)
         {
-            var height = ImGui.GetFrameHeight();
-            var x = labelMin.X - MathF.Truncate(CellPadding.X * ImGuiHelper.Scale);
-            ImGui.GetWindowDrawList().AddRectFilled(new Vector2(x, labelMin.Y),
-                new Vector2(x + MathF.Truncate(OriginBarWidth * ImGuiHelper.Scale), labelMin.Y + height),
-                ImGui.GetColorU32(EditorTheme.Accent));
+            ChangedBar(labelMin);
         }
 
         var hovered = false;

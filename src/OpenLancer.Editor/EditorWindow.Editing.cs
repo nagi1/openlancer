@@ -306,7 +306,9 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         ImGui.Separator();
         if (Theme.IconMenuItem(EditorIcons.BoxOpen, "Export mod...", edits.ActiveMod != null && !IsEditing))
         {
-            ShowExport(edits.ActiveMod!.Folder);
+            // The Mods window asks first when its publish draft of the mod has changes (section 12.6 of the M11c
+            // design).
+            Mods.Export(edits.ActiveMod!.Folder);
         }
 
         ImGui.SetItemTooltip(edits.ActiveMod == null
@@ -495,6 +497,8 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     private void DrawDialogs()
     {
         Choice.Draw();
+        // The export takes the results of its tasks also while its dialog is closed.
+        exportDialog?.Update();
         exportDialog?.Draw();
         newModDialog.Draw();
         newProfileDialog.Draw();
@@ -504,9 +508,9 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
-    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || templateDialog.IsOpen ||
-                               SceneEdits.IsOpen || closeDialog.IsOpen || exportDialog?.IsOpen == true ||
-                               Mods.DialogOpen;
+    internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen ||
+                                templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen ||
+                                exportDialog?.IsOpen == true || Mods.DialogOpen;
 
     /// <summary>
     /// The keys of the editor. Ctrl+S (File > Save) also works while a text field has the keyboard or a field edit is

@@ -45,19 +45,47 @@ public sealed class ModsPreviewTests
         Assert.Empty(parts["Images"]);
     }
 
-    /// <summary>The Files part of the preview lists the packages of the targets with the forms of the last export
-    /// choices.</summary>
+    /// <summary>The Files part of the preview lists the packages of the targets and the forms of the last export
+    /// choices, as the next export writes them.</summary>
     [Fact]
-    public void ThePackagesFollowTheTargetsAndTheSavedForms()
+    public void ThePackagesFollowTheTargetsAndTheSavedChoices()
     {
         var all = PreviewTab.Packages(Manifest, null);
-        var dropInOnly = PreviewTab.Packages(Manifest, new ExportChoices([], DropIn: true, Flmm: false, ""));
+        var dropInOnly = PreviewTab.Packages(Manifest,
+            new ExportChoices([ModTargets.Vanilla, ModTargets.OpenLancer], DropIn: true, Flmm: false, ""));
+        var vanillaOnly = PreviewTab.Packages(Manifest,
+            new ExportChoices([ModTargets.Vanilla], DropIn: true, Flmm: true, ""));
 
         Assert.Equal(["starrunner-1.0.1-vanilla-1.1.zip", "starrunner-1.0.1-vanilla-1.1-flmm.zip", "starrunner-1.0.1-openlancer.zip"],
             all.Select(p => p.FileName));
         Assert.Equal([PackageForm.DropIn, PackageForm.ModFolder], dropInOnly.Select(p => p.Form));
+        Assert.Equal(["starrunner-1.0.1-vanilla-1.1.zip", "starrunner-1.0.1-vanilla-1.1-flmm.zip"],
+            vanillaOnly.Select(p => p.FileName));
         // A mod that needs other mods has no export.
         Assert.Empty(PreviewTab.Packages(Manifest with { DependsOn = ["base"] }, null));
+    }
+
+    /// <summary>The Images part lists only the entries that pass the path rule, with the names of the export (decision
+    /// D567).</summary>
+    [Fact]
+    public void TheImagesHaveTheNamesOfTheExport()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "ol-preview", "starrunner");
+        var settings = PublishSettings.Empty with
+        {
+            Screenshots =
+            [
+                new PublishScreenshot("publish/screenshots/../../mod.json", ""),
+                new PublishScreenshot("publish/screenshots/dock.png", "The dock"),
+                new PublishScreenshot("//host/share/x.png", ""),
+                new PublishScreenshot("publish/screenshots/fight.jpg", ""),
+            ],
+        };
+
+        var shots = PreviewTab.Screenshots(folder, settings);
+
+        Assert.Equal(["publish/screenshots/dock.png", "publish/screenshots/fight.jpg"], shots.Select(s => s.File));
+        Assert.Equal(["01-dock.png", "02-fight.jpg"], shots.Select((s, i) => ModExport.ScreenshotName(i, s.File)));
     }
 
     [Fact]

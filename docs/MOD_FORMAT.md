@@ -541,7 +541,7 @@ The page of the selected mod has these parts:
 
 - The header: the display name, the id, the version, the authors and the chips of the state. The tooltip of a chip tells more. **Export...** opens the Export dialog of the mod. **Play** plays the mod alone in a linked game (see "Play in the game" in [PLAY.md](PLAY.md)). The **...** menu has Make active mod, Duplicate..., Rename..., Add to profile or Remove from profile, Open folder, Open export folder and Show in Console.
 - The publish checklist: for example "4 of 6 steps complete", and one row for each step. A missing step tells what is missing and why. Its buttons go to the field or fix the step. The recommended items do not count.
-- The tab **Settings**: the display name, the version and the target games of `mod.json`, and the publish settings. Each list has Add, Remove, Move up, Move down and a drag handle. Increase version gives the next patch, minor or major version, and adds a changelog entry for it.
+- The tab **Settings**: the display name, the version and the target games of `mod.json`, and the publish settings. Each list has Add, Remove, Move up, Move down and a drag handle. Increase version gives the next patch, minor or major version, and adds a changelog entry for it. **Add entry** adds a changelog entry at the top, because the changelog lists the newest version first. The entry of a version with the mark "published" is read-only: you cannot change, move or remove it.
 - The tab **Preview**: the parts of the Nexus page in the order of the page, each with Copy. Copy copies the text of the field in `nexus-page.txt`. The README of each package, the header of the FLMM script and `CHECKLIST.txt` come from the last check. Click **Check now** to make them.
 - The tab **History**: the exports of the publish history, newest first, with the state of their files, and the test plays. **Mark as published...** gives a version the mark "published".
 
@@ -556,13 +556,13 @@ The page of the selected mod has these parts:
 
 The Settings tab edits a draft, as the import settings of Unity do. A changed field has a blue bar and a blue label until you click **Apply**. **Revert** drops the changes. A change of the selected mod or of the active mod asks first: Apply, Revert or Cancel. A close of the window, of the profile or of the editor asks the same. The title of the window has `*` while the draft has changes.
 
-Apply checks that `mod.json` and `publish.json` did not change on disk after the window read them. When a file changed, Apply asks: Load again, Replace or Cancel. Apply copies the new screenshots first. Then it writes `publish.json` and `mod.json`. When an image in `publish/screenshots` is no longer in the list, Apply asks before it deletes the file. A change of the target games opens the profile again, because the save gate reads the targets when the profile opens.
+Apply checks that `mod.json` and `publish.json` did not change on disk after the window read them. When a file changed, Apply asks: Load again, Replace or Cancel. Apply copies the new screenshots first. Then it writes `publish.json` and `mod.json`. When an image in `publish/screenshots` is no longer in the list, Apply asks before it deletes the file. **Keep the files** is the default answer, because a delete is permanent. A change of the target games opens the profile again, because the save gate reads the targets when the profile opens.
 
 The window never writes into a game folder, and it never writes a file of another mod. A mod in the OpenLancer repo needs "Allow edits of this repo mod" first, and Add images refuses it. The window does not write a mod that another editor has open. A `mod.json` with a comment is read-only, because OpenLancer cannot write the file and keep the comment.
 
 A check runs the steps of the export of each target, but it writes no package. The steps are the merge, the format checks, the content checks, the FLMM script and the game file rule. The checks run on a worker thread, one mod at a time. The publish history records the result of each target. **Check all** checks each mod of the list, and the window checks the selected mod when its last check is old.
 
-Rename gives the mod a new id and a new folder name. Before it changes a file, it shows a plan: the folder, the profiles that name the folder, the history folder and the warnings. When another mod names the old id in `dependsOn`, Rename refuses. Rename the mod only before the first release, because players keep the files of the old id. Duplicate makes a copy with a new id and a new display name. The copy has no page link, and it is not in a profile.
+Rename gives the mod a new id and a new folder name. Before it changes a file, it shows a plan. The plan lists the folder, the profiles that name the folder, the history folder, the settings of the editor that change and the warnings. When another mod names the old id in `dependsOn`, Rename refuses. Rename waits while a game of a play copy runs, an export runs or a check of the mod runs. Rename the mod only before the first release, because players keep the files of the old id. Duplicate makes a copy with a new id and a new display name. The copy has no page link, and it is not in a profile.
 
 ### Edits in the Inspector
 
@@ -1072,7 +1072,9 @@ When the deploy folder path has characters outside ASCII, lancer.exe reads the p
 
 The export makes the packages that players install (milestone M11). It merges one mod on the files of a target game, checks the result and writes the packages. The internal patch format stays the working format of the editor. Open the export in the editor with **Mod > Export mod...** or with **Export...** of the Mods window, or run `oltool export`.
 
-The Export dialog reads the mod from its folder when it opens, so it uses the applied display name, version and targets. It shows the display name with **Change...**, which opens the Mods window at that field, and the publish checklist. It writes into the version folder of the output folder, and it tells that folder. After the export, it records the packages in the publish history, and it tells the next step: the upload to Nexus and the mark "published".
+The Export dialog reads the mod from its folder when it opens, so it uses the applied display name, version and targets. It shows the display name with **Change...**, which opens the Mods window at that field, and the publish checklist. It writes into the version folder of the output folder, and it tells that folder. After the export, it records the packages in the publish history, and it tells the next step: the upload to Nexus and the mark "published". When the Mods window has unapplied publish settings of the mod, the export asks to apply them first.
+
+When you close the Export dialog while the export runs, the export goes on without the dialog. An export that still checks the mod then stops and writes no package. An export that writes its packages completes, records them in the publish history and writes the result to the Console. Export and play then does not start the game.
 
 ### Targets and bases
 

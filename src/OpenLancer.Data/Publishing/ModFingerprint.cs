@@ -74,9 +74,7 @@ public sealed class ModFingerprint
         text.Append($"{PublishSettings.FileName}\t{HashOrNone(Path.Combine(modFolder, PublishSettings.FileName))}\n");
         foreach (var screenshot in settings.Screenshots)
         {
-            var path = ScreenshotRules.PathProblem(screenshot.File) == null
-                ? Path.Combine(modFolder, screenshot.File.Replace('/', Path.DirectorySeparatorChar))
-                : null;
+            var path = ScreenshotRules.PathIn(modFolder, screenshot.File);
             text.Append($"screenshot\t{screenshot.File}\t{(path == null ? "-" : HashOrNone(path))}\n");
         }
         return ContentHash.Of(Encoding.UTF8.GetBytes(text.ToString()));

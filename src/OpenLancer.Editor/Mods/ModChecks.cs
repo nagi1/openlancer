@@ -71,6 +71,12 @@ internal sealed class ModChecks(Func<ModCheckRequest, ModCheckResult> run)
     public bool IsChecking(string folder) =>
         Running is { } running && GameFolders.Same(running, folder) || waiting.Any(r => GameFolders.Same(r.Folder, folder));
 
+    /// <summary>True while a check of the mod waits or runs on a worker thread, also a check whose result a cancel
+    /// dropped. A check that runs writes the publish history of the mod, so a rename of the mod waits for it.</summary>
+    public bool IsBusyWith(string folder) =>
+        running is { } current && GameFolders.Same(current.Request.Folder, folder) ||
+        waiting.Any(r => GameFolders.Same(r.Folder, folder));
+
     /// <summary>The last result of a mod in this run of the editor, or null.</summary>
     public ModCheckResult? ResultOf(string folder) => results.GetValueOrDefault(Path.GetFullPath(folder));
 
@@ -133,6 +139,12 @@ internal sealed class ModChecks(Func<ModCheckRequest, ModCheckResult> run)
         catch (ModLoadException e)
         {
             return Failed(request, e.Message);
+        }
+
+        // The export refuses a save that is not complete too, but the check gives the text of a check.
+        if (mod.HasPendingSave)
+        {
+            return Failed(request, PublishMessages.CheckPendingSave);
         }
 
         var targets = ExportTarget.All.Where(t => mod.Manifest.Targets.Contains(t.Id)).ToList();

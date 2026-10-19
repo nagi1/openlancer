@@ -137,7 +137,5 @@ internal static class EditorIcons
     public const char ArrowDown = Icons.ArrowDown;
     public const char GripLines = '\uf7a4';
     public const char Check = Icons.Check;
-    public const char Upload = '\uf093';
-    public const char Gamepad = '\uf11b';
     public const char Sync = '\uf021';
 }

@@ -10,6 +10,7 @@ using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.PlayCopies;
 using OpenLancer.Data.Publishing;
+using OpenLancer.Data.Strings;
 using OpenLancer.Editor;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
@@ -50,7 +51,8 @@ internal sealed class GamePlayRig : IDisposable
 {
     public const string GoodsPatch = "[Good]\nnickname = lf_hull\nprice = 5600\n";
 
-    public GamePlayRig(bool hd = false)
+    /// <param name="strings">The writer of the text DLL of the merge, or null for the fake writer.</param>
+    public GamePlayRig(bool hd = false, IStringResourceWriter? strings = null)
     {
         Game = new PlayGame(hd);
         Plays = new GamePlay(Host, (info, exited) =>
@@ -58,7 +60,7 @@ internal sealed class GamePlayRig : IDisposable
             var process = new FakeGameProcess();
             Starts.Add((info, exited, process));
             return process;
-        }, TestWorkspace.FakeDllWriter.Instance, ThnScripts.Evaluator, () => Now);
+        }, strings ?? TestWorkspace.FakeDllWriter.Instance, ThnScripts.Evaluator, () => Now);
         var report = Game.Export.Report();
         Host.Games.Add(report);
         Host.Settings.Games.Add(new LinkedGame(report.Root!, DateTime.UtcNow, report.Name, report.Build));
@@ -404,6 +406,54 @@ public sealed class GamePlayTests : IDisposable
         }
 
         Assert.Contains("Recorded a test play of Mod first (first) in Freelancer 1.0: 60 s.", rig.Console);
+    }
+
+    /// <summary>A play of the profile takes the fingerprints before the merge (review of M11c Build 2). A file that
+    /// changes during the merge then gives the test play the old content, so the play does not count for the new
+    /// content, which the game can miss.</summary>
+    [Fact]
+    public void ATestPlayHasTheContentOfTheStartOfTheInstall()
+    {
+        string? patch = null;
+        var writer = new ChangingWriter(() => File.AppendAllText(patch!, "\n; A change during the merge.\n"));
+        using var local = new GamePlayRig(strings: writer);
+        var mod = local.Game.Export.Mod("m", new()
+        {
+            ["strings.json"] = """{ "strings": { "name": "Name" } }""",
+            [@"patches\" + ExportGame.GoodsPath] = "[Good]\nnickname = g2\nids_name = $str:name\n",
+        });
+        patch = Path.Combine(mod.Folder, "patches", ExportGame.GoodsPath);
+        var before = new ModFingerprint().Content(mod.Manifest, mod.Folder);
+        local.Open(mod);
+
+        local.Plays.Play(local.Target);
+        local.Run(() => local.Starts.Count == 1, "the start of the game");
+        local.Now += GamePlay.TestPlayTime;
+        local.Starts[0].Exit(0);
+        local.Run(() => local.Console.Any(c => c.StartsWith("Recorded a test play")), "the record of the play");
+
+        Assert.True(writer.Changed);
+        var history = PublishHistory.Load(PublishHistory.FolderOf(local.Game.Game.Folder, mod.Id), mod.Id).History;
+        var play = Assert.Single(history.Plays);
+        Assert.Equal(before, play.Content);
+        Assert.NotEqual(before, new ModFingerprint().Content(mod.Manifest, mod.Folder));
+    }
+
+    /// <summary>A writer of the text DLL that changes a file of the mod at its first call, during the merge.</summary>
+    private sealed class ChangingWriter(Action change) : IStringResourceWriter
+    {
+        public bool Changed { get; private set; }
+
+        public byte[] Write(IReadOnlyDictionary<int, string> strings, IReadOnlyDictionary<int, string> infocards)
+        {
+            if (!Changed)
+            {
+                Changed = true;
+                change();
+            }
+
+            return TestWorkspace.FakeDllWriter.Instance.Write(strings, infocards);
+        }
     }
 
     /// <summary>The rule of a test play (finding R17): Force stop and a crash code give no play. The exit code comes as

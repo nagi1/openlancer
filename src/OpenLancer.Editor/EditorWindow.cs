@@ -180,6 +180,9 @@ internal sealed partial class EditorWindow : Game
     /// </summary>
     public bool CanChangeProfile => Session is not { IsBusy: true };
 
+    /// <summary>The reason of an action that waits while <see cref="CanChangeProfile"/> is false.</summary>
+    internal const string ProfileLoading = "The game data of the open profile is loading.";
+
     /// <summary>The error of the last profile that did not open, or null. The Welcome screen shows it.</summary>
     public string? OpenError { get; private set; }
 
@@ -827,7 +830,6 @@ internal sealed partial class EditorWindow : Game
     private void FileMenu()
     {
         var loading = !CanChangeProfile;
-        const string loadingTip = "The game data of the open profile is loading.";
         if (Theme.BeginIconMenu(EditorIcons.Open, "Open profile"))
         {
             if (ImGui.IsWindowAppearing())
@@ -842,7 +844,7 @@ internal sealed partial class EditorWindow : Game
                     OpenProfile(path);
                 }
 
-                ImGui.SetItemTooltip(loading ? loadingTip : path);
+                ImGui.SetItemTooltip(loading ? ProfileLoading : path);
             }
 
             if (menuProfiles.Count == 0)
@@ -871,7 +873,7 @@ internal sealed partial class EditorWindow : Game
                     OpenProfile(recent.Path);
                 }
 
-                ImGui.SetItemTooltip(loading ? loadingTip
+                ImGui.SetItemTooltip(loading ? ProfileLoading
                     : exists ? recent.Path
                     : $"The file is not found.\n{recent.Path}");
             }
@@ -891,7 +893,7 @@ internal sealed partial class EditorWindow : Game
 
         if (loading)
         {
-            ImGui.SetItemTooltip(loadingTip);
+            ImGui.SetItemTooltip(ProfileLoading);
         }
 
         if (Theme.IconMenuItem(EditorIcons.Link, "Game link...", true))
@@ -907,7 +909,7 @@ internal sealed partial class EditorWindow : Game
 
         if (loading)
         {
-            ImGui.SetItemTooltip(loadingTip);
+            ImGui.SetItemTooltip(ProfileLoading);
         }
 
         ImGui.Separator();

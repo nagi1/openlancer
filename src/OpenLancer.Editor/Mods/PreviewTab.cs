@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Export;
+using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Ui;
@@ -71,6 +71,12 @@ internal sealed class PreviewTab(EditorWindow window, ModsWindow mods)
         }
 
         ImGui.EndDisabled();
+        if (mods.Draft is { HasChanges: true } draft && GameFolders.Same(draft.ModFolder, row.Folder))
+        {
+            CardLayout.Note(EditorIcons.InfoCircle, EditorTheme.Accent, "The preview shows the applied settings, as " +
+                "the export uses them. Click Apply to see your changes here.");
+        }
+
         if (check == null)
         {
             CardLayout.Dim("OpenLancer did not check this mod in this session. Click Check now to make the previews of " +
@@ -119,7 +125,8 @@ internal sealed class PreviewTab(EditorWindow window, ModsWindow mods)
     {
         var texts = new PublishTexts(manifest, row.Settings);
         var packages = Packages(manifest, window.Settings.ExportOf(row.Folder));
-        var images = row.Settings.Screenshots.Select((s, i) => ($"{i + 1:00}-{Path.GetFileName(s.File)}", s.Caption)).ToList();
+        var shots = Screenshots(row.Folder, row.Settings);
+        var images = shots.Select((s, i) => (ModExport.ScreenshotName(i, s.File), s.Caption)).ToList();
         var parts = Parts(PackageTexts.NexusPage(texts, packages, images));
         CardLayout.Dim("The preview follows the parts of a Nexus page. It does not copy the look of the site.");
         ImGui.Spacing();
@@ -133,7 +140,7 @@ internal sealed class PreviewTab(EditorWindow window, ModsWindow mods)
         Part(parts, "Author", () => Lines(parts, "Author"));
         Part(parts, "Version", () => Lines(parts, "Version"));
         Part(parts, "Summary", () => Lines(parts, "Summary"));
-        Images(row);
+        Part(parts, "Images", () => Images(row.Folder, shots));
         Part(parts, "Description (BBCode)", () => Description(manifest, row.Settings, packages));
         Part(parts, "Requirements", () => Lines(parts, "Requirements"));
         Part(parts, "Files", () => Lines(parts, "Files"));
@@ -143,22 +150,24 @@ internal sealed class PreviewTab(EditorWindow window, ModsWindow mods)
         Part(parts, "Tags", () => Lines(parts, "Tags"));
     }
 
+    /// <summary>The screenshots that the export can copy: the entries that pass the path rule (decision D586). The
+    /// export also checks the bytes of each image, so the last check names an image that it refuses.</summary>
+    internal static IReadOnlyList<PublishScreenshot> Screenshots(string modFolder, PublishSettings settings) =>
+        [.. settings.Screenshots.Where(s => ScreenshotRules.PathIn(modFolder, s.File) != null)];
+
     /// <summary>The image strip: the thumbnail of each screenshot with its caption.</summary>
-    private void Images(ModRow row)
+    private void Images(string modFolder, IReadOnlyList<PublishScreenshot> shots)
     {
-        Heading("Images");
-        ImGui.Separator();
-        if (row.Settings.Screenshots.Count == 0)
+        if (shots.Count == 0)
         {
             ImGui.TextDisabled("No screenshots");
             return;
         }
 
         var height = MathF.Truncate(ImageHeight * ImGuiHelper.Scale);
-        foreach (var shot in row.Settings.Screenshots)
+        foreach (var shot in shots)
         {
-            var path = Path.Combine(row.Folder, shot.File.Replace('/', Path.DirectorySeparatorChar));
-            if (mods.Thumbnails.Get(path) is { } image)
+            if (mods.Thumbnails.Of(modFolder, shot.File) is { } image)
             {
                 var (uv0, uv1) = ScreenshotThumbnails.Uv;
                 ImGui.Image(image.Ref, new Vector2(MathF.Round(height * image.Size.X / MathF.Max(1, image.Size.Y)), height),
@@ -209,11 +218,14 @@ internal sealed class PreviewTab(EditorWindow window, ModsWindow mods)
     }
 
     /// <summary>The packages that an export with the saved choices of the Export dialog writes, for the Files part and
-    /// the install steps.</summary>
+    /// the install steps. Without saved choices, the export has each target and each form, as the Export dialog does at
+    /// its first open.</summary>
     internal static IReadOnlyList<ExportedPackage> Packages(ModManifest manifest, ExportChoices? choices)
     {
         var packages = new List<ExportedPackage>();
-        foreach (var target in ExportTarget.All.Where(t => manifest.Targets.Contains(t.Id) && t.Refusal(manifest) == null))
+        foreach (var target in ExportTarget.All.Where(t =>
+                     manifest.Targets.Contains(t.Id) && t.Refusal(manifest) == null &&
+                     (choices == null || choices.Targets.Contains(t.Id))))
         {
             if (!target.IsRetail)
             {

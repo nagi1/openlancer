@@ -39,8 +39,8 @@ internal static class Chip
 
     /// <summary>
     /// Draws the chips from left to right in the caption size. They wrap at the right edge of the content region. The
-    /// area of the chips is one item, so a tooltip of the caller can follow it. A chip with a tooltip shows it on
-    /// hover.
+    /// area of the chips is one item with the width of its widest row, so a table column that fits its content grows
+    /// to the chips, and a tooltip of the caller can follow the item. A chip with a tooltip shows it on hover.
     /// </summary>
     public static void Flow(IReadOnlyList<ChipItem> chips)
     {
@@ -88,11 +88,25 @@ internal static class Chip
             }
         }
 
-        ImGui.Dummy(new Vector2(Math.Max(1, available), Math.Max(1, rows) * height));
+        ImGui.Dummy(new Vector2(MathF.Max(1, Width(places, widths)), Math.Max(1, rows) * height));
         if (tooltip != null && ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
         {
             ImGui.SetTooltip(tooltip);
         }
+    }
+
+    /// <summary>The width of the widest row of the chips, in pixels.</summary>
+    /// <param name="places">The places of <see cref="Layout"/>.</param>
+    /// <param name="widths">The width of each chip, in pixels.</param>
+    internal static float Width(IReadOnlyList<(float X, int Row)> places, IReadOnlyList<float> widths)
+    {
+        var width = 0f;
+        for (var i = 0; i < places.Count; i++)
+        {
+            width = MathF.Max(width, places[i].X + widths[i]);
+        }
+
+        return width;
     }
 
     /// <summary>

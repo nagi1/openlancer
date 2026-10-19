@@ -368,6 +368,26 @@ public sealed class PublishDraftTests
         Assert.True(draft.IsChanged(PublishField.Changelog));
     }
 
+    /// <summary>Add entry adds the new entry at the top, because the changelog lists the newest version first. The
+    /// first new entry gets the version of the draft, and the next one gets no version.</summary>
+    [Fact]
+    public void AddEntryGoesToTheTop()
+    {
+        using var workspace = new PublishWorkspace();
+        var draft = PublishDraft.Open(workspace.Mod("m", version: "1.1.0"));
+        draft.Values = draft.Values with
+        {
+            Settings = draft.Values.Settings with { Changelog = [new ChangelogEntry("1.0.0", ["First release."])] },
+        };
+
+        draft.AddChangelogEntry();
+        draft.AddChangelogEntry();
+
+        Assert.Equal(["", "1.1.0", "1.0.0"], draft.Values.Settings.Changelog.Select(e => e.Version));
+        Assert.Equal([""], draft.Values.Settings.Changelog[1].Changes);
+        Assert.True(draft.IsChanged(PublishField.Changelog));
+    }
+
     /// <summary>Writes a PNG image outside the mod, and returns its path.</summary>
     private static string WriteImage(PublishWorkspace workspace, string name, byte mark = 0)
     {

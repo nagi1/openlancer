@@ -23,6 +23,21 @@ public sealed class ReorderableListTests
         Assert.Equal(["a", "b", "c"], list);
     }
 
+    /// <summary>A locked entry, for example the changelog entry of a published version, does not move or go. The
+    /// other entries still move (review of M11c Build 2).</summary>
+    [Fact]
+    public void ALockedEntryDoesNotMoveOrGo()
+    {
+        string[] list = ["a", "published", "c"];
+        static string? Locked(string entry) => entry == "published" ? "Version 1.0.0 is on Nexus." : null;
+
+        Assert.Equal(list, ReorderableList.Apply(list, ListEdit.Remove(1), () => "new", Locked));
+        Assert.Equal(list, ReorderableList.Apply(list, ListEdit.Move(1, 0), () => "new", Locked));
+        Assert.Equal(["a", "c"], ReorderableList.Apply(["a", "b", "c"], ListEdit.Remove(1), () => "new", Locked));
+        Assert.Equal(["c", "a", "published"], ReorderableList.Apply(list, ListEdit.Move(2, 0), () => "new", Locked));
+        Assert.Equal(["a", "published", "c", "new"], ReorderableList.Apply(list, ListEdit.Add, () => "new", Locked));
+    }
+
     [Fact]
     public void AnEditOutsideTheListChangesNothing()
     {

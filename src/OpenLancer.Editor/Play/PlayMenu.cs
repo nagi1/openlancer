@@ -196,7 +196,7 @@ internal sealed class PlayMenu(EditorWindow window)
         if (targets.Count == 0)
         {
             ImGui.MenuItem($"{EditorIcons.Rocket}   Play in the game", "Ctrl+F5", false, false);
-            Tooltip(GamePlay.NoTarget);
+            ItemTooltip.Show(GamePlay.NoTarget);
         }
 
         foreach (var target in targets)
@@ -207,8 +207,8 @@ internal sealed class PlayMenu(EditorWindow window)
                 games.Play(target);
             }
 
-            Tooltip(block ?? $"Save the active mod, install the mods of the profile into the play copy of " +
-                             $"{target.Root}, and start its game. Your game folder does not change.");
+            ItemTooltip.Show(block ?? $"Save the active mod, install the mods of the profile into the play copy of " +
+                                      $"{target.Root}, and start its game. Your game folder does not change.");
         }
 
         var servers = targets.Where(t => t.HasServer).ToList();
@@ -228,8 +228,9 @@ internal sealed class PlayMenu(EditorWindow window)
         }
         else
         {
-            Tooltip(servers.Count == 0 ? "Link a game folder with its FLServer.exe in File > Game link." : block ??
-                "Start FLServer of a play copy with the mods of the profile. Then join it from the game.");
+            ItemTooltip.Show(servers.Count == 0
+                ? "Link a game folder with its FLServer.exe in File > Game link."
+                : block ?? "Start FLServer of a play copy with the mods of the profile. Then join it from the game.");
         }
 
         if (ImGui.MenuItem($"{EditorIcons.SatelliteDish}   Join test server", "", false, games.JoinBlock == null))
@@ -237,26 +238,17 @@ internal sealed class PlayMenu(EditorWindow window)
             games.JoinServer();
         }
 
-        Tooltip(games.JoinBlock ?? "Start the game of the play copy of the test server. Join the server in its " +
-                                   "multiplayer menu.");
+        ItemTooltip.Show(games.JoinBlock ??
+                         "Start the game of the play copy of the test server. Join the server in its multiplayer menu.");
         if (ImGui.MenuItem($"{EditorIcons.Stop}   {(games.ServerForceStop ? "Force stop test server" : "Stop test server")}",
                 "", false, games.ServerRuns))
         {
             games.StopServer();
         }
 
-        Tooltip(games.ServerForceStop
+        ItemTooltip.Show(games.ServerForceStop
             ? "FLServer saves its characters, which can take up to 60 seconds. Force stop ends it at once."
             : "Close FLServer. It saves its characters first.");
-    }
-
-    /// <summary>The tooltip of the last item, also when it is disabled.</summary>
-    private static void Tooltip(string text)
-    {
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-        {
-            ImGui.SetTooltip(text);
-        }
     }
 
     /// <summary>The Play at base list: the bases of the open system first, then the other bases by system (section

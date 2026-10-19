@@ -77,6 +77,36 @@ public sealed class ModsWindowSettingsTests
         Assert.Equal(Mods("new"), settings.ModsWindow.SelectedFolder);
     }
 
+    /// <summary>The plan of the Rename dialog lists the changes of the settings of the editor (section 12.3 of the M11c
+    /// design), with the workspace of the rename.</summary>
+    [Fact]
+    public void ThePlanListsTheChangesOfTheSettings()
+    {
+        var settings = EditorSettings.Transient();
+        settings.SetExport(Mods("old"), new ExportChoices([], true, true, PublishHistory.FolderOf(Workspace, "old")));
+        settings.SetActiveMod(Profile("a"), "old");
+        settings.SetActiveMod(Profile("b"), "other");
+        var plan = new RenamePlan("old", "new", Mods("old"), Mods("new"), [Profile("a"), Profile("b")], null, null, [],
+            null);
+        var picked = EditorSettings.Transient();
+        picked.SetExport(Mods("old"), new ExportChoices([], true, true, Picked));
+
+        var lines = settings.RenameChanges(plan, Workspace);
+
+        Assert.Equal(
+        [
+            "The editor keeps the choices of the Export dialog for the new mod folder.",
+            $"The output folder of the Export dialog changes to {PublishHistory.FolderOf(Workspace, "new")}.",
+            $"The active mod of the profile {Profile("a")} changes to new.",
+        ], lines);
+        Assert.Equal(["The editor keeps the choices of the Export dialog for the new mod folder."],
+            picked.RenameChanges(plan, Workspace));
+        Assert.Empty(EditorSettings.Transient().RenameChanges(plan, Workspace));
+        // The list does not change the settings.
+        Assert.NotNull(settings.ExportOf(Mods("old")));
+        Assert.Equal("old", settings.ActiveMods[Profile("a")]);
+    }
+
     /// <summary>An output folder that the user picked stays after a rename.</summary>
     [Fact]
     public void RenameKeepsAnOutputFolderThatTheUserPicked()

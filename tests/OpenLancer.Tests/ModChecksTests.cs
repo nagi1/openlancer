@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Mods;
@@ -115,6 +116,51 @@ public sealed class ModChecksTests
         Assert.Null(checks.ResultOf(Folder("b")));
         lock (started)
             Assert.Equal(["a", "b", "d"], started);
+    }
+
+    /// <summary>A cancel drops the result of a running check, but its worker still writes the publish history. So a
+    /// rename of the mod waits until the worker ends (review of M11c Build 2).</summary>
+    [Fact]
+    public void ACancelledCheckStillMakesTheModBusy()
+    {
+        using var gate = new SemaphoreSlim(0);
+        var checks = new ModChecks(request =>
+        {
+            gate.Wait();
+            return new ModCheckResult(request.Folder, DateTime.UtcNow, "c", "p", [], [], [], []);
+        });
+
+        checks.Request(Request("a"));
+        checks.Request(Request("b"));
+        Assert.True(checks.IsBusyWith(Folder("b")));
+        checks.Update();
+        checks.CancelAll();
+
+        Assert.Null(checks.Running);
+        Assert.False(checks.IsChecking(Folder("a")));
+        Assert.True(checks.IsBusyWith(Folder("a")));
+        Assert.False(checks.IsBusyWith(Folder("b")));
+        gate.Release();
+        Run(checks, () => !checks.IsBusyWith(Folder("a")));
+        Assert.Null(checks.ResultOf(Folder("a")));
+    }
+
+    /// <summary>A check of a mod with a save that is not complete gives the text of a check (section 16 of the M11c
+    /// design), and the history does not change.</summary>
+    [Fact]
+    public void ACheckOfAPendingSaveGivesTheTextOfACheck()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("m");
+        PublishWorkspace.Write(Path.Combine(mod, SaveTransaction.FolderName, "journal"), "olsave journal 1\n");
+
+        var result = ModChecks.Run(new ModCheckRequest(mod, workspace.Root, [], []),
+            TestWorkspace.FakeDllWriter.Instance, ThnScripts.Evaluator);
+
+        Assert.Equal(PublishMessages.CheckPendingSave, Assert.Single(result.Problems).Message);
+        Assert.Equal("The last save of this mod is not complete. Open the profile once. Then check the mod.",
+            PublishMessages.CheckPendingSave);
+        Assert.False(Directory.Exists(workspace.Exports("m")));
     }
 
     private static string Folder(string name) => Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ol-checks", name));

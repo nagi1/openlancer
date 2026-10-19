@@ -183,11 +183,7 @@ internal sealed partial class PropertyGrid
         ThnMenu(field);
         if (field.Changed)
         {
-            var height = ImGui.GetFrameHeight();
-            var x = labelMin.X - MathF.Truncate(CellPadding.X * ImGuiHelper.Scale);
-            ImGui.GetWindowDrawList().AddRectFilled(new Vector2(x, labelMin.Y),
-                new Vector2(x + MathF.Truncate(OriginBarWidth * ImGuiHelper.Scale), labelMin.Y + height),
-                ImGui.GetColorU32(EditorTheme.Accent));
+            ChangedBar(labelMin);
         }
 
         if (field.ReadOnly != null)

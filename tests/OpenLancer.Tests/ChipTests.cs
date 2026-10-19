@@ -26,6 +26,19 @@ public sealed class ChipTests
         Assert.Equal([(0f, 0), (0f, 1), (0f, 2)], places);
     }
 
+    /// <summary>The item of the chips has the width of the widest row, not the width of the space. So a table column
+    /// that fits its content grows to a chip (review of M11c Build 2).</summary>
+    [Fact]
+    public void TheWidthIsTheWidestRow()
+    {
+        float[] widths = [40, 40, 90];
+        var places = Chip.Layout(widths, available: 100, gap: 4);
+
+        Assert.Equal(90, Chip.Width(places, widths));
+        Assert.Equal(60, Chip.Width(Chip.Layout([60], available: 10, gap: 4), [60]));
+        Assert.Equal(0, Chip.Width([], []));
+    }
+
     /// <summary>Each color of the catalog has its own look. The mark "published" is an outline, and violet stays for
     /// prefab overrides.</summary>
     [Fact]

@@ -257,7 +257,7 @@ In the Mods window, pick **Play > Play this mod alone in HD Edition 0.7.1**, or 
 
 ### Test plays
 
-A game of a play copy that runs 60 s or more records a test play. The publish history of each mod that the play installed gets the record. The play counts only when the game ends without Force stop and without a crash code. The test server records nothing, but a game that joins it records a play. The publish checklist of the Mods window counts a test play of the current content. When you test the mod outside OpenLancer, click **Mark as tested** in the checklist.
+A game of a play copy that runs 60 s or more records a test play. The publish history of each mod that the play installed gets the record, with the content of the mod at the start of the install. The play counts only when the game ends without Force stop and without a crash code. The test server records nothing, but a game that joins it records a play. The publish checklist of the Mods window counts a test play of the current content. When you test the mod outside OpenLancer, click **Mark as tested** in the checklist.
 
 ### The status of the game of the play copy
 

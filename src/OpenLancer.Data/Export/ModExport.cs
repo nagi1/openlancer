@@ -540,6 +540,13 @@ public static class ModExport
         };
     }
 
+    /// <summary>The name of a screenshot in <c>screenshots</c> of the output folder: <c>01-&lt;name&gt;.&lt;ext&gt;</c>
+    /// in list order (decision D567).</summary>
+    /// <param name="index">The place of the image in the list of the images that passed the screenshot rule, from
+    /// 0.</param>
+    /// <param name="file">The path of the image in <c>publish.json</c>.</param>
+    public static string ScreenshotName(int index, string file) => $"{index + 1:00}-{Path.GetFileName(file)}";
+
     /// <summary>
     /// Copies the screenshots that passed the screenshot rule into <c>screenshots</c> of the output folder, with the
     /// names <c>01-&lt;name&gt;.&lt;ext&gt;</c> in list order (decision D567). The export deletes no file there. The
@@ -553,7 +560,7 @@ public static class ModExport
         for (var i = 0; i < prepared.Screenshots.Count; i++)
         {
             var screenshot = prepared.Screenshots[i];
-            var name = $"{i + 1:00}-{Path.GetFileName(screenshot.File)}";
+            var name = ScreenshotName(i, screenshot.File);
             Directory.CreateDirectory(folder);
             var source = Path.Combine(prepared.Request.Mod.Folder, screenshot.File.Replace('/', Path.DirectorySeparatorChar));
             AtomicFile.WriteAllBytes(Path.Combine(folder, name), File.ReadAllBytes(source));

@@ -3,7 +3,6 @@ using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
-using OpenLancer.Data.Export;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Ui;
 
@@ -27,14 +26,17 @@ internal sealed class ChecklistPanel(ModsWindow mods)
     private string? openFolder;
     private bool showAll;
 
-    public void Draw(ModRow row)
+    /// <param name="maxStepsHeight">The largest height of the steps and the recommended items, in pixels. More lines
+    /// scroll, so that the tabs below the panel keep their room.</param>
+    public void Draw(ModRow row, float maxStepsHeight)
     {
         if (row.Manifest is not { } manifest)
         {
             return;
         }
 
-        var checklist = PublishChecklist.Of(Input(row, manifest));
+        var checklist =
+            PublishChecklist.Of(mods.ChecklistInputOf(manifest, row.Settings, row.History, row.Content, row.Page));
         if (openFolder != row.Folder)
         {
             openFolder = row.Folder;
@@ -60,28 +62,24 @@ internal sealed class ChecklistPanel(ModsWindow mods)
             new Vector2(-1, MathF.Truncate(4 * ImGuiHelper.Scale)), "");
         if (!checklist.AllComplete || showAll)
         {
-            foreach (var step in checklist.Steps)
+            ImGui.SetNextWindowSizeConstraints(Vector2.Zero, new Vector2(float.MaxValue, MathF.Max(1, maxStepsHeight)));
+            if (ImGui.BeginChild("##steps", Vector2.Zero, ImGuiChildFlags.AutoResizeY))
             {
-                Step(row, step);
+                foreach (var step in checklist.Steps)
+                {
+                    Step(row, step);
+                }
+
+                foreach (var item in checklist.Recommended)
+                {
+                    Recommended(row, item);
+                }
             }
 
-            foreach (var item in checklist.Recommended)
-            {
-                Recommended(row, item);
-            }
+            ImGui.EndChild();
         }
 
         ImGui.PopID();
-    }
-
-    /// <summary>What the checklist reads: the manifest, the settings, the history and the fingerprints of the row, and
-    /// the linked games.</summary>
-    private ChecklistInput Input(ModRow row, Data.Mods.ModManifest manifest)
-    {
-        var reports = mods.LinkedReports;
-        return new ChecklistInput(manifest, row.Settings, row.History, row.Content, row.Page,
-            target => Export.ExportDialog.BaseOf(target, reports) is { } report ? TargetCheck.BaseKey(report) : null,
-            [.. mods.PlayGames(manifest).Select(g => ExportTarget.Find(g.Game.Target ?? "")).OfType<ExportTarget>().Distinct()]);
     }
 
     private void Step(ModRow row, ChecklistStep step)
@@ -198,7 +196,7 @@ internal sealed class ChecklistPanel(ModsWindow mods)
                 mods.MarkAsTested(row);
                 break;
             case ChecklistAction.Export:
-                mods.Export(row);
+                mods.Export(row.Folder);
                 break;
             case ChecklistAction.AddImages:
                 mods.AddImages();

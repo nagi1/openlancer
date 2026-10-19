@@ -50,7 +50,11 @@ public static class PublishMessages
     public const string RenamePendingSave =
         "The last save of this mod is not complete. Open the profile once. Then rename the mod.";
 
-    public const string RenameBusy = "Stop the game, or wait until the export ends. Then rename the mod.";
+    public const string CheckPendingSave =
+        "The last save of this mod is not complete. Open the profile once. Then check the mod.";
+
+    public const string RenameBusy =
+        "Stop the game, or wait until the export or the check of the mod ends. Then rename the mod.";
 
     public const string RenameRepoMod =
         "This mod is part of the OpenLancer repo. OpenLancer does not rename tracked files.";

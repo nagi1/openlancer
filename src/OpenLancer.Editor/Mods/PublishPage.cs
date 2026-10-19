@@ -43,14 +43,20 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
         "An empty line: a new paragraph\n\n" +
         "The export writes BBCode for Nexus, plain text for the README and ASCII for FLMM.";
 
+    private const string TierInfo =
+        "Tier 1: a data mod for the retail game and OpenLancer. Tier 2: a mod that only OpenLancer runs.";
+
     // Sizes in unscaled points.
-    private const float BarWidth = 3;
     private const float ThumbnailHeight = 54;
     private const float DescriptionLines = 10;
 
     private PublishDraft draft = null!;
     private IReadOnlyList<FieldProblem> problems = [];
     private PublishField? focus;
+
+    // True after a Go to of the changelog: the first change of the entry of the current version gets the keyboard
+    // (section 8.3 of the M11c design).
+    private bool focusChange;
     private float labelWidth;
 
     /// <summary>Goes to a field at the next draw: its section opens, the page scrolls to it, and it gets the
@@ -67,6 +73,9 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             return;
         }
 
+        // The ids of the fields and of the changelog entries include the mod folder, so that another mod does not get
+        // their state, for example an open entry.
+        ImGui.PushID(draft.ModFolder);
         Notes();
         NameAndVersion(row);
         Targets();
@@ -74,6 +83,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
         Screenshots();
         CreditsAndPermissions();
         NexusPage();
+        ImGui.PopID();
         ImGui.EndChild();
         Buttons(row);
     }
@@ -127,7 +137,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             PropertyGrid.Field(draft.ModId,
                 MathF.Max(1, ImGui.GetContentRegionAvail().X - renameWidth - ImGui.GetStyle().ItemSpacing.X));
             ImGui.SameLine();
-            var block = mods.WriteBlock(row);
+            var block = mods.RenameBlock(row);
             ImGui.BeginDisabled(block != null);
             if (ImGui.Button("Rename..."))
             {
@@ -135,7 +145,8 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             }
 
             ImGui.EndDisabled();
-            Tooltip(block ?? "Give the mod a new id and a new folder name. Do this only before the first release.");
+            ItemTooltip.Show(block ??
+                             "Give the mod a new id and a new folder name. Do this only before the first release.");
         });
         Row("Version", PublishMessages.VersionRule, PublishField.Version, () => Version(row, manifestLock));
         Row("Authors", "The names of the authors. The README, the FLMM script and the Nexus page show them.",
@@ -189,7 +200,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
                 focus = PublishField.Changelog;
             }
 
-            Tooltip(next == null ? PublishMessages.VersionRule : tooltip);
+            ItemTooltip.Show(next == null ? PublishMessages.VersionRule : tooltip);
         }
 
         ImGui.EndPopup();
@@ -227,7 +238,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
                 }
 
                 ImGui.EndDisabled();
-                Tooltip(block ?? tierBlock ?? target.Game);
+                ItemTooltip.Show(block ?? tierBlock ?? target.Game);
             }
 
             if (formatOne)
@@ -239,11 +250,19 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
                 }
 
                 ImGui.EndDisabled();
-                Tooltip(manifestLock ?? PublishMessages.FormatVersion2Fix);
+                ItemTooltip.Show(manifestLock ?? PublishMessages.FormatVersion2Fix);
             }
         });
-        Row("Tier", "Tier 1: a data mod for the retail game and OpenLancer. Tier 2: a mod that only OpenLancer runs.", null,
-            () => PropertyGrid.Field($"Tier {draft.Tier}"));
+        // The tier is read-only, with an info icon (section 8.2 of the M11c design).
+        Row("Tier", TierInfo, null, () =>
+        {
+            var icon = EditorIcons.InfoCircle.ToString();
+            var iconWidth = ImGui.CalcTextSize(icon).X + ImGui.GetStyle().ItemSpacing.X;
+            PropertyGrid.Field($"Tier {draft.Tier}", MathF.Max(1, ImGui.GetContentRegionAvail().X - iconWidth));
+            ImGui.SameLine();
+            ImGui.TextDisabled(icon);
+            ImGui.SetItemTooltip(TierInfo);
+        });
         EndSection();
     }
 
@@ -303,24 +322,35 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
         EndSection();
     }
 
-    /// <summary>The changelog: one entry for each version, with a list of changes (decision D576). The entry of the
-    /// current version is open. The entry of a version with the mark "published" is read-only.</summary>
+    /// <summary>The changelog: one entry for each version, newest first, with a list of changes (decision D576). The
+    /// entry of the current version is open. The entry of a version with the mark "published" is read-only: its fields,
+    /// its drag handle, its move buttons and Remove are disabled. Add entry adds the new entry at the top.</summary>
     private void Changelog(ModRow row, bool locked)
     {
         var current = draft.Values.Version;
+        var focusCurrent = focusChange;
+        focusChange = false;
         var changed = ReorderableList.Draw("changelog", draft.Values.Settings.Changelog, (i, entry, width) =>
         {
-            var published = row.History.IsPublished(entry.Version) && entry.Version.Length > 0;
+            var published = PublishedText(row, entry);
             var isCurrent = ModVersion.TextComparer.Equals(entry.Version, current);
-            ImGui.SetNextItemOpen(isCurrent, ImGuiCond.Once);
+            var goTo = focusCurrent && isCurrent;
+            ImGui.SetNextItemOpen(isCurrent, goTo ? ImGuiCond.Always : ImGuiCond.Once);
             var title = entry.Version.Length > 0 ? $"Version {entry.Version}" : "New entry";
-            if (!ImGui.TreeNodeEx($"{title}###entry", ImGuiTreeNodeFlags.SpanAvailWidth))
+            var open = ImGui.TreeNodeEx(published != null ? $"{EditorIcons.Lock}  {title}###entry" : $"{title}###entry",
+                ImGuiTreeNodeFlags.SpanAvailWidth);
+            if (published != null)
+            {
+                ImGui.SetItemTooltip(published);
+            }
+
+            if (!open)
             {
                 RowProblems(PublishField.Changelog, i);
                 return entry;
             }
 
-            ImGui.BeginDisabled(published);
+            ImGui.BeginDisabled(published != null);
             var version = entry.Version;
             ImGui.SetNextItemWidth(width - ImGui.GetTreeNodeToLabelSpacing());
             if (ImGui.InputTextWithHint("##version", "Version", ref version, ModVersion.MaxSafeLength + 1))
@@ -329,29 +359,39 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             }
 
             ImGui.SetItemTooltip("The version of these changes, in the form 1.2.3.");
-            if (TextList("changes", entry.Changes, null, "Add change", multiLine: true) is { } changes)
+            if (TextList("changes", entry.Changes, null, "Add change", multiLine: true, focusFirst: goTo) is
+                { } changes)
             {
                 entry = entry with { Changes = changes };
             }
 
             ImGui.EndDisabled();
-            if (published && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            {
-                ImGui.SetTooltip($"Version {entry.Version} is on Nexus. Change the text on Nexus, or add the change to " +
-                                 "the next version.");
-            }
-
             RowProblems(PublishField.Changelog, i);
             ImGui.TreePop();
             return entry;
-        }, () => new ChangelogEntry(draft.Values.Settings.Changelog.Any(e => ModVersion.TextComparer.Equals(e.Version, current))
-            ? ""
-            : current, [""]), "Add entry", locked ? draft.SettingsReadOnly : null);
+        }, null, null, locked ? draft.SettingsReadOnly : null, entry => PublishedText(row, entry));
         if (changed != null)
         {
             Set(s => s with { Changelog = changed });
         }
+
+        ImGui.BeginDisabled(locked);
+        if (ImGui.Button($"{EditorIcons.Plus}  Add entry"))
+        {
+            draft.AddChangelogEntry();
+        }
+
+        ImGui.EndDisabled();
+        ItemTooltip.Show(draft.SettingsReadOnly ??
+                         "Add an entry at the top. The changelog lists the newest version first.");
     }
+
+    /// <summary>The reason why a changelog entry is read-only, or null: its version has the mark "published" (section
+    /// 10.4 of the M11c design).</summary>
+    private static string? PublishedText(ModRow row, ChangelogEntry entry) =>
+        entry.Version.Length > 0 && row.History.IsPublished(entry.Version)
+            ? $"Version {entry.Version} is on Nexus. Change the text on Nexus, or add the change to the next version."
+            : null;
 
     /// <summary>The screenshots: a thumbnail, the file name and a caption for each image (decisions D586 and
     /// D592).</summary>
@@ -371,10 +411,12 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             var imports = draft.Imports;
             var changed = ReorderableList.Draw("screenshots", draft.Values.Settings.Screenshots, (i, shot, width) =>
             {
-                var path = imports.TryGetValue(shot.File, out var source)
-                    ? source
-                    : Path.Combine(draft.ModFolder, shot.File.Replace('/', Path.DirectorySeparatorChar));
-                Thumbnail(path);
+                // An image that Apply copies comes from the file dialog. An image of the list must pass the path rule,
+                // so that a hand-written publish.json cannot show a file outside the mod (decision D586).
+                var source = imports.GetValueOrDefault(shot.File);
+                Thumbnail(source != null
+                    ? mods.Thumbnails.Get(source, null)
+                    : mods.Thumbnails.Of(draft.ModFolder, shot.File));
                 ImGui.SameLine();
                 ImGui.BeginGroup();
                 var fieldWidth = MathF.Max(1, ImGui.GetContentRegionAvail().X);
@@ -397,7 +439,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
                 Set(s => s with { Screenshots = changed });
             }
 
-            var repo = RepoCheck.RepoRoot(draft.ModFolder) != null;
+            var repo = mods.IsRepoMod(draft.ModFolder);
             ImGui.BeginDisabled(locked != null || repo);
             if (ImGui.Button($"{EditorIcons.Images}  Add images..."))
             {
@@ -405,16 +447,19 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             }
 
             ImGui.EndDisabled();
-            Tooltip(locked ?? (repo ? PublishMessages.ImageInRepoMod : "Pick PNG or JPEG images. OpenLancer checks each image."));
+            ItemTooltip.Show(locked ?? (repo
+                ? PublishMessages.ImageInRepoMod
+                : "Pick PNG or JPEG images. OpenLancer checks each image."));
         });
         EndSection();
     }
 
-    /// <summary>A thumbnail of an image in the height of a row, or the image glyph while it decodes.</summary>
-    private void Thumbnail(string path)
+    /// <summary>A thumbnail of an image in the height of a row, or the image glyph while it decodes or when it does
+    /// not pass the rule.</summary>
+    private static void Thumbnail((ImTextureRef Ref, Vector2 Size)? thumbnail)
     {
         var height = MathF.Truncate(ThumbnailHeight * ImGuiHelper.Scale);
-        if (mods.Thumbnails.Get(path) is { } image)
+        if (thumbnail is { } image)
         {
             var width = MathF.Round(height * image.Size.X / MathF.Max(1, image.Size.Y));
             var (uv0, uv1) = ScreenshotThumbnails.Uv;
@@ -484,7 +529,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
             }
 
             ImGui.EndDisabled();
-            Tooltip(locked ?? "Replace the text with a common text.");
+            ItemTooltip.Show(locked ?? "Replace the text with a common text.");
             if (ImGui.BeginPopup("##fill"))
             {
                 foreach (var (name, text) in PermissionTexts)
@@ -594,8 +639,8 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
     private void Buttons(ModRow row)
     {
         var errors = problems.Where(p => p.Severity == DiagnosticSeverity.Error).ToList();
-        var repoBlock = RepoCheck.RepoRoot(draft.ModFolder) != null && !mods.RepoAllowed(draft.ModFolder);
-        var block = draft.HasChanges ? mods.WriteBlock(row) : null;
+        var repoBlock = mods.IsRepoMod(draft.ModFolder) && !mods.RepoAllowed(draft.ModFolder);
+        var block = draft.HasChanges ? mods.WriteBlock(row.Folder) : null;
         var allow = "Allow edits of this repo mod";
         var applyLabel = repoBlock ? allow : "Apply";
         var width = CardLayout.ButtonWidth("Revert") + CardLayout.ButtonWidth(applyLabel) + ImGui.GetStyle().ItemSpacing.X;
@@ -607,7 +652,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
         }
 
         ImGui.EndDisabled();
-        Tooltip("Drop the unapplied changes.");
+        ItemTooltip.Show("Drop the unapplied changes.");
         ImGui.SameLine();
         if (repoBlock)
         {
@@ -630,7 +675,7 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
 
         EditorTheme.PopPrimaryButtonColors();
         ImGui.EndDisabled();
-        Tooltip(block ?? (errors.Count > 0
+        ItemTooltip.Show(block ?? (errors.Count > 0
             ? $"Correct the errors first. {errors[0].Message}"
             : "Write the publish settings into mod.json and publish.json."));
     }
@@ -638,10 +683,17 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
     /// <summary>A list of texts, one row for each text. Returns the new list after a change, else null.</summary>
     /// <param name="field">The field of the problems of the rows, or null.</param>
     /// <param name="multiLine">True for texts that keep their line ends, for example the changes of a version.</param>
+    /// <param name="focusFirst">True to give the keyboard to the first text, for example the first change of a new
+    /// version.</param>
     private IReadOnlyList<string>? TextList(string id, IReadOnlyList<string> items, PublishField? field, string add,
-        bool multiLine = false) =>
+        bool multiLine = false, bool focusFirst = false) =>
         ReorderableList.Draw(id, items, (i, text, width) =>
         {
+            if (focusFirst && i == 0)
+            {
+                ImGui.SetKeyboardFocusHere();
+            }
+
             ImGui.SetNextItemWidth(width);
             if (multiLine)
             {
@@ -729,22 +781,28 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
         var changed = field is { } f && draft.IsChanged(f);
         if (changed)
         {
-            var x = min.X - MathF.Truncate(4 * ImGuiHelper.Scale);
-            ImGui.GetWindowDrawList().AddRectFilled(new Vector2(x, min.Y),
-                new Vector2(x + MathF.Truncate(BarWidth * ImGuiHelper.Scale), min.Y + ImGui.GetFrameHeight()),
-                ImGui.GetColorU32(EditorTheme.Accent));
+            PropertyGrid.ChangedBar(min);
         }
 
         ImGui.PushStyleColor(ImGuiCol.Text, changed ? EditorTheme.AccentText : EditorTheme.Label);
         ImGui.Text(label);
         ImGui.PopStyleColor();
-        ImGui.SetItemTooltip(changed ? $"{tooltip}\n\nThis field has a change that is not applied. Click Apply." : tooltip);
+        ImGui.SetItemTooltip(changed ? $"{tooltip}\n\nYou did not apply this change. Click Apply." : tooltip);
         ImGui.TableNextColumn();
         if (field != null && focus == field)
         {
             focus = null;
             ImGui.SetScrollHereY(0.2f);
-            ImGui.SetKeyboardFocusHere();
+            // The changelog gives the keyboard to the first change of the current version, not to the first drag
+            // handle of the list.
+            if (field == PublishField.Changelog)
+            {
+                focusChange = true;
+            }
+            else
+            {
+                ImGui.SetKeyboardFocusHere();
+            }
         }
 
         value();
@@ -775,14 +833,5 @@ internal sealed class PublishPage(EditorWindow window, ModsWindow mods)
         ImGui.TextColored(error ? EditorTheme.Error : EditorTheme.Warning,
             $"{(error ? EditorIcons.TimesCircle : EditorIcons.ExclamationTriangle)}  {problem.Message}");
         ImGui.PopTextWrapPos();
-    }
-
-    /// <summary>The tooltip of the last item, also when it is disabled.</summary>
-    private static void Tooltip(string text)
-    {
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled | ImGuiHoveredFlags.ForTooltip))
-        {
-            ImGui.SetTooltip(text);
-        }
     }
 }

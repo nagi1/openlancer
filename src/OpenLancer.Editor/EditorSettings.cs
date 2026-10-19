@@ -422,12 +422,10 @@ internal sealed class EditorSettings
     /// <param name="workspace">The workspace of the rename, which holds the <c>exports</c> folder.</param>
     public void RenameMod(RenamePlan plan, string workspace)
     {
-        if (Exports.Remove(plan.OldFolder, out var choices))
+        if (RenamedExport(plan, workspace) is { } choices)
         {
-            var folder = choices.Folder.Length > 0 && GameFolders.Same(choices.Folder, PublishHistory.FolderOf(workspace, plan.OldId))
-                ? PublishHistory.FolderOf(workspace, plan.NewId)
-                : choices.Folder;
-            Exports[plan.NewFolder] = choices with { Folder = folder };
+            Exports.Remove(plan.OldFolder);
+            Exports[plan.NewFolder] = choices;
         }
 
         if (ModsWindow.SelectedFolder.Length > 0 && GameFolders.Same(ModsWindow.SelectedFolder, plan.OldFolder))
@@ -435,14 +433,50 @@ internal sealed class EditorSettings
             ModsWindow.SelectedFolder = plan.NewFolder;
         }
 
-        foreach (var profile in plan.Profiles)
+        foreach (var profile in RenamedActiveMods(plan))
         {
-            if (ActiveMods.TryGetValue(profile, out var id) && id == plan.OldId)
-            {
-                ActiveMods[profile] = plan.NewId;
-            }
+            ActiveMods[profile] = plan.NewId;
         }
     }
+
+    /// <summary>The changes of <see cref="RenameMod"/> as lines of the plan of the Rename dialog (section 12.3 of the
+    /// M11c design).</summary>
+    public IReadOnlyList<string> RenameChanges(RenamePlan plan, string workspace)
+    {
+        var lines = new List<string>();
+        if (RenamedExport(plan, workspace) is { } choices)
+        {
+            lines.Add("The editor keeps the choices of the Export dialog for the new mod folder.");
+            if (choices.Folder != Exports[plan.OldFolder].Folder)
+            {
+                lines.Add($"The output folder of the Export dialog changes to {choices.Folder}.");
+            }
+        }
+
+        lines.AddRange(RenamedActiveMods(plan)
+            .Select(p => $"The active mod of the profile {p} changes to {plan.NewId}."));
+        return lines;
+    }
+
+    /// <summary>The saved choices of the Export dialog after a rename, or null when the mod has none. A saved output
+    /// folder that is the old default folder <c>exports\&lt;old id&gt;</c> becomes the new default folder.</summary>
+    private ExportChoices? RenamedExport(RenamePlan plan, string workspace)
+    {
+        if (!Exports.TryGetValue(plan.OldFolder, out var choices))
+        {
+            return null;
+        }
+
+        var oldDefault = PublishHistory.FolderOf(workspace, plan.OldId);
+        var folder = choices.Folder.Length > 0 && GameFolders.Same(choices.Folder, oldDefault)
+            ? PublishHistory.FolderOf(workspace, plan.NewId)
+            : choices.Folder;
+        return choices with { Folder = folder };
+    }
+
+    /// <summary>The profiles of a rename whose saved active mod is the old id.</summary>
+    private IEnumerable<string> RenamedActiveMods(RenamePlan plan) =>
+        plan.Profiles.Where(p => ActiveMods.TryGetValue(p, out var id) && id == plan.OldId).ToList();
 
     /// <summary>Stores the ship package of Play for a profile. Null sets the default package again.</summary>
     public void SetPlayPackage(string profilePath, string? package)

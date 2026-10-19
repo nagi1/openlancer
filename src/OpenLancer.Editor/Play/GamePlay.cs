@@ -660,6 +660,13 @@ internal sealed class GamePlay : IDisposable
                 return new Prepared(folder) { Refusal = refusal };
             }
 
+            // The fingerprints of the install, for the test plays. They come before the merge, so that a change of a
+            // file during the merge gives the fingerprint of the old content. The test play then does not count for
+            // the new content, which the game can miss.
+            var fingerprints = new ModFingerprint();
+            installed = new Installed(
+                [.. profile.Mods.Select(m => PlayedMod.Of(m, profilePath!, fingerprints)).OfType<PlayedMod>()],
+                Alone: profile.Mods.Count == 1);
             var build = PlayBuild.Run(request.Target.Game, profile.Mods, strings, thn);
             problems.AddRange(build.Problems);
             if (build.HasErrors)
@@ -668,11 +675,6 @@ internal sealed class GamePlay : IDisposable
             }
 
             files = build.Files;
-            // The fingerprints of the install, for the test plays.
-            var fingerprints = new ModFingerprint();
-            installed = new Installed(
-                [.. profile.Mods.Select(m => PlayedMod.Of(m, profilePath!, fingerprints)).OfType<PlayedMod>()],
-                Alone: profile.Mods.Count == 1);
         }
 
         var source = request.Target.Game.Base!;

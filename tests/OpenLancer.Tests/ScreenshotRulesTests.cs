@@ -112,6 +112,57 @@ public sealed class ScreenshotRulesTests
         Assert.Null(ScreenshotRules.CheckImport(edge, []));
     }
 
+    /// <summary>The thumbnails of the Mods window open only an entry that passes the path rule (review of M11c Build 2).
+    /// A path of another computer or a path out of the mod folder gives no file.</summary>
+    [Theory]
+    [InlineData("//host/share/x.png")]
+    [InlineData(@"\\host\share\x.png")]
+    [InlineData("publish/screenshots/../../../Games/x.png")]
+    [InlineData(@"C:\x.png")]
+    [InlineData("publish/x.png")]
+    public void PathInGivesNoPathOutsideTheMod(string file)
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("m");
+
+        Assert.Null(ScreenshotRules.PathIn(mod, file));
+    }
+
+    [Fact]
+    public void PathInGivesThePathOfAnEntryInTheMod()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("m");
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(mod, "publish", "screenshots", "a.png")),
+            ScreenshotRules.PathIn(mod, "publish/screenshots/a.png"));
+    }
+
+    /// <summary>A thumbnail reads only an image whose real path is in the mod folder, with 8,192 pixels or fewer on
+    /// each side. An image of the file dialog has no mod folder.</summary>
+    [Fact]
+    public void ThumbnailBytesFollowTheRules()
+    {
+        using var workspace = new PublishWorkspace();
+        var mod = workspace.Mod("m");
+        var shot = Path.Combine(mod, PublishWorkspace.Screenshot(mod, "a.png"));
+        var large = Path.Combine(mod, "publish", "screenshots", "large.png");
+        PublishWorkspace.WriteBytes(large, PublishWorkspace.Png(ScreenshotRules.MaxSide + 1, 10));
+        var text = Path.Combine(mod, "publish", "screenshots", "text.png");
+        PublishWorkspace.Write(text, "not an image");
+        var outside = Path.Combine(workspace.Root, "outside");
+        PublishWorkspace.WriteBytes(Path.Combine(outside, "b.png"), PublishWorkspace.Png(10, 10));
+        PublishWorkspace.Junction(Path.Combine(mod, "publish", "screenshots", "linked"), outside);
+        var linked = Path.Combine(mod, "publish", "screenshots", "linked", "b.png");
+
+        Assert.Equal(File.ReadAllBytes(shot), ScreenshotRules.ThumbnailBytes(shot, mod));
+        Assert.Null(ScreenshotRules.ThumbnailBytes(large, mod));
+        Assert.Null(ScreenshotRules.ThumbnailBytes(text, mod));
+        Assert.Null(ScreenshotRules.ThumbnailBytes(linked, mod));
+        Assert.Null(ScreenshotRules.ThumbnailBytes(Path.Combine(mod, "missing.png"), mod));
+        Assert.NotNull(ScreenshotRules.ThumbnailBytes(Path.Combine(outside, "b.png"), null));
+    }
+
     [Theory]
     [InlineData(int.MinValue + 1, 100)]
     [InlineData(100, -1)]

@@ -169,6 +169,22 @@ public sealed class PublishDraft
         Values = Values with { Version = version, Settings = settings };
     }
 
+    /// <summary>
+    /// Adds a changelog entry with one empty change at the top, because the changelog lists the newest version first
+    /// (decision D576). The entry gets the version of the draft when no entry has it, else an empty version.
+    /// </summary>
+    public void AddChangelogEntry()
+    {
+        var settings = Values.Settings;
+        var version = settings.Changelog.Any(e => ModVersion.TextComparer.Equals(e.Version, Values.Version))
+            ? ""
+            : Values.Version;
+        Values = Values with
+        {
+            Settings = settings with { Changelog = [new ChangelogEntry(version, [""]), .. settings.Changelog] },
+        };
+    }
+
     /// <summary>Removes a target from the draft (the Fix "Remove the target" of the checklist).</summary>
     public void RemoveTarget(string target) =>
         Values = Values with { Targets = [.. Values.Targets.Where(t => t != target)] };

@@ -449,8 +449,8 @@ public static class PackageTexts
         switch (file.Kind)
         {
             case TargetFileKind.TextDll:
-                yield return $"Text: {Count(files.StringIds.Strings.Count, "string")} and " +
-                             $"{Count(files.StringIds.Infocards.Count, "infocard")} in {file.Path}.";
+                yield return $"Text: {Plural.Count(files.StringIds.Strings.Count, "string")} and " +
+                             $"{Plural.Count(files.StringIds.Infocards.Count, "infocard")} in {file.Path}.";
                 yield break;
             case TargetFileKind.Cutscene:
                 yield return Cutscene(file);
@@ -551,9 +551,6 @@ public static class PackageTexts
     }
 
     private static string Values(Entry entry) => string.Join(", ", entry.Select(RetailText.Of));
-
-    /// <summary>A number and a noun, for example "1 string" or "2 strings".</summary>
-    private static string Count(int number, string noun) => number == 1 ? $"1 {noun}" : $"{number} {noun}s";
 
     private static string Ordinal(int number) => (number % 100) switch
     {
