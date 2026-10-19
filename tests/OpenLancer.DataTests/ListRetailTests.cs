@@ -7,6 +7,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.DataTests;

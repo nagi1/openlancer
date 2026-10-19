@@ -2,9 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OpenLancer.Data.Editing;
-using OpenLancer.Editor.Ui;
 
-namespace OpenLancer.Editor.Editing;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>The commands of a raw edit, or the problems that stop it. No problem and no command: nothing changed.</summary>
 internal sealed record RawEditPlan(EditCommand? Command, IReadOnlyList<RawProblem> Problems);

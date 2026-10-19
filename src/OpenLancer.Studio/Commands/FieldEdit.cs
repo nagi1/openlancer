@@ -8,7 +8,7 @@ using LibreLancer.Data;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 
-namespace OpenLancer.Editor.Editing;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>The line texts that the text of a field gives, or why the text is not valid.</summary>
 /// <param name="Lines">The value text of each line, with the values separated by ", ". Null when the text is not

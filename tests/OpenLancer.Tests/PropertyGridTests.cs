@@ -7,6 +7,7 @@ using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.Tests;

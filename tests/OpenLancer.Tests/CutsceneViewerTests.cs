@@ -14,6 +14,7 @@ using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Validation;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.Tests;

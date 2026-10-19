@@ -4,6 +4,7 @@ using System.Linq;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.DataTests;

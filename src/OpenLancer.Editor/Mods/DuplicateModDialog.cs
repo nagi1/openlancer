@@ -6,6 +6,7 @@ using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Mods;
 

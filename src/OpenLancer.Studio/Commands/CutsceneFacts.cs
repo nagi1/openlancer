@@ -7,7 +7,7 @@ using LibreLancer.Data.Schema.GCS;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Thn;
 
-namespace OpenLancer.Editor.Cutscene;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>A mission of the storyline (section 4.2 of the cutscene categories design).</summary>
 /// <param name="Nickname">The nickname of the story mission, for example <c>Story_07a</c>.</param>

@@ -13,6 +13,7 @@ using LibreLancer.Data.Schema.Storyline;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Hierarchy;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.Tests;

@@ -7,6 +7,7 @@ using LibreLancer.Thn;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Thn;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Cutscene;
 
@@ -500,10 +501,6 @@ internal sealed class TimelineModel
     /// <summary>The name of an entity, or the empty name when it has no text name.</summary>
     internal static string EntityName(ThnTable entity) => entity[EntityNameKey] is ThnText name ? name.Value : "";
 
-    /// <summary>The length of an event: <c>props.duration</c>, or 0 when the event has no length above 0.</summary>
-    internal static float LengthOf(ThnTable ev) =>
-        ev.List.Length > 3 && ev.List[3] is ThnTable props && props["duration"] is ThnNumber d && d.Value > 0 ? d.Value : 0;
-
     private static TimelineEvent Event(string path, ThnElement element, int index, float duration, SymbolNames names,
         ScriptPlay play)
     {
@@ -514,7 +511,7 @@ internal sealed class TimelineModel
             ? targetList.List.Select(v => v is ThnText text ? text.Value : ThnWriter.Value(v)).ToList()
             : [];
         var props = list.Length > 3 ? list[3] as ThnTable : null;
-        var length = LengthOf(element.Table);
+        var length = TimelineClip.LengthOf(element.Table);
         string? ignored = play switch
         {
             ScriptPlay.Set => SetScriptReason,

@@ -9,6 +9,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Inspector;
 

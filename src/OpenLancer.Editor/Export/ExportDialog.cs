@@ -17,6 +17,7 @@ using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Strings;
 using OpenLancer.Runtime.Thn;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Export;
 

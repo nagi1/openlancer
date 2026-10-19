@@ -13,6 +13,7 @@ using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Runtime.Scene;
 using OpenLancer.Runtime.Thn;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.DataTests;

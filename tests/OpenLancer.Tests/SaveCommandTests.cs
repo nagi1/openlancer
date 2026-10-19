@@ -4,6 +4,7 @@ using System.IO;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.FieldBindingTests;
 using static OpenLancer.Tests.ItemWorkspace;

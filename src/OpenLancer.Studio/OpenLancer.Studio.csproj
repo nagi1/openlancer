@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The shared command layer of the editor UI and the agent tools (section 4.0 of the M6b design, milestone MCP1).
+       It makes no ImGui call and has no reference to the MCP SDK. See CommandLayer.cs. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The editor calls the commands and the helpers of the layer. -->
+    <InternalsVisibleTo Include="OpenLancer.Editor" />
+    <InternalsVisibleTo Include="OpenLancer.Tests" />
+    <InternalsVisibleTo Include="OpenLancer.DataTests" />
+  </ItemGroup>
+
+</Project>

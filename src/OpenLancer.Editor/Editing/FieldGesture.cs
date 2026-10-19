@@ -5,6 +5,7 @@ using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Editing;
 

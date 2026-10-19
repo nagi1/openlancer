@@ -6,7 +6,7 @@ using LibreLancer.Data.Ini;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 
-namespace OpenLancer.Editor.Editing;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>A value of a market line that has its own field in the "Markets" section.</summary>
 /// <param name="Index">The place of the value in <see cref="MarketLine.Values"/>.</param>

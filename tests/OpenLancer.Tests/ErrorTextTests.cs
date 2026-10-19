@@ -2,6 +2,7 @@ using System;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.ThnSessions;
 

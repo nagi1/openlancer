@@ -7,6 +7,7 @@ using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Inspector;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.FieldBindingTests;
 using static OpenLancer.Tests.ItemWorkspace;

@@ -13,6 +13,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Database;
 

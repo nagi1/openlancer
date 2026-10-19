@@ -5,7 +5,7 @@ using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Thn;
 
-namespace OpenLancer.Editor.Cutscene;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>The events that Ctrl+C copied: their tables, in the order of W.</summary>
 internal sealed record TimelineClip(IReadOnlyList<ThnTable> Events)
@@ -14,12 +14,16 @@ internal sealed record TimelineClip(IReadOnlyList<ThnTable> Events)
     public float Start => Events.Min(TimeOf);
 
     /// <summary>The end of the event that ends last: its time and its length.</summary>
-    public float End => Events.Max(e => TimeOf(e) + TimelineModel.LengthOf(e));
+    public float End => Events.Max(e => TimeOf(e) + LengthOf(e));
 
     /// <summary>The first target of the earliest event: the row of the clip. Null when it has no text target.</summary>
     public string? Row => FirstTarget(Events.MinBy(TimeOf)!);
 
     internal static float TimeOf(ThnTable ev) => ev.List.Length > 0 && ev.List[0] is ThnNumber time ? time.Value : 0;
+
+    /// <summary>The length of an event: <c>props.duration</c>, or 0 when the event has no length above 0.</summary>
+    internal static float LengthOf(ThnTable ev) =>
+        ev.List.Length > 3 && ev.List[3] is ThnTable props && props["duration"] is ThnNumber d && d.Value > 0 ? d.Value : 0;
 
     internal static string? FirstTarget(ThnTable ev) =>
         ev.List.Length > 2 && ev.List[2] is ThnTable { List: [ThnText first, ..] } ? first.Value : null;

@@ -7,6 +7,7 @@ using LibreLancer.Data.GameData.World;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Inspector;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.FieldBindingTests;
 using Universe = LibreLancer.Data.Schema.Universe;
@@ -169,7 +170,7 @@ public sealed class ScenePageTests
             Nickname = "br04", SourceFile = "", Zones = [shared, box], AsteroidFields = [field], Nebulae = [smog, boxed],
         };
         var index = new Editor.Scene.SystemIndex(system, system);
-        static string Name(object item) => Editor.Scene.SceneItems.FallbackName(item)!;
+        static string Name(object item) => SceneItems.FallbackName(item)!;
 
         Assert.Equal(["The asteroid field smog_asteroids uses this zone too. A change of the area changes both."],
             FieldPage.AreaNotes(smog, index, Name));

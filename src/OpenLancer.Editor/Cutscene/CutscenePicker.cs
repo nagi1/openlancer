@@ -8,6 +8,7 @@ using LibreLancer.ImUI;
 using OpenLancer.Data.IO;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Cutscene;
 

@@ -5,6 +5,7 @@ using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Ini;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.Tests;

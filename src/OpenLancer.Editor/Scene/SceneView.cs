@@ -17,6 +17,7 @@ using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Scene;
 

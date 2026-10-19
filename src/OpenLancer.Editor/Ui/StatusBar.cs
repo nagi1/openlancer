@@ -12,6 +12,7 @@ using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Ui;
 

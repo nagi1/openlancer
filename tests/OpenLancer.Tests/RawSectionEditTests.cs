@@ -2,6 +2,7 @@ using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.ListWorkspace;
 

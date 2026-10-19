@@ -5,6 +5,7 @@ using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.FieldBindingTests;
 

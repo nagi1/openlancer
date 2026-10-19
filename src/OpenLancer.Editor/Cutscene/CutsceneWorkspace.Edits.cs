@@ -8,6 +8,7 @@ using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Runtime.Thn;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Cutscene;
 

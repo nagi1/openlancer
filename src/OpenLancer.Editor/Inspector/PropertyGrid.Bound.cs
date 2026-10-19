@@ -11,6 +11,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Inspector;
 
@@ -528,7 +529,7 @@ internal sealed partial class PropertyGrid
         if (StringPlaceholder.TryParse(id, out var placeholder))
         {
             var text = session.Edits.Text(placeholder) ?? "";
-            return (kind == StringKind.Infocard && text.Length > 0 ? EditorSession.PlainText(text) : text, id);
+            return (kind == StringKind.Infocard && text.Length > 0 ? ItemTexts.PlainText(text) : text, id);
         }
 
         return value.TryToInt32(out var number) && number > 0

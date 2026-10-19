@@ -1,6 +1,6 @@
 using System;
 
-namespace OpenLancer.Editor.Ui;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>
 /// The text of an exception for a user (decision D130 of the M8b design). The data layer throws its refusals with the

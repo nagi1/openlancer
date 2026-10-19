@@ -2,11 +2,10 @@ using System;
 using System.Collections.Generic;
 using LibreLancer;
 using LibreLancer.Data;
-using LibreLancer.Data.GameData.World;
-using LibreLancer.Infocards;
 using LibreLancer.Resources;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor;
 
@@ -18,6 +17,10 @@ internal sealed class EditorSession : IDisposable
 {
     private readonly Dictionary<int, string> infoTexts = [];
 
+    /// <summary>Why the edits of the active mod need the allowance of the user, or null (see
+    /// <see cref="RepoMods"/>).</summary>
+    private readonly string? repoReason;
+
     /// <param name="repoRoot">The OpenLancer repo that holds the active mod, or null (see <see cref="RepoCheck"/>).</param>
     /// <param name="ui">The UI thread, which ends each load of the engine data (see <see cref="Loads"/>).</param>
     public EditorSession(EditSession edits, GameResourceManager resources, string? repoRoot, IUIThread ui)
@@ -25,6 +28,7 @@ internal sealed class EditorSession : IDisposable
         Edits = edits;
         Resources = resources;
         RepoRoot = repoRoot;
+        repoReason = repoRoot != null && edits.ActiveMod is { } mod ? RepoMods.Reason(mod) : null;
         Loads = new DataLoads(ui);
         Texts = new ItemTexts(edits, Name, InfoText);
         edits.Changed += _ => Touch();
@@ -72,7 +76,7 @@ internal sealed class EditorSession : IDisposable
 
     /// <summary>True when the active mod is in the OpenLancer repo and the user did not allow its edits for this
     /// session yet.</summary>
-    public bool NeedsRepoConfirmation => RepoRoot != null && !RepoEditsAllowed;
+    public bool NeedsRepoConfirmation => repoReason != null && !RepoEditsAllowed;
 
     /// <summary>True when the recovery file is older than the edits (decision D8).</summary>
     public bool RecoveryOutdated { get; private set; }
@@ -82,10 +86,7 @@ internal sealed class EditorSession : IDisposable
 
     /// <summary>Why the editor takes no edits now, or null.</summary>
     public string? NoEditReason =>
-        Edits.ReadOnlyReason ?? (NeedsRepoConfirmation
-            ? $"The mod '{Edits.ActiveMod!.Id}' is part of the OpenLancer repo, so its files are tracked files. Allow " +
-              "its edits for this session first."
-            : null);
+        Edits.ReadOnlyReason ?? (NeedsRepoConfirmation ? repoReason + " Allow its edits for this session first." : null);
 
     public bool CanEdit => NoEditReason == null;
 
@@ -150,15 +151,13 @@ internal sealed class EditorSession : IDisposable
         if (!infoTexts.TryGetValue(ids, out var text))
         {
             var xml = GameData.Items.Ini.Infocards.GetXmlResource(ids);
-            text = xml == null ? "" : PlainText(xml);
+            text = xml == null ? "" : ItemTexts.PlainText(xml);
             infoTexts[ids] = text;
         }
 
         return text;
     }
 
-    /// <summary>The plain text of an infocard in RDL XML.</summary>
-    public static string PlainText(string xml) => RDLParse.Parse(xml).ExtractText().TrimEnd();
 
     /// <summary>
     /// The display name of an item, or an empty string when it has no name. The name of a scene item, a system or a
@@ -188,14 +187,6 @@ internal sealed class EditorSession : IDisposable
     /// <summary>The name of a section: the text of its <c>ids_name</c>, or an empty string.</summary>
     public string NameOf(SectionView view) => Texts.NameOf(view);
 
-    /// <summary>The string resource id of the name of an item, or 0 when the item has no name.</summary>
-    public static int NameIds(object? item) => item switch
-    {
-        SystemObject obj => obj.IdsName,
-        Zone zone => zone.IdsName,
-        NamedItem named => named.IdsName,
-        _ => 0,
-    };
 
     /// <summary>Frees the resources and releases the lock of the active mod (see <see cref="EditSession"/>).</summary>
     public void Dispose()

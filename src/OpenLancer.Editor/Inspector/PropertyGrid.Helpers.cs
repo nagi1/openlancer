@@ -6,6 +6,7 @@ using ImGuiNET;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Inspector;
 

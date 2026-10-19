@@ -9,6 +9,7 @@ using LibreLancer.ImUI;
 using LibreLancer.Render;
 using LibreLancer.World;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Scene;
 

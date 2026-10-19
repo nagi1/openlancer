@@ -8,6 +8,7 @@ using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Games;
 

@@ -15,6 +15,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\external\Librelancer\src\Editor\LibreLancer.ImUI\LibreLancer.ImUI.csproj" />
     <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+    <!-- The shared command layer: the commands and the edit helpers without an ImGui call. -->
+    <ProjectReference Include="..\OpenLancer.Studio\OpenLancer.Studio.csproj" />
     <!-- The editor validates a save out of process with oltool, so oltool goes next to the editor. -->
     <ProjectReference Include="..\OpenLancer.Tools\OpenLancer.Tools.csproj" />
     <!-- Play runs the game in its own process, so the play program goes next to the editor. -->

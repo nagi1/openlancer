@@ -17,6 +17,7 @@ using OpenLancer.Editor.Export;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Mods;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor;
 

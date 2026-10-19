@@ -2,7 +2,7 @@ using System.IO;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
 
-namespace OpenLancer.Editor.Scene;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>
 /// The nickname and the zone of a scene item, for the readers that show any item. These are the Inspector header, the

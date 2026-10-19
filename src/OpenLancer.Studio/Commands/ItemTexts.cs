@@ -1,10 +1,11 @@
 using System;
+using LibreLancer.Data;
 using LibreLancer.Data.GameData.World;
+using LibreLancer.Infocards;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Strings;
-using OpenLancer.Editor.Scene;
 
-namespace OpenLancer.Editor;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>
 /// The texts of items as the edit view gives them, for example the name of an object of the open system. A text comes
@@ -66,15 +67,27 @@ internal sealed class ItemTexts(EditSession edits, Func<int, string> name, Func<
         if (StringPlaceholder.TryParse(value, out var placeholder))
         {
             var text = edits.Text(placeholder) ?? "";
-            return placeholder.Kind == StringKind.Infocard && text.Length > 0 ? EditorSession.PlainText(text) : text;
+            return placeholder.Kind == StringKind.Infocard && text.Length > 0 ? PlainText(text) : text;
         }
         return value.TryToInt32(out var id) && id > 0 ? kind == StringKind.Infocard ? info(id) : name(id) : "";
     }
 
+    /// <summary>The plain text of an infocard in RDL XML.</summary>
+    public static string PlainText(string xml) => RDLParse.Parse(xml).ExtractText().TrimEnd();
+
+    /// <summary>The string resource id of the name of an item, or 0 when the item has no name.</summary>
+    public static int NameIds(object? item) => item switch
+    {
+        SystemObject obj => obj.IdsName,
+        Zone zone => zone.IdsName,
+        NamedItem named => named.IdsName,
+        _ => 0,
+    };
+
     /// <summary>The text id of a key of an item without a section in W, or 0.</summary>
     private static int IdOf(object? item, string key) => key.ToLowerInvariant() switch
     {
-        "ids_name" or "strid_name" => EditorSession.NameIds(item),
+        "ids_name" or "strid_name" => NameIds(item),
         "tradelane_space_name" => item is SystemObject obj ? obj.TradelaneSpaceName : 0,
         _ => 0,
     };

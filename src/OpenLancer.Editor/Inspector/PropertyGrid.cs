@@ -15,6 +15,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
+using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Inspector;
 

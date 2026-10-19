@@ -7,6 +7,7 @@ using OpenLancer.Editor;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Studio.Commands;
 using Xunit;
 
 namespace OpenLancer.Tests;
@@ -77,7 +78,7 @@ public sealed class HierarchyModelTests
     private static string IdText(object item, string key) => Names.GetValueOrDefault(key switch
     {
         "tradelane_space_name" => ((SystemObject)item).TradelaneSpaceName,
-        _ => EditorSession.NameIds(item),
+        _ => ItemTexts.NameIds(item),
     }, "");
 
     private static HierarchyNode Group(HierarchyModel model, string id) => model.Root.Children.Single(c => c.Id == id);

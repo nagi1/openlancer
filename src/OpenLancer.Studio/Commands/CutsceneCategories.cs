@@ -7,7 +7,7 @@ using LibreLancer.Data.Schema.GCS;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Thn;
 
-namespace OpenLancer.Editor.Cutscene;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>The categories of the cutscene list, in the order of the list (decision D601 of the cutscene categories
 /// design).</summary>

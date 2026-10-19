@@ -5,7 +5,7 @@ using System.Linq;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Thn;
 
-namespace OpenLancer.Editor.Cutscene;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>The folder groups of the Cutscenes tab (section 7.2 of the M8 design).</summary>
 internal enum CutsceneFolder

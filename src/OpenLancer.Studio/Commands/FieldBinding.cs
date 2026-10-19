@@ -4,7 +4,7 @@ using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.IO;
 
-namespace OpenLancer.Editor.Editing;
+namespace OpenLancer.Studio.Commands;
 
 /// <summary>
 /// One key of one section of the edit view, as a bound Inspector row shows it: its lines, the layer that sets them,

@@ -10,6 +10,7 @@ using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Inspector;
+using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.ThnScripts;
 using static OpenLancer.Tests.ThnSessions;
