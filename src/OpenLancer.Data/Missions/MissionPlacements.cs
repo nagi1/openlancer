@@ -135,6 +135,18 @@ public sealed record MissionPlacement(PlacementKind Kind, PlacementShape Shape, 
 /// </remarks>
 public static class MissionPlacements
 {
+    /// <summary>The keys of the trigger lines that can have their own place in the Scene.</summary>
+    private static readonly HashSet<string> PlacedKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Act_SpawnShip", "Act_SpawnFormation", "Act_SpawnSolar", "Act_SpawnLoot", "Act_RelocateShip", "Act_RelocateForm",
+        "Act_MovePlayer", "Act_SetInitialPlayerPos", "Act_NNPath", "Cnd_DistVec", "Cnd_DistShip", "Cnd_DistCircle",
+        "Cnd_CmpToPlane", "Act_RandomPopSphere", "Act_StaticCam", "Act_CallThorn",
+    };
+
+    /// <summary>True when a line of a trigger can have its own place in the Scene, for example a distance volume or a
+    /// spawn at a position.</summary>
+    public static bool HasPlace(MissionLine line) => line.Trigger != null && PlacedKeys.Contains(line.Key.Trim());
+
     /// <summary>The placeable items of a mission in one system.</summary>
     /// <param name="objectPosition">Gives the position of an object of the system by its nickname, or null when the
     /// system has no such object.</param>

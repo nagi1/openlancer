@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer;
@@ -58,6 +59,10 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
     /// or null.</summary>
     public Func<object, string?>? Labels { get; set; }
 
+    /// <summary>The items that the cross-links of the Mission tab highlight, for example the gate of a lock line
+    /// (section 7.3 of the M6a design). Each one gets brackets and its label.</summary>
+    public IReadOnlyCollection<object> Highlighted { get; set; } = [];
+
     /// <summary>Forgets the markers and the cached labels. Call it when a system opens or closes.</summary>
     public void Reset()
     {
@@ -110,6 +115,14 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
         if (hovered != null && !Equals(hovered, window.Selection))
         {
             DrawBrackets(drawList, hovered, HoverColor, HoverThickness);
+        }
+
+        foreach (var item in Highlighted)
+        {
+            if (!Equals(item, window.Selection) && !Equals(item, hovered))
+            {
+                DrawBrackets(drawList, item, HoverColor, HoverThickness);
+            }
         }
 
         if (window.Selection != null)
@@ -407,9 +420,10 @@ internal sealed class SceneOverlay(EditorWindow window, IReadOnlyDictionary<Syst
         }
     }
 
-    /// <summary>2 for the selected item, 1 for the hovered item and 0 for all other items.</summary>
+    /// <summary>2 for the selected item, 1 for the hovered item and the items of the cross-links, and 0 for all other
+    /// items.</summary>
     private int Highlight(object item, object? hovered) =>
-        Equals(item, window.Selection) ? 2 : Equals(item, hovered) ? 1 : 0;
+        Equals(item, window.Selection) ? 2 : Equals(item, hovered) || Highlighted.Contains(item) ? 1 : 0;
 
     /// <summary>
     /// True when the label of a marker can go in a rectangle: it covers no placed label, not the axis widget, and no

@@ -31,6 +31,7 @@ internal sealed class MissionView : IDisposable
     private readonly EditorWindow window;
     private readonly MissionWorkspace missions;
     private readonly RawIniEditor raw = new(MissionWorkspace.Vocabulary);
+    private readonly MissionLinks links;
     private int lastCursor = -1;
     private object? lastSelection;
     private string? shownPath;
@@ -44,6 +45,14 @@ internal sealed class MissionView : IDisposable
         this.missions = missions;
         State = new GraphViewState(window.Settings.MissionLens);
         Graph = new GraphView(window, missions, State);
+        links = new MissionLinks(window, missions, Graph);
+        window.Scene.DoubleClicked += item =>
+        {
+            if (window.CenterMode == CenterMode.Mission && missions.Open is { } open)
+            {
+                links.SceneDoubleClicked(open, item);
+            }
+        };
     }
 
     /// <summary>The state of the graph of the session: frames, lines, drags.</summary>
@@ -278,6 +287,7 @@ internal sealed class MissionView : IDisposable
         var partWidth = withScene
             ? MathF.Truncate(Math.Clamp(settings.MissionSplit, 0.1f, 0.9f) * (avail.X - gap))
             : avail.X;
+        links.Update(analysis);
 
         if (ImGui.BeginChild("##mission-part", new Vector2(partWidth, avail.Y), ImGuiChildFlags.None,
                 ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
@@ -310,10 +320,15 @@ internal sealed class MissionView : IDisposable
         ImGui.SetCursorScreenPos(origin + new Vector2(partWidth + gap, 0));
         if (ImGui.BeginChild("##scene", new Vector2(Math.Max(1, avail.X - partWidth - gap), avail.Y)))
         {
-            ScenePart(elapsed);
+            ScenePart(analysis, elapsed);
         }
 
         ImGui.EndChild();
+        // The connector lines draw on the window of the tab after both parts, so they go over both.
+        if (!missions.ShowRaw)
+        {
+            links.DrawLines(analysis, (origin, origin + avail));
+        }
     }
 
     /// <summary>The graph part: the graph of the mission, and the keys of the graph while it has the focus.</summary>
@@ -326,6 +341,7 @@ internal sealed class MissionView : IDisposable
             Graph.FrameSelection();
         }
 
+        links.UsesBar();
         Graph.Draw(analysis, ImGui.GetContentRegionAvail());
         Keys();
     }
@@ -350,6 +366,11 @@ internal sealed class MissionView : IDisposable
         if (ImGui.IsKeyPressed(ImGuiKey.Escape, false) && Graph.HasFocus)
         {
             Graph.EndFocus();
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.F3, false))
+        {
+            links.Step(io.KeyShift ? -1 : 1);
         }
 
         if (ImGui.IsKeyPressed(ImGuiKey.F, false))
@@ -394,12 +415,15 @@ internal sealed class MissionView : IDisposable
         FollowCursor(path, text);
     }
 
-    /// <summary>The Scene part: the Scene toolbar strip and the Scene view.</summary>
-    private void ScenePart(double elapsed)
+    /// <summary>The Scene part: the Scene toolbar strip, the banner of an item in another system, and the Scene view.
+    /// After the view, the Scene frames the world items of a pending request.</summary>
+    private void ScenePart(MissionAnalysis analysis, double elapsed)
     {
         var width = ImGui.GetContentRegionAvail().X;
         EditorLayout.Strip("##scene-toolbar", window.Scene.Toolbar, new Vector2(width, EditorLayout.StripHeight));
+        links.Banner(analysis);
         window.Scene.Draw(elapsed);
+        links.FramePending(analysis);
     }
 
     /// <summary>The note of a raw view that shows the canonical text in place of the file text.</summary>
@@ -469,6 +493,7 @@ internal sealed class MissionView : IDisposable
     {
         Graph.Reset();
         State.Reset();
+        links.Reset();
     }
 
     public void Dispose()

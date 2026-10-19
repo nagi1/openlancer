@@ -119,6 +119,30 @@ internal sealed class SceneView : IDisposable
     /// design).</summary>
     public MissionLayer MissionItems => missionLayer;
 
+    /// <summary>The overlay of the markers and labels. The cross-links of the Mission tab set its highlighted
+    /// items.</summary>
+    public SceneOverlay Overlay => overlay;
+
+    /// <summary>The screen rectangle of the scene in the last frame that drew it, or null.</summary>
+    public (Vector2 Min, Vector2 Max)? LastRect { get; private set; }
+
+    /// <summary>The frame number of the last frame that drew the scene.</summary>
+    public int LastFrame { get; private set; } = -1;
+
+    /// <summary>A double-click on an item of the scene, for example a mission marker or an object. The Mission tab
+    /// frames the first trigger that uses it (section 7.3 of the M6a design).</summary>
+    public event Action<object>? DoubleClicked;
+
+    private SceneProjection? lastProjection;
+
+    /// <summary>The screen point of a world position with the camera of the last frame. False when the position is
+    /// behind the camera or the scene did not draw.</summary>
+    public bool TryProject(Vector3 position, out Vector2 screen)
+    {
+        screen = default;
+        return lastProjection is { } projection && projection.Project(position, out screen, out _);
+    }
+
     /// <summary>The shared data of the open system, or null when no system is open.</summary>
     public SystemIndex? Index { get; private set; }
 
@@ -286,6 +310,8 @@ internal sealed class SceneView : IDisposable
         objects.Clear();
         overlay.Reset();
         missionLayer.Reset();
+        lastProjection = null;
+        LastRect = null;
         picker.Reset();
         cycle.Reset();
         world?.Dispose();
@@ -351,6 +377,14 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
+        // The cross-links of the Mission tab highlight items only in the Scene part of that tab (section 7.3 of the M6a
+        // design). The Mission tab sets them again in each of its frames.
+        if (window.CenterMode != CenterMode.Mission)
+        {
+            overlay.Highlighted = [];
+            missionLayer.Highlight = new HashSet<Missions.MissionRef>();
+        }
+
         // Flush A: the changes of W since the last frame, before this frame reads the scene.
         sync!.Flush();
         FollowSelection();
@@ -398,6 +432,9 @@ internal sealed class SceneView : IDisposable
         controller.HandleInput(window.Keyboard, viewKeys, active, elapsed);
         controller.Apply(camera, sky, width, height);
         var projection = new SceneProjection(camera, origin, size, ImGuiHelper.Scale);
+        lastProjection = projection;
+        LastRect = (origin, origin + size);
+        LastFrame = ImGui.GetFrameCount();
         overlay.Update(projection, Index);
         // The items of the open mission are markers too, so the picker and the pick cycle find them (section 7.2 of the
         // M6a design). They have their own toggle, "Mission items".
@@ -408,6 +445,13 @@ internal sealed class SceneView : IDisposable
         }
         gizmo.Update(projection);
         Pick(projection, Index, activated, deactivated);
+        if (activated && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && DoubleClicked != null &&
+            scenePicker.Pick(projection, ImGui.GetMousePos(), Index,
+                new PickView(controller.Position, window.Settings.ShowZones, window.Settings.ShowNebulae,
+                    window.Settings.ShowFog)).Item is { } doubleClicked)
+        {
+            DoubleClicked(doubleClicked);
+        }
         if (viewKeys && !ImGui.GetIO().WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F))
         {
             Focus(window.Selection);
@@ -518,7 +562,10 @@ internal sealed class SceneView : IDisposable
         var item = ToolbarItems.IconWidth + spacing;
         // The system list gets the space that the other items leave, between its minimum and maximum width. The other
         // items are Frame system, the gizmo items, the view toggles, the help button and two separators.
-        var missionToggle = missionLayer.Active ? 1 : 0;
+        // The toggle "Mission items" and the menu "Mission systems" show only for an open mission.
+        var missionToggle = !missionLayer.Active ? 0
+            : window.Missions.Open is { } open && Data.Missions.MissionSummary.TriggerSystems(open.Index).Count > 1 ? 2
+            : 1;
         var others = (ViewOptions.Length + missionToggle + TransformGizmo.ToolbarItemCount + 2) * item +
                      2 * (1 + spacing) + spacing;
         var scale = ImGuiHelper.Scale;
@@ -545,6 +592,7 @@ internal sealed class SceneView : IDisposable
                 "Mission items: show the ships, points, volumes and paths of the open mission in this system.",
                 settings.ShowMissionItems);
             ImGui.SameLine();
+            MissionSystems();
         }
 
         // The toggles that do not fit go into a menu behind a More button, so that the help button stays in view.
@@ -612,6 +660,47 @@ internal sealed class SceneView : IDisposable
             ControlsTable();
             ImGui.EndPopup();
         }
+    }
+
+    /// <summary>
+    /// The menu "Mission systems" (section 7.4 of the M6a design): each system of the open mission with its trigger
+    /// count. It shows only when the mission names more than one system. A click opens the system.
+    /// </summary>
+    private void MissionSystems()
+    {
+        if (window.Missions.Open is not { } analysis ||
+            Data.Missions.MissionSummary.TriggerSystems(analysis.Index) is not { Count: > 1 } systems)
+        {
+            return;
+        }
+
+        if (ToolbarItems.Button("mission-systems", EditorIcons.Map, "Mission systems: open a system of the mission."))
+        {
+            ImGui.OpenPopup("##mission-systems");
+        }
+
+        ImGui.SameLine();
+        if (!ImGui.BeginPopup("##mission-systems"))
+        {
+            return;
+        }
+
+        EditorTheme.PushMenuColors();
+        ImGui.TextDisabled("Mission systems");
+        foreach (var (nickname, triggers) in systems)
+        {
+            var system = window.Session?.GameData?.Items.Systems.Get(nickname);
+            var name = system != null && window.Session!.ItemName(system) is { Length: > 0 } text ? text : nickname;
+            var count = triggers == 1 ? "1 trigger" : $"{triggers} triggers";
+            if (ImGui.MenuItem($"{name} ({nickname}): {count}", "", System?.Nickname.Equals(nickname,
+                    StringComparison.OrdinalIgnoreCase) == true, system != null))
+            {
+                window.OpenSystem(system!);
+            }
+        }
+
+        EditorTheme.PopMenuColors();
+        ImGui.EndPopup();
     }
 
     /// <summary>Draws the controls of the view and the gizmo as a table of inputs and actions.</summary>

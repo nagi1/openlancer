@@ -788,6 +788,11 @@ internal sealed class GraphView : IDisposable
             if (ImGui.IsMouseHoveringRect(min, max))
             {
                 pendingTooltip = chip.Tooltip;
+                // A double-click on a chip frames the world items of the trigger in the Scene part.
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                {
+                    missions.FrameInScene(new MissionRef(script, MissionItemKind.Trigger, node.Trigger!.Section.Ref));
+                }
             }
 
             RecordChip(node, chip, min, max);
@@ -821,12 +826,18 @@ internal sealed class GraphView : IDisposable
             var min = new Vector2(origin.X + PinSize, origin.Y + MissionGraph.HeaderHeight + i * MissionGraph.LineHeight);
             var max = new Vector2(origin.X + node.Size.X - PinSize, min.Y + MissionGraph.LineHeight);
             ImGui.SetCursorScreenPos(min);
+            var rowRef = new MissionRef(script, MissionItemKind.Row, node.Trigger!.Section.Ref, Row: graphRow.Line.Entry);
             if (ImGui.InvisibleButton($"##row{i}", max - min))
             {
-                window.Selection = new MissionRef(script, MissionItemKind.Row, node.Trigger!.Section.Ref, Row: graphRow.Line.Entry);
+                window.Selection = rowRef;
             }
 
             var hovered = ImGui.IsItemHovered();
+            // A double-click on a row frames its world items in the Scene part (section 7.3 of the M6a design).
+            if (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+            {
+                missions.FrameInScene(rowRef);
+            }
             if (graphRow.Line.Entry == selectedRow || hovered)
             {
                 drawList.AddRectFilled(min, max, EditorTheme.ToAbgr(graphRow.Line.Entry == selectedRow
@@ -862,6 +873,11 @@ internal sealed class GraphView : IDisposable
                 if (ImGui.InvisibleButton($"##link{i}", linkMax - linkMin))
                 {
                     window.Selection = LinkRef(script, node, graphRow, link);
+                }
+
+                if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                {
+                    missions.FrameInScene(LinkRef(script, node, graphRow, link));
                 }
 
                 drawList.AddRectFilled(linkMin, linkMax, EditorTheme.ToAbgr(ChipFill), 3);
