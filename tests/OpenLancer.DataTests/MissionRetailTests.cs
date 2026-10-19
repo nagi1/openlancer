@@ -18,20 +18,8 @@ namespace OpenLancer.DataTests;
 /// </summary>
 public sealed class MissionRetailTests(ITestOutputHelper output)
 {
-    /// <summary>The run of the retail scripts, made once for the tests of this class. The workspace closes after the
-    /// run, because the result holds all that the tests read.</summary>
-    private static readonly Lazy<MissionRunResult> Vanilla = new(() =>
-    {
-        using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m6aproof");
-        return MissionRun.Execute(workspace.Open().MissionInputs(EngineCoverage.Instance));
-    });
-
     /// <summary>The run, or a skip without the retail data.</summary>
-    private static MissionRunResult Run()
-    {
-        GameDataPaths.RequireBase();
-        return Vanilla.Value;
-    }
+    private static MissionRunResult Run() => RetailMissions.Run();
 
     private static List<MissionAnalysis> Slots(MissionRunResult run) =>
         run.Scripts.Where(s => s.Slot != null).Select(s => run.Of(s.Path)!).ToList();

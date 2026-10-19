@@ -225,6 +225,7 @@ public sealed class MissionIndex
     private readonly Dictionary<MissionTrigger, List<MissionLink>> incoming = [];
     private readonly Dictionary<MissionSection, string> itemSystems = [];
     private readonly List<MissionLine> lines = [];
+    private readonly Dictionary<MissionSection, List<MissionLine>> linesOf = [];
     private readonly List<MissionTrigger> triggers = [];
     private readonly List<MissionLink> links = [];
     private readonly List<(MissionSection Formation, int Line, string Ship)> laterMembers = [];
@@ -344,7 +345,7 @@ public sealed class MissionIndex
     public string? SystemOf(MissionSection item) => itemSystems.GetValueOrDefault(item);
 
     /// <summary>The lines of a section, in file order.</summary>
-    public IEnumerable<MissionLine> LinesOf(MissionSection section) => lines.Where(l => l.Section == section);
+    public IReadOnlyList<MissionLine> LinesOf(MissionSection section) => linesOf.GetValueOrDefault(section) ?? [];
 
     /// <summary>True when the name is an object of the label rule of the script: a ship, a formation, a solar, a loot
     /// or a label.</summary>
@@ -424,13 +425,15 @@ public sealed class MissionIndex
                 if (name is { Kind: not MissionNameKind.Directive })
                     line.Mark = Coverage.Of(name.Name);
                 lines.Add(line);
+                if (!linesOf.TryGetValue(section, out var list))
+                    linesOf[section] = list = [];
+                list.Add(line);
             }
         }
     }
 
     private void CollectTriggers()
     {
-        var bySection = lines.GroupBy(l => l.Section).ToDictionary(g => g.Key, g => g.ToList());
         foreach (var section in Document.OfKind(MissionSectionKind.Trigger))
         {
             // The game skips a trigger without a nickname. The target checks use the same rule (decision D556).
@@ -442,7 +445,7 @@ public sealed class MissionIndex
                 IsDuplicate = triggerByName.ContainsKey(nickname),
                 LinesBeforeNickname = Enumerable.Range(0, nicknameLine).ToList(),
             };
-            var sectionLines = bySection.GetValueOrDefault(section) ?? [];
+            var sectionLines = LinesOf(section);
             var after = sectionLines.Where(l => l.Entry > nicknameLine).ToList();
             foreach (var line in sectionLines)
                 line.Trigger = trigger;
@@ -676,6 +679,11 @@ public sealed class MissionIndex
             incoming[link.Target] = list = [];
         list.Add(link);
     }
+
+    /// <summary>True when the trigger is not a start trigger and no Start or Load link ends at it. The game never runs
+    /// such a trigger (rule G05, the graph mark "Never starts").</summary>
+    public bool NothingStarts(MissionTrigger trigger) =>
+        !trigger.StartsActive && !LinksTo(trigger).Any(l => l.Kind is MissionLinkKind.Start or MissionLinkKind.Load);
 
     /// <summary>The links that start a trigger, from any trigger, itself included.</summary>
     public IEnumerable<MissionLink> StartsOf(MissionTrigger trigger) =>

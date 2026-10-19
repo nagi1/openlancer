@@ -449,7 +449,7 @@ public static class MissionChecks
                     "fail. Add a fail text.", trigger.Nickname);
             foreach (var trigger in triggers)
             {
-                if (trigger.StartsActive || index.LinksTo(trigger).Any(l => l.Kind is MissionLinkKind.Start or MissionLinkKind.Load))
+                if (!index.NothingStarts(trigger))
                     continue;
                 Add("G05", trigger.Section, -1,
                     $"Nothing starts trigger '{trigger.Nickname}'. The game never runs it. Start it from another trigger, " +
