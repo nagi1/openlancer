@@ -18,6 +18,7 @@ internal sealed class SchemaPage(EditorWindow window, PropertyGrid grid)
 {
     private readonly MarketSection market = new(window, grid);
     private readonly SectionExtras extras = new(window, grid);
+    private readonly MissionUsesRows missionRows = new(window, grid);
 
     public void Draw(SectionRef section)
     {
@@ -44,6 +45,12 @@ internal sealed class SchemaPage(EditorWindow window, PropertyGrid grid)
         if (view.Type.Equals("Good", StringComparison.OrdinalIgnoreCase) && section.Id.Key is { } nickname)
         {
             market.Draw(nickname, key + ".SoldAt");
+        }
+
+        // A base lists the mission lines that name it (section 10.18 of the M6a design).
+        if (view.Type.Equals("Base", StringComparison.OrdinalIgnoreCase))
+        {
+            missionRows.Section(section.Id.Key, key);
         }
 
         // The page shows each schema key in Keys or in Unset keys.

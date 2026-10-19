@@ -88,6 +88,17 @@ public sealed record OpenLancerReport(string Text, string Tooltip, IReadOnlyList
 /// line".</summary>
 public sealed record MissionTextId(string Group, string Id);
 
+/// <summary>A line of a mission script that names an object of a system, a base or a zone (section 10.18 of the M6a
+/// design).</summary>
+public sealed record MissionObjectUse(MissionScriptInfo Script, MissionLine Line)
+{
+    /// <summary>The text of the row: "{slot}: {trigger nickname} ({plain name})". A script without a slot gives its
+    /// path.</summary>
+    public string Text =>
+        $"{Script.Slot?.Slot ?? MissionFiles.Display(Script.Path)}: " +
+        $"{Line.Trigger?.Nickname ?? Line.Section.Nickname ?? Line.Section.Ref.Id.ToString()} ({Line.Name?.Plain ?? Line.Key})";
+}
+
 /// <summary>
 /// The queries of the mission studio over a run of the mission checks (sections 5 and 10.2 of the M6a design): the rows
 /// of the Missions tab, the OpenLancer report, the systems, the search, the bundle, the news and rumors, the text ids and
@@ -213,6 +224,16 @@ public static class MissionSummary
         }
         return systems;
     }
+
+    /// <summary>
+    /// The lines of all mission scripts of a run that name an object of a system, a base or a zone by its nickname, in
+    /// the order of the scripts and of the lines (section 10.18 of the M6a design). The Behaviors section of a system
+    /// object and the Used by sections of a base and of a zone list them.
+    /// </summary>
+    public static IReadOnlyList<MissionObjectUse> ObjectUses(MissionRunResult result, string nickname) =>
+        result.Scripts.Select(s => result.Of(s.Path)).OfType<MissionAnalysis>()
+            .SelectMany(a => MissionUses.NamingObject(a.Index, nickname).Select(l => new MissionObjectUse(a.Script, l)))
+            .ToList();
 
     /// <summary>
     /// The systems that the triggers of a mission name, each with its trigger count, the most first (the menu "Mission

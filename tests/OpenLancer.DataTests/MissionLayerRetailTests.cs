@@ -55,6 +55,22 @@ public sealed class MissionLayerRetailTests(ITestOutputHelper output)
             ? value
             : 0;
 
+    /// <summary>The objects of Li01 list the mission lines that name them in their Behaviors section (section 10.18 of
+    /// the M6a design), for example the gates of the lock lines.</summary>
+    [Fact]
+    public void TheObjectsOfLi01ListTheirMissionRows()
+    {
+        var (objects, _) = World("li01");
+        var run = RetailMissions.Run();
+        var uses = objects.Keys.ToDictionary(k => k, k => MissionSummary.ObjectUses(run, k));
+        var named = uses.Count(u => u.Value.Count > 0);
+        var total = uses.Values.Sum(u => u.Count);
+
+        output.WriteLine($"{named} objects of Li01 have {total} mission lines.");
+        Assert.All(uses.Values.SelectMany(u => u), u => Assert.NotNull(u.Line.Trigger));
+        Assert.Equal((47, 335), (named, total));
+    }
+
     [Fact]
     public void TheCountOfPlaceableItemsOfEachKindInLi01()
     {

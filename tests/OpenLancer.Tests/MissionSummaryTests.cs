@@ -240,6 +240,23 @@ public sealed class MissionSummaryTests
         Assert.Null(MissionSummary.StartSystem(Index("[Trigger]\nnickname = t\nCnd_True = no_params\n")));
     }
 
+    /// <summary>The rows of the Behaviors section of a system object (section 10.18 of the M6a design).</summary>
+    [Fact]
+    public void TheObjectUsesNameTheSlotTheTriggerAndTheLine()
+    {
+        using var folder = new MissionFolder();
+        folder.Write(Script, Story.Replace("Act_ActTrig = t_end", "Act_ActTrig = t_end\nAct_LockDock = Player, gate_x, lock"));
+        var world = World(new System.Collections.Generic.Dictionary<MissionValueKind, string[]>
+        {
+            [MissionValueKind.SystemObject] = ["gate_x"],
+        });
+        var result = MissionRun.Execute(folder.Inputs(world: world));
+
+        var use = Assert.Single(MissionSummary.ObjectUses(result, "GATE_X"));
+        Assert.Equal("M01a: t_start (Lock or unlock dock)", use.Text);
+        Assert.Empty(MissionSummary.ObjectUses(result, "gate_y"));
+    }
+
     [Fact]
     public void TheBaseLabelNamesTheGameAndItsVersion()
     {

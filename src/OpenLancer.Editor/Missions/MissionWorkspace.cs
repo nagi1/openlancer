@@ -298,6 +298,33 @@ internal sealed class MissionWorkspace(EditorWindow window)
             : MissionRef.Of(selection.Script);
     }
 
+    // The mission lines that name each object, base or zone, for the run of the last result.
+    private readonly Dictionary<string, IReadOnlyList<MissionObjectUse>> objectUses = new(StringComparer.OrdinalIgnoreCase);
+    private MissionRunResult? objectUsesRun;
+
+    /// <summary>The lines of the mission scripts that name an object of a system, a base or a zone (section 10.18 of the
+    /// M6a design). The pages ask in each frame, so the workspace keeps the lines until the next run.</summary>
+    public IReadOnlyList<MissionObjectUse> UsesOf(string nickname)
+    {
+        if (Result is not { } result)
+        {
+            return [];
+        }
+
+        if (!ReferenceEquals(objectUsesRun, result))
+        {
+            objectUses.Clear();
+            objectUsesRun = result;
+        }
+
+        if (!objectUses.TryGetValue(nickname, out var uses))
+        {
+            objectUses[nickname] = uses = MissionSummary.ObjectUses(result, nickname);
+        }
+
+        return uses;
+    }
+
     /// <summary>The number of hidden base-game problems of all scripts, for the toggle.</summary>
     public int HiddenTotal => Result == null ? 0 : BaseGameMessages.Count(Result.Problems);
 

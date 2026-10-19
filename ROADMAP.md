@@ -41,6 +41,7 @@ Each milestone goes through four steps: design, adversarial review, build and ve
 | M26 | Nebula and asteroid field areas | 1 | later | Change the shape of a nebula or a field, cut holes, edit mining zones, add new nebulae and fields, and duplicate them. |
 | M27 | Connections and network map | 1 | later | A universe map. Create jump gates, jump holes, trade lanes and new systems. |
 | GA2 | Gap audit, retail comparisons | engine | later | Compare each GA1 row with the retail game. |
+| M6a | Mission studio, read-only | 1 | in progress | Browse the mission scripts with their checks. See each mission as a graph of triggers beside the Scene, with acts, behavior prefabs and links to the world. The Hierarchy and the Inspector show each mission item. |
 | M6 | Mission graph | 1 | later | Edit missions as a graph of triggers, conditions and actions. |
 | M7 | Dialogue | 1 | later | Edit mission dialogue and add voice lines. |
 | M30 | Space cutscene authoring | 1 | later | Make new in-space cutscenes. |

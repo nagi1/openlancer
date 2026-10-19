@@ -26,6 +26,7 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
     private readonly SectionExtras extras = new(window, grid);
     private readonly ComponentStrip strip = new(window, grid);
     private readonly UsedBySection usedBy = new(window, grid);
+    private readonly MissionUsesRows missionRows = new(window, grid);
 
     // The story mentions of the last object, with the edit view that they came from (decision D261 of the M3 design).
     private (string Nickname, object View, IReadOnlyList<Data.Editing.Scene.StoryMention> Mentions)? mentions;
@@ -239,9 +240,10 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
 
     /// <summary>
     /// The behaviors of the object (decision D247 of the M3 design): its pilot, behavior and difficulty, its reputation,
-    /// the encounters of the zones that hold its position, and the files that name it as text. The rows of keys stay
-    /// bound, so a raw edit shows at once. The other rows are read-only, and each one selects its item. Milestone M29 adds
-    /// the cutscene scripts and the mission triggers.
+    /// the encounters of the zones that hold its position, the mission lines that name it (section 10.18 of the M6a
+    /// design), and the other files that name it as text. The rows of keys stay bound, so a raw edit shows at once. The
+    /// other rows are read-only, and each one selects its item. A mission row opens the mission at its line, so the text
+    /// rows leave out the mission scripts. Milestone M29 adds the cutscene scripts.
     /// </summary>
     private void Behaviors(SystemObject obj, SectionRef? section)
     {
@@ -268,7 +270,8 @@ internal sealed class SystemObjectPage(EditorWindow window, PropertyGrid grid)
                 }
             }
 
-            foreach (var mention in Mentions(section))
+            missionRows.Rows(missionRows.UsesOf(obj.Nickname));
+            foreach (var mention in Mentions(section).Where(m => !window.Missions.IsScript(m.Path)))
             {
                 grid.Text("Named in", $"{mention.Path} ({mention.Count} {(mention.Count == 1 ? "time" : "times")})");
             }

@@ -21,18 +21,31 @@ internal sealed class UsedBySection(EditorWindow window, PropertyGrid grid)
     /// <summary>The most rows that the section draws.</summary>
     private const int MaxRows = 200;
 
+    private readonly MissionUsesRows missionRows = new(window, grid);
+
     /// <param name="section">The section of the item in W.</param>
     /// <param name="pageKey">The key of the page, for the open state of the section, for example "Zone".</param>
     public void Draw(SectionRef section, string pageKey)
     {
-        if (window.Session is not { } session || References(session.Edits, section) is not { Count: > 0 } references)
+        if (window.Session is not { } session)
+        {
+            return;
+        }
+
+        var references = References(session.Edits, section);
+        // A zone also lists the mission lines that name it (section 10.18 of the M6a design). An object lists them in its
+        // Behaviors section.
+        var missions = section.Id.Type.Equals("Object", StringComparison.OrdinalIgnoreCase)
+            ? []
+            : missionRows.UsesOf(section.Id.Key);
+        if (references.Count == 0 && missions.Count == 0)
         {
             return;
         }
 
         using (grid.Bind(null))
         {
-            if (!grid.BeginSection($"{pageKey}.UsedBy", EditorIcons.Link, $"Used by ({references.Count})"))
+            if (!grid.BeginSection($"{pageKey}.UsedBy", EditorIcons.Link, $"Used by ({references.Count + missions.Count})"))
             {
                 return;
             }
@@ -47,6 +60,7 @@ internal sealed class UsedBySection(EditorWindow window, PropertyGrid grid)
                 grid.Text("More", $"{references.Count - MaxRows} more lines");
             }
 
+            missionRows.Rows(missions);
             grid.EndSection();
         }
     }

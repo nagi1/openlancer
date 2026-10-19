@@ -80,6 +80,14 @@ Run `start.bat` to build and start the editor. Open a profile and a system, then
 
 To play the mods in your own retail game, pick **Play > Play in HD Edition 0.7.1** (or another linked game), or press Ctrl+F5. The editor installs the mods into a play copy next to the game and starts the game of the play copy. Your game folder does not change. **Play > Host test server** starts FLServer of the play copy with the mods. See "Play in the game" in [docs/PLAY.md](docs/PLAY.md) and "Play copies" in [docs/GAME_LINK.md](docs/GAME_LINK.md).
 
+## Read missions
+
+Open the Missions tab of the editor to see the mission scripts of the game data and the mods. The 14 story missions come first, in the order of the game. Each row gives the start stage, the next mission, the problems and the lines that OpenLancer does not run. Double-click a mission to open it in the Mission tab.
+
+The Mission tab shows the mission as a graph beside the Scene. Each box is one trigger: the event that starts it, and what it does. Frames group the acts and the behavior prefabs, for example a spawn wave. A lens shows one part of the mission, for example the battles or the conversations. Select a trigger, and the Scene shows the ships, points and volumes that it uses. Select an item in the Scene, and the graph shows the triggers that use it.
+
+The Hierarchy lists the items of the open mission, and the Inspector shows each item with named fields and a completeness panel. The Raw INI view shows the whole script with the marks of the checks. This version shows mission scripts but does not change them. The toggle "base-game messages" shows the problems that the base game has too. They are hidden by default.
+
 ## Study and edit cutscenes
 
 Open the Cutscenes tab of the editor to browse the retail cutscenes and the cutscenes of the mods. Open one to preview it on a timeline and to see each value. With Mod > None (read-only), the editor takes no edits. With an active mod, a save writes the changes of a cutscene as a small THN patch. See [docs/CUTSCENES.md](docs/CUTSCENES.md).
