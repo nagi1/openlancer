@@ -339,6 +339,10 @@ public sealed record MissionKeySpec(string Key, string Label, MissionValueKind K
 /// <param name="Directives">True for <c>[ObjList]</c>: the orders are keys too.</param>
 public sealed record MissionSectionSpec(string Type, IReadOnlyList<MissionKeySpec> Keys, bool OpenKeys, bool Directives)
 {
+    /// <summary>True when the game reads the lines of the section in order, so a patch writes all its lines with
+    /// <c>ol.replace</c> (section 6.2 of the M6b design, decision D665).</summary>
+    public bool OrderSensitive { get; init; }
+
     /// <summary>The list field of the orders of an <c>[ObjList]</c>, or null.</summary>
     public MissionListInfo? Orders { get; init; }
 
@@ -858,6 +862,7 @@ public sealed class MissionSchema
         Bool(e, "openKeys"), Bool(e, "directives"))
     {
         Orders = ReadList(e, "orders"),
+        OrderSensitive = Bool(e, "orderSensitive"),
     };
 
     private static MissionValueKind Kind(string text) =>

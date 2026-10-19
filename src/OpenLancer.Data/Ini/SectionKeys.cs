@@ -124,12 +124,46 @@ internal static class SectionKeys
         Exceptions.TryGetValue(sectionName, out var match) ? match : new(SectionMatchKind.Keyed, DefaultKey);
 
     /// <summary>
+    /// How a patch section of a type finds its target in a file. In a mission file, <c>[Mission]</c> and
+    /// <c>[Constants]</c> are single sections, as <c>[SystemInfo]</c> is in a system file (section 6.5 of the M6b
+    /// design). A mission script has one <c>[Mission]</c>, and retail has one <c>[Constants]</c> in M04.
+    /// </summary>
+    /// <param name="path">The install path of the file.</param>
+    public static SectionMatch For(string sectionName, string path) =>
+        IsMissionFile(path) && MissionSingles.Contains(sectionName) ? new(SectionMatchKind.Singleton, null) : For(sectionName);
+
+    /// <summary>The types that a mission file has once at most.</summary>
+    private static readonly HashSet<string> MissionSingles = new(StringComparer.OrdinalIgnoreCase) { "Mission", "Constants" };
+
+    /// <summary>The folder of the mission files, as the start of an install path.</summary>
+    private const string MissionFolder = @"DATA\MISSIONS\";
+
+    /// <summary>True for a file under <c>DATA\MISSIONS</c>: a mission script, a ship build file or a shared file of the
+    /// missions.</summary>
+    /// <param name="path">An install path in any form.</param>
+    public static bool IsMissionFile(string path) =>
+        (IO.VfsPath.Normalize(path) ?? path).StartsWith(MissionFolder, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// True for a section whose patch holds all its lines with <c>ol.replace</c>: a section of the seven mission types
+    /// whose line order counts, in a mission file (section 6.2 of the M6b design, decision D665). The rule data marks
+    /// the types (<c>orderSensitive</c> in <c>mission-schema.json</c>).
+    /// </summary>
+    /// <param name="path">The install path of the file.</param>
+    public static bool IsReplaced(string sectionName, string path) =>
+        IsMissionFile(path) && MissionOrderSensitive.Value.Contains(sectionName);
+
+    private static readonly Lazy<HashSet<string>> MissionOrderSensitive = new(() =>
+        Missions.MissionSchema.Retail.Sections.Where(s => s.OrderSensitive).Select(s => s.Type)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
     /// True when a patch section finds the section without a key: a section of a singleton type, or a section without
     /// a line of the key of a type whose key is optional (see <see cref="SectionMatch.KeyOptional"/>).
     /// </summary>
-    public static bool FindsWithoutKey(Section section)
+    public static bool FindsWithoutKey(Section section, string? path = null)
     {
-        var match = For(section.Name);
+        var match = path == null ? For(section.Name) : For(section.Name, path);
         return match.Kind == SectionMatchKind.Singleton || match.KeyOptional && !HasKeyLine(section, match);
     }
 
@@ -160,6 +194,13 @@ internal static class SectionKeys
     /// from the <c>[Section]</c> attributes of the upstream schema, so it follows upstream changes.
     /// </remarks>
     public static bool IsOrderSensitive(string sectionName) => OrderSensitiveTypes.Value.Contains(sectionName);
+
+    /// <summary>True when the engine reads the lines of a section in order in a file: a type of
+    /// <see cref="IsOrderSensitive(string)"/>, or a mission type of <see cref="IsReplaced"/> in a mission
+    /// file.</summary>
+    /// <param name="path">The install path of the file.</param>
+    public static bool IsOrderSensitive(string sectionName, string path) =>
+        IsOrderSensitive(sectionName) || IsReplaced(sectionName, path);
 
     private static readonly Lazy<HashSet<string>> OrderSensitiveTypes = new(() =>
     {

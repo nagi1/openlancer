@@ -22,6 +22,10 @@ internal sealed record PatchText(
 {
     public bool Succeeded => Problems.Count == 0;
 
+    /// <summary>Warnings about the patch that do not stop the save, for example a loaded section that the writer wrote
+    /// with <c>ol.replace</c>.</summary>
+    public IReadOnlyList<Diagnostic> Notes { get; init; } = [];
+
     /// <summary>
     /// The text of the patch file: the header of the loaded patch, the sections, and the footer of the loaded patch.
     /// A blank line comes between two sections, unless the first section ends with a blank line. Each line ends with
@@ -79,6 +83,13 @@ internal sealed record PatchText(
 /// <c>ol.rename</c> with the new key, then the changed lines as for a changed section. The merge keeps the section at
 /// its place. A section of W with the old key is then a new section. The child sections of a renamed section count as
 /// kept sections.</item>
+/// <item>Replaced: a changed section of a mission type whose line order counts, in a mission file (section 6.2 of the
+/// M6b design). All lines of W in order, with the key line of B. <c>ol.replace</c> and <c>ol.base</c> come directly
+/// after the first key line, and <c>ol.rename</c> too for a rename. Pins have no effect, because the patch holds all
+/// lines.</item>
+/// <item>Placed: a new or moved ship or formation section of a mission file before a kept section gets
+/// <c>ol.before</c> with that section (section 6.4 of the M6b design). It does not move the sections after it. The
+/// delete of a moved section of a mission file gets <c>ol.base</c>.</item>
 /// </list>
 /// <para>A patch section finds its target by its key in the whole file. So the writer refuses to change or delete a
 /// section without a key, a section whose key another section of its type also has, and a <c>[BaseGood]</c> of
@@ -94,8 +105,12 @@ internal sealed record PatchText(
 /// </remarks>
 internal static class PatchWriter
 {
-    /// <summary>The value of <c>ol.new</c> and <c>ol.delete</c>.</summary>
+    /// <summary>The value of <c>ol.new</c>, <c>ol.delete</c> and <c>ol.replace</c>.</summary>
     private static readonly string[] TrueValue = ["true"];
+
+    /// <summary>The section types of a mission file whose place counts: a formation names the ships of earlier sections
+    /// (rule M08 of the mission checks). A new or moved one gets <c>ol.before</c>.</summary>
+    private static readonly HashSet<string> PlacedTypes = new(StringComparer.OrdinalIgnoreCase) { "MsnShip", "MsnFormation" };
 
     /// <param name="path">The install path of the file, for messages.</param>
     /// <param name="b">The document that the merge gives to the patch.</param>
@@ -119,7 +134,7 @@ internal static class PatchWriter
             var sections = plan.Sections(rewritten);
             if (plan.Problems.Count > 0)
                 return new PatchText([], plan.Problems);
-            var patch = new PatchText(sections, [], source);
+            var patch = new PatchText(sections, [], source) { Notes = plan.Notes.ToList() };
             var failures = plan.Check(patch);
             if (failures.Count == 0)
                 return patch;
@@ -140,9 +155,10 @@ internal static class PatchWriter
     /// <param name="kept">True when W has the section too.</param>
     /// <param name="bCounts">The key counts of B.</param>
     /// <param name="wCounts">The key counts of W.</param>
-    internal static string? NotPatchable(Section section, bool kept, KeyCounts bCounts, KeyCounts wCounts)
+    /// <param name="path">The install path of the file.</param>
+    internal static string? NotPatchable(Section section, bool kept, KeyCounts bCounts, KeyCounts wCounts, string path)
     {
-        var match = SectionKeys.For(section.Name);
+        var match = SectionKeys.For(section.Name, path);
         switch (match.Kind)
         {
             case SectionMatchKind.Append:
@@ -177,10 +193,13 @@ internal static class PatchWriter
     /// <para>The editor takes no edit of such a section (see <see cref="EditDocument.ReadOnlyReasonAt"/>). The writer
     /// does not refuse the section, because it also writes the pinned lines of a loaded patch. The self-check then
     /// reports the error.</para>
+    /// <para>A mission section of <see cref="SectionKeys.IsReplaced"/> keeps its order, because its patch holds all
+    /// lines with <c>ol.replace</c>.</para>
     /// </remarks>
-    internal static string? OrderNotKept(Section section)
+    /// <param name="path">The install path of the file.</param>
+    internal static string? OrderNotKept(Section section, string path)
     {
-        if (!SectionKeys.IsOrderSensitive(section.Name) ||
+        if (SectionKeys.IsReplaced(section.Name, path) || !SectionKeys.IsOrderSensitive(section.Name) ||
             SectionKeys.For(section.Name) is not { Kind: SectionMatchKind.Keyed } match ||
             section.Count == 0 || section[0].Name.Equals(match.KeyEntry, StringComparison.OrdinalIgnoreCase))
             return null;
@@ -223,6 +242,13 @@ internal static class PatchWriter
         /// <summary>The sections of B that get <c>ol.rename</c>, by their identity in B.</summary>
         private readonly HashSet<SectionIdentity> renamedRoots = [];
 
+        /// <summary>The new and moved sections of W that get <c>ol.before</c>, by their index in W, with the type and
+        /// the key of the kept section after them.</summary>
+        private readonly Dictionary<int, (string Type, string Key)> anchors = [];
+
+        /// <summary>The notes of the last <see cref="Sections"/> call.</summary>
+        public List<Diagnostic> Notes { get; } = [];
+
         public Plan(string path, IniDocument b, IReadOnlyList<Section> w,
             Func<SectionIdentity, IReadOnlyCollection<string>> pins, PatchSource? source, IReadOnlySet<SectionIdentity> deleted,
             IReadOnlyDictionary<SectionIdentity, SectionIdentity> renamed)
@@ -252,7 +278,7 @@ internal static class PatchWriter
                         Pair(child, bIds[k]);
                 }
             }
-            moved = Moved(deleted);
+            moved = Placed(deleted);
         }
 
         private void Pair(SectionIdentity wId, SectionIdentity bId)
@@ -281,6 +307,7 @@ internal static class PatchWriter
         public List<PatchSection> Sections(IReadOnlySet<SectionIdentity> rewritten)
         {
             Problems.Clear();
+            Notes.Clear();
             loaded.Clear();
             var result = new List<PatchSection>();
             var parentDeleted = false;
@@ -361,9 +388,8 @@ internal static class PatchWriter
             var id = bIds[i];
             var rename = renamedRoots.Contains(id);
             var pinned = pins(wIds[j]);
-            var keyName = SectionKeys.For(original.Name).Kind == SectionMatchKind.Keyed
-                ? SectionKeys.For(original.Name).KeyEntry
-                : null;
+            var match = SectionKeys.For(original.Name, path);
+            var keyName = match.Kind == SectionMatchKind.Keyed ? match.KeyEntry : null;
             bool IsKey(string name) => keyName != null && name.Equals(keyName, StringComparison.OrdinalIgnoreCase);
             var loadedSection = source?.Existing(original.Name, id.Key);
             // A loaded section that changes nothing stays, because no edit touched its lines.
@@ -398,6 +424,8 @@ internal static class PatchWriter
                 names.UnionWith(group.Where(n => before.ContainsKey(n) || after.ContainsKey(n)));
             if (names.Count == 0 && !keepEmpty && !rename)
                 return null;
+            if (names.Count > 0 && SectionKeys.IsReplaced(edited.Name, path))
+                return Replaced(i, j, rename ? key : null, loadedSection, rewritten);
             if (names.Count > 0 && SectionKeys.IsOrderSensitive(edited.Name))
                 names.UnionWith(after.Keys.Where(n => !IsKey(n)));
 
@@ -452,13 +480,17 @@ internal static class PatchWriter
                     : "a patch cannot delete this section, because " + reason);
             }
             var lines = Lines(source?.Existing(original.Name, id.Key), inB: true, keepText: true);
-            var match = SectionKeys.For(original.Name);
+            var match = SectionKeys.For(original.Name, path);
             var keyLine = match.Kind == SectionMatchKind.Keyed
                 ? original.FirstOrDefault(e => e.Name.Equals(match.KeyEntry, StringComparison.OrdinalIgnoreCase))
                 : null;
             var error = lines.Header(original.Name) ??
                         (keyLine != null ? lines.Key(keyLine) : null) ??
                         lines.Directive(IniPatcher.DirectiveDelete, TrueValue);
+            // The delete of a moved section holds the hash of its base, so the merge finds a base that changed after
+            // the edit (section 6.4 of the M6b design).
+            if (error == null && WIndexOfB(i) >= 0 && SectionKeys.IsMissionFile(path))
+                error = lines.Base(SectionHash.Of(original));
             return error != null ? Problem(id, error) : Built(id, lines);
         }
 
@@ -472,7 +504,7 @@ internal static class PatchWriter
             var lines = Lines(loadedSection, inB: false, keepText);
             if (lines.Header(section.Name) is { } headerError)
                 return Problem(id, headerError);
-            var match = SectionKeys.For(section.Name);
+            var match = SectionKeys.For(section.Name, path);
             string? error = null;
             if (SectionKeys.IsChild(section.Name))
             {
@@ -506,6 +538,8 @@ internal static class PatchWriter
                 else if (wCounts.Value.Keys(section.Name, key) != 1)
                     return Problem(id, $"another [{section.Name}] section has {match.KeyEntry} = {key}.");
                 error = lines.Directive(IniPatcher.DirectiveNew, TrueValue);
+                if (error == null && anchors.TryGetValue(j, out var anchor))
+                    error = lines.Directive(IniPatcher.DirectiveBefore, [anchor.Type, anchor.Key]);
             }
             else if (match.Kind == SectionMatchKind.Singleton)
             {
@@ -521,7 +555,135 @@ internal static class PatchWriter
         }
 
         private string? NotPatchable(Section section, bool kept) =>
-            PatchWriter.NotPatchable(section, kept, bCounts.Value, wCounts.Value);
+            PatchWriter.NotPatchable(section, kept, bCounts.Value, wCounts.Value, path);
+
+        /// <summary>
+        /// A changed section of a mission type whose line order counts, in a mission file (section 6.2 of the M6b
+        /// design): all lines of W in order. The first key line is the key line of B, so the merge finds the section by
+        /// its key in B. <c>ol.rename</c>, <c>ol.replace</c> and <c>ol.base</c> follow it. The n-th line of a name
+        /// replaces the n-th line of the name in B, which keeps its value type.
+        /// </summary>
+        /// <param name="newKey">The new key of a rename, or null.</param>
+        /// <param name="loadedSection">The loaded sections that change the section, or null. A loaded section of the
+        /// old form, with lines by name, gives a note.</param>
+        /// <param name="rewritten">True to write no line with the text of the loaded patch.</param>
+        private PatchSection? Replaced(int i, int j, string? newKey, SourceSection? loadedSection, bool rewritten)
+        {
+            var original = b.Sections[i];
+            var edited = w[j];
+            var id = bIds[i];
+            var reason = NotPatchable(original, kept: newKey == null);
+            if (reason != null)
+                return Problem(id, $"a patch cannot {(newKey != null ? "rename" : "change")} this section, because {reason}");
+            var keyName = SectionKeys.For(original.Name, path).KeyEntry!;
+            bool IsKey(string name) => name.Equals(keyName, StringComparison.OrdinalIgnoreCase);
+            var keyLine = original.First(e => IsKey(e.Name));
+            var firstKey = edited.ToList().FindIndex(e => IsKey(e.Name));
+            var lines = Lines(loadedSection, inB: true, keepText: !rewritten);
+            if (lines.Header(edited.Name) is { } headerError)
+                return Problem(id, headerError);
+            var before = SectionComparer.ByName(original);
+            var occurrence = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (var k = 0; k < edited.Count; k++)
+            {
+                var entry = edited[k];
+                var n = occurrence.GetValueOrDefault(entry.Name);
+                occurrence[entry.Name] = n + 1;
+                string? error;
+                if (k == firstKey)
+                {
+                    error = lines.Key(keyLine) ??
+                            (newKey != null
+                                ? PatchFormatter.KeyError(newKey, Binary) ??
+                                  lines.Directive(IniPatcher.DirectiveRename, [newKey])
+                                : null) ??
+                            lines.Directive(IniPatcher.DirectiveReplace, TrueValue) ??
+                            lines.Base(SectionHash.Of(original));
+                }
+                else
+                {
+                    var replaced = before.TryGetValue(entry.Name, out var old) && n < old.Count ? old[n] : null;
+                    error = lines.Entry(entry, replaced);
+                }
+                if (error != null)
+                    return Problem(id, error);
+            }
+            if (loadedSection != null && !loadedSection.Lines.Any(l =>
+                    l.Parsed.Name.Equals(IniPatcher.DirectiveReplace, StringComparison.OrdinalIgnoreCase)))
+            {
+                Notes.Add(Diagnostic.Warning(path, $"The editor wrote {id} of {path} with {IniPatcher.DirectiveReplace}. " +
+                                                   "The game gets the same lines.") with
+                {
+                    Target = new SectionRef(path, wIds[j]),
+                });
+            }
+            return Built(wIds[j], lines);
+        }
+
+        /// <summary>
+        /// The moved sections of B (see <see cref="Moved"/>), and the new and moved ship and formation sections of a
+        /// mission file that get <c>ol.before</c> (section 6.4 of the M6b design). Such a section goes directly before
+        /// the kept section after it in W, so it does not move the sections after it. A section whose next kept section
+        /// has no key that the merge can find goes to the end of the file, as another new section does.
+        /// </summary>
+        private HashSet<SectionIdentity> Placed(IReadOnlySet<SectionIdentity> deleted)
+        {
+            var placed = new HashSet<int>();
+            if (SectionKeys.IsMissionFile(path))
+            {
+                for (var j = 0; j < w.Count; j++)
+                {
+                    if (PlacedTypes.Contains(w[j].Name) && !SectionKeys.IsChild(w[j].Name))
+                        placed.Add(j);
+                }
+            }
+            while (true)
+            {
+                var result = Moved(deleted, placed);
+                anchors.Clear();
+                var dropped = false;
+                foreach (var j in placed.Order().ToList())
+                {
+                    var i = BIndexOfW(j);
+                    if (i >= 0 && !result.Contains(bIds[i]))
+                    {
+                        // A kept section needs no place.
+                        placed.Remove(j);
+                        continue;
+                    }
+                    var next = j + 1;
+                    while (next < w.Count && !(BIndexOfW(next) is >= 0 and var n && !result.Contains(bIds[n])))
+                        next++;
+                    if (next == w.Count)
+                        continue;
+                    if (AnchorOf(next) is { } anchor)
+                        anchors[j] = anchor;
+                    else
+                    {
+                        placed.Remove(j);
+                        dropped = true;
+                    }
+                }
+                if (!dropped)
+                    return result;
+            }
+        }
+
+        /// <summary>
+        /// The type and the key that <c>ol.before</c> names for the kept section of W at an index, or null when the
+        /// merge cannot find the section by them: it has no key, another section of W has its key, or a patch line
+        /// cannot hold the key. The new sections come after the kept sections in the patch, so the merge has only
+        /// sections of W then.
+        /// </summary>
+        private (string Type, string Key)? AnchorOf(int k)
+        {
+            var section = w[k];
+            if (SectionKeys.IsChild(section.Name) || SectionKeys.For(section.Name, path).Kind != SectionMatchKind.Keyed ||
+                SectionIdentity.KeyOf(section) is not { } key || wCounts.Value.Keys(section.Name, key) != 1 ||
+                !PatchFormatter.TryFormatDirective(IniPatcher.DirectiveBefore, [section.Name, key], out _, out _))
+                return null;
+            return (section.Name, key);
+        }
 
         /// <summary>
         /// The sections of B that the patch deletes and adds again. The merge keeps the sections of B in their order. It
@@ -538,7 +700,9 @@ internal static class PatchWriter
         /// A moved section takes its children with it.
         /// </summary>
         /// <param name="deleted">The sections that the loaded patch or an edit deleted.</param>
-        private HashSet<SectionIdentity> Moved(IReadOnlySet<SectionIdentity> deleted)
+        /// <param name="placed">The indexes in W of the new and moved sections that get <c>ol.before</c>. They do not
+        /// move the sections after them.</param>
+        private HashSet<SectionIdentity> Moved(IReadOnlySet<SectionIdentity> deleted, IReadOnlySet<int> placed)
         {
             var result = new HashSet<SectionIdentity>();
             var lastKept = -1;
@@ -558,6 +722,8 @@ internal static class PatchWriter
                 }
                 if (inB)
                     result.Add(bIds[i]);
+                if (placed.Contains(j))
+                    continue;
                 if (isChild)
                     childAfterNew = true;
                 else

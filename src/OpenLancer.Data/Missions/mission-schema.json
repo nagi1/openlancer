@@ -922,7 +922,7 @@
         { "index": 1, "name": "body", "label": "Body", "kind": "body" },
         { "index": 2, "name": "accessories", "label": "Accessories", "kind": "accessory", "rest": true, "optional": true } ] },
       { "key": "visit", "label": "Visit", "kind": "text", "hard": true, "help": "Only the word unknowable has an effect. Another word does nothing." } ] },
-    { "type": "MsnShip", "shipKeys": true, "keys": [
+    { "type": "MsnShip", "orderSensitive": true, "shipKeys": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "buffer": "object", "shipKey": true, "help": "The name that the lines of the mission use for the ship." },
       { "key": "npc", "label": "Pilot and voice", "kind": "npc", "closed": true, "shipKey": true, "help": "The [NPC] section of the pilot: the faction, the voice, the face and the ship build." },
       { "key": "random_name", "label": "Random pilot name", "kind": "bool", "shipKey": true, "help": "True gives the pilot a random name." },
@@ -943,7 +943,7 @@
       { "key": "arrival_obj", "label": "Arrives through", "kind": "object", "hard": true, "help": "The object that the ship comes out of when it spawns, for example a jump gate or a base.", "values": [ { "index": 0, "name": "object", "label": "Object", "kind": "object" }, { "index": 1, "name": "id", "label": "Id", "kind": "wholeNumber", "optional": true, "checked": false } ] },
       { "key": "formation", "label": "Formation shape", "kind": "formationShape", "hard": true, "help": "The shape of formations.ini. A section with this line is a formation. Put the ship keys before this line." },
       { "key": "ship", "label": "Member", "kind": "ship", "list": { "label": "Members", "items": "ships" }, "hard": true, "help": "An earlier [MsnShip] that the formation takes. Then the ship belongs to the formation, so it cannot spawn alone." } ] },
-    { "type": "MsnFormation", "shipKeys": true, "keys": [
+    { "type": "MsnFormation", "orderSensitive": true, "shipKeys": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "buffer": "object", "shipKey": true, "help": "The name that the lines of the mission use for the ship." },
       { "key": "npc", "label": "Pilot and voice", "kind": "npc", "closed": true, "shipKey": true, "help": "The [NPC] section of the pilot: the faction, the voice, the face and the ship build." },
       { "key": "random_name", "label": "Random pilot name", "kind": "bool", "shipKey": true, "help": "True gives the pilot a random name." },
@@ -964,7 +964,7 @@
       { "key": "arrival_obj", "label": "Arrives through", "kind": "object", "hard": true, "help": "The object that the ship comes out of when it spawns, for example a jump gate or a base.", "values": [ { "index": 0, "name": "object", "label": "Object", "kind": "object" }, { "index": 1, "name": "id", "label": "Id", "kind": "wholeNumber", "optional": true, "checked": false } ] },
       { "key": "formation", "label": "Formation shape", "kind": "formationShape", "hard": true, "help": "The shape of formations.ini. A section with this line is a formation. Put the ship keys before this line." },
       { "key": "ship", "label": "Member", "kind": "ship", "list": { "label": "Members", "items": "ships" }, "hard": true, "help": "An earlier [MsnShip] that the formation takes. Then the ship belongs to the formation, so it cannot spawn alone." } ] },
-    { "type": "MsnRandEnc", "openKeys": true, "keys": [
+    { "type": "MsnRandEnc", "orderSensitive": true, "openKeys": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "buffer": "encounterName", "help": "The name that the arm and disarm lines use for the encounter." },
       { "key": "encounter_type", "label": "Encounter type", "kind": "token", "tokens": "encounterType", "hard": true, "help": "TL_Attack attacks on a trade lane. SP_Attack attacks in open space. The keys after this line belong to the encounter." },
       { "key": "attacker_rep_name", "label": "Attacker faction", "kind": "faction", "help": "The faction of the attackers." },
@@ -995,22 +995,22 @@
       { "key": "type", "label": "Type", "kind": "text", "hard": true, "help": "How the game shows the objective: ids (a text), navmarker (a point), rep_inst (an object) or base (a base)." },
       { "key": "state", "label": "State", "kind": "text", "hard": true, "help": "ACTIVE shows the objective. HIDDEN hides it until a line shows it." },
       { "key": "hidden", "label": "Hidden", "kind": "bool", "help": "True hides the objective." } ] },
-    { "type": "Dialog", "keys": [
+    { "type": "Dialog", "orderSensitive": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "help": "The name that the triggers use for the conversation." },
       { "key": "system", "label": "System", "kind": "system", "help": "The system of the conversation. All speakers must be in this system." },
       { "key": "line", "label": "Line", "kind": "object", "help": "One comm line: the speaker, the listener and the comm line.", "list": { "label": "Lines", "items": "lines" }, "values": [
         { "index": 0, "name": "speaker", "label": "Speaker", "kind": "object" },
         { "index": 1, "name": "listener", "label": "Listener", "kind": "object" },
         { "index": 2, "name": "line", "label": "Comm line", "kind": "commLine", "closed": true } ] } ] },
-    { "type": "MetaBehavior", "keys": [
+    { "type": "MetaBehavior", "orderSensitive": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "help": "The name that the ships use for this behavior." },
       { "key": "system", "label": "System", "kind": "system", "unused": true, "help": "The game does not use this value." },
       { "key": "MB_GotoGuide", "label": "Go to guide", "kind": "text" },
       { "key": "MB_DockGuide", "label": "Dock guide", "kind": "text" } ] },
-    { "type": "ObjList", "directives": true, "orders": { "label": "Orders", "items": "orders", "addLabel": "Add order" }, "keys": [
+    { "type": "ObjList", "orderSensitive": true, "directives": true, "orders": { "label": "Orders", "items": "orders", "addLabel": "Add order" }, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "help": "The name that the order lines use for the order list." },
       { "key": "system", "label": "System", "kind": "system", "unused": true, "help": "The game does not use this value." } ] },
-    { "type": "Trigger", "keys": [
+    { "type": "Trigger", "orderSensitive": true, "keys": [
       { "key": "nickname", "label": "Nickname", "kind": "text", "help": "The name that the other lines use for the trigger." },
       { "key": "InitState", "label": "Starts with the mission", "kind": "token", "tokens": "initState", "hard": true, "help": "ACTIVE starts the trigger when the mission starts. The game reads the last line after the nickname." },
       { "key": "repeatable", "label": "Repeats", "kind": "bool", "hard": true, "help": "True makes the trigger active again each time it runs. The game reads the last line after the nickname." },

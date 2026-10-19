@@ -48,7 +48,7 @@ public sealed class NebulaFieldRetailTests(ITestOutputHelper output)
             foreach (var section in sections)
             {
                 types.Add(section.Name);
-                if (PatchWriter.NotPatchable(section, kept: true, counts, counts) is { } reason)
+                if (PatchWriter.NotPatchable(section, kept: true, counts, counts, $@"DATA\{file}") is { } reason)
                     refused.Add($"{Path.GetFileName(file)} [{section.Name}]: {reason}");
             }
         }

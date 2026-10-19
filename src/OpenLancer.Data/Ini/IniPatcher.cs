@@ -26,6 +26,11 @@ namespace OpenLancer.Data.Ini;
 /// lines of the patch section change it.</item>
 /// <item><c>ol.append = true</c> is only for a <c>[Data]</c> section of a patch of <c>EXE\freelancer.ini</c> (see
 /// <see cref="ApplyDataAppend"/>).</item>
+/// <item><c>ol.replace = true</c> replaces all lines of a section of a mission type whose line order counts, in a
+/// mission file (section 6.2 of the M6b design). <c>ol.base = &lt;hash&gt;</c> holds the hash of the section that the
+/// patch replaces or deletes (see <see cref="SectionHash"/>). A section whose hash differs gives a warning.</item>
+/// <item><c>ol.before = &lt;type&gt;, &lt;key&gt;</c> puts a new section of a mission file directly before the
+/// section with that type and key (section 6.4 of the M6b design).</item>
 /// </list>
 /// Directives use the <c>ol.</c> prefix because the upstream text parser drops lines that start with <c>@</c>.
 /// String values <c>$str:key</c> and <c>$ifc:key</c> become the resource ids of the mod's text.
@@ -42,6 +47,9 @@ internal static class IniPatcher
     internal const string DirectiveParent = "ol.parent";
     internal const string DirectiveRename = "ol.rename";
     internal const string DirectiveAppend = "ol.append";
+    internal const string DirectiveReplace = "ol.replace";
+    internal const string DirectiveBase = "ol.base";
+    internal const string DirectiveBefore = "ol.before";
 
     /// <summary>The section of <c>freelancer.ini</c> that lists the data files.</summary>
     private const string DataSection = "Data";
@@ -193,7 +201,7 @@ internal static class IniPatcher
     /// <summary>Applies one section. Returns the section that it added when it is a new parent section.</summary>
     private static Section? ApplySection(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
     {
-        var match = SectionKeys.For(patch.Name);
+        var match = SectionKeys.For(patch.Name, context.TargetPath);
         var isChild = SectionKeys.IsChild(patch.Name);
         if (p.IsAppend)
         {
@@ -201,9 +209,19 @@ internal static class IniPatcher
                           @"EXE\freelancer.ini.");
             return null;
         }
+        if (MissionDirectiveProblem(patch, p, context) is { } problem)
+        {
+            context.Error($"[{patch.Name}]: {problem}");
+            return null;
+        }
         if (p.RenameLines > 0)
         {
             Rename(target, patch, p, context);
+            return null;
+        }
+        if (p.IsReplace)
+        {
+            Replace(target, patch, p, context);
             return null;
         }
         if (p.ParentKey != null && !(p.IsNew && isChild))
@@ -263,8 +281,21 @@ internal static class IniPatcher
                 context.Error($"{label}: {DirectiveNew} is set, but the section already exists.");
                 return null;
             }
+            var place = target.Sections.Count;
+            if (p.Before is var (beforeType, beforeKey))
+            {
+                var anchors = FindKeyed(target, beforeType, beforeKey, context.TargetPath);
+                if (anchors.Count != 1)
+                {
+                    context.Error($"{label}: {DirectiveBefore} = {beforeType}, {beforeKey}: " + (anchors.Count == 0
+                        ? $"{target.Path} has no such section."
+                        : $"{target.Path} has {anchors.Count} such sections."));
+                    return null;
+                }
+                place = anchors[0];
+            }
             var added = Build(patch.Name, patch.File, patch.Line, p.Content, context, target.IsBinary);
-            target.Sections.Add(added);
+            target.Sections.Insert(place, added);
             context.RecordAdd(identity);
             return added;
         }
@@ -290,6 +321,7 @@ internal static class IniPatcher
                 context.Error($"{label}: {DirectiveDelete} cannot be used with other entries.");
                 return null;
             }
+            CheckBase(original, identity, p, context);
             var children = isChild ? 0 : SectionKeys.ChildCount(target.Sections, position);
             target.Sections.RemoveRange(position, 1 + children);
             context.Record(identity, null);
@@ -309,7 +341,7 @@ internal static class IniPatcher
     /// </summary>
     private static void Rename(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
     {
-        var match = SectionKeys.For(patch.Name);
+        var match = SectionKeys.For(patch.Name, context.TargetPath);
         var name = $"[{patch.Name}]";
         if (p.IsNew || p.IsDelete || p.ParentKey != null)
         {
@@ -332,7 +364,9 @@ internal static class IniPatcher
             return;
         }
         var keyEntries = p.Content.Where(e => Is(e, match.KeyEntry!)).ToList();
-        if (keyEntries.Count != 1 || keyEntries[0].Count != 1)
+        // With ol.replace, the first key line finds the section, as the game reads the first one.
+        if (p.IsReplace ? keyEntries.Count == 0 || keyEntries[0].Count != 1
+                : keyEntries.Count != 1 || keyEntries[0].Count != 1)
         {
             context.Error($"{name} needs exactly one '{match.KeyEntry}' entry with one value to find the section that " +
                           $"{DirectiveRename} renames.");
@@ -351,7 +385,8 @@ internal static class IniPatcher
         var candidates = target.Sections
             .Select((section, index) => (section, index))
             .Where(c => c.section.Name.Equals(patch.Name, StringComparison.OrdinalIgnoreCase) &&
-                        KeyEquals(c.section, match.KeyEntry!, oldKey))
+                        (p.IsReplace ? FirstKeyEquals(c.section, match.KeyEntry!, oldKey)
+                            : KeyEquals(c.section, match.KeyEntry!, oldKey)))
             .ToList();
         if (candidates.Count != 1)
         {
@@ -372,11 +407,131 @@ internal static class IniPatcher
         context.Record(identity, null);
         context.RecordAdd(renamed);
         context.RecordRename(identity, renamed);
-        var changes = p.Content.Where(e => !Is(e, match.KeyEntry!)).ToList();
-        var changed = changes.Count > 0 || p.RemoveNames.Count > 0
-            ? Modify(original, changes, p.RemoveNames, renamed, context, target.IsBinary)
-            : original;
+        Section changed;
+        if (p.IsReplace)
+        {
+            // The body first, then the new key (section 6.2 of the M6b design).
+            CheckBase(original, identity, p, context);
+            changed = ReplaceBody(original, p.Content, renamed, context, target.IsBinary);
+        }
+        else
+        {
+            var changes = p.Content.Where(e => !Is(e, match.KeyEntry!)).ToList();
+            changed = changes.Count > 0 || p.RemoveNames.Count > 0
+                ? Modify(original, changes, p.RemoveNames, renamed, context, target.IsBinary)
+                : original;
+        }
         target.Sections[position] = WithKey(changed, match.KeyEntry!, newKey);
+    }
+
+    /// <summary>
+    /// The problem of the mission directives of a patch section, or null (sections 6.2 to 6.4 of the M6b design).
+    /// <c>ol.replace</c> is only for a mission type whose line order counts, in a mission file, and not with
+    /// <c>ol.new</c>, <c>ol.delete</c>, <c>ol.remove</c> or <c>ol.parent</c>. <c>ol.base</c> goes with
+    /// <c>ol.replace</c> or <c>ol.delete</c> in a mission file. <c>ol.before</c> goes with <c>ol.new</c> in a mission
+    /// file.
+    /// </summary>
+    private static string? MissionDirectiveProblem(Section patch, PatchDirectives p, PatchContext context)
+    {
+        var missionFile = SectionKeys.IsMissionFile(context.TargetPath);
+        if (p.IsReplace && !SectionKeys.IsReplaced(patch.Name, context.TargetPath))
+            return $"{DirectiveReplace} is only for sections whose line order counts.";
+        if (p.IsReplace && (p.IsNew || p.IsDelete || p.RemoveNames.Count > 0 || p.ParentKey != null))
+            return $"{DirectiveReplace} cannot be used with {DirectiveNew}, {DirectiveDelete}, {DirectiveRemove} or " +
+                   $"{DirectiveParent}.";
+        if (p.BaseLines > 0 && (!missionFile || !(p.IsReplace || p.IsDelete)))
+            return $"{DirectiveBase} is only for a section of a mission file with {DirectiveReplace} or {DirectiveDelete}.";
+        if (p.BaseLines > 1 || p.BaseLines == 1 && string.IsNullOrEmpty(p.BaseHash))
+            return $"{DirectiveBase} needs one line with one value: the hash that the editor writes.";
+        if (p.BeforeLines > 0 && (!missionFile || !p.IsNew))
+            return $"{DirectiveBefore} is only for a new section of a mission file. Use it with {DirectiveNew}.";
+        if (p.BeforeLines > 1 || p.BeforeLines == 1 && p.Before == null)
+            return $"{DirectiveBefore} needs one line with two values: the type and the key of a section.";
+        return null;
+    }
+
+    /// <summary>
+    /// Applies a patch section with <c>ol.replace</c>: it finds the target by the first key line, wherever that line is
+    /// in the patch section. All entries of the target take the entries of the patch section, in patch order. The
+    /// section keeps its place in the file.
+    /// </summary>
+    private static void Replace(IniDocument target, Section patch, PatchDirectives p, PatchContext context)
+    {
+        var match = SectionKeys.For(patch.Name, context.TargetPath);
+        var key = p.Content.FirstOrDefault(e => Is(e, match.KeyEntry!));
+        if (key is not { Count: 1 })
+        {
+            context.Error($"[{patch.Name}] needs a '{match.KeyEntry}' entry with one value to find the section that " +
+                          $"{DirectiveReplace} replaces.");
+            return;
+        }
+        var identity = new SectionIdentity(patch.Name, key[0].ToString());
+        var positions = target.Sections
+            .Select((section, index) => (section, index))
+            .Where(c => c.section.Name.Equals(patch.Name, StringComparison.OrdinalIgnoreCase) &&
+                        FirstKeyEquals(c.section, match.KeyEntry!, identity.Key!))
+            .Select(c => c.index)
+            .ToList();
+        if (positions.Count != 1)
+        {
+            context.Error(positions.Count == 0
+                ? $"{identity}: no section to patch in {target.Path}. Set {DirectiveNew} = true to add it."
+                : $"{identity}: matches {positions.Count} sections in {target.Path}. Use a whole-file override.");
+            return;
+        }
+        var original = target.Sections[positions[0]];
+        CheckBase(original, identity, p, context);
+        target.Sections[positions[0]] = ReplaceBody(original, p.Content, identity, context, target.IsBinary);
+    }
+
+    /// <summary>
+    /// A section with the entries of a patch section in patch order, in place of all entries of the original. The n-th
+    /// line of a name gets the value types of the n-th original line of the name, as a change does. The ledger records
+    /// each name of the original and of the new entries.
+    /// </summary>
+    private static Section ReplaceBody(Section original, List<Entry> content, SectionIdentity identity,
+        PatchContext context, bool binary)
+    {
+        var originalLines = original.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        var occurrence = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var result = new Section(original.Name, content.Count) { File = original.File, Line = original.Line };
+        foreach (var entry in content)
+        {
+            var n = occurrence.GetValueOrDefault(entry.Name);
+            occurrence[entry.Name] = n + 1;
+            var replaced = originalLines.TryGetValue(entry.Name, out var lines) && n < lines.Count ? lines[n] : null;
+            result.Add(Copy(result, entry, context, binary, replaced));
+        }
+        foreach (var name in original.Select(e => e.Name).Concat(content.Select(e => e.Name))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+            context.Record(identity, name);
+        return result;
+    }
+
+    /// <summary>
+    /// Warns when the hash of <c>ol.base</c> differs from the hash of the section that the patch replaces or deletes
+    /// (section 6.3 of the M6b design). The changes of the lower layers in the section then go away.
+    /// </summary>
+    private static void CheckBase(Section original, SectionIdentity identity, PatchDirectives p, PatchContext context)
+    {
+        if (p.BaseHash is not { } expected || SectionHash.Matches(original, expected))
+            return;
+        context.Warning($"Mod '{context.ModId}' replaces {identity} of {context.TargetPath}. The base of this section " +
+                        "changed after the edit, and its changes go away. Compare the two, then keep your lines or use " +
+                        "the new base.");
+    }
+
+    /// <summary>The indexes of the sections of a type whose key is the key, as a patch section finds them.</summary>
+    private static List<int> FindKeyed(IniDocument target, string type, string key, string path)
+    {
+        var match = SectionKeys.For(type, path);
+        return target.Sections
+            .Select((section, index) => (section, index))
+            .Where(c => c.section.Name.Equals(type, StringComparison.OrdinalIgnoreCase) &&
+                        match.Kind == SectionMatchKind.Keyed && KeyEquals(c.section, match.KeyEntry!, key))
+            .Select(c => c.index)
+            .ToList();
     }
 
     /// <summary>A copy of a section whose first key line has the new key, as a string.</summary>
@@ -532,6 +687,21 @@ internal static class IniPatcher
             }
             else if (Is(entry, DirectiveAppend))
                 p.IsAppend = true;
+            else if (Is(entry, DirectiveReplace))
+                p.IsReplace = IsTrue(entry);
+            else if (Is(entry, DirectiveBase))
+            {
+                p.BaseLines++;
+                p.BaseHash = entry.Count == 1 ? SectionHash.TextOf(entry[0]) : null;
+            }
+            else if (Is(entry, DirectiveBefore))
+            {
+                p.BeforeLines++;
+                p.Before = entry.Count == 2 && entry[0].ToString().Trim() is { Length: > 0 } type &&
+                           entry[1].ToString().Trim() is { Length: > 0 } key
+                    ? (type, key)
+                    : null;
+            }
             else if (entry.Name.StartsWith(DirectivePrefix, StringComparison.OrdinalIgnoreCase))
             {
                 context?.Error($"[{patch.Name}]: unknown directive '{entry.Name}'.");
@@ -634,6 +804,12 @@ internal static class IniPatcher
         section.Any(e => Is(e, keyEntry) && e.Count > 0 &&
                          e[0].ToString().Equals(keyValue, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>True when the first key line of a section has the key. The game reads the first <c>nickname</c> line of
+    /// a mission section.</summary>
+    private static bool FirstKeyEquals(Section section, string keyEntry, string keyValue) =>
+        section.FirstOrDefault(e => Is(e, keyEntry)) is { Count: > 0 } first &&
+        first[0].ToString().Equals(keyValue, StringComparison.OrdinalIgnoreCase);
+
     private static bool Is(Entry entry, string name) => entry.Name.Equals(name, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsTrue(Entry entry) => entry.Count == 1 && entry[0].TryToBoolean(out var b) && b;
@@ -651,6 +827,18 @@ internal static class IniPatcher
         /// <summary>The number of <c>ol.rename</c> lines, and the new key of the last one when it has one value.</summary>
         public int RenameLines;
         public string? RenameKey;
+
+        /// <summary>True when the section has <c>ol.replace = true</c>.</summary>
+        public bool IsReplace;
+
+        /// <summary>The number of <c>ol.base</c> lines, and the hash of the last one when it has one value.</summary>
+        public int BaseLines;
+        public string? BaseHash;
+
+        /// <summary>The number of <c>ol.before</c> lines, and the type and the key of the last one when it has two
+        /// values.</summary>
+        public int BeforeLines;
+        public (string Type, string Key)? Before;
         public readonly List<string> RemoveNames = [];
         public readonly List<Entry> Content = [];
     }
@@ -684,6 +872,12 @@ internal sealed class PatchContext(
     List<Diagnostic> diagnostics,
     bool keepPlaceholders = false)
 {
+    /// <summary>The id of the mod of the patch.</summary>
+    public string ModId => modId;
+
+    /// <summary>The install path of the file that the patch changes.</summary>
+    public string TargetPath => targetPath;
+
     public void Error(string message) => diagnostics.Add(Diagnostic.Error(sourceFile, message));
 
     public void Warning(string message) => diagnostics.Add(Diagnostic.Warning(sourceFile, message));

@@ -216,8 +216,8 @@ internal sealed class EditDocument : IEditFile
         baseCounts ??= new KeyCounts(b.Sections);
         workingCounts ??= new KeyCounts(state.Working);
         // W has a renamed section under its new key, so only B must give the old key once.
-        return PatchWriter.NotPatchable(b.Sections[i], kept: before.Equals(id), baseCounts, workingCounts) ??
-               PatchWriter.OrderNotKept(b.Sections[i]);
+        return PatchWriter.NotPatchable(b.Sections[i], kept: before.Equals(id), baseCounts, workingCounts, Path) ??
+               PatchWriter.OrderNotKept(b.Sections[i], Path);
     }
 
     /// <summary>
@@ -314,7 +314,7 @@ internal sealed class EditDocument : IEditFile
             var count = diagnostics.Count;
             try
             {
-                source = PatchSource.Parse(patchFile!, bytes);
+                source = PatchSource.Parse(patchFile!, bytes, path);
             }
             catch (Exception e)
             {

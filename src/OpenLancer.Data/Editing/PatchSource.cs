@@ -72,14 +72,14 @@ internal sealed class PatchSource
     private readonly Dictionary<SectionIdentity, List<SourceSection>> added = [];
 
     private PatchSource(IReadOnlyList<Section> sections, Encoding encoding, IReadOnlyList<string> header,
-        IReadOnlyList<string> footer, IReadOnlyList<SourceSection>? texts)
+        IReadOnlyList<string> footer, IReadOnlyList<SourceSection>? texts, string? installPath)
     {
         Sections = sections;
         Encoding = encoding;
         Header = header;
         Footer = footer;
         if (texts != null)
-            Group(texts);
+            Group(texts, installPath);
     }
 
     /// <summary>The sections of the file, as the engine's text parser reads them.</summary>
@@ -94,20 +94,25 @@ internal sealed class PatchSource
     /// <summary>The lines after the last entry line of the last section.</summary>
     public IReadOnlyList<string> Footer { get; }
 
+    /// <param name="path">The patch file, for messages.</param>
+    /// <param name="data">The bytes of the patch file.</param>
+    /// <param name="installPath">The install path of the file that the patch changes, or null. In a mission file, a
+    /// patch section of a single section type finds its section without a key (see
+    /// <see cref="SectionKeys.For(string, string)"/>).</param>
     /// <exception cref="Exception">The engine's parser cannot read the file.</exception>
     /// <exception cref="InvalidDataException">The lines do not give the sections that the engine's parser reads.</exception>
-    public static PatchSource Parse(string path, byte[] data)
+    public static PatchSource Parse(string path, byte[] data, string? installPath = null)
     {
         var document = IniDocument.Parse(path, data);
         if (document.IsBinary)
-            return new PatchSource(document.Sections, IniDocument.TextEncoding, [], [], null);
+            return new PatchSource(document.Sections, IniDocument.TextEncoding, [], [], null, installPath);
         // The same reader as the engine's text parser, so the lines and the encoding are the same.
         using var reader = new StreamReader(new MemoryStream(data, false), IniDocument.TextEncoding,
             detectEncodingFromByteOrderMarks: true);
         var lines = new List<string>();
         while (reader.ReadLine() is { } line)
             lines.Add(line);
-        return Split(path, document.Sections, reader.CurrentEncoding, lines);
+        return Split(path, document.Sections, reader.CurrentEncoding, lines, installPath);
     }
 
     /// <summary>
@@ -133,7 +138,8 @@ internal sealed class PatchSource
     public static bool IsBlank(string line) => line.AsSpan().Trim(SpacesAndTabs).IsWhiteSpace();
 
     /// <summary>Splits the lines into the header, the text of each section and the footer.</summary>
-    private static PatchSource Split(string path, IReadOnlyList<Section> sections, Encoding encoding, List<string> lines)
+    private static PatchSource Split(string path, IReadOnlyList<Section> sections, Encoding encoding, List<string> lines,
+        string? installPath)
     {
         var kinds = new LineKind[lines.Count];
         var headers = new List<int>();
@@ -146,7 +152,7 @@ internal sealed class PatchSource
         if (headers.Count != sections.Count)
             throw Mismatch(path, $"{headers.Count} header lines give {sections.Count} sections");
         if (sections.Count == 0)
-            return new PatchSource(sections, encoding, lines, [], []);
+            return new PatchSource(sections, encoding, lines, [], [], installPath);
 
         var texts = new List<SourceSection>();
         var leading = LeadingStart(kinds, headers[0], 0);
@@ -181,7 +187,7 @@ internal sealed class PatchSource
                 footer = lines[(last + 1)..];
             leading = next;
         }
-        return new PatchSource(sections, encoding, header, footer, texts);
+        return new PatchSource(sections, encoding, header, footer, texts, installPath);
     }
 
     /// <summary>The first leading line of the header line at <paramref name="header"/>: the first line of the comment
@@ -221,7 +227,7 @@ internal sealed class PatchSource
     /// same type and key join the group, up to a section that deletes it. After a section with <c>ol.rename</c>, the
     /// later sections with the new key join the group. Another section without a key only adds a section.
     /// </summary>
-    private void Group(IReadOnlyList<SourceSection> texts)
+    private void Group(IReadOnlyList<SourceSection> texts, string? installPath)
     {
         var actions = IniPatcher.Actions(Sections);
         var groups = new List<(SectionIdentity Id, LoadedGroup Group)>();
@@ -230,7 +236,7 @@ internal sealed class PatchSource
         {
             var key = SectionIdentity.KeyOf(Sections[i]);
             var id = new SectionIdentity(Sections[i].Name, key);
-            if (key == null && !SectionKeys.FindsWithoutKey(Sections[i]))
+            if (key == null && !SectionKeys.FindsWithoutKey(Sections[i], installPath))
             {
                 if (actions[i] == PatchAction.Add)
                     AddTo(id, texts[i]);

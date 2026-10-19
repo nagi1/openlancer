@@ -86,6 +86,18 @@ internal sealed class PatchSectionBuilder(SourceSection? source, bool binary, bo
     }
 
     /// <summary>
+    /// Adds the <c>ol.base</c> line of a hash (see <see cref="SectionHash"/>). The text parser reads a hash of decimal
+    /// digits, or a hash with the form of a float, as a number. So the line keeps the text of the hash, and the merge
+    /// compares the hash through the parser (see <see cref="SectionHash.Matches"/>).
+    /// </summary>
+    public string? Base(string hash)
+    {
+        var index = FirstUnused(p => p.Name.Equals(IniPatcher.DirectiveBase, StringComparison.OrdinalIgnoreCase) &&
+                                     p.Count == 1 && SectionHash.TextOf(p[0]).Equals(hash, StringComparison.OrdinalIgnoreCase));
+        return Place(index, fits: true) ? null : Formatted($"{IniPatcher.DirectiveBase} = {hash}");
+    }
+
+    /// <summary>
     /// Adds the line of an entry. The n-th line of a name takes the place of the n-th loaded line of that name in
     /// the last loaded section that has the name, because the merge replaces the lines of a name in an earlier loaded
     /// section with the lines of a later one. Names compare without letter case, as the merge compares them.

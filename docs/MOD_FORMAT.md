@@ -150,6 +150,7 @@ Some section types use another key:
 | `[DynamicAsteroids]` | `asteroid` |
 | `[LootableZone]` | `zone`, or none for the section without a `zone` line (see below) |
 | `[locked_gates]` of `DATA\InitialWorld.ini` | none: the file has one |
+| `[Mission]`, `[Constants]` of a file under `DATA\MISSIONS` | none: the file has one of each (see "Mission files") |
 
 If the key matches no section, or more than one section, the merge fails with an error.
 
@@ -239,6 +240,9 @@ Directives start with `ol.`. Do not use `@`: the INI parser ignores lines that s
 | `ol.parent = <key>` | With `ol.new`, add a child section to the parent section with this key (see below). |
 | `ol.rename = <new key>` | Give the target section a new key. The section keeps its place (see "Renames"). |
 | `ol.append = true` | Only in a `[Data]` section of a patch of `EXE/freelancer.ini`: add the lines of the section to `[Data]` (see "freelancer.ini"). |
+| `ol.replace = true` | Only in a mission file: replace all lines of the target section with the lines of the patch section, in order (see "Mission files"). |
+| `ol.base = <hash>` | Only in a mission file, with `ol.replace` or `ol.delete`: the hash of the section when the editor wrote the patch (see "Mission files"). |
+| `ol.before = <type>, <key>` | Only in a mission file, with `ol.new`: add the new section directly before the section with this type and key (see "Mission files"). |
 
 An unknown `ol.` directive is an error.
 
@@ -257,6 +261,43 @@ pos = -37675, 0, -27705
 - The merge refuses `ol.rename` with `ol.new`, `ol.delete` or `ol.parent`. It also refuses it on a section type without a key and on a child section. The patch section must have exactly one key line and one `ol.rename` line.
 - The new key must differ from the old key in more than letter case. No other section of the type in the file can have the new key.
 - The place counts, because the engine reads some sections in file order. For example, a player launches from the first object of a system that docks with the base. A delete and a new section would move the section to the end of the file.
+
+### Mission files
+
+A mission file is a file under `DATA\MISSIONS`: a mission script, the file of its ship builds, or a shared file of the missions. The game reads the lines of these mission section types in order: `[Trigger]`, `[ObjList]`, `[Dialog]`, `[MsnShip]`, `[MsnFormation]`, `[MsnRandEnc]` and `[MetaBehavior]`. For example, a trigger runs its actions in order, and the game reads its lines from the first `nickname` line. A patch by names puts its lines at the place of the first line that they replace. So such a patch cannot keep the order of these sections.
+
+`ol.replace = true` replaces all lines of a section of these types:
+
+- The patch section finds its target by its first `nickname` line, wherever that line is in the patch section.
+- All lines of the target get the lines of the patch section, in patch order, without the `ol.` lines. The section keeps its place in the file. Lines before the `nickname` line stay before it.
+- `ol.replace` is only for these types in a mission file. On another type, the merge fails with the error "ol.replace is only for sections whose line order counts."
+- `ol.replace` cannot go with `ol.new`, `ol.delete`, `ol.remove` or `ol.parent`. With `ol.rename`, the merge replaces the lines first, then gives the `nickname` line the new key.
+- The n-th line of a name gets the value types of the n-th line of the name in the target. A change does the same (see "Value types in binary files").
+
+`ol.base = <hash>` holds a hash of the section that the patch replaces or deletes, as the editor read it from the lower layers. The hash is 16 hex digits of the SHA-256 of the section: each line with its key in lowercase and its values. A number gives its value, so `3` and `3.0` give the same hash. A text keeps its letter case, but `true` and `false` are in lowercase. So a binary section and the same section as text give the same hash. When the section of the lower layers has another hash, the merge gives a warning: "Mod '{mod}' replaces {section} of {file}. The base of this section changed after the edit, and its changes go away. Compare the two, then keep your lines or use the new base." The patch still applies.
+
+`ol.before = <type>, <key>` goes with `ol.new`. The merge puts the new section directly before the section with that type and key, not at the end of the file. When the file has no such section, or more than one, the merge fails with an error. The place of a ship and a formation counts: a formation names ships of the sections before it.
+
+`[Mission]` and `[Constants]` are single sections of a mission file, as `[SystemInfo]` is in a system file. A patch section of the type finds the one section of that type. When the file has two, the merge fails with an error. A patch changes their lines by names, as for other sections.
+
+This patch of `DATA/MISSIONS/OL_TEST/ol_test.ini` changes the condition of a trigger whose `system` line comes before its `nickname` line, and adds a ship before its formation:
+
+```ini
+[Trigger]
+system = Li01
+nickname = ol_wave2_spawn
+ol.replace = true
+ol.base = 5be0c1f27a9d4410
+Cnd_Destroyed = ol_wave1, -1, EXPLODE
+Act_SpawnFormation = ol_wave2_form
+Act_ActTrig = ol_wave2_done
+
+[MsnShip]
+ol.new = true
+ol.before = MsnFormation, ol_wave2_form
+nickname = ol_wave2_ship_3
+npc = ol_pirate_npc
+```
 
 ### Child sections
 
@@ -969,9 +1010,11 @@ The editor writes a THN patch in canonical form (see "Cutscenes"). It keeps the 
 
 ### Sections in which the line order counts
 
-The engine reads the lines of some sections in order, for example a mission `[Trigger]` or `[ObjList]`. When the editor changes such a section, its patch holds all lines of the section. The merge puts these lines at the place of the first line that they replace, and the `nickname` line stays in its place. So when a line comes before the `nickname` line, a patch from the editor cannot keep the order. The editor shows such a section, but it does not change it.
+The engine reads the lines of some sections in order, for example a mission `[Trigger]` or `[ObjList]`. In a mission file, the editor writes a changed section of such a type with `ol.replace` and all its lines in order. It adds `ol.base` with the hash of the section in the lower layers (see "Mission files"). So the order stays, also when a line comes before the `nickname` line. A new ship or formation that must come before another section gets `ol.before`. A moved ship or formation is a delete with `ol.base`, and a new section with `ol.before`.
 
-When a hand-written patch of the mod changes such a section, the editor writes that section again at each save of the file. So the editor cannot save an edit of that file, and the save reports the section. Change that file by hand.
+When a patch of the mod changes such a section by names, the next save of the file writes the section again with `ol.replace`. The game gets the same lines. The Console tells it once: "The editor wrote {section} of {file} with ol.replace. The game gets the same lines."
+
+Outside the mission files, the editor writes all lines of such a section except the `nickname` line. The merge puts these lines at the place of the first line that they replace, and the `nickname` line stays in its place. So when a line comes before the `nickname` line, a patch from the editor cannot keep the order. The editor shows such a section, but it does not change it. When a hand-written patch of the mod changes such a section, the editor writes that section again at each save of the file. So the editor cannot save an edit of that file, and the save reports the section. Change that file by hand.
 
 ### How a save writes the files
 

@@ -271,6 +271,7 @@ public sealed partial class EditSession
                 problems.AddRange(patch.Problems);
                 continue;
             }
+            problems.AddRange(patch.Notes);
             problems.AddRange(MissingText(document));
             problems.AddRange(FrozenTextIds(document.Path, patch));
             if (activeNow.Files.ContainsKey(path))
