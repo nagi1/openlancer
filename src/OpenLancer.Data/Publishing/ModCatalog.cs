@@ -121,6 +121,25 @@ public sealed record CatalogInput(string Workspace, string? ProfilePath)
 /// <remarks>The scan reads the saved files only and writes nothing. The window runs it on a worker.</remarks>
 public static class ModCatalog
 {
+    /// <summary>The chip of a publish draft with changes. The window shows it at once, before the next scan.</summary>
+    public static ModChip UnappliedChip { get; } = new(ChipKind.UnappliedChanges, "Unapplied changes", ChipColor.Blue,
+        "Click Apply to write the publish settings.");
+
+    /// <summary>
+    /// The row with the chip "Unapplied changes" of a draft as it is now. The scan gives the other chips, so a change
+    /// of a field shows its chip before the next scan.
+    /// </summary>
+    /// <param name="unapplied">True when the draft of the mod has changes now.</param>
+    public static ModRow WithDraft(ModRow row, bool unapplied)
+    {
+        if (unapplied == row.Has(ChipKind.UnappliedChanges))
+            return row;
+        var chips = row.Chips.Where(c => c.Kind != ChipKind.UnappliedChanges).ToList();
+        if (unapplied)
+            chips.Insert(chips.FindLastIndex(c => c.Kind is ChipKind.Active or ChipKind.UnsavedEdits) + 1, UnappliedChip);
+        return row with { Chips = chips };
+    }
+
     /// <summary>The workspace of a profile: the folder above the folder of the profile file.</summary>
     public static string WorkspaceOf(string profilePath) =>
         Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(profilePath))!, ".."));
@@ -226,8 +245,7 @@ public static class ModCatalog
             chips.Add(new ModChip(ChipKind.UnsavedEdits, "Unsaved edits", ChipColor.Blue,
                 "Save with Ctrl+S. The export uses the saved files."));
         if (input.DraftFolders.Any(f => GameFolders.Same(f, folder)))
-            chips.Add(new ModChip(ChipKind.UnappliedChanges, "Unapplied changes", ChipColor.Blue,
-                "Click Apply to write the publish settings."));
+            chips.Add(UnappliedChip);
         if (!active && File.Exists(Path.Combine(folder, SaveTransaction.FolderName, RecoveryFile.FileName)))
             chips.Add(new ModChip(ChipKind.EarlierSession, "Edits of an earlier session", ChipColor.Blue,
                 "Make this mod the active mod. Then restore or discard the edits."));

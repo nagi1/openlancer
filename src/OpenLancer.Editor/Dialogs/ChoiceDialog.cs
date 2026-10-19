@@ -1,16 +1,28 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ImGuiNET;
 
 namespace OpenLancer.Editor.Dialogs;
 
 /// <summary>One button of a <see cref="ChoiceDialog"/>.</summary>
 /// <param name="Action">What the button does. The dialog closes first.</param>
-internal sealed record Choice(string Label, Action Action);
+internal sealed record Choice(string Label, Action Action)
+{
+    /// <summary>False for a button that the user cannot click now. <see cref="Tooltip"/> then tells why.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>The tooltip of the button, or null.</summary>
+    public string? Tooltip { get; init; }
+
+    /// <summary>True for the default button, which Enter clicks. Without a default button, the first button is the
+    /// default button.</summary>
+    public bool Default { get; init; }
+}
 
 /// <summary>
-/// A message with buttons, for example Save, Discard and Cancel. The first button is the default button. Escape and the
-/// close button of the title bar run the cancel action.
+/// A message with buttons, for example Save, Discard and Cancel. The first button is the default button, unless a button
+/// says that it is the default button. Escape and the close button of the title bar run the cancel action.
 /// </summary>
 internal sealed class ChoiceDialog : ModalDialog
 {
@@ -36,6 +48,7 @@ internal sealed class ChoiceDialog : ModalDialog
     {
         ImGui.TextWrapped(message);
         ImGui.Spacing();
+        var primary = Math.Max(0, choices.ToList().FindIndex(c => c.Default));
         for (var i = 0; i < choices.Count; i++)
         {
             if (i > 0)
@@ -43,11 +56,17 @@ internal sealed class ChoiceDialog : ModalDialog
                 ImGui.SameLine();
             }
 
-            if (Button(choices[i].Label, primary: i == 0))
+            var choice = choices[i];
+            if (Button(choice.Label, primary: i == primary, enabled: choice.Enabled))
             {
                 Close();
-                choices[i].Action();
+                choice.Action();
                 return;
+            }
+
+            if (choice.Tooltip != null && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(choice.Tooltip);
             }
         }
     }

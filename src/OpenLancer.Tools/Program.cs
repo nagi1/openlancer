@@ -523,16 +523,10 @@ internal static class Program
             Err.WriteLine(unsafeVersion);
             return ExitProblems;
         }
-        // The probe is not for players, and the checklist writes nothing. Neither runs the guard or goes into the
-        // history.
-        var guarded = !probe && !checklist;
-        var load = PublishHistory.Load(root, modId);
-        if (guarded && load.GuardRefusal is { } noHistory)
-            return Fail(noHistory);
         var publish = PublishSettings.Load(mod.Folder);
         foreach (var problem in publish.Problems)
             Err.WriteLine($"Warning: {mod.Folder}: {problem}");
-        var prepared = ModExport.Prepare(new ExportRequest
+        var request = new ExportRequest
         {
             Mod = mod,
             Targets = targets,
@@ -546,73 +540,71 @@ internal static class Program
             Publish = publish.Settings,
             StringWriter = DllStringResourceWriter.Instance,
             Thn = ThornEvaluator.Instance,
-        });
-        foreach (var problem in prepared.Problems)
-            Err.WriteLine(problem);
-        if (checklist)
+        };
+        // The probe is not for players, and the checklist writes nothing. Neither runs the guard or goes into the
+        // history.
+        if (checklist || probe)
         {
-            foreach (var line in prepared.Checklist)
-                Out.WriteLine(line);
-            return prepared.Problems.Any(p => p.Severity == DiagnosticSeverity.Error) ? ExitProblems : ExitOk;
+            var prepared = ModExport.Prepare(request);
+            PrintProblems(prepared);
+            if (checklist)
+            {
+                foreach (var line in prepared.Checklist)
+                    Out.WriteLine(line);
+                return prepared.Problems.Any(p => p.Severity == DiagnosticSeverity.Error) ? ExitProblems : ExitOk;
+            }
+            return PrintPackages(ModExport.Write(prepared, []));
         }
 
         var version = mod.Manifest.Version;
         var location = new HistoryLocation(root, modId, mod.Folder,
             [profile.BaseFolder, .. reports.Select(r => r.Root).OfType<string>()]);
-        var history = load.History;
-        var time = DateTime.UtcNow;
-        var replace = false;
-        if (guarded && !prepared.Refused)
+        var export = GuardedExport.Prepare(request, location, DateTime.UtcNow);
+        if (export.Refusal is { } noHistory)
+            return Fail(noHistory);
+        PrintProblems(export.Prepared!);
+        var guard = export.Guard;
+        if (guard.Kind != GuardKind.None)
+            PrintWarnings(export.RecordChecks());
+        if (guard.Kind == GuardKind.Published)
         {
-            var guard = history.Conflict(prepared);
-            if (guard.Kind != GuardKind.None)
-                RecordHistory(location, h => SetChecks(h, prepared.Checks, prepared.Content, time));
-            if (guard.Kind == GuardKind.Published)
-            {
-                Err.WriteLine(sameVersion ? PublishMessages.SameVersionPublished(version) : guard.Text);
-                return ExitProblems;
-            }
-            if (guard.Kind == GuardKind.Exported)
-            {
-                if (!sameVersion || !guard.CanReplace)
-                {
-                    Err.WriteLine(sameVersion ? guard.PartialText : guard.Text);
-                    return ExitProblems;
-                }
-                replace = true;
-            }
+            Err.WriteLine(sameVersion ? PublishMessages.SameVersionPublished(version) : guard.Text);
+            return ExitProblems;
+        }
+        if (guard.Kind == GuardKind.Exported && (!sameVersion || !guard.CanReplace))
+        {
+            Err.WriteLine(sameVersion ? guard.PartialText : guard.Text);
+            return ExitProblems;
         }
 
-        var result = ModExport.Write(prepared, probe ? [] : history.ValidPackages(version, prepared.OutputFolder, prepared.Content));
+        var result = export.Write();
+        var exit = PrintPackages(result);
+        var (recorded, warnings) = export.RecordExport(result, replace: guard.Kind == GuardKind.Exported);
+        PrintWarnings(warnings);
+        foreach (var line in recorded?.Messages(version) ?? [])
+            Out.WriteLine(line);
+        return exit;
+    }
+
+    private static void PrintProblems(PreparedExport prepared)
+    {
+        foreach (var problem in prepared.Problems)
+            Err.WriteLine(problem);
+    }
+
+    /// <summary>Prints a line for each package, and gives the exit code of the result.</summary>
+    private static int PrintPackages(ExportResult result)
+    {
         foreach (var package in result.Packages)
             Out.WriteLine(package.Path != null ? $"Wrote {package.Path}" : $"Refused {package.FileName}");
-        if (guarded && !prepared.Refused)
-        {
-            RecordResult? recorded = null;
-            RecordHistory(location, h =>
-            {
-                SetChecks(h, result.Checks, result.Content, time);
-                if (result.Packages.Any(p => p.Path != null))
-                    recorded = h.RecordExport(PublishHistory.EntryOf(result, time), replace);
-            });
-            foreach (var line in recorded?.Messages(version) ?? [])
-                Out.WriteLine(line);
-        }
         return result.Succeeded ? ExitOk : ExitProblems;
     }
 
-    /// <summary>Writes a change into the publish history, and prints the warnings of the write.</summary>
-    private static void RecordHistory(HistoryLocation location, Action<PublishHistory> change)
+    /// <summary>Prints the warnings of a write of the publish history.</summary>
+    private static void PrintWarnings(IEnumerable<string> warnings)
     {
-        foreach (var message in PublishHistory.Update(location, "export", change).Messages)
+        foreach (var message in warnings)
             Err.WriteLine($"Warning: {message}");
-    }
-
-    /// <summary>Keeps the result of the checks of each target as the last check of the target (decision D572).</summary>
-    private static void SetChecks(PublishHistory history, IEnumerable<TargetCheck> checks, string content, DateTime time)
-    {
-        foreach (var check in checks)
-            history.SetCheck(new HistoryCheck(check.Target.Id, time, content, check.Base, check.Errors, check.Warnings));
     }
 
     /// <summary>Prints the publish checklist of a mod (section 15 of the M11c design). It reads the history, the last

@@ -389,18 +389,25 @@ internal sealed partial class FlmmScript
         var xml = new StringBuilder();
         xml.Append("<script>\r\n");
         if (header != null)
-        {
-            xml.Append($"  <header name=\"{EscapeAttribute(Ascii(header.Name))}\">\r\n");
-            xml.Append($"    <scriptversion>{ScriptVersion}</scriptversion>\r\n");
-            xml.Append($"    <author>{Escape(Ascii(header.Author))}</author>\r\n");
-            xml.Append($"    <description>{Escape(Ascii(header.Description)).Replace("\n", "\r\n")}</description>\r\n");
-            if (header.ModUrl.Length > 0)
-                xml.Append($"    <modurl>{Escape(Ascii(header.ModUrl))}</modurl>\r\n");
-            xml.Append("  </header>\r\n");
-        }
+            xml.Append(HeaderXml(header));
         foreach (var op in operations)
             xml.Append(op);
         xml.Append("</script>\r\n");
+        return xml.ToString();
+    }
+
+    /// <summary>The header element of a script, as the script holds it: ASCII, indented, with CR LF line ends. The
+    /// Preview tab of the Mods window shows it.</summary>
+    public static string HeaderXml(FlmmHeader header)
+    {
+        var xml = new StringBuilder();
+        xml.Append($"  <header name=\"{EscapeAttribute(Ascii(header.Name))}\">\r\n");
+        xml.Append($"    <scriptversion>{ScriptVersion}</scriptversion>\r\n");
+        xml.Append($"    <author>{Escape(Ascii(header.Author))}</author>\r\n");
+        xml.Append($"    <description>{Escape(Ascii(header.Description)).Replace("\n", "\r\n")}</description>\r\n");
+        if (header.ModUrl.Length > 0)
+            xml.Append($"    <modurl>{Escape(Ascii(header.ModUrl))}</modurl>\r\n");
+        xml.Append("  </header>\r\n");
         return xml.ToString();
     }
 

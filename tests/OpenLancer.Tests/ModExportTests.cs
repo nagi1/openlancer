@@ -154,6 +154,29 @@ public sealed class ModExportTests
         return reader.ReadToEnd();
     }
 
+    /// <summary>The Preview tab of the Mods window shows the README and the FLMM header of the prepare. They are the
+    /// texts that the packages hold.</summary>
+    [Fact]
+    public void PrepareGivesTheReadmeAndTheFlmmHeaderOfEachPackage()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+
+        var prepared = ModExport.Prepare(game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer) with { Publish = Texts });
+        var result = ModExport.Write(prepared, []);
+
+        Assert.True(result.Succeeded, string.Join("\n", result.Problems));
+        foreach (var (plan, package) in prepared.Packages.Zip(result.Packages))
+        {
+            var name = package.Form == PackageForm.ModFolder ? "m/m README.txt" : "m README.txt";
+            Assert.Equal(Entry(package.Path!, name), plan.Readme);
+        }
+
+        var flmm = prepared.Packages.Single(p => p.Form == PackageForm.Flmm);
+        Assert.Contains(flmm.ScriptHeader!, Script(result.Packages.Single(p => p.Form == PackageForm.Flmm).Path!, "m"));
+        Assert.All(prepared.Packages.Where(p => p.Form != PackageForm.Flmm), p => Assert.Null(p.ScriptHeader));
+    }
+
     [Fact]
     public void TheReadmeHasTheSummaryDescriptionAuthorsCreditsAndChanges()
     {

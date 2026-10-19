@@ -23,6 +23,12 @@ public sealed record Package(string FileName, byte[]? Bytes, IReadOnlyList<Diagn
 internal sealed record PackagePlan(string FileName, Func<byte[]>? Make, IReadOnlyList<Diagnostic> Problems,
     string? GameFiles)
 {
+    /// <summary>The text of the README of the package, or null when the package is refused.</summary>
+    public string? Readme { get; init; }
+
+    /// <summary>The header element of the script of an FLMM package, else null.</summary>
+    public string? ScriptHeader { get; init; }
+
     public Package ToPackage() => new(FileName, Make?.Invoke(), Problems);
 }
 
@@ -70,6 +76,6 @@ public static class DropInPackage
         var digest = PackageDigest.Of(entries);
         var readme = PackageTexts.Readme(texts, target, PackageForm.DropIn, files, entries.Select(e => e.Name).ToList());
         entries.Add((PackageTexts.ReadmeName(mod), Encoding.UTF8.GetBytes(readme)));
-        return new PackagePlan(name, () => DeterministicZip.Write(entries), problems, digest);
+        return new PackagePlan(name, () => DeterministicZip.Write(entries), problems, digest) { Readme = readme };
     }
 }

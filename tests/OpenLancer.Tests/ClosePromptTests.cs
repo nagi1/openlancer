@@ -5,6 +5,7 @@ using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
 using Xunit;
@@ -182,11 +183,106 @@ public sealed class ClosePromptTests
         Assert.Equal(dialog, host.Dialog);
     }
 
+    /// <summary>A publish draft of the Mods window asks first (section 10.7 of the M11c design). After Apply, the
+    /// question about the unsaved edits follows.</summary>
+    [Fact]
+    public void ADraftAsksBeforeTheUnsavedEdits()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        Edit(session);
+        var host = new Host(session) { UnappliedDraft = "Starrunner" };
+        var prompt = new ClosePrompt(host);
+
+        Assert.False(prompt.Request());
+
+        Assert.Equal(["end edits", "ask"], host.Calls);
+        Assert.Equal(PublishMessages.DraftQuestion("Starrunner"), host.Dialog!.Value.Message);
+        Assert.Equal(["Apply", "Revert", "Cancel"], host.Dialog.Value.Choices.Select(c => c.Label).ToList());
+        host.Choose("Apply");
+        Assert.Equal(["end edits", "ask", "apply draft", "ask"], host.Calls);
+        Assert.Equal($"Save changes to {ModName} before you close?", host.Dialog!.Value.Message);
+        host.Choose("Don't Save");
+        Assert.Equal(["end edits", "ask", "apply draft", "ask", "discard", "close"], host.Calls);
+    }
+
+    /// <summary>Revert drops the draft. Without unsaved edits, the window then closes.</summary>
+    [Fact]
+    public void RevertOfTheDraftClosesTheWindowWithoutUnsavedEdits()
+    {
+        using var ws = Workspace();
+        var host = new Host(ws.Session("act")) { UnappliedDraft = "Starrunner" };
+
+        Assert.False(new ClosePrompt(host).Request());
+        host.Choose("Revert");
+
+        Assert.Equal(["end edits", "ask", "revert draft", "close"], host.Calls);
+    }
+
+    /// <summary>Cancel and Escape keep the window open and the draft. The next request asks again.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CancelOfTheDraftQuestionKeepsTheWindowOpen(bool escape)
+    {
+        using var ws = Workspace();
+        var host = new Host(ws.Session("act")) { UnappliedDraft = "Starrunner" };
+        var prompt = new ClosePrompt(host);
+        Assert.False(prompt.Request());
+
+        if (escape)
+            host.Escape();
+        else
+            host.Choose("Cancel");
+
+        Assert.Equal(["end edits", "ask"], host.Calls);
+        Assert.Equal("Starrunner", host.UnappliedDraft);
+        Assert.False(prompt.Request());
+        Assert.Equal(["end edits", "ask", "end edits", "ask"], host.Calls);
+    }
+
+    /// <summary>An Apply that stops, for example after a refusal of the write guard, keeps the window open.</summary>
+    [Fact]
+    public void AnApplyThatStopsKeepsTheWindowOpen()
+    {
+        using var ws = Workspace();
+        var host = new Host(ws.Session("act")) { UnappliedDraft = "Starrunner", ApplyWrites = false };
+        var prompt = new ClosePrompt(host);
+        Assert.False(prompt.Request());
+
+        host.Choose("Apply");
+
+        Assert.Equal(["end edits", "ask", "apply draft"], host.Calls);
+        Assert.False(prompt.Request());
+        Assert.DoesNotContain("close", host.Calls);
+    }
+
     /// <summary>The editor window as the close prompt sees it, on a real edit session. The dialog is a record of its
     /// last call.</summary>
     private sealed class Host(EditSession session) : IClosePromptHost
     {
         public List<string> Calls { get; } = [];
+
+        /// <summary>The display name of the mod of a publish draft with changes, or null.</summary>
+        public string? UnappliedDraft { get; set; }
+
+        /// <summary>False for an Apply that stops, for example after a refusal.</summary>
+        public bool ApplyWrites { get; init; } = true;
+
+        public void ApplyDraft(Action applied)
+        {
+            Calls.Add("apply draft");
+            if (!ApplyWrites)
+                return;
+            UnappliedDraft = null;
+            applied();
+        }
+
+        public void RevertDraft()
+        {
+            Calls.Add("revert draft");
+            UnappliedDraft = null;
+        }
 
         /// <summary>The open field edit or drag: its end makes the edit.</summary>
         public Action? OpenEdit { get; init; }

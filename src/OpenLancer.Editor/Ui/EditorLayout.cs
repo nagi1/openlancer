@@ -97,7 +97,7 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
 
     // ImGuiTabItemFlags_NoCloseButton from imgui_internal.h. The BeginTabItem overload that takes flags also takes an
     // open flag, and an open flag adds a close button. This flag removes the button again.
-    private const ImGuiTabItemFlags NoCloseButton = (ImGuiTabItemFlags)(1 << 20);
+    internal const ImGuiTabItemFlags NoCloseButton = (ImGuiTabItemFlags)(1 << 20);
 
     private readonly EditorPanelGroup hierarchyGroup = new(hierarchy.Id, [hierarchy]);
     private readonly EditorPanelGroup inspectorGroup = new(inspector.Id, [inspector]);

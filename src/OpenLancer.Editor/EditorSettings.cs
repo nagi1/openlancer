@@ -5,7 +5,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using OpenLancer.Data;
+using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor;
@@ -34,6 +36,58 @@ internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastNa
 /// <param name="Folder">The output folder.</param>
 internal sealed record ExportChoices(IReadOnlyList<string> Targets, bool DropIn, bool Flmm, string Folder);
 
+/// <summary>The mods that the list of the Mods window shows (section 10.2 of the M11c design).</summary>
+internal enum ModsFilter
+{
+    ProfileAndWorkspace,
+    Profile,
+    Workspace,
+}
+
+/// <summary>A tab of the detail page of the Mods window.</summary>
+internal enum ModsTab
+{
+    Settings,
+    Preview,
+    History,
+}
+
+/// <summary>The state of the Mods window that persists (section 10.1 of the M11c design). ImGui keeps the size and the
+/// place of the window in <see cref="EditorSettings.ImGuiState"/>.</summary>
+internal sealed class ModsWindowSettings
+{
+    public const float DefaultListWidth = 300;
+
+    [JsonIgnore]
+    public ModsFilter Filter { get; set; } = ModsFilter.ProfileAndWorkspace;
+
+    [JsonIgnore]
+    public ModsTab Tab { get; set; } = ModsTab.Settings;
+
+    /// <summary>The full path of the selected mod folder, or an empty text.</summary>
+    public string SelectedFolder { get; set; } = "";
+
+    /// <summary>The width of the list, in unscaled points.</summary>
+    public float ListWidth { get; set; } = DefaultListWidth;
+
+    // The file holds the filter and the tab by name. A name that this editor does not know gives the default.
+    [JsonInclude]
+    [JsonPropertyName(nameof(Filter))]
+    private string FilterName
+    {
+        get => Filter.ToString();
+        set => Filter = EditorSettings.Named(value, ModsFilter.ProfileAndWorkspace);
+    }
+
+    [JsonInclude]
+    [JsonPropertyName(nameof(Tab))]
+    private string TabName
+    {
+        get => Tab.ToString();
+        set => Tab = EditorSettings.Named(value, ModsTab.Settings);
+    }
+}
+
 /// <summary>How the Assets panel shows its tiles (decision D270 of the M23 design).</summary>
 internal enum ThumbnailMode
 {
@@ -47,7 +101,7 @@ internal enum ThumbnailMode
 /// <summary>
 /// Editor preferences that persist between sessions: the UI scale, the panel sizes, the view options, the gizmo tool
 /// and its snap, the Database category, the open Inspector sections, the ImGui table state, the recent profiles, the
-/// active mod and the Play ship of each profile, the linked games and the workspace folder.
+/// active mod and the Play ship of each profile, the linked games, the workspace folder and the Mods window.
 /// </summary>
 internal sealed class EditorSettings
 {
@@ -166,6 +220,9 @@ internal sealed class EditorSettings
 
     /// <summary>The choices of the Export dialog of each mod, by the full path of the mod folder.</summary>
     public Dictionary<string, ExportChoices> Exports { get; set; } = new(PathComparer);
+
+    /// <summary>The state of the Mods window (milestone M11c).</summary>
+    public ModsWindowSettings ModsWindow { get; set; } = new();
 
     /// <summary>The root of the linked game of the last Play in the game, or null. Ctrl+F5 plays in it (decision
     /// D324).</summary>
@@ -323,7 +380,7 @@ internal sealed class EditorSettings
     }
 
     /// <summary>The value of an enum name, or the fallback for a name that this editor does not know.</summary>
-    private static T Named<T>(string name, T fallback) where T : struct, Enum =>
+    internal static T Named<T>(string name, T fallback) where T : struct, Enum =>
         Enum.GetValues<T>().FirstOrDefault(v => v.ToString().Equals(name, StringComparison.OrdinalIgnoreCase), fallback);
 
     /// <summary>The step, or the fallback for a step that is not a finite number above 0.</summary>
@@ -356,6 +413,36 @@ internal sealed class EditorSettings
 
     /// <summary>Stores the choices of the Export dialog for a mod folder.</summary>
     public void SetExport(string modFolder, ExportChoices choices) => Exports[modFolder] = choices;
+
+    /// <summary>
+    /// Moves the keys of a renamed mod (section 12.3 of the M11c design): the choices of the Export dialog, the selected
+    /// mod of the Mods window and the active mod of each profile of the rename. A saved output folder that is the old
+    /// default folder <c>exports\&lt;old id&gt;</c> becomes the new default folder (finding R10).
+    /// </summary>
+    /// <param name="workspace">The workspace of the rename, which holds the <c>exports</c> folder.</param>
+    public void RenameMod(RenamePlan plan, string workspace)
+    {
+        if (Exports.Remove(plan.OldFolder, out var choices))
+        {
+            var folder = choices.Folder.Length > 0 && GameFolders.Same(choices.Folder, PublishHistory.FolderOf(workspace, plan.OldId))
+                ? PublishHistory.FolderOf(workspace, plan.NewId)
+                : choices.Folder;
+            Exports[plan.NewFolder] = choices with { Folder = folder };
+        }
+
+        if (ModsWindow.SelectedFolder.Length > 0 && GameFolders.Same(ModsWindow.SelectedFolder, plan.OldFolder))
+        {
+            ModsWindow.SelectedFolder = plan.NewFolder;
+        }
+
+        foreach (var profile in plan.Profiles)
+        {
+            if (ActiveMods.TryGetValue(profile, out var id) && id == plan.OldId)
+            {
+                ActiveMods[profile] = plan.NewId;
+            }
+        }
+    }
 
     /// <summary>Stores the ship package of Play for a profile. Null sets the default package again.</summary>
     public void SetPlayPackage(string profilePath, string? package)

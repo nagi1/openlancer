@@ -141,4 +141,23 @@ public sealed class ModCatalogTests
         Assert.True(rows[1].Has(ChipKind.NeverExported));
         Assert.Equal(["0.9.0", "1.0.0"], ModCatalog.M11Versions(workspace.Exports("my-mod-2"), "my-mod-2"));
     }
+
+    /// <summary>The window shows the chip of a draft with changes at once, after the chips of the active mod, and
+    /// before the next scan.</summary>
+    [Fact]
+    public void TheDraftChipFollowsTheDraftWithoutAScan()
+    {
+        using var workspace = new PublishWorkspace();
+        var folder = workspace.Mod("m");
+        var row = Assert.Single(ModCatalog.Scan(new CatalogInput(workspace.Root, null) { ActiveModFolder = folder }));
+
+        var changed = ModCatalog.WithDraft(row, unapplied: true);
+        var applied = ModCatalog.WithDraft(changed, unapplied: false);
+
+        Assert.Equal([ChipKind.Active, ChipKind.UnappliedChanges], changed.Chips.Take(2).Select(c => c.Kind));
+        Assert.Same(row, ModCatalog.WithDraft(row, unapplied: false));
+        Assert.Same(changed, ModCatalog.WithDraft(changed, unapplied: true));
+        Assert.Equal(row.Chips, applied.Chips);
+        Assert.Same(row.History, changed.History);
+    }
 }

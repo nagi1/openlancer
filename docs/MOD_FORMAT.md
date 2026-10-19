@@ -531,6 +531,39 @@ The editor shows the edit view: the base data with the mods up to the active mod
 
 The files of a mod in the OpenLancer repo, for example `samples/mods/ol-sample`, are tracked files. For such a mod, the editor takes no edit, undo, redo or save until you allow the edits one time in each session: in the Inspector or in the Mod menu. A restore of the unsaved edits of an earlier session also allows them, and the restore dialog tells this.
 
+### The Mods window
+
+**Mod > Mods...** opens the Mods window (milestone M11c). It lists the mods of the open profile in load order, then the other mods of the `mods` folder of the workspace. The workspace is the folder above the folder of the open profile. Without an open profile, it is the workspace folder of the editor. **Show** and the search field filter the list. The search finds the display name, the id and the tags.
+
+A row shows the display name, the id and the version. A blue dot marks unsaved or unapplied changes. A yellow triangle marks a change after the last export. The last glyph shows the state of the checks. A mod whose `mod.json` does not load shows its error, and Open folder is its only action. The window reads the mods again when it gets the focus, after each of its actions, after a save, after an export and on **Refresh**.
+
+The page of the selected mod has these parts:
+
+- The header: the display name, the id, the version, the authors and the chips of the state. The tooltip of a chip tells more. **Export...** opens the Export dialog of the mod. **Play** plays the mod alone in a linked game (see "Play in the game" in [PLAY.md](PLAY.md)). The **...** menu has Make active mod, Duplicate..., Rename..., Add to profile or Remove from profile, Open folder, Open export folder and Show in Console.
+- The publish checklist: for example "4 of 6 steps complete", and one row for each step. A missing step tells what is missing and why. Its buttons go to the field or fix the step. The recommended items do not count.
+- The tab **Settings**: the display name, the version and the target games of `mod.json`, and the publish settings. Each list has Add, Remove, Move up, Move down and a drag handle. Increase version gives the next patch, minor or major version, and adds a changelog entry for it.
+- The tab **Preview**: the parts of the Nexus page in the order of the page, each with Copy. Copy copies the text of the field in `nexus-page.txt`. The README of each package, the header of the FLMM script and `CHECKLIST.txt` come from the last check. Click **Check now** to make them.
+- The tab **History**: the exports of the publish history, newest first, with the state of their files, and the test plays. **Mark as published...** gives a version the mark "published".
+
+| Step of the checklist | Complete when |
+|---|---|
+| Display name | The display name is not empty, not "My mod" and not the mod id. |
+| Summary | The summary is not empty. |
+| Version | The version follows the rule of "Versions", and it is higher than each version with the mark "published". |
+| Checks for each target | The last check of each target has the current content, the current linked game and no error. |
+| Test play in the game | The history has a test play of the current content in a retail game, or a mark "tested". A mod with only the target OpenLancer has no such step. |
+| Export made | The exports of the current version with the current content and texts have a package for each target. |
+
+The Settings tab edits a draft, as the import settings of Unity do. A changed field has a blue bar and a blue label until you click **Apply**. **Revert** drops the changes. A change of the selected mod or of the active mod asks first: Apply, Revert or Cancel. A close of the window, of the profile or of the editor asks the same. The title of the window has `*` while the draft has changes.
+
+Apply checks that `mod.json` and `publish.json` did not change on disk after the window read them. When a file changed, Apply asks: Load again, Replace or Cancel. Apply copies the new screenshots first. Then it writes `publish.json` and `mod.json`. When an image in `publish/screenshots` is no longer in the list, Apply asks before it deletes the file. A change of the target games opens the profile again, because the save gate reads the targets when the profile opens.
+
+The window never writes into a game folder, and it never writes a file of another mod. A mod in the OpenLancer repo needs "Allow edits of this repo mod" first, and Add images refuses it. The window does not write a mod that another editor has open. A `mod.json` with a comment is read-only, because OpenLancer cannot write the file and keep the comment.
+
+A check runs the steps of the export of each target, but it writes no package. The steps are the merge, the format checks, the content checks, the FLMM script and the game file rule. The checks run on a worker thread, one mod at a time. The publish history records the result of each target. **Check all** checks each mod of the list, and the window checks the selected mod when its last check is old.
+
+Rename gives the mod a new id and a new folder name. Before it changes a file, it shows a plan: the folder, the profiles that name the folder, the history folder and the warnings. When another mod names the old id in `dependsOn`, Rename refuses. Rename the mod only before the first release, because players keep the files of the old id. Duplicate makes a copy with a new id and a new display name. The copy has no page link, and it is not in a profile.
+
 ### Edits in the Inspector
 
 The Inspector edits ships, equipment, goods, the other sections of the item files, the market lines, and the objects, zones and lights of the open star system and the sections that set the fields of a system. The edits go into the active mod. A field shows each line of a key on its own text line, with the values separated by `, `. The editor reads the text as the merge reads a patch line, so a value gets the type that a save and a reload give it (see "Value types in binary files"). For example, in a binary file, `true` that replaces the text `TRUE` stays `TRUE`, and `200` that replaces a float is a float. An empty field removes the key.
@@ -1037,7 +1070,9 @@ When the deploy folder path has characters outside ASCII, lancer.exe reads the p
 
 ## Export
 
-The export makes the packages that players install (milestone M11). It merges one mod on the files of a target game, checks the result and writes the packages. The internal patch format stays the working format of the editor. Open the export in the editor with **Mod > Export mod...**, or run `oltool export`.
+The export makes the packages that players install (milestone M11). It merges one mod on the files of a target game, checks the result and writes the packages. The internal patch format stays the working format of the editor. Open the export in the editor with **Mod > Export mod...** or with **Export...** of the Mods window, or run `oltool export`.
+
+The Export dialog reads the mod from its folder when it opens, so it uses the applied display name, version and targets. It shows the display name with **Change...**, which opens the Mods window at that field, and the publish checklist. It writes into the version folder of the output folder, and it tells that folder. After the export, it records the packages in the publish history, and it tells the next step: the upload to Nexus and the mark "published".
 
 ### Targets and bases
 
@@ -1154,6 +1189,8 @@ Two different packages with the same version confuse players. The guard compares
 - A replace of a version without the mark needs each target and form of the old export. The old entry stays in the history with the time of the new export as `replacedBy`.
 
 `oltool export` prints the text of a conflict and exits 1. `--same-version` replaces a version without the mark. To replace a version with packages of two targets, give both targets in one `oltool export`.
+
+The Export dialog asks after its checks and before it writes. **Export as <next>** writes the next patch version into `mod.json` and a changelog entry into `publish.json`, and exports again. **Replace version <v>** writes over the packages of a version without the mark. A replace that does not have each target and form of the old export is not available, and its tooltip tells why.
 
 **Export and play** in the Export dialog exports first. Then it installs the export of the first checked retail target into the play copy of its base, and starts the game. A source build is never the base of an export. See "Play in the game" in [PLAY.md](PLAY.md).
 

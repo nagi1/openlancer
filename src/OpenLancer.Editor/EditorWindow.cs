@@ -28,6 +28,7 @@ using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Hierarchy;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Mods;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
@@ -108,6 +109,9 @@ internal sealed partial class EditorWindow : Game
         GamePlay = new GamePlay(this, GameProcess.Starter(this), DllStringResourceWriter.Instance, ThornEvaluator.Instance,
             () => playClock.Elapsed);
         playMenu = new PlayMenu(this);
+        Mods = new ModsWindow(this);
+        // A test play changes the publish checklist of its mods.
+        GamePlay.PlaysRecorded += Mods.Refresh;
         // The window gets this title when it is made. The shaders compile before the first frame, and the window
         // must not show the engine name during that time.
         Title = AppTitle;
@@ -143,6 +147,10 @@ internal sealed partial class EditorWindow : Game
 
     /// <summary>The edits of the open profile, the saves and what follows a save.</summary>
     public EditController Edits { get; }
+
+    /// <summary>The Mods window (milestone M11c): the mods of the profile and the workspace, with their publish
+    /// settings, checks and exports.</summary>
+    public ModsWindow Mods { get; }
 
     /// <summary>Create, Duplicate, Rename and Delete of the items of the open system (milestone M3).</summary>
     public SceneEdits SceneEdits { get; }
@@ -309,6 +317,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         Edits.Dispose();
+        Mods.Dispose();
         baseRun.Dispose();
         Cutscenes.Dispose();
         assets?.Dispose();
@@ -397,7 +406,7 @@ internal sealed partial class EditorWindow : Game
     {
         if (CanChangeProfile)
         {
-            Edits.Leave("closing the profile", () => OpenNow(path));
+            Leave("closing the profile", () => OpenNow(path));
         }
     }
 
@@ -508,7 +517,7 @@ internal sealed partial class EditorWindow : Game
     {
         if (Session != null && CanChangeProfile)
         {
-            Edits.Leave("closing the profile", CloseNow);
+            Leave("closing the profile", CloseNow);
         }
     }
 
@@ -617,14 +626,20 @@ internal sealed partial class EditorWindow : Game
 
     protected override void Update(double elapsed) => Scene.Update(elapsed);
 
-    /// <summary>When the window gets the focus, the prop groups read their folders again, as Unity refreshes its
-    /// assets. So a group that another program wrote shows (section 9.1 of the M23 design).</summary>
+    /// <summary>When the window gets the focus, the prop groups and the Mods window read their folders again, as Unity
+    /// refreshes its assets. So a group or a mod that another program wrote shows (section 9.1 of the M23 design and
+    /// section 10.2 of the M11c design).</summary>
     private void RefreshOnFocus()
     {
         var focused = Focused;
-        if (focused && !wasFocused && Session is { } session)
+        if (focused && !wasFocused)
         {
-            PropGroups.Refresh(session.Edits);
+            if (Session is { } session)
+            {
+                PropGroups.Refresh(session.Edits);
+            }
+
+            Mods.Refresh();
         }
 
         wasFocused = focused;
@@ -696,6 +711,7 @@ internal sealed partial class EditorWindow : Game
 
         statusBar.Draw(new Vector2(0, Height - statusHeight), Width);
         gameLinkWindow.Draw();
+        Mods.Draw();
         DrawDialogs();
         Shortcuts();
         Edits.Update(IsEditing);

@@ -38,7 +38,8 @@ public static class FlmmPackage
         KnownBuilds? builds)
     {
         var manifest = mod.Manifest;
-        var script = FlmmScript.Build(files, mod, FlmmHeader.Of(texts, target), probe);
+        var header = FlmmHeader.Of(texts, target);
+        var script = FlmmScript.Build(files, mod, header, probe);
         var problems = script.Problems.ToList();
         problems.AddRange(script.Files.Select(f => PackageRules.GameFile(f.Path, f.Bytes, builds)).OfType<Diagnostic>());
         var name = FileName(manifest, target, probe);
@@ -53,6 +54,10 @@ public static class FlmmPackage
         var readme = PackageTexts.Readme(texts, target, PackageForm.Flmm, files, script.Files.Select(f => f.Path).ToList(),
             probe);
         return new PackagePlan(name, () => DeterministicZip.Write([($"{manifest.Id}.flmod", DeterministicZip.Write(tree)),
-            (PackageTexts.ReadmeName(manifest), Encoding.UTF8.GetBytes(readme))]), problems, digest);
+            (PackageTexts.ReadmeName(manifest), Encoding.UTF8.GetBytes(readme))]), problems, digest)
+        {
+            Readme = readme,
+            ScriptHeader = FlmmScript.HeaderXml(header),
+        };
     }
 }

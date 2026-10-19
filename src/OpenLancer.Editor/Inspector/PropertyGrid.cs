@@ -32,10 +32,6 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     private const float BodyIndent = 8;
     private const float BodyTop = 4;
     private const float AxisPrefixWidth = 14;
-    private const float ChipGap = 4;
-    private const float ChipInset = 2;
-    private const float ChipPaddingX = 6;
-    private const float ChipRounding = 3;
     private static readonly Vector2 CellPadding = new(4, 1);
 
     // The Unity label width: 45% of the Inspector width less 40 points, and at least 140 points for the 15 point font.
@@ -462,7 +458,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         }
         else
         {
-            Chips(FlagTable<T>.Entries, bits);
+            Chip.Flow([.. FlagTable<T>.Entries.Where(e => (bits & e.Value) != 0).Select(e => new ChipItem(e.Name, ChipLook.Grey))]);
         }
 
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
@@ -708,52 +704,6 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             field(i, texts[i], layout.Field);
             ImGui.PopID();
         }
-    }
-
-    /// <summary>
-    /// Draws a rounded chip for each flag that is set. The chips flow from left to right and wrap at the column edge.
-    /// </summary>
-    private static void Chips((ulong Value, string Name)[] entries, ulong bits)
-    {
-        var scale = ImGuiHelper.Scale;
-        var font = ImGui.GetFont();
-        var fontSize = MathF.Round(EditorTheme.CaptionSize * scale);
-        var avail = ImGui.GetContentRegionAvail().X;
-        var height = ImGui.GetFrameHeight();
-        var gap = MathF.Truncate(ChipGap * scale);
-        var inset = MathF.Truncate(ChipInset * scale);
-        var padding = MathF.Truncate(ChipPaddingX * scale);
-        var background = ImGui.GetColorU32(EditorTheme.SelectionUnfocused);
-        var textColor = ImGui.GetColorU32(ImGuiCol.Text);
-        var start = ImGui.GetCursorScreenPos();
-        var drawList = ImGui.GetWindowDrawList();
-        var x = 0f;
-        var y = 0f;
-        foreach (var (flag, name) in entries)
-        {
-            if ((bits & flag) == 0)
-            {
-                continue;
-            }
-
-            var textSize = font.CalcTextSizeA(fontSize, float.MaxValue, 0, name);
-            var chipWidth = MathF.Ceiling(textSize.X) + 2 * padding;
-            if (x > 0 && x + chipWidth > avail)
-            {
-                x = 0;
-                y += height;
-            }
-
-            var min = start + new Vector2(x, y + inset);
-            var max = min + new Vector2(chipWidth, height - 2 * inset);
-            drawList.AddRectFilled(min, max, background, ChipRounding * scale);
-            drawList.AddText(font, fontSize,
-                new Vector2(min.X + padding, min.Y + MathF.Truncate((max.Y - min.Y - textSize.Y) / 2)), textColor,
-                name);
-            x += chipWidth + gap;
-        }
-
-        ImGui.Dummy(new Vector2(Math.Max(1, avail), y + height));
     }
 
     /// <summary>

@@ -314,27 +314,31 @@ public static class PackageTexts
     /// <summary>The first line of the block of a target in the checklist.</summary>
     public static string ChecklistTarget(ExportTarget target) => $"Target: {target.Name}";
 
+    /// <summary>The name of a package form and the steps of its install, for the description of the Nexus page. The
+    /// Preview tab of the Mods window draws them too.</summary>
+    public static (string Name, IReadOnlyList<string> Steps) Install(ModManifest mod, PackageForm form) => form switch
+    {
+        PackageForm.DropIn => ("Drop-in zip",
+        [
+            "Copy the files of the list in the README from your game folder to a backup folder.",
+            "Extract the zip into your game folder. Let it replace the files.",
+        ]),
+        PackageForm.Flmm => ("FLMM package",
+        [
+            $"In the Freelancer Mod Manager, import {mod.Id}.flmod.",
+            "Activate the mod.",
+        ]),
+        _ => ("OpenLancer",
+        [
+            "Extract the zip into the mods folder of your OpenLancer workspace.",
+            $"Add the mod {mod.Id} to a profile.",
+        ]),
+    };
+
     /// <summary>The steps of the install of a form, as BBCode for the description of the Nexus page.</summary>
     private static IEnumerable<string> InstallSteps(ModManifest mod, PackageForm form)
     {
-        var (name, steps) = form switch
-        {
-            PackageForm.DropIn => ("Drop-in zip", new[]
-            {
-                "Copy the files of the list in the README from your game folder to a backup folder.",
-                "Extract the zip into your game folder. Let it replace the files.",
-            }),
-            PackageForm.Flmm => ("FLMM package", new[]
-            {
-                $"In the Freelancer Mod Manager, import {mod.Id}.flmod.",
-                "Activate the mod.",
-            }),
-            _ => ("OpenLancer", new[]
-            {
-                "Extract the zip into the mods folder of your OpenLancer workspace.",
-                $"Add the mod {mod.Id} to a profile.",
-            }),
-        };
+        var (name, steps) = Install(mod, form);
         yield return $"[b]{name}[/b]";
         yield return "[list=1]";
         foreach (var step in steps)

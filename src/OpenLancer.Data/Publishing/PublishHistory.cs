@@ -457,6 +457,15 @@ public sealed class PublishHistory
         Checks.Add(check);
     }
 
+    /// <summary>Keeps the result of the checks of each target of an export or a check as the last check of the target
+    /// (decision D572).</summary>
+    /// <param name="content">The content fingerprint of the checked mod.</param>
+    public void SetChecks(IEnumerable<TargetCheck> checks, string content, DateTime time)
+    {
+        foreach (var check in checks)
+            SetCheck(new HistoryCheck(check.Target.Id, time, content, check.Base, check.Errors, check.Warnings));
+    }
+
     /// <summary>The last check of a target, or null.</summary>
     public HistoryCheck? CheckOf(string target) => Checks.LastOrDefault(c => c.Target == target);
 

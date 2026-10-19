@@ -60,7 +60,7 @@ public static class ModZip
             return new PackagePlan(name, null, problems, null);
         var readme = PackageTexts.Readme(texts, ExportTarget.OpenLancer, PackageForm.ModFolder, null, []);
         entries.Add(($"{mod.Id}/{PackageTexts.ReadmeName(mod.Manifest)}", Encoding.UTF8.GetBytes(readme)));
-        return new PackagePlan(name, () => DeterministicZip.Write(entries), problems, content);
+        return new PackagePlan(name, () => DeterministicZip.Write(entries), problems, content) { Readme = readme };
     }
 
     /// <summary>The files of the mod folder that the package can hold: <c>mod.json</c>, <c>strings.json</c>,

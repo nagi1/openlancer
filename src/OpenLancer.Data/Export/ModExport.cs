@@ -114,6 +114,13 @@ public sealed record PreparedPackage(ExportTarget Target, PackageForm Form, stri
     internal Func<byte[]>? Make { get; init; }
 
     public bool Refused => Make == null;
+
+    /// <summary>The text of the README that the package holds, or null when a problem refuses the package. The Preview
+    /// tab of the Mods window shows it.</summary>
+    public string? Readme { get; init; }
+
+    /// <summary>The header element of the script of an FLMM package, else null.</summary>
+    public string? ScriptHeader { get; init; }
 }
 
 /// <summary>
@@ -424,6 +431,7 @@ public static class ModExport
         prepared.Add(new PreparedPackage(target, PackageForm.ModFolder, plan.FileName, refused ? null : plan.GameFiles)
         {
             Make = refused ? null : plan.Make,
+            Readme = refused ? null : plan.Readme,
         });
     }
 
@@ -479,6 +487,7 @@ public static class ModExport
             prepared.Add(new PreparedPackage(target, PackageForm.DropIn, dropIn.FileName, dropIn.GameFiles)
             {
                 Make = dropIn.Make,
+                Readme = dropIn.Readme,
             });
         }
         if (request.Forms.HasFlag(ExportForms.Flmm))
@@ -491,6 +500,8 @@ public static class ModExport
             prepared.Add(new PreparedPackage(target, PackageForm.Flmm, flmm.FileName, flmm.GameFiles)
             {
                 Make = flmm.Make,
+                Readme = flmm.Readme,
+                ScriptHeader = flmm.ScriptHeader,
             });
         }
         prepared.Add(Check(target, baseKey, targetProblems));
