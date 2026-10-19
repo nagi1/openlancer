@@ -342,6 +342,9 @@ public sealed partial class EditSession : IDisposable
     {
         var (document, index) = Find(target);
         var id = document.IdentityAt(index);
+        // Each line of a whole file of the active mod comes from the active mod.
+        if (ActiveMod != null && document.IsWholeFile)
+            return (ValueOrigin.ActiveMod, ActiveMod.Id);
         if (ActiveMod != null && (!document.InBase(id) || document.Pins(id).Contains(name) ||
                                   !SameLines(document.BaseSection(id)!, document.Working[index], name, document.IsBinary)))
             return (ValueOrigin.ActiveMod, ActiveMod.Id);
@@ -530,7 +533,8 @@ public sealed partial class EditSession : IDisposable
             return;
         Revision++;
         history.Push(change);
-        touched.UnionWith(change.Paths);
+        foreach (var path in change.Paths)
+            (ModFileDocument.IsKey(path) ? touchedModFiles : touched).Add(path);
         Changed?.Invoke(change.Change);
     }
 
@@ -543,8 +547,11 @@ public sealed partial class EditSession : IDisposable
             throw new InvalidOperationException("A batch is open. Commit or cancel it first.");
     }
 
-    /// <summary>The INI document or the cutscene of a path that the session opened.</summary>
-    private IEditFile FileAt(string path) => documents.TryGetValue(path, out var document) ? document : cutscenes[path];
+    /// <summary>The INI document, the cutscene or the editor file of a key that the session opened.</summary>
+    private IEditFile FileAt(string path) =>
+        documents.TryGetValue(path, out var document) ? document
+        : cutscenes.TryGetValue(path, out var cutscene) ? cutscene
+        : modFiles[path];
 
     /// <summary>The section of a reference.</summary>
     /// <exception cref="ArgumentException">The edit view has no such section.</exception>
@@ -580,7 +587,8 @@ public sealed partial class EditSession : IDisposable
         // The fingerprint first: a change after it shows at the save.
         inputs.Remember(normal, lower);
         var b = lowerView.Document(normal);
-        if (b == null)
+        // A whole file of the active mod that the editor edits opens also when the lower layer does not have it.
+        if (b == null && !(ActiveMod != null && ActiveMod.Files.ContainsKey(normal) && EditDocument.EditsWholeFile(normal)))
             return false;
         document = EditDocument.Open(normal, b, ActiveMod, []);
         documents[normal] = document;
@@ -697,6 +705,21 @@ public sealed partial class EditSession : IDisposable
 
         private static SectionRef Normal(SectionRef section) =>
             section with { Path = VfsPath.Normalize(section.Path) ?? section.Path };
+
+        /// <summary>An editor file of the active mod, to change it (section 6.8 of the M6b design). The session opens
+        /// the file at the first use. A file that does not exist has no text.</summary>
+        /// <param name="relativePath">The path relative to the mod folder.</param>
+        /// <exception cref="ArgumentException">The path is not the path of an editor file.</exception>
+        /// <exception cref="InvalidOperationException">The session is read-only, or it has no active mod.</exception>
+        /// <exception cref="IOException">The file could not be read.</exception>
+        public ModFileDocument ModFile(string relativePath)
+        {
+            session.ThrowIfReadOnly();
+            var document = session.ModFile(relativePath) ??
+                           throw new InvalidOperationException("There is no active mod. Select a mod to edit.");
+            change.Capture(document);
+            return document;
+        }
 
         private EditDocument Editable(EditDocument document)
         {

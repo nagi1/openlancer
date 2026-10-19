@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Export;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
@@ -48,10 +49,14 @@ internal sealed record DocumentState(
 /// <para>The document gives no patch, and is read-only, in these cases:</para>
 /// <list type="bullet">
 /// <item>The loaded patch has an error. Then some of its lines are not in W, and a save would lose them.</item>
-/// <item>The active mod replaces the file with its own file. The merge then applies the patch of the mod to that
-/// file, not to B. W is then B, and the document only shows it.</item>
+/// <item>The active mod replaces the file with its own file, outside the mission files. The merge then applies the
+/// patch of the mod to that file, not to B. W is then B, and the document only shows it.</item>
 /// <item>The file is <c>EXE\freelancer.ini</c>, which a patch cannot change.</item>
 /// </list>
+/// <para>A whole mission file of the active mod (see <see cref="EditsWholeFile"/>) is a document of the kind "whole
+/// file" (section 6.7 of the M6b design). B is the file of the mod as it is on disk, and W gets the edits. A save
+/// writes the whole file as text (see <see cref="ChangedWholeFile"/>), not a patch. Each section is editable, also a
+/// section whose key repeats.</para>
 /// <para>Edits never change a section or an entry in place. They put new sections into the list, so an old
 /// <see cref="DocumentState"/> stays valid.</para>
 /// </remarks>
@@ -61,6 +66,9 @@ internal sealed class EditDocument : IEditFile
 
     private readonly IniDocument b;
     private readonly PatchSource? source;
+
+    /// <summary>The whole file of the active mod of a document of the kind "whole file", or null.</summary>
+    private readonly WholeSource? whole;
 
     /// <summary>Why the document gives no patch, or null.</summary>
     private readonly Diagnostic? refusal;
@@ -72,10 +80,11 @@ internal sealed class EditDocument : IEditFile
     private KeyCounts? baseCounts;
     private KeyCounts? workingCounts;
     private PatchText? initialText;
+    private WholeFileText? initialWholeText;
     private HashSet<SectionIdentity>? initialIds;
 
     private EditDocument(string path, IniDocument b, DocumentState state, PatchSource? source, Diagnostic? refusal,
-        string? sourceHash)
+        string? sourceHash, WholeSource? whole = null)
     {
         Path = path;
         this.b = b;
@@ -84,7 +93,11 @@ internal sealed class EditDocument : IEditFile
         this.source = source;
         this.refusal = refusal;
         SourceHash = sourceHash;
+        this.whole = whole;
     }
+
+    /// <summary>The file of the active mod of a whole file, and its bytes as the session read them.</summary>
+    private sealed record WholeSource(string File, byte[] Bytes);
 
     /// <summary>The install path, in <see cref="VfsPath.Normalize"/> form.</summary>
     public string Path { get; }
@@ -108,28 +121,45 @@ internal sealed class EditDocument : IEditFile
     /// <summary>Why the document gives no patch and cannot be edited, or null.</summary>
     public string? ReadOnlyReason => refusal?.Message;
 
-    /// <summary>The SHA-256 of the loaded patch file, in lowercase hex, or null when the active mod had no patch for
-    /// the file.</summary>
+    /// <summary>The SHA-256 of the loaded patch file, or of the whole file of a document of the kind "whole file", in
+    /// lowercase hex. Null when the active mod had no patch for the file.</summary>
     public string? SourceHash { get; }
+
+    /// <summary>True for a document of the kind "whole file": B is a whole file of the active mod, and a save writes
+    /// the whole file.</summary>
+    public bool IsWholeFile => whole != null;
+
+    /// <summary>
+    /// True when the editor edits a whole file of the active mod at an install path (decision D680 of the M6b design):
+    /// a file under <c>DATA\MISSIONS</c>, for example a test script, a replaced slot script or a ship build file. The
+    /// editor shows the other whole files of the active mod read-only.
+    /// </summary>
+    public static bool EditsWholeFile(string path) => SectionKeys.IsMissionFile(path);
 
     /// <summary>
     /// Opens a file for editing. W is B with the patch of <paramref name="activeMod"/> for this path applied.
     /// </summary>
     /// <param name="path">The install path, in <see cref="VfsPath.Normalize"/> form.</param>
-    /// <param name="b">The document that the merge gives to the active mod's patch. The editor owns it from now on.</param>
+    /// <param name="b">The document that the merge gives to the active mod's patch, or null when the lower layer does
+    /// not have the file. Only a whole file of the active mod can open without it. The editor owns it from now
+    /// on.</param>
     /// <param name="activeMod">The mod that the edits go to, or null.</param>
     /// <param name="diagnostics">Gets the problems of the active mod's patch, and why the document gives no
     /// patch.</param>
-    public static EditDocument Open(string path, IniDocument b, Mod? activeMod, List<Diagnostic> diagnostics)
+    public static EditDocument Open(string path, IniDocument? b, Mod? activeMod, List<Diagnostic> diagnostics)
     {
-        if (activeMod == null)
-            return Load(path, b, "", null, null, diagnostics);
-        if (activeMod.Files.TryGetValue(path, out var file))
+        if (activeMod != null && activeMod.Files.TryGetValue(path, out var file))
         {
-            return Refused(path, b, diagnostics, Diagnostic.Error(file,
+            if (EditsWholeFile(path))
+                return OpenWhole(path, file, b, diagnostics);
+            return Refused(path, b!, diagnostics, Diagnostic.Error(file,
                 $"The active mod '{activeMod.Id}' replaces {path} with this file. The editor cannot write a patch " +
                 "for a file that the active mod replaces."));
         }
+        if (b == null)
+            throw new ArgumentNullException(nameof(b), $"The lower layer has no file {path}.");
+        if (activeMod == null)
+            return Load(path, b, "", null, null, diagnostics);
         if (VfsPath.Comparer.Equals(path, ModOverlay.FreelancerIniPath))
         {
             return Refused(path, b, diagnostics, Diagnostic.Error(path,
@@ -156,8 +186,11 @@ internal sealed class EditDocument : IEditFile
     /// <param name="modId">The id of the active mod.</param>
     /// <param name="patchFile">The patch file, for messages.</param>
     /// <param name="bytes">The bytes of the patch file, or null for no patch.</param>
+    /// <remarks>For a document of the kind "whole file", the bytes are the whole file, and they become B.</remarks>
     public EditDocument Reopen(string modId, string patchFile, byte[]? bytes, List<Diagnostic> diagnostics) =>
-        Load(Path, b, modId, patchFile, bytes, diagnostics);
+        whole != null && bytes != null
+            ? Whole(Path, patchFile, bytes, b, diagnostics)
+            : Load(Path, b, modId, patchFile, bytes, diagnostics);
 
     /// <summary>The pinned names of a section.</summary>
     public IReadOnlyCollection<string> Pins(SectionIdentity id) => state.Pins.GetValueOrDefault(id, NoPins);
@@ -209,6 +242,10 @@ internal sealed class EditDocument : IEditFile
     {
         if (refusal != null)
             return refusal.Message;
+        // A whole file needs no patch, so a repeated key or the order of the lines does not matter (section 6.7 of the
+        // M6b design).
+        if (whole != null)
+            return null;
         var id = IdentityAt(index);
         if (BaseIdOf(id) is not { } before)
             return null;
@@ -294,10 +331,80 @@ internal sealed class EditDocument : IEditFile
     }
 
     private PatchText Write(DocumentState s) =>
-        refusal == null
+        refusal == null && whole == null
             ? PatchWriter.Write(Path, b, s.Working, id => s.Pins.GetValueOrDefault(id, NoPins), source, s.Deleted,
                 s.Renamed)
-            : new PatchText([], [refusal]);
+            : new PatchText([], [refusal ?? Diagnostic.Error(Path, $"{Path} is a whole file of the mod, not a patch.")]);
+
+    /// <summary>
+    /// The bytes that a save writes for a document of the kind "whole file", or null when the edits do not change the
+    /// file: W has its initial state, or its text equals the text of the initial state. A text file keeps its comments
+    /// and the lines that do not change (see <see cref="IniTextEdit"/>). A binary file becomes canonical text.
+    /// </summary>
+    public WholeFileText? ChangedWholeFile()
+    {
+        if (whole == null || refusal != null || state == Initial)
+            return null;
+        var text = WholeText(state);
+        initialWholeText ??= WholeText(Initial);
+        return text.Bytes.AsSpan().SequenceEqual(initialWholeText.Bytes) ? null : text;
+    }
+
+    /// <summary>The state with the sections that the bytes of a whole file give, for the restore of the recovery
+    /// file.</summary>
+    /// <exception cref="InvalidOperationException">The document is not of the kind "whole file".</exception>
+    /// <exception cref="Exception">The parser cannot read the bytes.</exception>
+    public DocumentState WholeState(byte[] bytes)
+    {
+        if (whole == null)
+            throw new InvalidOperationException($"{Path} is not a whole file of the mod.");
+        return Initial with { Working = IniDocument.Parse(Path, bytes).Sections.ToImmutableList() };
+    }
+
+    private WholeFileText WholeText(DocumentState s)
+    {
+        var w = b.WithSections(s.Working);
+        if (b.IsBinary)
+            return new WholeFileText(w.ToText(), $"The save writes the binary file {whole!.File} as text.");
+        var result = IniTextEdit.Write(whole!.Bytes, b, w, IniSectionDiff.Compare(b.Sections, s.Working));
+        return new WholeFileText(result.Bytes, result.Fallback == null
+            ? null
+            : $"The save writes {whole.File} as canonical text, because {result.Fallback}. Its comments go away.");
+    }
+
+    /// <summary>A whole file of the active mod, as a document of the kind "whole file".</summary>
+    /// <param name="lower">The document of the lower layer, or null. A file that cannot be read gives a read-only
+    /// document with it.</param>
+    private static EditDocument OpenWhole(string path, string file, IniDocument? lower, List<Diagnostic> diagnostics)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = SharedFile.ReadAllBytes(file);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Refused(path, lower ?? IniDocument.Parse(path, []), diagnostics, Diagnostic.Error(file, e.Message));
+        }
+        return Whole(path, file, bytes, lower, diagnostics);
+    }
+
+    private static EditDocument Whole(string path, string file, byte[] bytes, IniDocument? lower,
+        List<Diagnostic> diagnostics)
+    {
+        IniDocument document;
+        try
+        {
+            document = IniDocument.Parse(path, bytes);
+        }
+        catch (Exception e)
+        {
+            return Refused(path, lower ?? IniDocument.Parse(path, []), diagnostics, Diagnostic.Error(file, e.Message));
+        }
+        return new EditDocument(path, document, new DocumentState(document.Sections.ToImmutableList(),
+                ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>>.Empty, ImmutableHashSet<SectionIdentity>.Empty),
+            null, null, ContentHash.Of(bytes), new WholeSource(file, bytes));
+    }
 
     private static EditDocument Load(string path, IniDocument b, string modId, string? patchFile, byte[]? bytes,
         List<Diagnostic> diagnostics)
@@ -376,3 +483,8 @@ internal sealed class EditDocument : IEditFile
         return baseIndex.GetValueOrDefault(id, -1);
     }
 }
+
+/// <summary>The bytes that a save writes for a whole file of the mod.</summary>
+/// <param name="Note">A warning for the save, or null: the save writes a binary file as text, or writes canonical text
+/// and drops the comments.</param>
+internal sealed record WholeFileText(byte[] Bytes, string? Note);

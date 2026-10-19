@@ -14,16 +14,23 @@ internal enum RecoveredKind
     /// <summary>A patch of an INI file or a THN patch of a cutscene.</summary>
     Patch,
 
-    /// <summary>The whole file of a cutscene that the active mod has.</summary>
+    /// <summary>The whole file of a cutscene, or a whole INI file of the kind "whole file", that the active mod
+    /// has.</summary>
     WholeFile,
+
+    /// <summary>An editor file of the active mod (see <see cref="ModFileDocument"/>). Its path is relative to the mod
+    /// folder. Format 3 adds it.</summary>
+    ModFile,
 }
 
-/// <summary>The file of the active mod that unsaved edits give for one install path.</summary>
-/// <param name="Path">The install path, in <see cref="VfsPath.Normalize"/> form.</param>
+/// <summary>The file of the active mod that unsaved edits give for one install path or one editor file.</summary>
+/// <param name="Path">The install path, in <see cref="VfsPath.Normalize"/> form. For an editor file, the path relative
+/// to the mod folder, in the form of <see cref="ModFileDocument.Normalize"/>.</param>
 /// <param name="KnownHash">The hash of the file of the mod that the edits change (see <see cref="ContentHash"/>), or
 /// null when the mod had no such file.</param>
 /// <param name="Text">The text of the file, or null for no patch. A whole file without text is the delete of a new
-/// cutscene: an undo of New cutscene after its save (section 5.4 of the M8b design).</param>
+/// cutscene: an undo of New cutscene after its save (section 5.4 of the M8b design). An editor file without text is
+/// the delete of the file.</param>
 internal sealed record RecoveredFile(string Path, RecoveredKind Kind, string? KnownHash, string? Text);
 
 /// <summary>The text of the mod with unsaved edits.</summary>
@@ -41,15 +48,20 @@ internal sealed record RecoveredText(string? KnownHash, ModText Text);
 /// also holds the hash of the file on disk that the edits change. When a file of the mod changes after the editor
 /// wrote the recovery file, the edits do not apply to it any more.</para>
 /// <para>Format 2 adds the cutscenes: the THN patch or the whole file of each, with its kind. Format 1 holds only
-/// INI patches. The editor reads both and writes format 2.</para>
+/// INI patches. Format 3 adds the editor files of the mod with the kind <c>modfile</c>, and the whole INI files of the
+/// mission files with the kind <c>file</c> (section 6.8 of the M6b design). The editor reads formats 1, 2 and 3. It
+/// writes format 3 when the file holds one of these entries, else format 2, so that an earlier editor can restore
+/// it.</para>
 /// </remarks>
 internal sealed record RecoveryFile(IReadOnlyList<RecoveredFile> Files, RecoveredText? Text)
 {
     public const string FileName = "recovery.json";
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
+    private const int CutscenesVersion = 2;
     private const int PatchesOnlyVersion = 1;
     private const string PatchKind = "patch";
     private const string WholeFileKind = "file";
+    private const string ModFileKind = "modfile";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -75,6 +87,7 @@ internal sealed record RecoveryFile(IReadOnlyList<RecoveredFile> Files, Recovere
         var entries = json?.FormatVersion switch
         {
             PatchesOnlyVersion when json.Files == null && (json.Patches ?? []).All(p => p.Kind == null) => json.Patches ?? [],
+            CutscenesVersion when json.Patches == null && (json.Files ?? []).All(f => f.Kind != ModFileKind) => json.Files ?? [],
             FormatVersion when json.Patches == null => json.Files ?? [],
             _ => null,
         };
@@ -92,11 +105,16 @@ internal sealed record RecoveryFile(IReadOnlyList<RecoveredFile> Files, Recovere
 
     public byte[] ToBytes() => JsonSerializer.SerializeToUtf8Bytes(new FileJson
     {
-        FormatVersion = FormatVersion,
+        FormatVersion = Files.Any(NeedsFormat3) ? FormatVersion : CutscenesVersion,
         Files = Files.Select(f => new FileEntryJson
         {
             Path = f.Path,
-            Kind = f.Kind == RecoveredKind.WholeFile ? WholeFileKind : PatchKind,
+            Kind = f.Kind switch
+            {
+                RecoveredKind.WholeFile => WholeFileKind,
+                RecoveredKind.ModFile => ModFileKind,
+                _ => PatchKind,
+            },
             KnownHash = f.KnownHash,
             Text = f.Text,
         }).ToList(),
@@ -110,19 +128,27 @@ internal sealed record RecoveryFile(IReadOnlyList<RecoveredFile> Files, Recovere
             },
     }, JsonOptions);
 
+    /// <summary>True for an entry that format 2 cannot hold: an editor file, or a whole INI file.</summary>
+    private static bool NeedsFormat3(RecoveredFile file) =>
+        file.Kind == RecoveredKind.ModFile ||
+        file.Kind == RecoveredKind.WholeFile && !file.Path.EndsWith(".thn", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>An entry as a recovered file, or null when it is not valid. An entry without a kind is a patch, as in
-    /// format 1.</summary>
+    /// format 1. The path of an editor file must be in its folders, and the path of another file must be an install
+    /// path.</summary>
     private static RecoveredFile? Recovered(FileEntryJson entry)
     {
-        if (entry.Path == null || VfsPath.Normalize(entry.Path) != entry.Path)
-            return null;
         RecoveredKind? kind = entry.Kind switch
         {
             null or PatchKind => RecoveredKind.Patch,
             WholeFileKind => RecoveredKind.WholeFile,
+            ModFileKind => RecoveredKind.ModFile,
             _ => null,
         };
-        return kind is { } k ? new RecoveredFile(entry.Path, k, entry.KnownHash, entry.Text) : null;
+        if (kind is not { } k || entry.Path == null)
+            return null;
+        var normal = k == RecoveredKind.ModFile ? ModFileDocument.Normalize(entry.Path) : Commands.InstallPaths.TryParse(entry.Path);
+        return normal == entry.Path ? new RecoveredFile(entry.Path, k, entry.KnownHash, entry.Text) : null;
     }
 
     private sealed class FileJson
@@ -132,7 +158,7 @@ internal sealed record RecoveryFile(IReadOnlyList<RecoveredFile> Files, Recovere
         /// <summary>The entries of format 1.</summary>
         public List<FileEntryJson>? Patches { get; set; }
 
-        /// <summary>The entries of format 2.</summary>
+        /// <summary>The entries of formats 2 and 3.</summary>
         public List<FileEntryJson>? Files { get; set; }
 
         public TextJson? Text { get; set; }

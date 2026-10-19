@@ -147,6 +147,16 @@ public abstract class EditCommand
         return new SetTextCommand($"Set text {key}", kind, key, text);
     }
 
+    /// <summary>
+    /// Sets the text of an editor file of the active mod: a graph file or a mission prefab (section 6.8 of the M6b
+    /// design). Null makes it a file that does not exist, so a save deletes it. The command throws an
+    /// <see cref="ArgumentException"/> when it runs with a path outside the folders of the editor files.
+    /// </summary>
+    /// <param name="relativePath">The path relative to the mod folder, for example
+    /// <c>graphs\DATA\MISSIONS\M02\m02.ini</c>.</param>
+    internal static EditCommand SetModFile(string relativePath, string? text) =>
+        new SetModFileCommand($"Set {relativePath}", relativePath, text);
+
     /// <summary>Runs commands in order, as one edit.</summary>
     public static EditCommand Group(string label, IReadOnlyList<EditCommand> commands) => new GroupCommand(label, commands, null);
 
@@ -169,6 +179,11 @@ public abstract class EditCommand
     /// <summary>The key entry name of a section, or null when its type has no key.</summary>
     private static string? KeyName(Section section) =>
         SectionKeys.For(section.Name) is { Kind: SectionMatchKind.Keyed } match ? match.KeyEntry : null;
+
+    private sealed class SetModFileCommand(string label, string relativePath, string? text) : EditCommand(label)
+    {
+        internal override void Run(EditSession.CommandScope scope) => scope.ModFile(relativePath).SetText(text);
+    }
 
     private sealed class SetLinesCommand(string label, SectionRef target, string name,
         IReadOnlyList<IReadOnlyList<ValueBase>> lines) : EditCommand(label)

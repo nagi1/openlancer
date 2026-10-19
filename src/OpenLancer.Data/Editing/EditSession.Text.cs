@@ -79,12 +79,12 @@ public sealed partial class EditSession
     /// read or parsed has no lines here, because the merge reports it. Other files have no lines here. For example, the
     /// merge of a THN patch does not resolve placeholders.
     /// </summary>
-    /// <param name="skipPatch">True for an install path whose patch the caller does not want.</param>
+    /// <param name="skip">True for an install path whose patch or whole file the caller does not want.</param>
     private static IEnumerable<(string File, Section Section, Entry Entry)> ResolvedLines(Mod mod,
-        Func<string, bool> skipPatch)
+        Func<string, bool> skip)
     {
-        var files = mod.Patches.Where(p => !skipPatch(p.Key)).Select(p => (Path: p.Key, File: p.Value, Patch: true))
-            .Concat(mod.Files.Select(f => (Path: f.Key, File: f.Value, Patch: false)))
+        var files = mod.Patches.Where(p => !skip(p.Key)).Select(p => (Path: p.Key, File: p.Value, Patch: true))
+            .Concat(mod.Files.Where(f => !skip(f.Key)).Select(f => (Path: f.Key, File: f.Value, Patch: false)))
             .Where(f => f.Path.EndsWith(".ini", StringComparison.OrdinalIgnoreCase));
         foreach (var (_, file, isPatch) in files)
         {

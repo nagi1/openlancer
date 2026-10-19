@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
@@ -32,6 +33,12 @@ public sealed partial class EditSession
             return [];
         var problems = new List<Diagnostic>();
         var files = new List<RecoveredFile>();
+        foreach (var key in touchedModFiles.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var modFile = modFiles[key];
+            if (modFile.HasChanges)
+                files.Add(new RecoveredFile(modFile.RelativePath, RecoveredKind.ModFile, modFile.SourceHash, modFile.Text));
+        }
         foreach (var path in touched.Order(StringComparer.OrdinalIgnoreCase))
         {
             if (cutscenes.TryGetValue(path, out var cutscene))
@@ -46,6 +53,13 @@ public sealed partial class EditSession
                 continue;
             }
             var document = documents[path];
+            if (document.IsWholeFile)
+            {
+                if (document.ChangedWholeFile() is { } whole)
+                    files.Add(new RecoveredFile(path, RecoveredKind.WholeFile, document.SourceHash,
+                        IniDocument.TextEncoding.GetString(whole.Bytes)));
+                continue;
+            }
             var patch = document.ChangedPatch();
             if (patch == null)
                 continue;
@@ -104,6 +118,15 @@ public sealed partial class EditSession
         {
             foreach (var recovered in recovery.Files)
             {
+                if (recovered.Kind == RecoveredKind.ModFile)
+                {
+                    var modFile = scope.ModFile(recovered.Path);
+                    if (modFile.SourceHash != recovered.KnownHash)
+                        problems.Add(Diagnostic.Error(Path.Combine(ActiveMod.Folder, recovered.Path), changed));
+                    else
+                        modFile.SetText(recovered.Text);
+                    continue;
+                }
                 if (recovered.Path.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
                 {
                     // A new cutscene that the earlier session did not save has no file, so the session cannot open
@@ -130,9 +153,23 @@ public sealed partial class EditSession
                     continue;
                 }
                 var document = scope.Document(recovered.Path);
-                if (document.SourceHash != recovered.KnownHash || recovered.Kind != RecoveredKind.Patch)
+                if (document.SourceHash != recovered.KnownHash ||
+                    recovered.Kind != (document.IsWholeFile ? RecoveredKind.WholeFile : RecoveredKind.Patch) ||
+                    document.IsWholeFile && recovered.Text == null)
                 {
                     problems.Add(Diagnostic.Error(recovered.Path, changed));
+                    continue;
+                }
+                if (document.IsWholeFile)
+                {
+                    try
+                    {
+                        document.Restore(document.WholeState(IniDocument.TextEncoding.GetBytes(recovered.Text!)));
+                    }
+                    catch (Exception e) when (e is not InvalidOperationException)
+                    {
+                        problems.Add(Diagnostic.Error(recovered.Path, e.Message));
+                    }
                     continue;
                 }
                 var diagnostics = new List<Diagnostic>();
@@ -151,7 +188,8 @@ public sealed partial class EditSession
                     scope.Text = recovery.Text.Text;
             }
         }
-        catch (Exception e) when (e is ArgumentException or InvalidOperationException)
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException or IOException or
+                                       UnauthorizedAccessException)
         {
             problems.Add(Diagnostic.Error(file, e.Message));
         }

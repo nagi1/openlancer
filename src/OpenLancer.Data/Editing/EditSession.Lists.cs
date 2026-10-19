@@ -79,10 +79,13 @@ public sealed partial class EditSession
         var id = source.Ids[index];
         if (source.Document is not { } document)
         {
-            // A whole file of the active mod: W has the lower data of the file.
+            // A whole file of the active mod that the editor shows read-only: W has the lower data of the file.
             var inW = OpenDocument(source.Path) is { } w && w.IndexOf(id) >= 0;
             return (ValueOrigin.ActiveMod, ActiveMod?.Id, inW, false);
         }
+        // A whole file of the active mod that the editor edits: each section comes from the active mod.
+        if (document.IsWholeFile)
+            return (ValueOrigin.ActiveMod, ActiveMod?.Id, true, !document.InInitial(id));
         // A section of B that the active mod renames gives a name of the active mod.
         if (ActiveMod != null && (!document.InBase(id) || document.IsRenamed(id)))
             return (ValueOrigin.ActiveMod, ActiveMod.Id, true, !document.InInitial(id));

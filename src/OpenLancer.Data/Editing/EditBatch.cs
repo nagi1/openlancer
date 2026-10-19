@@ -192,8 +192,9 @@ public sealed class EditBatch : IDisposable
 
     public void Dispose() => Cancel();
 
-    /// <summary>The install paths of the files that the steps changed until now, in normal form.</summary>
-    public IReadOnlyCollection<string> Paths => change.Paths;
+    /// <summary>The install paths of the INI files and the cutscenes that the steps changed until now, in normal
+    /// form.</summary>
+    public IReadOnlyCollection<string> Paths => change.Paths.Where(p => !ModFileDocument.IsKey(p)).ToList();
 
     private EditResult Result(EditStatus status, IReadOnlyList<EditError> errors) =>
         EditResult.Merge(status, parts.Concat(checkParts ?? []).ToList()) with
@@ -201,7 +202,7 @@ public sealed class EditBatch : IDisposable
             Errors = errors,
             Label = Label,
             Revision = session.Revision,
-            Files = change.Paths.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+            Files = Paths.Order(StringComparer.OrdinalIgnoreCase).ToList(),
         };
 
     private void End()

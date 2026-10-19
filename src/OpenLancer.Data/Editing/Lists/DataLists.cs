@@ -694,11 +694,11 @@ public sealed class DataLists
         }
     }
 
-    /// <summary>The sections of a file for the lists: W, or the edit view of a whole file of the active mod. Null when
-    /// the edit view has no such INI file.</summary>
+    /// <summary>The sections of a file for the lists: W, or the edit view of a whole file of the active mod that the
+    /// editor shows read-only. Null when the edit view has no such INI file.</summary>
     internal FileTable? TableOf(string path)
     {
-        if (session.ActiveMod is { } active && active.Files.ContainsKey(path))
+        if (session.ActiveMod is { } active && active.Files.ContainsKey(path) && !EditDocument.EditsWholeFile(path))
             return WholeFile(path);
         return session.Table.File(path);
     }

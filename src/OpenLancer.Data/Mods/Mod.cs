@@ -18,7 +18,9 @@ namespace OpenLancer.Data.Mods;
 /// <c>files/&lt;install path&gt;</c> adds or replaces the file at that path.
 /// <c>strings.json</c> holds the text that patches refer to with <c>$str:key</c> and <c>$ifc:key</c>.
 /// <c>props/&lt;nickname&gt;.ini</c> and <c>props/&lt;nickname&gt;.strings.json</c> hold a prop group of the editor
-/// (milestone M23). The merge and the game ignore this folder and each other folder of a mod.
+/// (milestone M23). <c>graphs/</c> and <c>prefabs/missions/</c> hold the editor files of missions (see
+/// <see cref="Editing.ModFileDocument"/>). The merge and the game ignore these folders and each other folder of a
+/// mod.
 /// </remarks>
 public sealed class Mod
 {

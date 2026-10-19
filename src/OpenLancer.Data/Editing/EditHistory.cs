@@ -10,12 +10,14 @@ namespace OpenLancer.Data.Editing;
 internal interface IFileState;
 
 /// <summary>
-/// A file of a session whose state the edit history keeps: an INI file (see <see cref="EditDocument"/>) or a cutscene
-/// script (see <see cref="ThnDocument"/>). So one entry of the history can change both kinds.
+/// A file of a session whose state the edit history keeps: an INI file (see <see cref="EditDocument"/>), a cutscene
+/// script (see <see cref="ThnDocument"/>) or an editor file of the mod (see <see cref="ModFileDocument"/>). So one
+/// entry of the history can change each kind.
 /// </summary>
 internal interface IEditFile
 {
-    /// <summary>The install path, in <see cref="VfsPath.Normalize"/> form.</summary>
+    /// <summary>The key of the file in the session: the install path in <see cref="VfsPath.Normalize"/> form, or the
+    /// key of an editor file of the mod (see <see cref="ModFileDocument"/>).</summary>
     string Path { get; }
 
     /// <summary>The state now. <see cref="Restore"/> puts back a state that this property gave.</summary>

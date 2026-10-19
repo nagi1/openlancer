@@ -15,6 +15,9 @@ Format version 2 adds the tier and the targets of a mod to `mod.json`. The patch
   files/<install path>         a file that the mod adds or replaces
   props/<nickname>.ini         a prop group of the editor (see "Prop groups"). The merge ignores it.
   props/<nickname>.strings.json  the text of a prop group. The merge ignores it.
+  graphs/<install path>        the graph file of a mission script of the editor: node places, acts and prefab
+                               instances (see "Editor files of missions"). The merge ignores it.
+  prefabs/missions/<id>.ini    a mission prefab of the editor (see "Editor files of missions"). The merge ignores it.
   publish.json                 optional: the publish settings (see "Publish settings"). The merge ignores it.
   publish/screenshots/         the screenshots of the Nexus page. The merge ignores it.
   .olsave/                     the editor's save folder (see "The editor"). The merge ignores it.
@@ -373,6 +376,12 @@ Freelancer also shows a string id in `ids_info` as an infocard with plain text, 
 ## Whole files
 
 A file in `files/` adds a new file, or replaces the file at the same install path. Patches of later mods apply to the replaced file. A replacement discards the changes of the mods that load before it, and the merge reports a warning that names them. Put new assets under `DATA/MODS/<mod id>/` so that they do not collide with other mods.
+
+The editor edits a whole file of the active mod under `DATA/MISSIONS`. Examples are a test script, a replaced slot script and a file of ship builds. Each section of such a file is editable, also a section whose key another section has. The save writes the whole file as text. A text file keeps its comments and the lines that do not change. A binary file becomes text, and the save tells it. When the active mod is in the OpenLancer repo, the save refuses a whole mission file. The content scan cannot tell such a file from a copy of a retail script. The editor shows the other whole files of the active mod, but it does not change them.
+
+### Editor files of missions
+
+The editor keeps the graph of each mission script in `graphs/<install path>`, and each mission prefab of the mod in `prefabs/missions/<id>.ini`. The game, the merge, `oltool deploy`, the validation and the packages ignore these folders. The editor writes them at the save of the mod, in the same save as the patches. Undo and the recovery file of unsaved edits cover them. A graph file without content is not written, and the save deletes an old one with the empty folders below `graphs/`. The editor files of the lower mods are read-only.
 
 ## Prop groups
 

@@ -92,7 +92,9 @@ public sealed partial class EditSession
         var writes = plan.Where(p => !p.SameAsDisk).ToList();
         if (writes.Count > 0)
         {
-            var stale = inputs.Changed(plan.Where(p => p.Source != null).Select(p => p.Source!.Path), profileNow, active);
+            // An editor file of the mod does not depend on the lower layer.
+            var stale = inputs.Changed(plan.Where(p => p.Source is EditDocument or ThnDocument).Select(p => p.Source!.Path),
+                profileNow, active);
             if (stale.Count > 0)
                 return Stale(stale, problems);
         }
@@ -254,6 +256,19 @@ public sealed partial class EditSession
     private List<PlannedFile> Plan(Mod active, Mod activeNow, List<Diagnostic> problems)
     {
         var plan = new List<PlannedFile>();
+        foreach (var key in touchedModFiles.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            var modFile = modFiles[key];
+            if (!modFile.HasChanges)
+                continue;
+            var target = Path.Combine(active.Folder, modFile.RelativePath.Replace('\\', Path.DirectorySeparatorChar));
+            if (!PathRules.IsInside(target, active.Folder))
+            {
+                problems.Add(Diagnostic.Error(target, $"The file {target} is not in the folder {active.Folder}."));
+                continue;
+            }
+            plan.Add(new PlannedFile(new FileChange(target, modFile.Bytes), modFile.SourceHash, modFile));
+        }
         foreach (var path in touched.Order(StringComparer.OrdinalIgnoreCase))
         {
             if (cutscenes.TryGetValue(path, out var cutscene))
@@ -263,6 +278,12 @@ public sealed partial class EditSession
                 continue;
             }
             var document = documents[path];
+            if (document.IsWholeFile)
+            {
+                if (PlanWholeFile(document, active, activeNow, problems) is { } whole)
+                    plan.Add(whole);
+                continue;
+            }
             var patch = document.ChangedPatch();
             if (patch == null)
                 continue;
@@ -351,10 +372,50 @@ public sealed partial class EditSession
         return new PlannedFile(new FileChange(target, file.ToBytes()), cutscene.SourceHash, cutscene);
     }
 
+    /// <summary>
+    /// The whole file that the edits of a document of the kind "whole file" give (section 6.7 of the M6b design), or
+    /// null when the file does not change or the save cannot write it. A problem then tells why. The save writes no
+    /// whole mission file into a mod in the OpenLancer repo (decision D70).
+    /// </summary>
+    /// <param name="activeNow">The active mod as it is on disk now.</param>
+    private PlannedFile? PlanWholeFile(EditDocument document, Mod active, Mod activeNow, List<Diagnostic> problems)
+    {
+        var path = document.Path;
+        if (document.ChangedWholeFile() is not { } file)
+            return null;
+        if (WholeMissionFileInRepo(active) is { } inRepo)
+        {
+            problems.Add(Diagnostic.Error(path, inRepo));
+            return null;
+        }
+        problems.AddRange(MissingText(document));
+        if (!activeNow.Files.TryGetValue(path, out var target))
+        {
+            problems.Add(Diagnostic.Error(path, $"The active mod has no whole file for {path} now. Open the profile " +
+                                                "again."));
+            return null;
+        }
+        var root = Path.Combine(active.Folder, Mod.FilesFolder);
+        if (!PathRules.IsInside(target, root))
+        {
+            problems.Add(Diagnostic.Error(path, $"The file {target} is not in the folder {root}."));
+            return null;
+        }
+        if (file.Note != null)
+            problems.Add(Diagnostic.Warning(target, file.Note));
+        return new PlannedFile(new FileChange(target, file.Bytes), document.SourceHash, document);
+    }
+
+    /// <summary>Why the editor writes no whole mission file into a mod, or null: the mod is in the OpenLancer repo
+    /// (decision D70, section 6.7 of the M6b design).</summary>
+    internal static string? WholeMissionFileInRepo(Mod mod) => WholeFileInRepo(mod, "mission");
+
     /// <summary>Why the editor writes no whole cutscene file into a mod, or null: the mod is in the OpenLancer repo
     /// (decision D70).</summary>
-    internal static string? WholeCutsceneInRepo(Mod mod) => RepoCheck.RepoRoot(mod.Folder) is { } repo
-        ? $"The mod '{mod.Id}' is in the OpenLancer repo {repo}. The editor writes no whole cutscene file into it, " +
+    internal static string? WholeCutsceneInRepo(Mod mod) => WholeFileInRepo(mod, "cutscene");
+
+    private static string? WholeFileInRepo(Mod mod, string kind) => RepoCheck.RepoRoot(mod.Folder) is { } repo
+        ? $"The mod '{mod.Id}' is in the OpenLancer repo {repo}. The editor writes no whole {kind} file into it, " +
           "because the content scan cannot tell such a file from a copy of a retail script (decision D70)."
         : null;
 
@@ -405,6 +466,9 @@ public sealed partial class EditSession
                     break;
                 case ThnDocument cutscene:
                     cutscenes[cutscene.Path] = cutscene.Reopen(file.Change.Content, file.Change.Path);
+                    break;
+                case ModFileDocument modFile:
+                    modFiles[modFile.Path] = modFile.Reopen(file.Change.Content);
                     break;
             }
         }
@@ -519,7 +583,7 @@ public sealed partial class EditSession
 
     /// <summary>One file of a save.</summary>
     /// <param name="KnownHash">The hash of the file when the session read it, or null when it did not exist.</param>
-    /// <param name="Source">The INI document or the cutscene of the file, or null for strings.json.</param>
+    /// <param name="Source">The INI document, the cutscene or the editor file, or null for strings.json.</param>
     private sealed record PlannedFile(FileChange Change, string? KnownHash, IEditFile? Source)
     {
         /// <summary>True when the file on disk already has the new content, so it needs no write.</summary>
