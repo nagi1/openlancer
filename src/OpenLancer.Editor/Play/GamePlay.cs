@@ -10,6 +10,7 @@ using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.PlayCopies;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Dialogs;
@@ -43,6 +44,29 @@ internal interface IGamePlayHost : IPlayHost
     IReadOnlyList<string> ProtectedFolders();
 }
 
+/// <summary>A mod that a play installs, for the record of a test play (decision D569 of the M11c design).</summary>
+/// <param name="Name">The display name of the mod.</param>
+/// <param name="History">The folder of the publish history of the mod.</param>
+/// <param name="Content">The content fingerprint of the mod at the install.</param>
+internal sealed record PlayedMod(string Id, string Name, string Folder, string History, string Content)
+{
+    /// <summary>The played mod of a mod of a profile, or null when OpenLancer cannot read a file of the mod now. The
+    /// play then records no test play for the mod. The history is in the workspace of the profile.</summary>
+    public static PlayedMod? Of(Mod mod, string profilePath, ModFingerprint fingerprints)
+    {
+        try
+        {
+            return new PlayedMod(mod.Id, mod.Manifest.Name, mod.Folder,
+                PublishHistory.FolderOf(ModCatalog.WorkspaceOf(profilePath), mod.Id),
+                fingerprints.Content(mod.Manifest, mod.Folder));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+}
+
 /// <summary>A play copy of a linked game as the Game link window shows it.</summary>
 /// <param name="Folder">The folder of the play copy.</param>
 /// <param name="Record">The record, or null when the folder holds no play copy.</param>
@@ -62,6 +86,9 @@ internal sealed record PlayCopyInfo(string Folder, PlayCopyRecord? Record, long 
 /// the game. After 5 seconds, Stop becomes Force stop, which ends the process. Stop test server closes the window of
 /// FLServer and offers Force stop at once. The editor ends FLServer itself after 60 seconds (decision D336).</para>
 /// <para>Play in OpenLancer (<see cref="PlayController"/>) does not change. Both can run at the same time.</para>
+/// <para>A game that runs 60 s or more and ends without a crash and without Force stop records a test play in the
+/// publish history of each mod that its play installed (decision D569 of the M11c design). The test server records
+/// nothing.</para>
 /// </remarks>
 internal sealed class GamePlay : IDisposable
 {
@@ -77,6 +104,13 @@ internal sealed class GamePlay : IDisposable
     internal const string ReloadNote = "The game does not load changes while it runs. Stop the game and play again.";
 
     internal const string NoTarget = "Link a game folder with its game program in File > Game link.";
+
+    /// <summary>The shortest run of the game that counts as a test play.</summary>
+    internal static readonly TimeSpan TestPlayTime = TimeSpan.FromSeconds(60);
+
+    /// <summary>The first exit code of a crash. Windows gives the codes of a crash from this value up, for example
+    /// 0xC0000005.</summary>
+    internal const uint CrashCodes = 0xC0000000;
 
     private readonly IGamePlayHost host;
     private readonly GameStarter start;
@@ -116,6 +150,9 @@ internal sealed class GamePlay : IDisposable
         host.Validated += OnValidated;
     }
 
+    /// <summary>Runs on the UI thread when the history of a mod got a test play.</summary>
+    public event Action? PlaysRecorded;
+
     private enum JobKind
     {
         Game,
@@ -134,6 +171,9 @@ internal sealed class GamePlay : IDisposable
     /// <summary>True while a request saves, validates, merges or installs, or while the game or the server
     /// runs.</summary>
     public bool Busy => pending != null || job != null || client != null || server != null;
+
+    /// <summary>True while a request saves, validates, merges or installs the mods into a play copy.</summary>
+    public bool Installing => pending != null || job != null;
 
     public bool GameRuns => client != null;
 
@@ -157,7 +197,7 @@ internal sealed class GamePlay : IDisposable
         {
             null => null,
             { StopSentAt: not null } => "Stopping the game of the play copy",
-            { ExportMod: { } mod } run => $"Playing the export of {mod} in {run.Target.Name} (play copy)",
+            { Status: { } status } => status,
             { } run => $"Playing in {run.Target.Name} (play copy)",
         };
 
@@ -206,15 +246,18 @@ internal sealed class GamePlay : IDisposable
             return;
         }
 
-        StartGame(server!.Target, exportMod: null);
+        // The game plays the mods that the test server installed.
+        StartGame(server!.Target, null, server.Installed);
     }
 
     /// <summary>
-    /// Export and play (decision D326): installs the files of an export into the play copy of its base, and starts the
-    /// game. The play copy then holds this mod alone, with its own text DLL. The next Play in the game installs the
-    /// profile again.
+    /// Export and play (decision D326) and "Play this mod alone" of the Mods window (decision D577): installs the files
+    /// of an export into the play copy of its base, and starts the game. The play copy then holds this mod alone, with
+    /// its own text DLL. The next Play in the game installs the profile again.
     /// </summary>
-    public void PlayExport(GameReport game, TargetFiles files, string modId)
+    /// <param name="alone">True for "Play this mod alone", false for "Export and play". Only the status text
+    /// differs.</param>
+    public void PlayExport(GameReport game, TargetFiles files, PlayedMod mod, bool alone = false)
     {
         if (PlayTarget.Of([game]) is not [var target])
         {
@@ -222,7 +265,14 @@ internal sealed class GamePlay : IDisposable
             return;
         }
 
-        var export = new Job(target, JobKind.Export) { Files = files, ExportMod = modId };
+        var export = new Job(target, JobKind.Export)
+        {
+            Files = files,
+            Mods = [mod],
+            Status = alone
+                ? $"Playing {mod.Name} alone in {target.Name} (play copy)"
+                : $"Playing the export of {mod.Id} in {target.Name} (play copy)",
+        };
         if (Refusal(export) is { } refusal)
         {
             Refuse(refusal);
@@ -600,6 +650,8 @@ internal sealed class GamePlay : IDisposable
     {
         var problems = new List<Diagnostic>();
         var files = request.Files;
+        // The files of an export hold one mod alone.
+        var installed = new Installed(request.Mods, Alone: true);
         if (files == null)
         {
             var profile = ModProfile.Load(profilePath!);
@@ -608,6 +660,13 @@ internal sealed class GamePlay : IDisposable
                 return new Prepared(folder) { Refusal = refusal };
             }
 
+            // The fingerprints of the install, for the test plays. They come before the merge, so that a change of a
+            // file during the merge gives the fingerprint of the old content. The test play then does not count for
+            // the new content, which the game can miss.
+            var fingerprints = new ModFingerprint();
+            installed = new Installed(
+                [.. profile.Mods.Select(m => PlayedMod.Of(m, profilePath!, fingerprints)).OfType<PlayedMod>()],
+                Alone: profile.Mods.Count == 1);
             var build = PlayBuild.Run(request.Target.Game, profile.Mods, strings, thn);
             problems.AddRange(build.Problems);
             if (build.HasErrors)
@@ -630,7 +689,15 @@ internal sealed class GamePlay : IDisposable
         try
         {
             var result = copy.Install(files, profilePath);
-            return new Prepared(folder) { Problems = problems, Copy = copy, Install = result, Made = made, Files = files.Files.Count };
+            return new Prepared(folder)
+            {
+                Problems = problems,
+                Copy = copy,
+                Install = result,
+                Made = made,
+                Files = files.Files.Count,
+                Installed = installed,
+            };
         }
         catch
         {
@@ -693,11 +760,11 @@ internal sealed class GamePlay : IDisposable
                                   (request.Kind == JobKind.Server ? "The test server starts." : "The game starts."));
         if (request.Kind == JobKind.Server)
         {
-            StartServer(request.Target);
+            StartServer(request.Target, prepared.Installed);
         }
         else
         {
-            StartGame(request.Target, request.ExportMod);
+            StartGame(request.Target, request.Status, prepared.Installed);
         }
 
         if (client == null && server == null)
@@ -707,7 +774,10 @@ internal sealed class GamePlay : IDisposable
     }
 
     /// <summary>Starts the game program of the open play copy in its program folder, without arguments.</summary>
-    private void StartGame(PlayTarget target, string? exportMod)
+    /// <param name="status">The status text while the game runs, or null for the text of a play of the
+    /// profile.</param>
+    /// <param name="installed">The mods that the play copy holds.</param>
+    private void StartGame(PlayTarget target, string? status, Installed installed)
     {
         var copy = open!;
         if (copy.ProgramPath is not { } program)
@@ -716,13 +786,14 @@ internal sealed class GamePlay : IDisposable
             return;
         }
 
-        client = Start(target, new ProcessStartInfo(program) { WorkingDirectory = copy.ProgramFolder }, server: false);
+        client = Start(target, new ProcessStartInfo(program) { WorkingDirectory = copy.ProgramFolder }, server: false,
+            installed);
         if (client == null)
         {
             return;
         }
 
-        client.ExportMod = exportMod;
+        client.Status = status;
         if (!copy.SavesInCopy && savesNoteShown.Add(target.Root))
         {
             Log(ConsoleSeverity.Info, SavesNote);
@@ -730,7 +801,7 @@ internal sealed class GamePlay : IDisposable
     }
 
     /// <summary>Starts FLServer of the open play copy with <c>/c</c> in the program folder (section 8.7).</summary>
-    private void StartServer(PlayTarget target)
+    private void StartServer(PlayTarget target, Installed installed)
     {
         var copy = open!;
         if (copy.ServerPath is not { } program)
@@ -739,7 +810,7 @@ internal sealed class GamePlay : IDisposable
             return;
         }
 
-        server = Start(target, TestServer.Command(program, copy.ProgramFolder), server: true);
+        server = Start(target, TestServer.Command(program, copy.ProgramFolder), server: true, installed);
         if (server == null)
         {
             return;
@@ -753,13 +824,17 @@ internal sealed class GamePlay : IDisposable
         }
     }
 
-    private GameRun? Start(PlayTarget target, ProcessStartInfo info, bool server)
+    private GameRun? Start(PlayTarget target, ProcessStartInfo info, bool server, Installed installed)
     {
         GameRun? run = null;
         try
         {
             // The process gives its exit on the UI thread after this method, so the callback finds the run.
-            run = new GameRun(start(info, code => Exited(run!, code)), target, server, host.Session?.Saves ?? 0);
+            run = new GameRun(start(info, code => Exited(run!, code)), target, server, host.Session?.Saves ?? 0)
+            {
+                StartedAt = clock(),
+                Installed = installed,
+            };
             return run;
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException or IOException)
@@ -795,6 +870,12 @@ internal sealed class GamePlay : IDisposable
         else if (!run.Killed)
         {
             Log(ConsoleSeverity.Info, $"{name} closed.");
+        }
+
+        var time = clock() - run.StartedAt;
+        if (IsTestPlay(run.IsServer, run.Killed, code, time) && run.Installed.Mods.Count > 0)
+        {
+            RecordPlays(run, (int)time.TotalSeconds);
         }
 
         if (open != null)
@@ -836,6 +917,57 @@ internal sealed class GamePlay : IDisposable
         {
             closeAfterServer = null;
             close();
+        }
+    }
+
+    /// <summary>
+    /// True when a run counts as a test play (decision D569, finding R17): a game, not the test server, that ran 60 s or
+    /// more, without Force stop, and whose exit code as an unsigned number is below 0xC0000000.
+    /// </summary>
+    /// <param name="server">True for the test server.</param>
+    /// <param name="killed">True after Force stop.</param>
+    /// <param name="code">The exit code, as the process gives it.</param>
+    /// <param name="time">The time from the start to the exit.</param>
+    internal static bool IsTestPlay(bool server, bool killed, int code, TimeSpan time) =>
+        !server && !killed && unchecked((uint)code) < CrashCodes && time >= TestPlayTime;
+
+    /// <summary>
+    /// Records a test play in the publish history of each mod of a run, on a worker thread, because a write waits for
+    /// the lock of the history. A failed write gives a Console warning and no other effect.
+    /// </summary>
+    private void RecordPlays(GameRun run, int seconds)
+    {
+        var target = run.Target.Game.Target;
+        var roots = host.LinkedGameReports().Select(r => r.Root).Append(host.Session?.BaseFolder).OfType<string>()
+            .ToList();
+        var time = DateTime.UtcNow;
+        foreach (var mod in run.Installed.Mods)
+        {
+            var play = new HistoryPlay(time, target, mod.Content, run.Installed.Alone, seconds, Manual: false);
+            var location = new HistoryLocation(mod.History, mod.Id, mod.Folder, roots);
+            Task.Run(() => PublishHistory.Update(location, "play", h => h.AddPlay(play))).ContinueWith(task =>
+                host.QueueUIThread(() => PlayRecorded(mod, run.Target, seconds, task)), TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>The end of the record of one test play, on the UI thread.</summary>
+    private void PlayRecorded(PlayedMod mod, PlayTarget target, int seconds, Task<HistoryWrite> task)
+    {
+        if (task.Exception?.GetBaseException() is { } failure)
+        {
+            Log(ConsoleSeverity.Warning, $"OpenLancer did not record the test play of {mod.Id}: {ErrorText.Of(failure)}");
+            return;
+        }
+
+        foreach (var message in task.Result.Messages)
+        {
+            Log(ConsoleSeverity.Warning, message);
+        }
+
+        if (task.Result.Written)
+        {
+            Log(ConsoleSeverity.Info, $"Recorded a test play of {mod.Name} ({mod.Id}) in {target.Name}: {seconds} s.");
+            PlaysRecorded?.Invoke();
         }
     }
 
@@ -1036,8 +1168,11 @@ internal sealed class GamePlay : IDisposable
         /// <summary>The files of an export, or null to merge the mods of the profile.</summary>
         public TargetFiles? Files { get; init; }
 
-        /// <summary>The id of the mod of an export, for the status text.</summary>
-        public string? ExportMod { get; init; }
+        /// <summary>The mod of the files of an export. A play of the profile finds its mods at the install.</summary>
+        public IReadOnlyList<PlayedMod> Mods { get; init; } = [];
+
+        /// <summary>The status text while the game of an export runs, or null.</summary>
+        public string? Status { get; init; }
 
         /// <summary>The folder of the play copy that the user picked, or null for the folder of the settings.</summary>
         public string? Folder { get; init; }
@@ -1068,6 +1203,16 @@ internal sealed class GamePlay : IDisposable
 
         /// <summary>The number of files of the install.</summary>
         public int Files { get; init; }
+
+        /// <summary>The mods of the install, with their fingerprints.</summary>
+        public Installed Installed { get; init; } = Installed.None;
+    }
+
+    /// <summary>The mods that a play copy holds after an install, for the test plays.</summary>
+    /// <param name="Alone">True when the install holds one mod alone: an export, or a profile with one mod.</param>
+    private sealed record Installed(IReadOnlyList<PlayedMod> Mods, bool Alone)
+    {
+        public static Installed None { get; } = new([], false);
     }
 
     /// <summary>The result of a check after an exit, or the error that stopped it.</summary>
@@ -1082,8 +1227,14 @@ internal sealed class GamePlay : IDisposable
 
         public bool IsServer { get; } = isServer;
 
-        /// <summary>The id of the mod of an export that the game plays, or null.</summary>
-        public string? ExportMod { get; set; }
+        /// <summary>The status text while the game runs, or null for the text of a play of the profile.</summary>
+        public string? Status { get; set; }
+
+        /// <summary>The time of the clock of <see cref="GamePlay"/> at the start.</summary>
+        public TimeSpan StartedAt { get; init; }
+
+        /// <summary>The mods that the play copy holds.</summary>
+        public Installed Installed { get; init; } = Installed.None;
 
         /// <summary>The last save of the session that the Console told about.</summary>
         public int SavesSeen { get; set; } = saves;

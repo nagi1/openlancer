@@ -251,6 +251,14 @@ After the game closes, the editor checks the links of the play copy through hand
 
 Mod > Export mod has the button Export and play. It exports the mod first. Then it installs the export of the first checked retail target into the play copy of its base, and starts the game. The play copy then holds this mod alone, with the text DLL of the export. The status bar shows "Playing the export of ol-sample in HD Edition 0.7.1 (play copy)", for example. The next Play in the game installs the mods of the profile again.
 
+### Play one mod alone
+
+In the Mods window, pick **Play > Play this mod alone in HD Edition 0.7.1**, or the item of another game. The editor merges this mod alone for the game, as the export does, and installs the result into the play copy. It writes no package. For the active mod with unsaved edits, the editor asks to save first, because the play uses the saved files. The status bar shows "Playing Starrunner alone in HD Edition 0.7.1 (play copy)", for example.
+
+### Test plays
+
+A game of a play copy that runs 60 s or more records a test play. The publish history of each mod that the play installed gets the record, with the content of the mod at the start of the install. The play counts only when the game ends without Force stop and without a crash code. The test server records nothing, but a game that joins it records a play. The publish checklist of the Mods window counts a test play of the current content. When you test the mod outside OpenLancer, click **Mark as tested** in the checklist.
+
 ### The status of the game of the play copy
 
 | Text | Meaning |
@@ -258,6 +266,7 @@ Mod > Export mod has the button Export and play. It exports the mod first. Then 
 | Play in HD Edition 0.7.1: validating save 2... | Play waits for the validation of the save. |
 | Play in HD Edition 0.7.1: installing the mods... | Play merges the mods, and makes or updates the play copy. |
 | Playing in HD Edition 0.7.1 (play copy) | The game of the play copy runs. |
+| Playing Starrunner alone in HD Edition 0.7.1 (play copy) | The game of the play copy runs with one mod of the Mods window. |
 | Stopping the game of the play copy | The editor closed the main window of the game, and the game did not end yet. |
 
 ## The test server

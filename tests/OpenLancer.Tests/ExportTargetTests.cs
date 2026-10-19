@@ -5,6 +5,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Editor;
 using OpenLancer.Editor.Export;
 using Xunit;
@@ -54,6 +55,37 @@ public sealed class ExportTargetTests
         // The dialog finds the base of each target among the linked games.
         Assert.Same(report, ExportDialog.BaseOf(ExportTarget.Vanilla, [report]));
         Assert.Null(ExportDialog.BaseOf(ExportTarget.HdEdition, [report]));
+    }
+
+    [Fact]
+    public void TheDialogRequestCarriesThePublishSettings()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod("[Good]\nnickname = lf_hull\nprice = 5600\n");
+        PublishSettings.Write(mod.Folder, PublishSettings.Empty with { Summary = "From publish.json." });
+
+        var request = ExportDialog.RequestOf(mod, [ExportTarget.Vanilla], [game.Report()], game.Game.Folder, ExportForms.DropIn,
+            out var problems);
+
+        Assert.Equal("From publish.json.", request.Publish.Summary);
+        Assert.NotNull(request.BaseOf(ExportTarget.Vanilla));
+        Assert.Equal(ExportForms.DropIn, request.Forms);
+        Assert.Empty(problems);
+    }
+
+    [Fact]
+    public void TheDialogRequestGivesTheProblemsOfPublishJson()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod("[Good]\nnickname = lf_hull\nprice = 5600\n");
+        PublishWorkspace.Write(Path.Combine(mod.Folder, PublishSettings.FileName),
+            """{ "formatVersion": 1, "summary": "Kept.", "authors": "Ann" }""");
+
+        var request = ExportDialog.RequestOf(mod, [ExportTarget.Vanilla], [game.Report()], game.Game.Folder, ExportForms.DropIn,
+            out var problems);
+
+        Assert.Equal("Kept.", request.Publish.Summary);
+        Assert.Equal("publish.json: 'authors' must be a list of texts. OpenLancer ignores the value.", Assert.Single(problems));
     }
 
     [Fact]

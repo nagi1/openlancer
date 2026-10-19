@@ -73,21 +73,21 @@ internal static class SaveReport
             var errors = result.Problems.Count(p => p.Severity == DiagnosticSeverity.Error);
             return new ReportLine(ConsoleSeverity.Error, Source, result.ChangedOnDisk.Count > 0
                 ? $"The editor did not save mod '{modId}'. Something outside the editor changed " +
-                  $"{Count(result.ChangedOnDisk.Count, "file")} of the mod. Select Overwrite or Cancel in the dialog."
-                : $"The editor did not save mod '{modId}' because of {Count(errors, "error")}. The Console lists them.");
+                  $"{Plural.Count(result.ChangedOnDisk.Count, "file")} of the mod. Select Overwrite or Cancel in the " +
+                  "dialog."
+                : $"The editor did not save mod '{modId}' because of {Plural.Count(errors, "error")}. The Console " +
+                  "lists them.");
         }
 
         if (number > 0)
         {
             return new ReportLine(ConsoleSeverity.Info, Source,
-                $"Saved mod '{modId}' (save {number}): {Count(result.Written.Count, "file")} written, " +
-                $"{Count(result.Deleted.Count, "file")} deleted.");
+                $"Saved mod '{modId}' (save {number}): {Plural.Count(result.Written.Count, "file")} written, " +
+                $"{Plural.Count(result.Deleted.Count, "file")} deleted.");
         }
 
         return new ReportLine(ConsoleSeverity.Info, Source, hadEdits
             ? $"Saved mod '{modId}'. No file changed."
             : $"Mod '{modId}' has no unsaved edits. No file changed.");
     }
-
-    private static string Count(int count, string noun) => count == 1 ? $"1 {noun}" : $"{count} {noun}s";
 }

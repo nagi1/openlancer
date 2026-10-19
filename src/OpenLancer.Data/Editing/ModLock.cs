@@ -38,9 +38,13 @@ internal sealed class ModLock : IDisposable
     }
 
     /// <summary>Takes the lock of a mod, or returns null with the reason when the editor cannot take it.</summary>
-    public static ModLock? TryTake(Mod mod, out string? reason)
+    public static ModLock? TryTake(Mod mod, out string? reason) => TryTake(mod.Folder, mod.Id, out reason);
+
+    /// <summary>Takes the lock of a mod folder, for example for a write of the Mods window into a mod that no session
+    /// holds (decision D587 of the M11c design).</summary>
+    public static ModLock? TryTake(string modFolder, string modId, out string? reason)
     {
-        var folder = Path.Combine(mod.Folder, SaveTransaction.FolderName);
+        var folder = Path.Combine(modFolder, SaveTransaction.FolderName);
         FileStream handle;
         try
         {
@@ -50,12 +54,12 @@ internal sealed class ModLock : IDisposable
         }
         catch (IOException e) when (IsHeld(e))
         {
-            reason = HeldReason(mod.Id, folder);
+            reason = HeldReason(modId, folder);
             return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            reason = $"The editor cannot lock mod '{mod.Id}': {e.Message} Correct the problem, then open the " +
+            reason = $"The editor cannot lock mod '{modId}': {e.Message} Correct the problem, then open the " +
                      "profile again.";
             return null;
         }
@@ -72,6 +76,30 @@ internal sealed class ModLock : IDisposable
 
         reason = null;
         return new ModLock(folder, handle);
+    }
+
+    /// <summary>The reason when another program holds the lock of a mod folder, or null. The check makes no file and no
+    /// folder, so the Mods window can run it on each mod.</summary>
+    public static string? HeldBy(string modFolder, string modId)
+    {
+        var folder = Path.Combine(modFolder, SaveTransaction.FolderName);
+        var path = Path.Combine(folder, FileName);
+        if (!File.Exists(path))
+            return null;
+        try
+        {
+            using var probe = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return null;
+        }
+        catch (IOException e) when (IsHeld(e))
+        {
+            return HeldReason(modId, folder);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The file went away, or OpenLancer cannot read it. A write takes the lock and gives its own reason.
+            return null;
+        }
     }
 
     /// <summary>

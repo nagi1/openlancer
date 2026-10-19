@@ -9,10 +9,13 @@ using LibreLancer.Data.GameData.Items;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Mods;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Export;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Mods;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor;
@@ -21,7 +24,13 @@ namespace OpenLancer.Editor;
 /// prompt when the window closes.</summary>
 internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 {
+    private const string ModsTooltip =
+        "Show the mods of the profile and the workspace, with their publish settings, checks and exports.";
+
     private readonly NewModDialog newModDialog = new();
+
+    // The display names of the mods of the Mod menu, read from their files when the menu opens.
+    private List<string> menuModNames = [];
     private readonly NewFromTemplateDialog templateDialog = new();
     private ExportDialog? exportDialog;
 
@@ -34,6 +43,12 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 
     string? IClosePromptHost.UnsavedMod =>
         Session is { Edits: { IsDirty: true, ActiveMod: { } mod } } ? mod.Manifest.Name : null;
+
+    string? IClosePromptHost.UnappliedDraft => Mods.UnappliedDraft;
+
+    void IClosePromptHost.ApplyDraft(Action applied) => Mods.ApplyDraft(applied);
+
+    void IClosePromptHost.RevertDraft() => Mods.RevertDraft();
 
     void IClosePromptHost.Save(Action saved) => Edits.Save(saved);
 
@@ -238,6 +253,13 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 
     private void ModMenu()
     {
+        if (Theme.IconMenuItem(EditorIcons.LayerGroup, "Mods...", true))
+        {
+            ShowMods(null, null);
+        }
+
+        ImGui.SetItemTooltip(ModsTooltip);
+        ImGui.Separator();
         if (Session is not { } session)
         {
             ImGui.MenuItem("No profile is open", false);
@@ -246,16 +268,23 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 
         var edits = session.Edits;
         var active = edits.ActiveMod?.Id;
+        // The display names come from the files, so a name that the Mods window applied shows at once.
+        if (ImGui.IsWindowAppearing())
+        {
+            menuModNames = edits.Profile.Mods.Select(DisplayName).ToList();
+        }
+
         ImGui.TextDisabled("Active mod");
         if (ImGui.MenuItem("None (read-only)", "", active == null, CanChangeProfile))
         {
             SetActiveMod(null);
         }
 
-        foreach (var mod in edits.Profile.Mods)
+        for (var i = 0; i < edits.Profile.Mods.Count; i++)
         {
-            if (ImGui.MenuItem($"{EditorIcons.LayerGroup}   {mod.Id}", mod.Manifest.Name, mod.Id == active,
-                    CanChangeProfile))
+            var mod = edits.Profile.Mods[i];
+            var name = i < menuModNames.Count ? menuModNames[i] : mod.Manifest.Name;
+            if (ImGui.MenuItem($"{EditorIcons.LayerGroup}   {name}", mod.Id, mod.Id == active, CanChangeProfile))
             {
                 SetActiveMod(mod.Id);
             }
@@ -266,7 +295,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         ImGui.Separator();
         if (Theme.IconMenuItem(EditorIcons.Plus, "New mod...", CanChangeProfile))
         {
-            NewMod(session);
+            NewMod(session, null);
         }
 
         if (edits.HasRecovery && Theme.IconMenuItem(EditorIcons.Undo, "Unsaved edits of an earlier session...", true))
@@ -277,7 +306,9 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         ImGui.Separator();
         if (Theme.IconMenuItem(EditorIcons.BoxOpen, "Export mod...", edits.ActiveMod != null && !IsEditing))
         {
-            ExportMod(session);
+            // The Mods window asks first when its publish draft of the mod has changes (section 12.6 of the M11c
+            // design).
+            Mods.Export(edits.ActiveMod!.Folder);
         }
 
         ImGui.SetItemTooltip(edits.ActiveMod == null
@@ -314,7 +345,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     }
 
     /// <summary>Makes another mod the active mod. The profile opens again, because the edit view changes.</summary>
-    private void SetActiveMod(string? modId)
+    internal void SetActiveMod(string? modId)
     {
         if (Session is not { } session || session.Edits.ActiveMod?.Id == modId)
         {
@@ -322,7 +353,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         }
 
         var path = session.Profile.FilePath;
-        Edits.Leave("changing the active mod", () =>
+        Leave("changing the active mod", () =>
         {
             Settings.SetActiveMod(path, modId);
             Settings.Save();
@@ -331,39 +362,96 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     }
 
     /// <summary>
+    /// Runs an action that ends the edits of the session, for example a close of the profile. A publish draft of the
+    /// Mods window with unapplied changes asks first (section 10.7 of the M11c design). Then unsaved edits ask: Save,
+    /// Discard or Cancel.
+    /// </summary>
+    /// <param name="what">The action in the question about the unsaved edits, for example "closing the profile".</param>
+    internal void Leave(string what, Action action) => Mods.AskDraft(() => Edits.Leave(what, action));
+
+    /// <summary>Opens the open profile again, after the leave question, for example after Apply changed the targets of
+    /// a mod of the profile. <paramref name="then"/> runs after the open.</summary>
+    internal void ReopenProfile(Action? then)
+    {
+        if (Session is not { } session)
+        {
+            then?.Invoke();
+            return;
+        }
+
+        var path = session.Profile.FilePath;
+        Leave("opening the profile again", () =>
+        {
+            OpenNow(path);
+            then?.Invoke();
+        });
+    }
+
+    /// <summary>Opens a profile without the leave question. The caller asked it.</summary>
+    internal void OpenProfileNow(string path) => OpenNow(path);
+
+    /// <summary>Closes the open profile without the leave question. The caller asked it.</summary>
+    internal void CloseProfileNow() => CloseNow();
+
+    /// <summary>
     /// Makes a new mod in the mods folder next to the profiles folder, adds it to the end of the profile, and makes it
     /// the active mod. The new mod loads after the active mod, so the unsaved edits of the session can still be saved.
     /// </summary>
-    private void NewMod(EditorSession session)
+    /// <param name="created">Gets the folder of the new mod after the profile opened again, or null.</param>
+    private void NewMod(EditorSession session, Action<string>? created)
     {
         var path = session.Profile.FilePath;
         var modsFolder = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "..", "mods"));
-        newModDialog.Show(modsFolder, path, session.Profile.BaseFolder, id =>
+        newModDialog.Show(modsFolder, path, session.Profile.BaseFolder, [], id =>
         {
             Log.Add(ConsoleSeverity.Info, EditController.Source, $"Made mod '{id}' in {modsFolder} and added it to the profile.");
-            Edits.Leave("making the new mod the active mod", () =>
+            Leave("making the new mod the active mod", () =>
             {
                 Settings.SetActiveMod(path, id);
                 Settings.Save();
                 OpenNow(path);
+                created?.Invoke(Path.Combine(modsFolder, id));
             });
         });
     }
 
     /// <summary>
-    /// Opens the Export dialog for the active mod (milestone M11). The export reads the saved files, so a dialog asks to
-    /// save unsaved edits first.
+    /// New mod... of the Mods window (section 12.1 of the M11c design). With an open profile, it works as Mod &gt; New
+    /// mod. Without a profile, the mod goes into the mods folder of the workspace only.
     /// </summary>
-    private void ExportMod(EditorSession session)
+    /// <param name="created">Gets the folder of the new mod.</param>
+    internal void NewModFromModsWindow(Action<string> created)
     {
-        if (session.Edits.ActiveMod is not { } mod)
+        if (Session is { } session)
         {
+            NewMod(session, created);
             return;
         }
 
-        var profilePath = session.Profile.FilePath;
-        void Show() => (exportDialog ??= new ExportDialog(this)).Show(mod, profilePath, LinkedGameReports());
-        if (!session.Edits.IsDirty)
+        var modsFolder = Path.Combine(Path.GetFullPath(Settings.WorkspaceOrDefault), ModWorkspace.ModsFolder);
+        newModDialog.Show(modsFolder, null, null, Mods.GameRoots(), id =>
+        {
+            Log.Add(ConsoleSeverity.Info, ModsWindow.Source, $"Made mod '{id}' in {modsFolder}.");
+            created(Path.Combine(modsFolder, id));
+        });
+    }
+
+    /// <summary>
+    /// Opens the Export dialog for a mod (milestones M11 and M11c). The export reads the saved files, so for the active
+    /// mod with unsaved edits, a dialog asks to save first.
+    /// </summary>
+    internal void ShowExport(string modFolder)
+    {
+        if (ExportBlock is { } block)
+        {
+            Log.Add(ConsoleSeverity.Warning, ExportDialog.Source, block);
+            return;
+        }
+
+        var workspace = Mods.Workspace;
+        void Show() => (exportDialog ??= new ExportDialog(this)).Show(modFolder, workspace, LinkedGameReports());
+        if (Session is not { Edits: { IsDirty: true, ActiveMod: { } active } } session ||
+            !Data.Games.GameFolders.Same(active.Folder, modFolder))
         {
             Show();
             return;
@@ -382,9 +470,35 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         ]);
     }
 
+    /// <summary>True while an export prepares or writes.</summary>
+    internal bool ExportRuns => exportDialog?.Running == true;
+
+    /// <summary>Why the Export dialog cannot open now, or null.</summary>
+    internal string? ExportBlock => ExportRuns ? "An export runs now. Wait until it ends." : null;
+
+    /// <summary>Shows the Mods window. A folder selects its mod, and a field goes to that field of the Settings
+    /// tab.</summary>
+    internal void ShowMods(string? modFolder, PublishField? field) => Mods.Open(modFolder, field);
+
+    /// <summary>The display name of a mod from its mod.json, or the name of the open when the file does not load
+    /// now.</summary>
+    private static string DisplayName(Mod mod)
+    {
+        try
+        {
+            return ModManifest.Load(mod.Folder).Name;
+        }
+        catch (ModLoadException)
+        {
+            return mod.Manifest.Name;
+        }
+    }
+
     private void DrawDialogs()
     {
         Choice.Draw();
+        // The export takes the results of its tasks also while its dialog is closed.
+        exportDialog?.Update();
         exportDialog?.Draw();
         newModDialog.Draw();
         newProfileDialog.Draw();
@@ -394,8 +508,9 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
-    private bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || templateDialog.IsOpen ||
-                               SceneEdits.IsOpen || closeDialog.IsOpen || exportDialog?.IsOpen == true;
+    internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen ||
+                                templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen ||
+                                exportDialog?.IsOpen == true || Mods.DialogOpen;
 
     /// <summary>
     /// The keys of the editor. Ctrl+S (File > Save) also works while a text field has the keyboard or a field edit is

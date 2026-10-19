@@ -70,6 +70,8 @@ See [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md). `samples/mods/ol-sample` is a comp
 
 To make the packages that players install, pick **Mod > Export mod...** in the editor, or run `oltool export`. The export makes a drop-in zip and an FLMM package for HD Edition 0.7.1 and for Freelancer 1.1 from the files of your linked games. It also makes a zip of the mod folder for OpenLancer. See "Export" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md).
 
+**Mod > Mods...** shows each mod of the profile and the workspace with its export state. Give a mod the display name that players see, and write the texts of its Nexus page before the export. A publish checklist tells what a release still needs, and the History tab shows each export and test play. See "The Mods window" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md).
+
 Some data loads in OpenLancer but crashes the retail game, for example a good with the price 0. For a mod with a retail target, the editor stops a save, a Play in the game and an export with such data. The Console tells why. Run `oltool validate GameData\profiles\my.json --target hde-0.7.1 --game "<HD Edition folder>"` to check a profile for a retail game. See "Content checks of the retail game" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md).
 
 ## Play from the editor

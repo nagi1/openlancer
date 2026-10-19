@@ -18,7 +18,8 @@ public sealed class FlmmScriptTests
     private const string Goods = @"DATA\EQUIPMENT\goods.ini";
 
     private static FlmmScript Script(ExportGame game, Mod mod, bool probe = false) =>
-        FlmmScript.Build(game.Build(mod, keepPlaceholders: true), mod, "description", probe);
+        FlmmScript.Build(game.Build(mod, keepPlaceholders: true), mod,
+            FlmmHeader.Of(PublishTexts.Of(mod.Manifest), game.Target), probe);
 
     private static FlmmScript Script(ExportGame game, string patch, string strings = "{}") =>
         Script(game, game.Mod("m", new() { ["strings.json"] = strings, [@"patches\" + GoodsPath] = patch }));

@@ -285,14 +285,15 @@ internal sealed class GameLinkWindow(EditorWindow window)
             plays.CheckCopy(game.Path);
         }
 
-        Tooltip(block ?? "Check the links of the play copy and the installed files. The Console lists each difference.");
+        ItemTooltip.Show(block ?? "Check the links of the play copy and the installed files. The Console lists each " +
+                         "difference.");
         ImGui.SameLine();
         if (ImGui.Button("Uninstall mods"))
         {
             plays.UninstallCopy(game.Path);
         }
 
-        Tooltip(block ?? "Give each file that Play in the game installed its version of the game again.");
+        ItemTooltip.Show(block ?? "Give each file that Play in the game installed its version of the game again.");
         ImGui.SameLine();
         if (ImGui.Button("Remove play copy"))
         {
@@ -303,7 +304,7 @@ internal sealed class GameLinkWindow(EditorWindow window)
             ]);
         }
 
-        Tooltip(block ?? "Delete the play copy and the saves in it. Your game folder does not change.");
+        ItemTooltip.Show(block ?? "Delete the play copy and the saves in it. Your game folder does not change.");
         ImGui.EndDisabled();
     }
 
@@ -316,14 +317,6 @@ internal sealed class GameLinkWindow(EditorWindow window)
     internal static string? NewProfileBlock(GameReport? report) =>
         report is { IsGame: true, CanBeBase: false } ? GameTexts.SourceBuildNoBase : null;
 
-    /// <summary>The tooltip of the last item, also when it is disabled.</summary>
-    private static void Tooltip(string text)
-    {
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-        {
-            ImGui.SetTooltip(text);
-        }
-    }
 
     private void UsedBy(IReadOnlyList<string> profiles)
     {
@@ -353,7 +346,7 @@ internal sealed class GameLinkWindow(EditorWindow window)
         ImGui.EndDisabled();
         if (NewProfileBlock(report) is { } block)
         {
-            Tooltip(block);
+            ItemTooltip.Show(block);
         }
 
         ImGui.SameLine();

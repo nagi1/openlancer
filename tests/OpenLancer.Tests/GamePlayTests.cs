@@ -9,6 +9,8 @@ using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.PlayCopies;
+using OpenLancer.Data.Publishing;
+using OpenLancer.Data.Strings;
 using OpenLancer.Editor;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
@@ -49,7 +51,8 @@ internal sealed class GamePlayRig : IDisposable
 {
     public const string GoodsPatch = "[Good]\nnickname = lf_hull\nprice = 5600\n";
 
-    public GamePlayRig(bool hd = false)
+    /// <param name="strings">The writer of the text DLL of the merge, or null for the fake writer.</param>
+    public GamePlayRig(bool hd = false, IStringResourceWriter? strings = null)
     {
         Game = new PlayGame(hd);
         Plays = new GamePlay(Host, (info, exited) =>
@@ -57,7 +60,7 @@ internal sealed class GamePlayRig : IDisposable
             var process = new FakeGameProcess();
             Starts.Add((info, exited, process));
             return process;
-        }, TestWorkspace.FakeDllWriter.Instance, ThnScripts.Evaluator, () => Now);
+        }, strings ?? TestWorkspace.FakeDllWriter.Instance, ThnScripts.Evaluator, () => Now);
         var report = Game.Export.Report();
         Host.Games.Add(report);
         Host.Settings.Games.Add(new LinkedGame(report.Root!, DateTime.UtcNow, report.Name, report.Build));
@@ -367,7 +370,7 @@ public sealed class GamePlayTests : IDisposable
         var result = ModExport.Run(rig.Game.Export.Request(mod) with { Forms = ExportForms.DropIn });
         Assert.True(result.Succeeded, string.Join(" | ", result.Problems));
 
-        rig.Plays.PlayExport(rig.Host.Games[0], result.Builds[ExportTarget.Vanilla], mod.Id);
+        rig.Plays.PlayExport(rig.Host.Games[0], result.Builds[ExportTarget.Vanilla], Played(mod, result.Content));
         rig.Run(() => rig.Starts.Count == 1, "the start of the game");
 
         Assert.Equal("Playing the export of m in Freelancer 1.0 (play copy)", rig.Plays.GameStatus);
@@ -375,6 +378,194 @@ public sealed class GamePlayTests : IDisposable
         Assert.Contains("DLL = ol_m.dll", File.ReadAllText(rig.Game.CopyPath(@"EXE\freelancer.ini")));
         Assert.DoesNotContain("ol_m.dll", File.ReadAllText(rig.Game.Game.PathOf(@"EXE\freelancer.ini")));
         Assert.Equal(0, rig.Host.SaveCalls);
+    }
+
+    /// <summary>A game that runs a minute records a test play in the history of each mod of the profile (decision D569
+    /// of the M11c design), with the target of the game and the content at the install.</summary>
+    [Fact]
+    public void AGameThatRanAMinuteRecordsATestPlayForEachInstalledMod()
+    {
+        var first = rig.Game.Export.GoodsMod(GamePlayRig.GoodsPatch, "first");
+        var second = rig.Game.Export.Mod("second", []);
+        rig.Open(first, second);
+        rig.Plays.Play(rig.Target);
+        rig.Run(() => rig.Starts.Count == 1, "the start of the game");
+
+        rig.Now += GamePlay.TestPlayTime;
+        rig.Starts[0].Exit(0);
+        rig.Run(() => rig.Console.Count(c => c.StartsWith("Recorded a test play")) == 2, "the records of the plays");
+
+        foreach (var mod in new[] { first, second })
+        {
+            var play = Assert.Single(History(mod).Plays);
+            Assert.Equal(ExportTarget.Vanilla.Id, play.Target);
+            Assert.False(play.Alone);
+            Assert.False(play.Manual);
+            Assert.Equal(60, play.Seconds);
+            Assert.Equal(new ModFingerprint().Content(mod.Manifest, mod.Folder), play.Content);
+        }
+
+        Assert.Contains("Recorded a test play of Mod first (first) in Freelancer 1.0: 60 s.", rig.Console);
+    }
+
+    /// <summary>A play of the profile takes the fingerprints before the merge (review of M11c Build 2). A file that
+    /// changes during the merge then gives the test play the old content, so the play does not count for the new
+    /// content, which the game can miss.</summary>
+    [Fact]
+    public void ATestPlayHasTheContentOfTheStartOfTheInstall()
+    {
+        string? patch = null;
+        var writer = new ChangingWriter(() => File.AppendAllText(patch!, "\n; A change during the merge.\n"));
+        using var local = new GamePlayRig(strings: writer);
+        var mod = local.Game.Export.Mod("m", new()
+        {
+            ["strings.json"] = """{ "strings": { "name": "Name" } }""",
+            [@"patches\" + ExportGame.GoodsPath] = "[Good]\nnickname = g2\nids_name = $str:name\n",
+        });
+        patch = Path.Combine(mod.Folder, "patches", ExportGame.GoodsPath);
+        var before = new ModFingerprint().Content(mod.Manifest, mod.Folder);
+        local.Open(mod);
+
+        local.Plays.Play(local.Target);
+        local.Run(() => local.Starts.Count == 1, "the start of the game");
+        local.Now += GamePlay.TestPlayTime;
+        local.Starts[0].Exit(0);
+        local.Run(() => local.Console.Any(c => c.StartsWith("Recorded a test play")), "the record of the play");
+
+        Assert.True(writer.Changed);
+        var history = PublishHistory.Load(PublishHistory.FolderOf(local.Game.Game.Folder, mod.Id), mod.Id).History;
+        var play = Assert.Single(history.Plays);
+        Assert.Equal(before, play.Content);
+        Assert.NotEqual(before, new ModFingerprint().Content(mod.Manifest, mod.Folder));
+    }
+
+    /// <summary>A writer of the text DLL that changes a file of the mod at its first call, during the merge.</summary>
+    private sealed class ChangingWriter(Action change) : IStringResourceWriter
+    {
+        public bool Changed { get; private set; }
+
+        public byte[] Write(IReadOnlyDictionary<int, string> strings, IReadOnlyDictionary<int, string> infocards)
+        {
+            if (!Changed)
+            {
+                Changed = true;
+                change();
+            }
+
+            return TestWorkspace.FakeDllWriter.Instance.Write(strings, infocards);
+        }
+    }
+
+    /// <summary>The rule of a test play (finding R17): Force stop and a crash code give no play. The exit code comes as
+    /// a signed number, so the rule compares it as an unsigned number.</summary>
+    [Theory]
+    [InlineData(false, false, 0, 60, true)]
+    [InlineData(false, false, 1, 60, true)]
+    [InlineData(false, true, 0, 60, false)]
+    [InlineData(false, false, unchecked((int)0xC0000005), 60, false)]
+    [InlineData(false, false, unchecked((int)0xC0000000), 600, false)]
+    [InlineData(false, false, 0, 59, false)]
+    [InlineData(true, false, 0, 600, false)]
+    public void TheRuleOfATestPlay(bool server, bool killed, int code, int seconds, bool counts)
+    {
+        Assert.Equal(counts, GamePlay.IsTestPlay(server, killed, code, TimeSpan.FromSeconds(seconds)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ForceStopOrACrashCodeRecordsNoPlay(bool forceStop)
+    {
+        rig.StartGame();
+        rig.Now += GamePlay.TestPlayTime;
+        if (forceStop)
+        {
+            rig.Plays.StopGame();
+            rig.Now += GamePlay.ForceStopLimit;
+            rig.Plays.StopGame();
+        }
+
+        rig.Starts[0].Exit(forceStop ? 1 : unchecked((int)0xC0000005));
+
+        AssertNoPlay("m");
+    }
+
+    [Fact]
+    public void AShortRunRecordsNoPlay()
+    {
+        rig.StartGame();
+        rig.Now += GamePlay.TestPlayTime - TimeSpan.FromSeconds(1);
+
+        rig.Starts[0].Exit(0);
+
+        AssertNoPlay("m");
+    }
+
+    /// <summary>A test server run records nothing. The game that joins it is a game run, with the mods of the
+    /// install of the server.</summary>
+    [Fact]
+    public void TheTestServerRecordsNoPlay()
+    {
+        var mod = rig.Game.Export.GoodsMod(GamePlayRig.GoodsPatch);
+        rig.Open(mod);
+        rig.Plays.HostServer(rig.Target);
+        rig.Run(() => rig.Starts.Count == 1, "the start of the server");
+        rig.Now += GamePlay.TestPlayTime;
+        rig.Starts[0].Exit(0);
+        AssertNoPlay(mod.Id);
+
+        rig.Plays.HostServer(rig.Target);
+        rig.Run(() => rig.Starts.Count == 2, "the start of the server");
+        rig.Plays.JoinServer();
+        rig.Now += GamePlay.TestPlayTime;
+        rig.Starts[2].Exit(0);
+        rig.Run(() => rig.Console.Any(c => c.StartsWith("Recorded a test play")), "the record of the play");
+
+        Assert.Single(History(mod).Plays);
+        rig.Starts[1].Exit(0);
+    }
+
+    /// <summary>"Play this mod alone" of the Mods window (decision D577) records a play alone.</summary>
+    [Fact]
+    public void PlayOfOneModRecordsAPlayAlone()
+    {
+        var mod = rig.Game.Export.GoodsMod(GamePlayRig.GoodsPatch);
+        var prepared = ModExport.Prepare(rig.Game.Export.Request(mod) with { Forms = 0, ChecklistOnly = true });
+
+        rig.Plays.PlayExport(rig.Host.Games[0], prepared.Builds[ExportTarget.Vanilla], Played(mod, prepared.Content),
+            alone: true);
+        rig.Run(() => rig.Starts.Count == 1, "the start of the game");
+        Assert.Equal("Playing Mod m alone in Freelancer 1.0 (play copy)", rig.Plays.GameStatus);
+        rig.Now += GamePlay.TestPlayTime;
+        rig.Starts[0].Exit(0);
+        rig.Run(() => rig.Console.Any(c => c.StartsWith("Recorded a test play")), "the record of the play");
+
+        var play = Assert.Single(History(mod).Plays);
+        Assert.True(play.Alone);
+        Assert.Equal(prepared.Content, play.Content);
+        Assert.Equal(0, rig.Host.SaveCalls);
+    }
+
+    /// <summary>The played mod of a mod of the export game, with its history in the workspace of the profile.</summary>
+    private PlayedMod Played(Mod mod, string content) =>
+        new(mod.Id, mod.Manifest.Name, mod.Folder, PublishHistory.FolderOf(rig.Game.Game.Folder, mod.Id), content);
+
+    private PublishHistory History(Mod mod) =>
+        PublishHistory.Load(PublishHistory.FolderOf(rig.Game.Game.Folder, mod.Id), mod.Id).History;
+
+    /// <summary>Runs the frames until the check after the exit ends, then a few more frames for a record that would
+    /// write. The history of the mod has no play.</summary>
+    private void AssertNoPlay(string modId)
+    {
+        rig.Run(() => !rig.Plays.Checking, "the check after the exit");
+        for (var i = 0; i < 20; i++)
+        {
+            rig.Host.Ui.RunQueued();
+            Thread.Sleep(10);
+        }
+
+        Assert.DoesNotContain(rig.Console, c => c.StartsWith("Recorded a test play"));
+        Assert.False(File.Exists(Path.Combine(PublishHistory.FolderOf(rig.Game.Game.Folder, modId), PublishHistory.FileName)));
     }
 
     [Fact]

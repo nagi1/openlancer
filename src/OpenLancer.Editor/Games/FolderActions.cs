@@ -7,7 +7,8 @@ using OpenLancer.Editor.Logs;
 
 namespace OpenLancer.Editor.Games;
 
-/// <summary>The folder picker and the file manager for the game link views. An error goes to the Console.</summary>
+/// <summary>The folder picker, the file manager and the browser for the views of the editor. An error goes to the
+/// Console.</summary>
 internal static class FolderActions
 {
     /// <summary>
@@ -49,6 +50,25 @@ internal static class FolderActions
         catch (Exception e) when (e is Win32Exception or InvalidOperationException)
         {
             window.Log.Add(ConsoleSeverity.Error, GameLinks.Source, $"The folder {path} did not open: {e.Message}");
+        }
+    }
+
+    /// <summary>Opens a web link in the browser. Only a link that starts with <c>http://</c> or <c>https://</c> opens,
+    /// because the system would start a program for another text.</summary>
+    public static void OpenWebLink(EditorWindow window, string url)
+    {
+        if (!Data.Publishing.PageText.IsWebLink(url))
+        {
+            return;
+        }
+
+        try
+        {
+            Shell.OpenCommand(url);
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException)
+        {
+            window.Log.Add(ConsoleSeverity.Error, GameLinks.Source, $"The link {url} did not open: {e.Message}");
         }
     }
 }

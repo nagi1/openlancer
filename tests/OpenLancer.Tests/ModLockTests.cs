@@ -19,6 +19,21 @@ public sealed class ModLockTests
 
     private static string SaveFolder(TestWorkspace ws) => Act(ws, SaveTransaction.FolderName);
 
+    /// <summary>The Mods window writes into the active mod without a lock of its own while the session holds the lock
+    /// (decision D587 of the M11c design).</summary>
+    [Fact]
+    public void HoldsLockTellsIfTheSessionHasTheLock()
+    {
+        using var ws = Workspace();
+        var first = ws.Session("act");
+        var second = ws.SecondSession("act");
+
+        Assert.True(first.HoldsLock);
+        Assert.False(second.HoldsLock);
+        first.Dispose();
+        Assert.False(first.HoldsLock);
+    }
+
     [Fact]
     public void ASecondSessionOnTheModIsReadOnlyAndNamesTheFirstSession()
     {

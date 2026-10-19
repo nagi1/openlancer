@@ -32,11 +32,8 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     private const float BodyIndent = 8;
     private const float BodyTop = 4;
     private const float AxisPrefixWidth = 14;
-    private const float ChipGap = 4;
-    private const float ChipInset = 2;
-    private const float ChipPaddingX = 6;
-    private const float ChipRounding = 3;
     private static readonly Vector2 CellPadding = new(4, 1);
+    private const float OriginBarWidth = 3;
 
     // The Unity label width: 45% of the Inspector width less 40 points, and at least 140 points for the 15 point font.
     private const float LabelFraction = 0.45f;
@@ -70,6 +67,20 @@ internal sealed partial class PropertyGrid(EditorWindow window)
 
     [LibraryImport("cimgui")]
     private static partial void igTableFullRowEnd();
+
+    /// <summary>
+    /// Draws the blue bar at the left edge of a label cell: the active mod sets the value, or the field has an edit
+    /// that is not saved or applied (AGENTS.md UI rule 7). The Inspector and the publish page of the Mods window use
+    /// it.
+    /// </summary>
+    /// <param name="labelMin">The top-left corner of the label text, in screen pixels.</param>
+    internal static void ChangedBar(Vector2 labelMin)
+    {
+        var x = labelMin.X - MathF.Truncate(CellPadding.X * ImGuiHelper.Scale);
+        ImGui.GetWindowDrawList().AddRectFilled(new Vector2(x, labelMin.Y),
+            new Vector2(x + MathF.Truncate(OriginBarWidth * ImGuiHelper.Scale), labelMin.Y + ImGui.GetFrameHeight()),
+            ImGui.GetColorU32(EditorTheme.Accent));
+    }
 
     /// <summary>
     /// The width of the label column, in pixels, for an Inspector that is <paramref name="width"/> pixels wide.
@@ -462,7 +473,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         }
         else
         {
-            Chips(FlagTable<T>.Entries, bits);
+            Chip.Flow([.. FlagTable<T>.Entries.Where(e => (bits & e.Value) != 0).Select(e => new ChipItem(e.Name, ChipLook.Grey))]);
         }
 
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
@@ -708,52 +719,6 @@ internal sealed partial class PropertyGrid(EditorWindow window)
             field(i, texts[i], layout.Field);
             ImGui.PopID();
         }
-    }
-
-    /// <summary>
-    /// Draws a rounded chip for each flag that is set. The chips flow from left to right and wrap at the column edge.
-    /// </summary>
-    private static void Chips((ulong Value, string Name)[] entries, ulong bits)
-    {
-        var scale = ImGuiHelper.Scale;
-        var font = ImGui.GetFont();
-        var fontSize = MathF.Round(EditorTheme.CaptionSize * scale);
-        var avail = ImGui.GetContentRegionAvail().X;
-        var height = ImGui.GetFrameHeight();
-        var gap = MathF.Truncate(ChipGap * scale);
-        var inset = MathF.Truncate(ChipInset * scale);
-        var padding = MathF.Truncate(ChipPaddingX * scale);
-        var background = ImGui.GetColorU32(EditorTheme.SelectionUnfocused);
-        var textColor = ImGui.GetColorU32(ImGuiCol.Text);
-        var start = ImGui.GetCursorScreenPos();
-        var drawList = ImGui.GetWindowDrawList();
-        var x = 0f;
-        var y = 0f;
-        foreach (var (flag, name) in entries)
-        {
-            if ((bits & flag) == 0)
-            {
-                continue;
-            }
-
-            var textSize = font.CalcTextSizeA(fontSize, float.MaxValue, 0, name);
-            var chipWidth = MathF.Ceiling(textSize.X) + 2 * padding;
-            if (x > 0 && x + chipWidth > avail)
-            {
-                x = 0;
-                y += height;
-            }
-
-            var min = start + new Vector2(x, y + inset);
-            var max = min + new Vector2(chipWidth, height - 2 * inset);
-            drawList.AddRectFilled(min, max, background, ChipRounding * scale);
-            drawList.AddText(font, fontSize,
-                new Vector2(min.X + padding, min.Y + MathF.Truncate((max.Y - min.Y - textSize.Y) / 2)), textColor,
-                name);
-            x += chipWidth + gap;
-        }
-
-        ImGui.Dummy(new Vector2(Math.Max(1, avail), y + height));
     }
 
     /// <summary>

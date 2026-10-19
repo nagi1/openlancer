@@ -132,6 +132,10 @@ public sealed partial class EditSession : IDisposable
     /// <summary>True when the session has edits that it did not save.</summary>
     public bool IsDirty => history.IsDirty;
 
+    /// <summary>True while the session holds the lock of its active mod (see <see cref="ModLock"/>). The Mods window
+    /// then writes into the active mod without a lock of its own.</summary>
+    public bool HoldsLock => modLock != null;
+
     /// <summary>
     /// The install paths of the files that a command of the session changed, also when an undo took the change back.
     /// A save writes the patches of these files. The session opened each of them, so a read of W of such a file opens
