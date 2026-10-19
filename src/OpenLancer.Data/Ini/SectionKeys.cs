@@ -93,9 +93,9 @@ internal static class SectionKeys
     {
         "CollisionGroup", // [Ship], [Solar]
         "LOD", // equipment
-        // [fuse]. The engine does not read the last five, but they are part of a fuse in the retail files.
+        // [fuse]. The engine reads the server actions of retail since OL-0046 (the last six).
         "start_effect", "destroy_group", "destroy_hp_attachment", "start_cam_particles", "ignite_fuse", "impulse",
-        "destroy_root", "tumble", "damage_group", "damage_root", "make_invincible", "dump_cargo",
+        "destroy_root", "tumble", "damage_group", "damage_root", "damage_hp_attachment", "make_invincible", "dump_cargo",
         "MVendor", "MRoom", "GF_NPC", "BaseFaction", // [MBase]
     };
 

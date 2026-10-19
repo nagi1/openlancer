@@ -24,7 +24,7 @@ public sealed class RepeatedEntryClassificationTests(ITestOutputHelper output)
     /// </summary>
     private static readonly HashSet<(string Section, string Name)> IndependentHandlers = new(SectionAndName.Instance)
     {
-        // Effects/Explosion.cs HandleEffect sets the effect from its line.
+        // Effects/Explosion.cs and Equipment/Explosion.cs HandleEffect add one effect from their line.
         ("explosion", "effect"),
         // Solar/Loadout.cs HandleCargo and HandleEquip add one item from their line.
         ("loadout", "cargo"),

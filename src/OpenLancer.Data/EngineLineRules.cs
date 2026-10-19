@@ -12,7 +12,8 @@ public enum EngineLineClass
     /// <summary>The game data has a problem, and the retail game runs with it.</summary>
     DataProblem,
 
-    /// <summary>The data is valid for the retail game, but the OpenLancer engine does not read it yet.</summary>
+    /// <summary>The data is valid for the retail game, but the OpenLancer engine does not read it yet. No kind has this
+    /// class now: the fork commits OL-0039 to OL-0052 read each gap of the console audit.</summary>
     EngineGap,
 
     /// <summary>A note about the speed of the game.</summary>
@@ -57,7 +58,7 @@ public enum EngineLineSubject
 
 /// <summary>A pattern of the lines of a kind: the component, the message without its place, and the section type.</summary>
 /// <param name="Fallback">True for a pattern that applies only when no other pattern matches, for example each unknown
-/// entry that no engine gap names.</param>
+/// entry that no other pattern names.</param>
 public sealed record EngineLinePattern(string Component, Regex Core, Regex? Section = null, bool Fallback = false)
 {
     public bool Matches(EngineLine line) =>
@@ -67,19 +68,15 @@ public sealed record EngineLinePattern(string Component, Regex Core, Regex? Sect
 
 /// <summary>One kind of engine line: its id, class, text and patterns, and the number of its lines in each data set
 /// that the base game gives.</summary>
-/// <param name="Id">For example B01 or G13 (sections 3.1 to 3.3 of the console audit).</param>
+/// <param name="Id">For example B01 or O02 (sections 3.1 to 3.3 of the console audit).</param>
 /// <param name="Text">What the line means, without the origin, for the details pane.</param>
 /// <param name="Sample">A synthetic line of the kind for the tests.</param>
-/// <param name="Pins">The number of lines of the kind that the base run of each data set gives, before the fork
-/// commits OL-0039 to OL-0052. A fork commit that removes lines lowers its pin in the same change.</param>
+/// <param name="Pins">The number of lines of the kind that the base run of each data set gives with the pinned engine
+/// fork. A fork commit that removes lines lowers the pin, or removes the kind, in the same change.</param>
 public sealed record EngineLineKind(string Id, EngineLineClass Class, string Text, IReadOnlyList<EngineLinePattern> Patterns,
     string Sample, IReadOnlyDictionary<EngineLineDataSet, int> Pins)
 {
     public EngineLineDisposition Disposition { get; init; } = EngineLineDisposition.Entry;
-
-    /// <summary>True when the line is about the work of OpenLancer itself, so its origin is OpenLancer, for example the
-    /// new-character save of Play that the engine builds itself (G15).</summary>
-    public bool OpenLancerOrigin { get; init; }
 
     /// <summary>The kind line of the details pane: "{class}. {text}".</summary>
     public string DetailText => $"{ClassName(Class)}. {Text}";
@@ -97,14 +94,14 @@ public sealed record EngineLineKind(string Id, EngineLineClass Class, string Tex
 /// <summary>
 /// The kinds of engine lines that the data load, the Scene, the story missions and Play give (section 4.5 of the
 /// console filter design). A kind gives the text of the details pane of the Console, and it can drop a line or make it
-/// a notice. The kind does not decide the origin of a line, except for the lines about OpenLancer itself.
+/// a notice. The kind does not decide the origin of a line.
 /// </summary>
 /// <remarks>
 /// <para>The texts tell what the retail game does with the data, in plain words. The audit took each fact from the
 /// retail game and the engine source.</para>
-/// <para>A line can match more than one pattern, for example each "Duplicate of" line and the "Duplicate of
-/// animation" line of a room. <see cref="Match"/> tries the patterns that are not fallbacks first, in the order of the
-/// table, then the fallbacks.</para>
+/// <para>A line can match more than one pattern, for example each "Unknown entry" line and the "Unknown entry name"
+/// line of a <c>[SystemInfo]</c>. <see cref="Match"/> tries the patterns that are not fallbacks first, in the order of
+/// the table, then the fallbacks.</para>
 /// </remarks>
 public static class EngineLineRules
 {
@@ -161,69 +158,6 @@ public static class EngineLineRules
             "The sphere file does not have all six sides. The game shows the glow of the sun from the star data.",
             "[Warning: 12:00:00] Sph: Sph EXE\\..\\data\\solar\\sample.sph does not contain all 6 sides and will not render",
             1, 1, new EngineLinePattern("Sph", Pattern(@"^Sph .+ does not contain all 6 sides and will not render$"))),
-        Kind("G01", EngineLineClass.EngineGap,
-            "The game knows this generic hardpoint type. The OpenLancer engine does not know it yet, so the ship has no " +
-            "mount point of this type.",
-            "[Error: 12:00:00] Ship: Unrecognised hp_type hp_turret in sample_ship",
-            12, 12, new EngineLinePattern("Ship",
-                Pattern(@"^Unrecognised hp_type (hp_gun|hp_turret|hp_torpedo|hp_shield_generator|hp_cargo_pod) in \S+$"))),
-        Kind("G02", EngineLineClass.EngineGap,
-            "The game reads one lifetime value as the minimum and the maximum. The OpenLancer engine needs two values.",
-            "[Error: 12:00:00] Ini: Not enough components for lifetime at section explosion: EXE\\..\\data\\fx\\sample.ini, line 11",
-            23, 23, Ini(@"Not enough components for lifetime", "explosion")),
-        Kind("G03", EngineLineClass.EngineGap,
-            "The game picks a random time between the two at_t values. The OpenLancer engine reads only one value.",
-            "[Warning: 12:00:00] Ini: Too many components for at_t at section destroy_group: EXE\\..\\data\\fx\\sample.ini, line 13",
-            17, 17, Ini(@"Too many components for at_t")),
-        Kind("G04", EngineLineClass.EngineGap,
-            "The game runs this fuse action. The OpenLancer engine does not run it yet.",
-            "[Warning: 12:00:00] Ini: Unknown section tumble at EXE\\..\\data\\fx\\sample.ini, line 6",
-            13, 13, Ini(@"Unknown section (tumble|damage_root|damage_group|damage_hp_attachment|make_invincible|dump_cargo)")),
-        Kind("G05", EngineLineClass.EngineGap,
-            "The game attaches this particle effect to the asteroid. The OpenLancer engine does not show it yet.",
-            "[Warning: 12:00:00] Ini: Unknown entry particle_effect at section DynamicAsteroid: EXE\\..\\data\\solar\\sample.ini, line 8",
-            3, 3, Ini(@"Unknown entry particle_effect", "DynamicAsteroid")),
-        Kind("G06", EngineLineClass.EngineGap,
-            "The game uses this level of detail on low detail settings. OpenLancer does not need it.",
-            "[Warning: 12:00:00] Ini: Unknown entry MinSpecLOD at section Simple: EXE\\..\\data\\ships\\sample.ini, line 6",
-            1, 1, Ini(@"Unknown entry MinSpecLOD", "Simple")),
-        Kind("G07", EngineLineClass.EngineGap,
-            "The game changes the color of the light with this curve. The OpenLancer engine does not change it yet.",
-            "[Warning: 12:00:00] Ini: Unknown entry color_curve at section LightSource: EXE\\..\\data\\universe\\sample.ini, line 50",
-            2, 2, Ini(@"Unknown entry color_curve", "LightSource")),
-        Kind("G08", EngineLineClass.EngineGap,
-            "The game plays each animation line of a room. The OpenLancer engine does not play room animations yet.",
-            "[Warning: 12:00:00] Ini: Duplicate of animation at section Room_Info: EXE\\..\\data\\universe\\sample.ini, line 5",
-            0, 1, Ini(@"Duplicate of animation", "Room_Info")),
-        Kind("G09", EngineLineClass.EngineGap,
-            "The game plays each effect line of an explosion. The OpenLancer engine plays only the last one.",
-            "[Warning: 12:00:00] Ini: Duplicate of effect in section explosion: EXE\\..\\data\\fx\\sample.ini (line not available)",
-            2, 0, Ini(@"Duplicate of effect", "explosion")),
-        Kind("G10", EngineLineClass.EngineGap,
-            "The game reads this ship key. The OpenLancer engine does not use it yet.",
-            "[Warning: 12:00:00] Ini: Unknown entry docking_sphere in section Ship: EXE\\..\\data\\ships\\sample.ini (line not available)",
-            7, 0, Ini(@"Unknown entry (camera_angular_slerp_multiplier|distance_render|docking_camera|docking_sphere)", "Ship")),
-        Kind("G11", EngineLineClass.EngineGap,
-            "The game shows this picture for a new character. OpenLancer does not need it.",
-            "[Warning: 12:00:00] Ini: Unknown entry thumb in section Pilot: EXE\\..\\data\\characters\\sample.ini (line not available)",
-            1, 0, Ini(@"Unknown entry thumb", "Pilot")),
-        Kind("G12", EngineLineClass.EngineGap,
-            "The game reads this mission section. The OpenLancer engine does not run it yet.",
-            "[Warning: 12:00:00] Ini: Unknown section MsnRandEnc at EXE\\..\\data\\missions\\sample.ini, line 20",
-            13, 1, Ini(@"Unknown section (MsnRandEnc|MetaBehavior)")),
-        Kind("G13", EngineLineClass.EngineGap,
-            "The game shows the text of an objective of type base. The OpenLancer engine does not show it yet.",
-            "[Error: 12:00:00] Ini: Invalid value for enum base at section NNObjective: EXE\\..\\data\\missions\\sample.ini, line 21",
-            1, 1, Ini(@"Invalid value for enum base", "NNObjective")),
-        Kind("G14", EngineLineClass.EngineGap,
-            "The game reads the label of a mission formation. The OpenLancer engine does not use it yet.",
-            "[Warning: 12:00:00] Ini: Unknown entry label in section MsnFormation: EXE\\..\\data\\missions\\sample.ini (line not available)",
-            1, 0, Ini(@"Unknown entry label", "MsnFormation")),
-        Kind("G15", EngineLineClass.EngineGap,
-            "The OpenLancer engine reads the cargo of a new character with the values in the wrong places. The cargo " +
-            "gets the health 0.",
-            "[Error: 12:00:00] Ini: Failed to parse float '' for cargo in section Player: sample: new_player:16",
-            0, 0, Ini(@"Failed to parse float '' for cargo", "Player")) with { OpenLancerOrigin = true },
         Kind("O01", EngineLineClass.ProcessLine,
             "A second data load in one process replaces the global material map of the engine.",
             "[Warning: 12:00:00] MaterialMap: Switching global material map. TODO make instance",

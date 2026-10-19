@@ -294,7 +294,7 @@ internal sealed class ConsoleLog
         ConsoleEntry? entry = null;
         if (engineLines.Add((consoleSeverity, parsed.Source, parsed.Message)) || !SkipKnownEngineLines)
         {
-            var origin = kind?.OpenLancerOrigin == true || origins == null ? MessageOrigin.OpenLancer
+            var origin = origins == null ? MessageOrigin.OpenLancer
                 : batch == null ? MessageOrigin.Unknown
                 : origins.NeedsBaseRun ? MessageOrigin.Pending
                 : MessageOrigin.BaseGame;
@@ -370,7 +370,7 @@ internal sealed class ConsoleLog
             return;
         }
 
-        var resolved = kind?.OpenLancerOrigin == true || origins == null
+        var resolved = origins == null
             ? new ResolvedLine(MessageOrigin.OpenLancer, null)
             : origins.CanResolve ? origins.ResolveRunning(line, occurrence)
             : new ResolvedLine(MessageOrigin.Pending, null);

@@ -39,12 +39,9 @@ public static class ModValidator
     /// True when a market line of a ship package gives the warning that the ship is not for sale (decision D511 of the
     /// console filter design): min = max = 0, and the base does not only buy the ship. Retail reads the sixth value of a
     /// <c>MarketGood</c> line as the transaction type: 0 buy and sell, 1 the base buys only, 2 the base sells only. Retail
-    /// marks each ship line with min = max = 0 as type 1 on purpose.
+    /// marks each ship line with min = max = 0 as type 1 on purpose. The fork keeps the type since OL-0045.
     /// </summary>
-    /// <remarks>The fork keeps the sixth value only as <c>Preserve = value &gt; 0</c>, so types 1 and 2 look the same, and
-    /// the test warns only for type 0. Fork commit OL-0045 keeps the number. Then the test becomes "the type is not 1",
-    /// so type 2 warns too.</remarks>
-    internal static bool ShipNotForSale(MarketGood item) => item.Min == 0 && item.Max == 0 && !item.Preserve;
+    internal static bool ShipNotForSale(MarketGood item) => item.Min == 0 && item.Max == 0 && item.TransactionType != 1;
 
     public static Report Validate(FileSystem fs)
     {

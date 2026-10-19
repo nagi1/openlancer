@@ -27,9 +27,12 @@ public sealed class ModValidatorMarketTests
     public void AShipThatTheBaseOnlyBuysGivesNoWarning() =>
         Assert.False(ModValidator.ShipNotForSale(Line("pkg1, 0, -1, 0, 0, 1, 1")));
 
-    [Fact]
-    public void AShipWithMinAndMaxZeroThatTheBaseCanSellGivesTheWarning() =>
-        Assert.True(ModValidator.ShipNotForSale(Line("pkg1, 0, -1, 0, 0, 0, 1")));
+    /// <summary>The base sells the ship (type 0 or 2), but it has no stock, so the ship is not for sale.</summary>
+    [Theory]
+    [InlineData("pkg1, 0, -1, 0, 0, 0, 1")]
+    [InlineData("pkg1, 0, -1, 0, 0, 2, 1")]
+    public void AShipWithMinAndMaxZeroThatTheBaseCanSellGivesTheWarning(string values) =>
+        Assert.True(ModValidator.ShipNotForSale(Line(values)));
 
     [Fact]
     public void AShipWithStockGivesNoWarning() =>

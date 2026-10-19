@@ -219,6 +219,8 @@ public static class SceneFields
             "GameItemDb.cs:1509-1512. An unknown curve throws in the engine (:1352)."),
         Row(SceneSection.LightSource, "rotate", SceneEffect.None, "The schema has it. The engine does not read it."),
         Row(SceneSection.LightSource, "ids_name", SceneEffect.None, "The schema has it. The engine does not read it."),
+        Row(SceneSection.LightSource, "color_curve", SceneEffect.None,
+            "The schema has it (OL-0048). The engine does not change the light color with it yet."),
 
         // The sections of a system file that set the fields of the system (GameItemDb.cs:1393-1464).
         Row(SceneSection.SystemInfo, "space_color", SceneEffect.Environment,

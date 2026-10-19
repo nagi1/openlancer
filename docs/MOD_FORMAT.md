@@ -193,7 +193,7 @@ The engine attaches some section types to the section of the parent type before 
 |---|---|
 | `[CollisionGroup]` | `[Ship]`, `[Solar]` |
 | `[LOD]` | equipment |
-| `[start_effect]`, `[destroy_group]`, `[destroy_hp_attachment]`, `[start_cam_particles]`, `[ignite_fuse]`, `[impulse]`, `[destroy_root]`, and the retail sections `[tumble]`, `[damage_group]`, `[damage_root]`, `[make_invincible]`, `[dump_cargo]` | `[fuse]` |
+| `[start_effect]`, `[destroy_group]`, `[destroy_hp_attachment]`, `[start_cam_particles]`, `[ignite_fuse]`, `[impulse]`, `[destroy_root]`, `[tumble]`, `[damage_group]`, `[damage_root]`, `[damage_hp_attachment]`, `[make_invincible]`, `[dump_cargo]` | `[fuse]` |
 | `[MVendor]`, `[MRoom]`, `[GF_NPC]`, `[BaseFaction]` | `[MBase]` |
 
 - `ol.delete` on a parent also removes its child sections.

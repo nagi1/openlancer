@@ -20,21 +20,32 @@ public sealed class EngineLineRulesTests
         Assert.Equal(EngineLineRules.Kinds.Count, EngineLineRules.Kinds.Select(k => k.Sample).Distinct().Count());
     }
 
-    /// <summary>A specific kind comes before a general one: a duplicate animation line of a room is an engine gap, each
-    /// other duplicate is a data problem.</summary>
+    /// <summary>A specific kind comes before a general one: an unknown name line of a <c>[SystemInfo]</c> is a key that
+    /// the game does not read there (B06), and each other unknown entry is a key that the game does not know
+    /// (B05).</summary>
     [Fact]
     public void ASpecificKindComesBeforeAFallback()
     {
-        Assert.Equal("G08", EngineLineRules.Match(Line(
-            @"[Warning: 12:00:00] Ini: Duplicate of animation at section Room_Info: data\a.ini, line 2"))!.Id);
-        Assert.Equal("B04", EngineLineRules.Match(Line(
-            @"[Warning: 12:00:00] Ini: Duplicate of animation at section Object: data\a.ini, line 2"))!.Id);
-        Assert.Equal("G03", EngineLineRules.Match(Line(
-            @"[Warning: 12:00:00] Ini: Too many components for at_t at section start_effect: data\a.ini, line 2"))!.Id);
-        Assert.Equal("B07", EngineLineRules.Match(Line(
-            @"[Warning: 12:00:00] Ini: Too many components for pos at section Object: data\a.ini, line 2"))!.Id);
+        Assert.Equal("B06", EngineLineRules.Match(Line(
+            @"[Warning: 12:00:00] Ini: Unknown entry name at section SystemInfo: data\a.ini, line 2"))!.Id);
+        Assert.Equal("B05", EngineLineRules.Match(Line(
+            @"[Warning: 12:00:00] Ini: Unknown entry name at section Object: data\a.ini, line 2"))!.Id);
+        Assert.Equal("B02", EngineLineRules.Match(Line(
+            @"[Warning: 12:00:00] Ini: Unknown entry particles at section start_effect: data\a.ini, line 2"))!.Id);
+        Assert.Equal("B05", EngineLineRules.Match(Line(
+            @"[Warning: 12:00:00] Ini: Unknown entry particles at section Object: data\a.ini, line 2"))!.Id);
         Assert.Equal("B06", EngineLineRules.Match(Line(@"[Warning: 12:00:00] Ini: Unknown section Foo at data\a.ini, line 2"))!.Id);
-        Assert.Equal("G04", EngineLineRules.Match(Line(@"[Warning: 12:00:00] Ini: Unknown section tumble at data\a.ini, line 2"))!.Id);
+    }
+
+    /// <summary>The fork commits OL-0039 to OL-0052 read each engine gap of the console audit, so the table has no
+    /// engine-gap kind. A line of such a key that the engine still gives, for example a third at_t value, is a data
+    /// problem.</summary>
+    [Fact]
+    public void TheTableHasNoEngineGapKind()
+    {
+        Assert.DoesNotContain(EngineLineRules.Kinds, k => k.Class == EngineLineClass.EngineGap);
+        Assert.Equal("B07", EngineLineRules.Match(Line(
+            @"[Warning: 12:00:00] Ini: Too many components for at_t at section start_effect: data\a.ini, line 2"))!.Id);
     }
 
     [Fact]
@@ -48,13 +59,12 @@ public sealed class EngineLineRulesTests
     public void TheClassesAndTheDispositions()
     {
         Assert.Equal(EngineLineClass.DataProblem, EngineLineRules.Find("B01")!.Class);
-        Assert.Equal(EngineLineClass.EngineGap, EngineLineRules.Find("G13")!.Class);
+        Assert.Equal(EngineLineClass.PerformanceNote, EngineLineRules.Find("O02")!.Class);
         Assert.Equal(EngineLineDisposition.Drop, EngineLineRules.Find("O01")!.Disposition);
         Assert.Equal(EngineLineDisposition.Notice, EngineLineRules.Find("O02")!.Disposition);
-        Assert.True(EngineLineRules.Find("G15")!.OpenLancerOrigin);
-        Assert.Equal("Engine gap. The game runs this fuse action. The OpenLancer engine does not run it yet.",
-            EngineLineRules.Find("G04")!.DetailText);
-        Assert.All(EngineLineRules.Kinds.Where(k => k.Id[0] is 'B' or 'G'),
+        Assert.Equal("Data problem. The game does not know this key. The game ignores the line.",
+            EngineLineRules.Find("B05")!.DetailText);
+        Assert.All(EngineLineRules.Kinds.Where(k => k.Id[0] == 'B'),
             k => Assert.Equal(EngineLineDisposition.Entry, k.Disposition));
     }
 
@@ -104,28 +114,16 @@ public sealed class EngineLineRulesTests
         Assert.Equal((0, 0), (log.UnseenWarnings, log.UnseenErrors));
     }
 
-    /// <summary>The new-character save of Play has the origin OpenLancer (G15), so it always shows.</summary>
-    [Fact]
-    public void AnOpenLancerKindHasTheOriginOpenLancer()
-    {
-        var log = new ConsoleLog();
-        log.AddGameLine(log.BeginGameRun(), ConsoleLog.ParseGameLine(
-            "[Error: 12:00:00] Ini: Failed to parse float '' for cargo in section Player: sample: new_player:16")!, "Play");
-
-        var entry = Assert.Single(log.Entries);
-        Assert.Equal((OriginKind.OpenLancer, "G15"), (entry.Origin.Kind, entry.Kind!.Id));
-        Assert.Equal(1, log.UnseenErrors);
-    }
-
-    /// <summary>The pins are the counts of the base run of each data set before the fork commits OL-0039 to OL-0052:
-    /// HD Edition 0.7.1 gives 120 lines (117 of the data load, 1 of the Scene, 2 of the story missions), and the retail
-    /// game 261 (240, 1 and 20).</summary>
+    /// <summary>The pins are the counts of the base run of each data set with the fork commits OL-0039 to OL-0052: HD
+    /// Edition 0.7.1 gives 46 lines (45 of the data load, 1 of the Scene, none of the story missions), and the retail
+    /// game 165 (159, 1 and 5). Before these commits, the counts were 120 (117, 1 and 2) and 261 (240, 1 and
+    /// 20).</summary>
     [Fact]
     public void ThePinsAddUpToTheLinesOfTheBaseRuns()
     {
-        Assert.Equal(120, EngineLineRules.Kinds.Sum(k => EngineLineRules.Pin(k, EngineLineDataSet.HdEdition071)));
-        Assert.Equal(261, EngineLineRules.Kinds.Sum(k => EngineLineRules.Pin(k, EngineLineDataSet.Vanilla)));
-        Assert.All(EngineLineRules.Kinds.Where(k => k.Disposition != EngineLineDisposition.Entry || k.OpenLancerOrigin),
+        Assert.Equal(46, EngineLineRules.Kinds.Sum(k => EngineLineRules.Pin(k, EngineLineDataSet.HdEdition071)));
+        Assert.Equal(165, EngineLineRules.Kinds.Sum(k => EngineLineRules.Pin(k, EngineLineDataSet.Vanilla)));
+        Assert.All(EngineLineRules.Kinds.Where(k => k.Disposition != EngineLineDisposition.Entry),
             k => Assert.Empty(k.Pins));
     }
 }

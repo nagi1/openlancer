@@ -675,7 +675,7 @@ public sealed class RemovedEntriesTests
 
     /// <summary>
     /// The scene rule reads the value that the engine reads, by its place: value 1, or value 2 after <c>all</c>,
-    /// whatever its text (RoomInfo.cs:27-41). A rule that took the first value that ends with .thn would read the
+    /// whatever its text (RoomInfo.cs:31-45). A rule that took the first value that ends with .thn would read the
     /// script of <c>all, x.thn, ambient</c>, where the engine reads <c>ambient</c>, and no value of a script without the
     /// .thn ending.
     /// </summary>

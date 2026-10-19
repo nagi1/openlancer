@@ -18,29 +18,25 @@ public sealed partial class SectionCheckRetailTests(ITestOutputHelper output)
 {
     /// <summary>
     /// The warnings of the retail item files, by section type and message, with their count. Each one is a real
-    /// property of the retail data, for example a key that the engine does not read.
+    /// property of the retail data, for example a key that the engine does not read. The fork reads the docking and
+    /// camera keys of a ship since OL-0050 and MinSpecLOD since OL-0051, so they give no warning.
     /// </summary>
     private static readonly Dictionary<string, int> KnownItemWarnings = new(StringComparer.Ordinal)
     {
         ["[collisiongroup] the section type has no key '------------------------------------------'. The game ignores the line."] = 1,
         ["[countermeasure] 'force_gun_ori' has 2 lines. The game reads only the last line."] = 3,
-        ["[ship] the section type has no key 'camera_angular_slerp_multiplier'. The game ignores the line."] = 1,
-        ["[ship] the section type has no key 'distance_render'. The game ignores the line."] = 2,
-        ["[ship] the section type has no key 'docking_camera'. The game ignores the line."] = 2,
-        ["[ship] the section type has no key 'docking_sphere'. The game ignores the line."] = 2,
-        ["[simple] the section type has no key 'MinSpecLOD'. The game ignores the line."] = 1,
     };
 
     /// <summary>
     /// The warnings of universe.ini and of the retail system files, as <see cref="KnownItemWarnings"/> gives them. Each
     /// trade lane zone has a string in <c>lane_id</c>, for example <c>br01_2</c>. The retail game never reads the key,
-    /// so the checks skip it (decision D513 of the console filter design), and no row counts these lines.
+    /// so the checks skip it (decision D513 of the console filter design), and no row counts these lines. The fork reads
+    /// color_curve of a light since OL-0048, so it gives no warning.
     /// </summary>
     private static readonly Dictionary<string, int> KnownSystemWarnings = new(StringComparer.Ordinal)
     {
         ["[background] 'nebulae' has 2 lines. The game reads only the last line."] = 1,
         ["[lightsource] the section type has no key 'behavior'. The game ignores the line."] = 1,
-        ["[lightsource] the section type has no key 'color_curve'. The game ignores the line."] = 2,
         ["[object] 'behavior' has 2 lines. The game reads only the last line."] = 3,
         ["[object] 'ids_info' has 2 lines. The game reads only the last line."] = 11,
         ["[object] 'pilot' has 2 lines. The game reads only the last line."] = 1,

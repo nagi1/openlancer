@@ -271,13 +271,15 @@ public sealed class ConsoleLogOriginTests
                      "not cause them.", ConsolePanel.BaseGameToggleTip(3, false));
     }
 
-    /// <summary>The source of a base-game row has the lock glyph, and an engine gap has the wrench glyph.</summary>
+    /// <summary>The source of a base-game row has the lock glyph, and an engine gap has the wrench glyph. The rules table
+    /// has no engine-gap kind now, so the test makes one.</summary>
     [Fact]
     public void TheGlyphsOfTheSource()
     {
         var gap = new ConsoleEntry(ConsoleSeverity.Warning, "Ini", "m", default)
         {
-            Kind = EngineLineRules.Find("G04"),
+            Kind = new EngineLineKind("T01", EngineLineClass.EngineGap, "A test gap.", [], "m",
+                new Dictionary<EngineLineDataSet, int>()),
             Origin = MessageOrigin.BaseGame,
         };
         var data = new ConsoleEntry(ConsoleSeverity.Warning, "Ini", "m", default) { Kind = EngineLineRules.Find("B05") };

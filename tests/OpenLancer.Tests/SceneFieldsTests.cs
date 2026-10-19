@@ -56,7 +56,9 @@ public sealed class SceneFieldsTests
         // Retail has a name line in 31 [SystemInfo] sections, but the schema does not know the key.
         Assert.DoesNotContain(SceneFields.Rows, r => r.Section == SceneSection.SystemInfo && r.Key == "name");
         Assert.Equal(SceneEffect.None, SceneFields.Effect(SceneSection.SystemInfo, "name"));
-        Assert.Equal(SceneEffect.None, SceneFields.Effect(SceneSection.LightSource, "color_curve"));
+        // Retail has behavior lines in [LightSource] sections, but the schema does not know the key.
+        Assert.DoesNotContain(SceneFields.Rows, r => r.Section == SceneSection.LightSource && r.Key == "behavior");
+        Assert.Equal(SceneEffect.None, SceneFields.Effect(SceneSection.LightSource, "behavior"));
     }
 
     /// <summary>
@@ -105,7 +107,7 @@ public sealed class SceneFieldsTests
         Rows(SceneSection.LightSource, transform, false, "pos");
         Rows(SceneSection.LightSource, SceneEffect.Light, false, "color", "range", "type", "attenuation", "direction",
             "atten_curve");
-        Rows(SceneSection.LightSource, none, false, "rotate", "ids_name");
+        Rows(SceneSection.LightSource, none, false, "rotate", "ids_name", "color_curve");
         // 7.5 The system sections and universe.ini
         Rows(SceneSection.SystemInfo, SceneEffect.Environment, false, "space_color");
         Rows(SceneSection.SystemInfo, data, false, "local_faction");

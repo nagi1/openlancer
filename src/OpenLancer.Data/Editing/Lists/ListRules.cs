@@ -78,8 +78,8 @@ public sealed record ListRule(string Role, string Section, string Key, int Index
 
     /// <summary>
     /// True for the <c>scene</c> line of a room (section 5.6 of the M8b design): the rule reads value 1 of the line, or
-    /// value 2 when value 0 is <c>all</c>, whatever its text, as the engine reads it (RoomInfo.cs:27-41). The engine
-    /// skips a line with too few values (RoomInfo.cs:46-49), so such a line gets no check.
+    /// value 2 when value 0 is <c>all</c>, whatever its text, as the engine reads it (RoomInfo.cs:31-45). The engine
+    /// skips a line with too few values (RoomInfo.cs:50-53), so such a line gets no check.
     /// </summary>
     public bool Scene { get; init; }
 
