@@ -8,6 +8,7 @@ using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Data.Strings;
 
 namespace OpenLancer.Data.Export;
@@ -55,6 +56,10 @@ internal sealed partial class FlmmScript
     /// <summary>The text of <c>script.xml</c>: ASCII, with CR LF line ends, without an XML declaration.</summary>
     public string Xml { get; private set; } = "";
 
+    /// <summary>The text of <c>script.xml</c> without its <c>header</c> element. The guard digest of the package uses
+    /// it, so that a change of the publish texts does not change the digest (decision D589).</summary>
+    public string OperationsXml { get; private set; } = "";
+
     /// <summary>The whole files of the package tree, by install path with the letter case of the game.</summary>
     public IReadOnlyList<(string Path, byte[] Bytes)> Files => files;
 
@@ -63,15 +68,16 @@ internal sealed partial class FlmmScript
 
     /// <summary>Makes the script of one mod.</summary>
     /// <param name="target">The files of a target build that keeps the text placeholders.</param>
-    /// <param name="description">The text of the description element.</param>
+    /// <param name="header">The fields of the header element.</param>
     /// <param name="probe">True to write each mod text in its macro as it is, also with a quote. The FLMM check uses
     /// such a package. It is never for players.</param>
-    public static FlmmScript Build(TargetFiles target, Mod mod, string description, bool probe)
+    public static FlmmScript Build(TargetFiles target, Mod mod, FlmmHeader header, bool probe)
     {
         var script = new FlmmScript(target, mod.Strings, probe);
         foreach (var file in target.Files)
             script.Add(file);
-        script.Xml = script.Write(mod.Manifest.Name, description);
+        script.Xml = script.Write(header);
+        script.OperationsXml = script.Write(null);
         return script;
     }
 
@@ -376,15 +382,22 @@ internal sealed partial class FlmmScript
     [GeneratedRegex(@"\$(?:str|ifc):[A-Za-z0-9_.\-]+")]
     private static partial Regex Placeholder();
 
-    private string Write(string name, string description)
+    /// <summary>The script, with the header element when <paramref name="header"/> is not null (section 9.2 of the
+    /// M11c design).</summary>
+    private string Write(FlmmHeader? header)
     {
         var xml = new StringBuilder();
         xml.Append("<script>\r\n");
-        xml.Append($"  <header name=\"{EscapeAttribute(Ascii(name))}\">\r\n");
-        xml.Append($"    <scriptversion>{ScriptVersion}</scriptversion>\r\n");
-        xml.Append("    <author></author>\r\n");
-        xml.Append($"    <description>{Escape(Ascii(description))}</description>\r\n");
-        xml.Append("  </header>\r\n");
+        if (header != null)
+        {
+            xml.Append($"  <header name=\"{EscapeAttribute(Ascii(header.Name))}\">\r\n");
+            xml.Append($"    <scriptversion>{ScriptVersion}</scriptversion>\r\n");
+            xml.Append($"    <author>{Escape(Ascii(header.Author))}</author>\r\n");
+            xml.Append($"    <description>{Escape(Ascii(header.Description)).Replace("\n", "\r\n")}</description>\r\n");
+            if (header.ModUrl.Length > 0)
+                xml.Append($"    <modurl>{Escape(Ascii(header.ModUrl))}</modurl>\r\n");
+            xml.Append("  </header>\r\n");
+        }
         foreach (var op in operations)
             xml.Append(op);
         xml.Append("</script>\r\n");
@@ -394,8 +407,9 @@ internal sealed partial class FlmmScript
     /// <summary>The name of the script file in the package.</summary>
     public static string FileName => ScriptName;
 
-    /// <summary>The text with <c>?</c> in place of each character that is not ASCII.</summary>
-    private static string Ascii(string text) => new(text.Select(c => c > 127 ? '?' : c).ToArray());
+    /// <summary>The ASCII form of a header text (decision D580): the common typographic characters get their ASCII
+    /// form, and each other character outside ASCII becomes <c>?</c>.</summary>
+    private static string Ascii(string text) => PageText.ToAscii(text);
 
     /// <summary>Escapes the characters that XML text cannot hold: <c>&amp;</c>, <c>&lt;</c> and <c>&gt;</c>.</summary>
     private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
@@ -424,4 +438,25 @@ internal sealed partial class FlmmScript
         sections.SelectMany(s => s).SelectMany(e => e).Any(v => StringPlaceholder.TryParse(v, out _));
 
     private sealed class FlmmTextException(string message) : Exception(message);
+}
+
+/// <summary>The fields of the header of an FLMM script (section 9.2 of the M11c design). The script writes them as
+/// ASCII.</summary>
+/// <param name="Name">The display name.</param>
+/// <param name="Author">The authors, or empty.</param>
+/// <param name="Description">The text of the description element, with LF line ends.</param>
+/// <param name="ModUrl">The page link, or empty for no <c>modurl</c> element.</param>
+internal sealed record FlmmHeader(string Name, string Author, string Description, string ModUrl)
+{
+    /// <summary>The header of a package: "Version &lt;version&gt; for &lt;target&gt;.", the summary, and the
+    /// description as plain text.</summary>
+    public static FlmmHeader Of(PublishTexts texts, ExportTarget target)
+    {
+        var description = $"Version {texts.Manifest.Version} for {target.Name}.";
+        if (texts.Settings.Summary.Length > 0)
+            description += "\n" + texts.Settings.Summary;
+        if (texts.DescriptionText.Count > 0)
+            description += "\n\n" + string.Join("\n", texts.DescriptionText);
+        return new FlmmHeader(texts.Manifest.Name, texts.Authors, description, texts.Settings.PageUrl);
+    }
 }

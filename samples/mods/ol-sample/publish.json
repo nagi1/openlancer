@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1,
+  "summary": "The sample mod of OpenLancer: a new light fighter for sale at Manhattan, and one example of each kind of change.",
+  "description": "# What it changes\n- New ship: the Starrunner, a light fighter at the ship dealer of Manhattan.\n- New text for the name and the infocard of the Starrunner.\n- The Patriot costs less: **5600** credits.\n- Objects of New York (Li01) and a light of St01 have new positions.\n- Three cutscenes have a moved camera or a moved character.\n\n## For modders\nThe mod shows each kind of change that the OpenLancer editor writes: INI patches, new items with text, and cutscene patches. It is a sample, not a release for players.",
+  "authors": [ "OpenLancer contributors" ],
+  "credits": [],
+  "permissions": "You can use the files of this mod in other free mods. Give credit to the authors.",
+  "category": "Miscellaneous",
+  "tags": [ "Ships", "Example" ],
+  "requirements": [],
+  "pageUrl": "",
+  "screenshots": [],
+  "changelog": [
+    { "version": "1.0.0", "changes": [ "First release." ] }
+  ]
+}

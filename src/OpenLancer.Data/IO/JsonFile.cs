@@ -44,9 +44,12 @@ internal sealed class JsonFile
     public static JsonFile Create() => new(new JsonObject(NodeOptions), false, "\n");
 
     /// <exception cref="InvalidDataException">The file is not a JSON object, or it has a comment.</exception>
-    public static JsonFile Read(string path)
+    public static JsonFile Read(string path) => Parse(File.ReadAllBytes(path));
+
+    /// <summary>Parses the bytes of a file that the caller read, for example to hash the same bytes.</summary>
+    /// <exception cref="InvalidDataException">The bytes are not a JSON object, or they have a comment.</exception>
+    public static JsonFile Parse(byte[] bytes)
     {
-        var bytes = File.ReadAllBytes(path);
         var preamble = Encoding.UTF8.Preamble;
         var bom = bytes.AsSpan().StartsWith(preamble);
         var json = bom ? bytes.AsMemory(preamble.Length) : bytes.AsMemory();

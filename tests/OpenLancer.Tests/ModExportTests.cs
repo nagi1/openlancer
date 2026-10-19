@@ -1,10 +1,13 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
 using OpenLancer.Data;
 using OpenLancer.Data.Export;
+using OpenLancer.Data.Publishing;
 using Xunit;
 using static OpenLancer.Tests.ExportGame;
 
@@ -28,7 +31,7 @@ public sealed class ModExportTests
             result.Packages.Select(p => p.FileName));
         Assert.All(result.Packages, p => Assert.True(File.Exists(p.Path)));
         var nexus = File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile));
-        Assert.Contains("- ol-test-1.2.0-vanilla-1.1.zip (Freelancer 1.1)", nexus);
+        Assert.Contains("ol-test-1.2.0-vanilla-1.1.zip: Drop-in zip for Freelancer 1.1.", nexus);
         Assert.Contains("Microsoft's \"Game Content Usage Rules\"", nexus);
         var checklist = File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.ChecklistFile));
         Assert.Contains("Target: Freelancer 1.1\r\nDATA\\EQUIPMENT\\goods.ini\r\n- Good 'lf_hull': price 6600 -> 5600.", checklist);
@@ -107,6 +110,315 @@ public sealed class ModExportTests
         Assert.Empty(result.Packages);
         Assert.False(Directory.Exists(result.OutputFolder));
     }
+
+    /// <summary>Publish settings with each field (section 8.1 of the M11c design). The mods of the tests have version
+    /// 1.2.0.</summary>
+    private static PublishSettings Texts => PublishSettings.Empty with
+    {
+        Summary = "A fast ship.",
+        Description = "# The ship\n- Fast.\n- **Cheap**.\n\nSee [the thread](https://example.org/t).",
+        Authors = ["Ann", "Bob"],
+        Credits = [new PublishCredit("Cy", "Tests")],
+        Permissions = "Ask first.",
+        Category = "Ships",
+        Tags = ["Ships", "Gameplay"],
+        Requirements = [new PublishRequirement("JFLP", "https://example.org/jflp", "Optional")],
+        PageUrl = "https://example.org/mods/1",
+        Changelog =
+        [
+            new ChangelogEntry("1.3.0", ["Next."]), new ChangelogEntry("1.2.0", ["Price fix."]),
+            new ChangelogEntry("1.0.0", ["First release."]),
+        ],
+    };
+
+    /// <summary>The text of an entry of a zip file.</summary>
+    private static string Entry(string zip, string name)
+    {
+        using var archive = ZipFile.OpenRead(zip);
+        using var reader = new StreamReader(archive.GetEntry(name)!.Open());
+        return reader.ReadToEnd();
+    }
+
+    private static string[] Entries(string zip)
+    {
+        using var archive = ZipFile.OpenRead(zip);
+        return [.. archive.Entries.Select(e => e.FullName)];
+    }
+
+    /// <summary>The script of the FLMM package of an export.</summary>
+    private static string Script(string zip, string id)
+    {
+        using var outer = ZipFile.OpenRead(zip);
+        using var flmod = new ZipArchive(outer.GetEntry($"{id}.flmod")!.Open());
+        using var reader = new StreamReader(flmod.GetEntry("script.xml")!.Open());
+        return reader.ReadToEnd();
+    }
+
+    [Fact]
+    public void TheReadmeHasTheSummaryDescriptionAuthorsCreditsAndChanges()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+
+        var result = ModExport.Run(game.Request(mod) with { Publish = Texts, Forms = ExportForms.DropIn });
+        var readme = Entry(result.Packages[0].Path!, "m README.txt");
+
+        Assert.StartsWith("Mod m\r\nVersion 1.2.0 for Freelancer 1.1. Mod id: m.\r\nBy Ann, Bob.\r\n\r\nA fast ship.\r\n\r\n" +
+                          "About:\r\nThe ship\r\n\r\n- Fast.\r\n- Cheap.\r\n\r\nSee the thread (https://example.org/t).\r\n\r\n" +
+                          "Requirements:\r\n- Freelancer 1.1, with or without JFLP.\r\n", readme);
+        Assert.Contains("- JFLP: Optional (https://example.org/jflp)\r\n", readme);
+        Assert.Contains("\r\nChanges:\r\n1.2.0\r\n- Price fix.\r\n1.0.0\r\n- First release.\r\n\r\nCredits:\r\n- Cy: Tests\r\n\r\n" +
+                        "Permissions:\r\nAsk first.\r\n\r\nPage: https://example.org/mods/1\r\n\r\nFreelancer", readme);
+        Assert.Contains("Mod m was created under Microsoft's", readme);
+    }
+
+    [Fact]
+    public void TheReadmeLeavesOutHigherChangelogVersions()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+
+        var result = ModExport.Run(game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer) with { Publish = Texts });
+
+        foreach (var package in result.Packages)
+        {
+            var readme = package.Form == PackageForm.ModFolder
+                ? Entry(package.Path!, "m/m README.txt")
+                : Entry(package.Path!, "m README.txt");
+            Assert.DoesNotContain("1.3.0", readme);
+            Assert.DoesNotContain("Next.", readme);
+        }
+        Assert.DoesNotContain("1.3.0", File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile)));
+    }
+
+    [Fact]
+    public void TheFlmmHeaderHasTheAuthorsAndThePageLink()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var texts = Texts with { Authors = [$"Ann {(char)0x2013} Bob", $"Zo{(char)0xEB}"] };
+
+        var result = ModExport.Run(game.Request(mod) with { Publish = texts, Forms = ExportForms.Flmm });
+        var script = Script(result.Packages[0].Path!, "m");
+
+        Assert.Contains("    <author>Ann - Bob, Zo?</author>\r\n", script);
+        Assert.Contains("    <description>Version 1.2.0 for Freelancer 1.1.\r\nA fast ship.\r\n\r\nThe ship\r\n\r\n- Fast.\r\n" +
+                        "- Cheap.\r\n\r\nSee the thread (https://example.org/t).</description>\r\n" +
+                        "    <modurl>https://example.org/mods/1</modurl>\r\n  </header>\r\n", script);
+        Assert.Contains(result.Problems, p => p.Message == PublishMessages.FlmmCharacter(((char)0xEB).ToString(), "the authors"));
+        Assert.DoesNotContain("<modurl>", Script(ModExport.Run(game.Request(mod) with { Forms = ExportForms.Flmm }).Packages[0].Path!, "m"));
+    }
+
+    [Fact]
+    public void TheNexusPageHasEachFieldAndBBCode()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+
+        var result = ModExport.Run(game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer) with { Publish = Texts });
+        var nexus = File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile));
+
+        Assert.StartsWith("Nexus page of Mod m 1.2.0. Copy each part into the field of the same name.\r\n\r\n" +
+                          "== Mod name ==\r\nMod m\r\n\r\n== Version ==\r\n1.2.0\r\n\r\n== Author ==\r\nAnn, Bob\r\n\r\n" +
+                          "== Category ==\r\nShips\r\n\r\n== Summary ==\r\nA fast ship.\r\n\r\n== Description (BBCode) ==\r\n" +
+                          "[size=5][b]The ship[/b][/size]\r\n[list]\r\n[*]Fast.\r\n[*][b]Cheap[/b].\r\n[/list]\r\n\r\n" +
+                          "See [url=https://example.org/t]the thread[/url].\r\n\r\n[size=4][b]Install[/b][/size]\r\n" +
+                          "[b]Drop-in zip[/b]\r\n", nexus);
+        Assert.Contains("[b]FLMM package[/b]\r\n[list=1]\r\n[*]In the Freelancer Mod Manager, import m.flmod.\r\n", nexus);
+        Assert.Contains("== Requirements ==\r\n- Freelancer 1.1: Freelancer 1.1, with or without JFLP.\r\n" +
+                        "- OpenLancer: OpenLancer.\r\n- JFLP: Optional (https://example.org/jflp)\r\n", nexus);
+        Assert.Contains("== Files ==\r\nm-1.2.0-vanilla-1.1.zip: Drop-in zip for Freelancer 1.1. The README gives the backup " +
+                        "and install steps.\r\nm-1.2.0-vanilla-1.1-flmm.zip: FLMM package for Freelancer 1.1 (preview). Import " +
+                        "it in the Freelancer Mod Manager.\r\nm-1.2.0-openlancer.zip: Mod folder for OpenLancer.", nexus);
+        Assert.Contains("== Changelog ==\r\n1.2.0\r\n- Price fix.\r\n1.0.0\r\n- First release.\r\n", nexus);
+        Assert.Contains("== Permissions and credits ==\r\nAsk first.\r\n\r\nCredits:\r\n- Cy: Tests\r\n", nexus);
+        Assert.Contains("== Tags ==\r\nShips\r\nGameplay\r\n\r\n== Images ==\r\n", nexus);
+        Assert.All(result.Packages, p => Assert.True(PackageTexts.FileDescription(p).Length < PublishLimits.FileDescriptionLength));
+    }
+
+    [Fact]
+    public void TheNexusPageListsThePackagesOfEarlierExportsOfTheVersion()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var root = Path.Combine(game.Game.Folder, "exports", "m");
+        var folder = ModExport.VersionFolder(root, mod.Manifest);
+        var location = new HistoryLocation(root, "m", mod.Folder, [game.Root]);
+        var first = ModExport.Run(game.Request(mod) with { OutputFolder = folder, Forms = ExportForms.DropIn });
+        PublishHistory.Update(location, "export", h => h.RecordExport(PublishHistory.EntryOf(first, DateTime.UtcNow)));
+        var history = PublishHistory.Load(root, "m").History;
+
+        var second = ModExport.Write(ModExport.Prepare(game.Request(mod, ExportTarget.OpenLancer) with
+        {
+            OutputFolder = folder,
+            OpenLancerBase = game.Base,
+        }), history.ValidPackages("1.2.0", folder, first.Content));
+
+        var nexus = File.ReadAllText(Path.Combine(folder, ModExport.NexusPageFile));
+        var checklist = File.ReadAllText(Path.Combine(folder, ModExport.ChecklistFile));
+        Assert.Single(second.Packages);
+        Assert.Contains("== Files ==\r\nm-1.2.0-vanilla-1.1.zip: Drop-in zip", nexus);
+        Assert.Contains("\r\nm-1.2.0-openlancer.zip: Mod folder for OpenLancer.", nexus);
+        Assert.StartsWith("Mod m 1.2.0 (m): checklist for testers\r\n\r\nTarget: Freelancer 1.1\r\nDATA\\EQUIPMENT\\goods.ini\r\n" +
+                          "- Good 'lf_hull': price 6600 -> 5600.\r\n\r\nTarget: OpenLancer\r\n", checklist);
+    }
+
+    [Fact]
+    public void ScreenshotsGoToTheOutputFolderAndNotIntoTheRetailZips()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var a = PublishWorkspace.Screenshot(mod.Folder, "a.png", 1);
+        var b = PublishWorkspace.Screenshot(mod.Folder, "b.png", 2);
+        var texts = PublishSettings.Empty with { Screenshots = [new PublishScreenshot(b, "Second"), new PublishScreenshot(a, "")] };
+
+        var result = ModExport.Run(game.Request(mod) with { Publish = texts });
+
+        var shots = Path.Combine(result.OutputFolder, ModExport.ScreenshotsFolder);
+        Assert.Equal(["01-b.png", "02-a.png"], Directory.EnumerateFiles(shots).Select(Path.GetFileName).Order());
+        Assert.Equal(File.ReadAllBytes(Path.Combine(mod.Folder, "publish", "screenshots", "b.png")),
+            File.ReadAllBytes(Path.Combine(shots, "01-b.png")));
+        Assert.All(result.Packages, p => Assert.DoesNotContain(Entries(p.Path!), e => e.Contains("publish")));
+        Assert.Contains("== Images ==\r\nscreenshots\\01-b.png: Second\r\nscreenshots\\02-a.png\r\n",
+            File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile)));
+    }
+
+    [Fact]
+    public void TheOpenLancerZipHoldsPublishJsonAndTheAcceptedScreenshots()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var a = PublishWorkspace.Screenshot(mod.Folder, "a.png");
+        PublishWorkspace.Screenshot(mod.Folder, "unlisted.png", 3);
+        PublishSettings.Write(mod.Folder, PublishSettings.Empty with { Screenshots = [new PublishScreenshot(a, "A")] });
+
+        var result = ModExport.Run(game.Request(mod, ExportTarget.OpenLancer) with { Publish = PublishSettings.Load(mod.Folder).Settings });
+
+        var entries = Entries(Assert.Single(result.Packages).Path!);
+        Assert.Contains("m/publish.json", entries);
+        Assert.Contains("m/publish/screenshots/a.png", entries);
+        Assert.DoesNotContain("m/publish/screenshots/unlisted.png", entries);
+    }
+
+    [Fact]
+    public void ABadScreenshotRefusesOnlyTheOpenLancerZip()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var a = PublishWorkspace.Screenshot(mod.Folder, "a.png");
+        PublishWorkspace.Write(Path.Combine(mod.Folder, "publish", "screenshots", "bad.png"), "text");
+        var texts = PublishSettings.Empty with
+        {
+            Screenshots = [new PublishScreenshot(a, ""), new PublishScreenshot("publish/screenshots/bad.png", "")],
+        };
+
+        var result = ModExport.Run(game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer) with { Publish = texts });
+
+        Assert.Equal([true, true, false], result.Packages.Select(p => p.Path != null));
+        Assert.Contains(result.Problems, p => p.Message == PublishMessages.ImageRefused("publish/screenshots/bad.png"));
+        Assert.False(Directory.Exists(Path.Combine(result.OutputFolder, ModExport.ScreenshotsFolder)));
+        Assert.Equal(1, result.Checks.Single(c => c.Target == ExportTarget.OpenLancer).Errors);
+        Assert.Equal(0, result.Checks.Single(c => c.Target == ExportTarget.Vanilla).Errors);
+    }
+
+    [Fact]
+    public void PackagesGoToAVersionFolder()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var root = Path.Combine(game.Game.Folder, "exports", "m");
+
+        var result = ModExport.Run(game.Request(mod) with { OutputFolder = ModExport.VersionFolder(root, mod.Manifest) });
+
+        Assert.Equal(Path.Combine(root, "1.2.0"), result.OutputFolder);
+        Assert.All(result.Packages, p => Assert.Equal(Path.Combine(root, "1.2.0", p.FileName), p.Path));
+        Assert.Throws<ArgumentException>(() => ModExport.VersionFolder(root, mod.Manifest with { Version = @"..\x" }));
+    }
+
+    [Fact]
+    public void AnUnsafeVersionWritesNothing()
+    {
+        using var game = new ExportGame();
+        var mod = game.Mod("m", new() { [@"patches\" + GoodsPath] = Patch });
+        var manifest = Path.Combine(mod.Folder, "mod.json");
+        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"1.2.0\"", "\"..\\\\..\\\\x\""));
+        mod = Data.Mods.Mod.Load(mod.Folder);
+
+        var result = ModExport.Run(game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer));
+
+        Assert.Equal(@"..\..\x", mod.Manifest.Version);
+        Assert.Equal(PublishMessages.VersionUnsafe(@"..\..\x"), Assert.Single(result.Problems).Message);
+        Assert.Empty(result.Packages);
+        Assert.False(Directory.Exists(result.OutputFolder));
+    }
+
+    [Fact]
+    public void APendingSaveRefusesTheCheck()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        PublishWorkspace.Write(Path.Combine(mod.Folder, ".olsave", "journal"), "olsave journal 1\n");
+
+        var prepared = ModExport.Prepare(game.Request(mod));
+
+        Assert.True(prepared.Refused);
+        Assert.Equal(PublishMessages.CheckRefusedPendingSave, Assert.Single(prepared.Problems).Message);
+        Assert.Empty(ModExport.Write(prepared, []).Packages);
+    }
+
+    [Fact]
+    public void PrepareWritesNoFileAndCompressesNothing()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+
+        var prepared = ModExport.Prepare(game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer) with { Publish = Texts });
+
+        Assert.False(Directory.Exists(prepared.OutputFolder));
+        Assert.Equal(3, prepared.Packages.Count);
+        Assert.All(prepared.Packages, p => Assert.False(p.Refused));
+        Assert.Equal(3, prepared.Digests.Count);
+        Assert.Equal([ExportTarget.Vanilla, ExportTarget.OpenLancer], prepared.Checks.Select(c => c.Target));
+        Assert.Contains("- Good 'lf_hull': price 6600 -> 5600.", prepared.Checklist);
+    }
+
+    [Fact]
+    public void TwoExportsWithSettingsGiveTheSameBytes()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+        var request = game.Request(mod, ExportTarget.Vanilla, ExportTarget.OpenLancer) with { Publish = Texts };
+
+        var one = ModExport.Run(request with { OutputFolder = Path.Combine(game.Game.Folder, "one") });
+        var two = ModExport.Run(request with { OutputFolder = Path.Combine(game.Game.Folder, "two") });
+
+        var files = Directory.EnumerateFiles(one.OutputFolder, "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(one.OutputFolder, f)).Order().ToList();
+        Assert.Equal(5, files.Count);
+        Assert.All(files, f => Assert.Equal(File.ReadAllBytes(Path.Combine(one.OutputFolder, f)),
+            File.ReadAllBytes(Path.Combine(two.OutputFolder, f))));
+        Assert.Equal(one.Packages.Select(p => p.Sha256), two.Packages.Select(p => p.Sha256));
+    }
+
+    [Fact]
+    public void TheReadmeHasNoDate()
+    {
+        using var game = new ExportGame();
+        var mod = game.GoodsMod(Patch);
+
+        var result = ModExport.Run(game.Request(mod) with { Publish = Texts, Forms = ExportForms.DropIn });
+
+        foreach (var text in new[]
+                 {
+                     Entry(result.Packages[0].Path!, "m README.txt"),
+                     File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.NexusPageFile)),
+                     File.ReadAllText(Path.Combine(result.OutputFolder, ModExport.ChecklistFile)),
+                 })
+        {
+            Assert.DoesNotMatch(@"\d{4}-\d{2}-\d{2}", text);
+            Assert.DoesNotContain(DateTime.Now.Year.ToString(CultureInfo.InvariantCulture), text);
+        }
+    }
 }
 
 /// <summary><c>oltool export</c> and <c>oltool game --write-manifest</c> on a fake game (section 7.14 of the M11
@@ -129,11 +441,13 @@ public sealed class OltoolExportTests
     }
 
     /// <summary>A fake Freelancer 1.0 (by the file version of Common.dll), a mod and a profile. Returns the profile
-    /// file.</summary>
-    private static string Profile(ExportGame game, string patch = "[Good]\nnickname = lf_hull\nprice = 5600\n")
+    /// file. The oltool publish tests use it too.</summary>
+    /// <param name="targets">More fields of mod.json, for example the targets.</param>
+    internal static string Profile(ExportGame game, string patch = "[Good]\nnickname = lf_hull\nprice = 5600\n",
+        string targets = "")
     {
         game.Game.WriteBytes(@"EXE\Common.dll", FakeGame.VersionDll(new Version(1, 0, 1223, 11)));
-        var mod = game.GoodsMod(patch, "ol-test");
+        var mod = game.Mod("ol-test", new() { [@"patches\" + GoodsPath] = patch }, targets);
         var profile = Path.Combine(game.Game.Folder, "profiles", "test.json");
         Directory.CreateDirectory(Path.GetDirectoryName(profile)!);
         File.WriteAllText(profile, JsonSerializer.Serialize(new { @base = game.Root, mods = new[] { mod.Folder } }));
@@ -213,4 +527,100 @@ public sealed class OltoolExportTests
         Assert.Equal(2, inside.Exit);
         Assert.False(File.Exists(Path.Combine(game.Root, "list.tsv")));
     }
+
+    [Fact]
+    public void OltoolTheDefaultFolderIsTheVersionFolder()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var root = Path.Combine(game.Game.Folder, "exports", "ol-test");
+
+        var (exit, output, errors) = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin");
+
+        Assert.True(exit == 0, errors);
+        Assert.Contains($"Wrote {Path.Combine(root, "1.2.0", "ol-test-1.2.0-vanilla-1.1.zip")}", output);
+        var history = PublishHistory.Load(root, "ol-test").History;
+        Assert.Equal("1.2.0", Assert.Single(history.Exports).Version);
+        Assert.Equal(0, history.CheckOf("vanilla-1.1")!.Errors);
+        Assert.True(File.Exists(Path.Combine(root, "1.2.0", "nexus-page.txt")));
+    }
+
+    [Fact]
+    public void OltoolTheSameVersionWithOtherGameFilesExitsOne()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var package = Path.Combine(game.Game.Folder, "exports", "ol-test", "1.2.0", "ol-test-1.2.0-vanilla-1.1.zip");
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin").Exit);
+        var before = File.ReadAllBytes(package);
+        ChangePrice(game);
+
+        var (exit, _, errors) = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin");
+
+        Assert.Equal(1, exit);
+        Assert.Contains("has other game files. Players cannot see which of the two packages they have.", errors);
+        Assert.Equal(before, File.ReadAllBytes(package));
+    }
+
+    [Fact]
+    public void OltoolSameVersionReplacesAVersionWithoutTheMark()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var root = Path.Combine(game.Game.Folder, "exports", "ol-test");
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin").Exit);
+        ChangePrice(game);
+
+        var (exit, _, errors) = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin",
+            "--same-version");
+
+        Assert.True(exit == 0, errors);
+        var history = PublishHistory.Load(root, "ol-test").History;
+        Assert.Equal(2, history.Exports.Count);
+        Assert.Equal(history.Exports[1].Time, history.Exports[0].ReplacedBy);
+        // The FLMM package of the same content is no conflict, so it needs no replace.
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "flmm").Exit);
+    }
+
+    [Fact]
+    public void OltoolSameVersionDoesNotReplaceAPublishedVersion()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var root = Path.Combine(game.Game.Folder, "exports", "ol-test");
+        Assert.Equal(0, Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin").Exit);
+        PublishHistory.Update(new HistoryLocation(root, "ol-test", Path.Combine(game.ModsFolder, "ol-test"), []), "mark",
+            h => h.Mark("1.2.0", DateTime.UtcNow, ""));
+        ChangePrice(game);
+
+        var (exit, _, errors) = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin",
+            "--same-version");
+        var plain = Run("export", profile, "--mod", "ol-test", "--target", "vanilla-1.1", "--format", "dropin");
+
+        Assert.Equal(1, exit);
+        Assert.Contains("Version 1.2.0 is on Nexus. Write a higher version into mod.json.", errors);
+        Assert.Equal(1, plain.Exit);
+        Assert.Contains(PublishMessages.GuardPublished("1.2.0"), plain.Errors);
+        Assert.Single(PublishHistory.Load(root, "ol-test").History.Exports);
+    }
+
+    [Fact]
+    public void OltoolAnUnsafeVersionExitsOne()
+    {
+        using var game = new ExportGame();
+        var profile = Profile(game);
+        var manifest = Path.Combine(game.ModsFolder, "ol-test", "mod.json");
+        File.WriteAllText(manifest, File.ReadAllText(manifest).Replace("\"1.2.0\"", "\"../x\""));
+
+        var (exit, _, errors) = Run("export", profile, "--mod", "ol-test", "--target", "openlancer");
+
+        Assert.Equal(1, exit);
+        Assert.Contains(PublishMessages.VersionUnsafe("../x"), errors);
+        Assert.False(Directory.Exists(Path.Combine(game.Game.Folder, "exports")));
+    }
+
+    /// <summary>Changes the price of the patch of the mod, so the merged goods change.</summary>
+    private static void ChangePrice(ExportGame game) =>
+        File.WriteAllText(Path.Combine(game.ModsFolder, "ol-test", "patches", GoodsPath),
+            "[Good]\r\nnickname = lf_hull\r\nprice = 4400\r\n");
 }

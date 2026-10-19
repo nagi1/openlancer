@@ -16,6 +16,7 @@ using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
 using OpenLancer.Data.PlayCopies;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Data.Validation;
 using OpenLancer.Runtime.Strings;
@@ -63,13 +64,23 @@ internal static class Program
           deploy <profile.json>             Build and validate, then write the merged data next to the profile.
           export <profile.json> --mod <id> --target <hde-0.7.1|vanilla-1.1|openlancer>
                  [--game <folder>] [--format dropin|flmm|all] [--out <folder>] [--checklist] [--flmm-probe]
+                 [--same-version]
                                             Merge one mod on the files of the target game, check the result and write
                                             the packages of the target. --game: the game folder of a retail target.
                                             Without it, the base of the profile must give the target. --format: the
-                                            package forms of a retail target, all by default. --out: the output
-                                            folder, <profile folder>\..\exports\<mod id> by default. --checklist:
-                                            print the checklist for testers, and write nothing. --flmm-probe: write
-                                            the probe of the FLMM check, which is not for players.
+                                            package forms of a retail target, all by default. --out: the exact output
+                                            folder, <profile folder>\..\exports\<mod id>\<version> by default.
+                                            --checklist: print the checklist for testers, and write nothing.
+                                            --flmm-probe: write the probe of the FLMM check, which is not for players.
+                                            The export records the packages in the publish history of
+                                            <profile folder>\..\exports\<mod id>. An export of a version that the
+                                            history has with other game files exits 1. --same-version: replace that
+                                            version, when it does not have the mark "published".
+          publish <profile.json> --mod <id> [--json]
+                                            Print the publish checklist of a mod: each step with "done" or what is
+                                            missing, and the recommended items. It reads the publish history and the
+                                            last checks, and runs no check. Exit 1 when a step is missing.
+                                            --json: write one JSON object, and nothing else.
           install <profile.json> --game <folder> [--into <play copy>] [--full-copy]
                                             Merge all mods of the profile on the files of the game, check the result,
                                             make or update the play copy of the game, and install the files into it.
@@ -118,6 +129,7 @@ internal static class Program
                 ["validate", var profile, .. var options] => Validate(profile, options),
                 ["deploy", var profile] => Deploy(profile),
                 ["export", var profile, .. var options] => Export(profile, options),
+                ["publish", var profile, .. var options] => Publish(profile, options),
                 ["install", var profile, .. var options] => Install(profile, options),
                 ["uninstall", var folder] => Uninstall(folder),
                 ["playcopy", "check", var folder] => CheckPlayCopy(folder),
@@ -421,11 +433,13 @@ internal static class Program
         return ExitOk;
     }
 
-    /// <summary>Exports one mod of a profile for one target (section 7.14 of the M11 design).</summary>
+    /// <summary>Exports one mod of a profile for one target (section 7.14 of the M11 design). The export goes into the
+    /// version folder, runs the same-version guard and records the publish history (section 15 of the M11c
+    /// design).</summary>
     private static int Export(string profilePath, string[] options)
     {
         string? modId = null, targetId = null, game = null, format = null, output = null;
-        bool checklist = false, probe = false;
+        bool checklist = false, probe = false, sameVersion = false;
         for (var i = 0; i < options.Length; i++)
         {
             var hasValue = i + 1 < options.Length;
@@ -451,6 +465,9 @@ internal static class Program
                     break;
                 case "--flmm-probe" when !probe:
                     probe = true;
+                    break;
+                case "--same-version" when !sameVersion:
+                    sameVersion = true;
                     break;
                 default:
                     return Fail(Usage);
@@ -478,6 +495,7 @@ internal static class Program
         var index = profile.IndexOf(modId);
         if (index < 0)
             return Fail($"The profile has no mod '{modId}'.");
+        var mod = profile.Mods[index];
         GameReport? report = null;
         if (target.IsRetail)
         {
@@ -485,30 +503,164 @@ internal static class Program
                 return Fail($"The folder {game} does not exist.");
             report = game != null ? GameDetector.Detect(game) : GameDetector.CheckRoot(profile.BaseFolder);
         }
-        var result = ModExport.Run(new ExportRequest
+        // The output root holds the version folders and the publish history (decisions D565 and D566).
+        var root = ModExport.DefaultFolder(profile.FilePath, modId);
+        if (output == null && ModVersion.SafeProblem(mod.Manifest.Version) is { } unsafeVersion)
         {
-            Mod = profile.Mods[index],
+            Err.WriteLine(unsafeVersion);
+            return ExitProblems;
+        }
+        var publish = PublishSettings.Load(mod.Folder);
+        foreach (var problem in publish.Problems)
+            Err.WriteLine($"Warning: {mod.Folder}: {problem}");
+        var prepared = ModExport.Prepare(new ExportRequest
+        {
+            Mod = mod,
             Targets = [target],
             BaseOf = _ => report,
-            OutputFolder = output ?? ModExport.DefaultFolder(profile.FilePath, modId),
+            OutputFolder = output ?? ModExport.VersionFolder(root, mod.Manifest),
             Forms = forms,
             FlmmProbe = probe,
             ChecklistOnly = checklist,
             OpenLancerBase = GameBase.Standard(profile.BaseFolder),
+            Publish = publish.Settings,
             StringWriter = DllStringResourceWriter.Instance,
             Thn = ThornEvaluator.Instance,
         });
-        foreach (var problem in result.Problems)
+        foreach (var problem in prepared.Problems)
             Err.WriteLine(problem);
         if (checklist)
         {
-            foreach (var line in result.Checklist)
+            foreach (var line in prepared.Checklist)
                 Out.WriteLine(line);
-            return result.Problems.Any(p => p.Severity == DiagnosticSeverity.Error) ? ExitProblems : ExitOk;
+            return prepared.Problems.Any(p => p.Severity == DiagnosticSeverity.Error) ? ExitProblems : ExitOk;
         }
+
+        var version = mod.Manifest.Version;
+        var location = new HistoryLocation(root, modId, mod.Folder,
+            [profile.BaseFolder, .. report?.Root is { } gameRoot ? [gameRoot] : Array.Empty<string>()]);
+        var (history, historyProblem) = PublishHistory.Load(root, modId);
+        if (historyProblem != null)
+            Err.WriteLine($"Warning: {historyProblem}");
+        var time = DateTime.UtcNow;
+        var replace = false;
+        // The probe is not for players, so it neither runs the guard nor goes into the history.
+        if (!probe && !prepared.Refused)
+        {
+            var guard = history.Conflict(prepared);
+            if (guard.Kind != GuardKind.None)
+                RecordHistory(location, h => SetChecks(h, prepared.Checks, prepared.Content, time));
+            if (guard.Kind == GuardKind.Published)
+            {
+                Err.WriteLine(sameVersion ? PublishMessages.SameVersionPublished(version) : guard.Text);
+                return ExitProblems;
+            }
+            if (guard.Kind == GuardKind.Exported)
+            {
+                if (!sameVersion || !guard.CanReplace)
+                {
+                    Err.WriteLine(sameVersion ? guard.PartialText : guard.Text);
+                    return ExitProblems;
+                }
+                replace = true;
+            }
+        }
+
+        var result = ModExport.Write(prepared, probe ? [] : history.ValidPackages(version, prepared.OutputFolder, prepared.Content));
         foreach (var package in result.Packages)
             Out.WriteLine(package.Path != null ? $"Wrote {package.Path}" : $"Refused {package.FileName}");
+        if (!probe && !prepared.Refused)
+        {
+            RecordResult? recorded = null;
+            RecordHistory(location, h =>
+            {
+                SetChecks(h, result.Checks, result.Content, time);
+                if (result.Packages.Any(p => p.Path != null))
+                    recorded = h.RecordExport(PublishHistory.EntryOf(result, time), replace);
+            });
+            foreach (var line in recorded?.Messages(version) ?? [])
+                Out.WriteLine(line);
+        }
         return result.Succeeded ? ExitOk : ExitProblems;
+    }
+
+    /// <summary>Writes a change into the publish history, and prints the warnings of the write.</summary>
+    private static void RecordHistory(HistoryLocation location, Action<PublishHistory> change)
+    {
+        foreach (var message in PublishHistory.Update(location, "export", change).Messages)
+            Err.WriteLine($"Warning: {message}");
+    }
+
+    /// <summary>Keeps the result of the checks of each target as the last check of the target (decision D572).</summary>
+    private static void SetChecks(PublishHistory history, IEnumerable<TargetCheck> checks, string content, DateTime time)
+    {
+        foreach (var check in checks)
+            history.SetCheck(new HistoryCheck(check.Target.Id, time, content, check.Base, check.Errors, check.Warnings));
+    }
+
+    /// <summary>Prints the publish checklist of a mod (section 15 of the M11c design). It reads the history, the last
+    /// checks and the profile base, and runs no check.</summary>
+    private static int Publish(string profilePath, string[] options)
+    {
+        string? modId = null;
+        var json = false;
+        for (var i = 0; i < options.Length; i++)
+        {
+            switch (options[i])
+            {
+                case "--mod" when modId == null && i + 1 < options.Length:
+                    modId = options[++i];
+                    break;
+                case "--json" when !json:
+                    json = true;
+                    break;
+                default:
+                    return Fail(Usage);
+            }
+        }
+        if (modId == null)
+            return Fail(Usage);
+        var profile = ModProfile.Load(profilePath);
+        var index = profile.IndexOf(modId);
+        if (index < 0)
+            return Fail($"The profile has no mod '{modId}'.");
+        var mod = profile.Mods[index];
+        var publish = PublishSettings.Load(mod.Folder);
+        var (history, historyProblem) = PublishHistory.Load(ModExport.DefaultFolder(profile.FilePath, modId), modId);
+        foreach (var problem in publish.Problems.Append(historyProblem).OfType<string>())
+            Err.WriteLine($"Warning: {problem}");
+        var fingerprint = new ModFingerprint();
+        var report = GameDetector.CheckRoot(profile.BaseFolder);
+        var checklist = PublishChecklist.Of(new ChecklistInput(mod.Manifest, publish.Settings, history,
+            fingerprint.Content(mod.Manifest, mod.Folder), fingerprint.Page(mod.Manifest, mod.Folder, publish.Settings),
+            t => report is { CanBeBase: true } && report.Target == t.Id ? TargetCheck.BaseKey(report) : null, []));
+
+        if (json)
+        {
+            Out.WriteLine(JsonSerializer.Serialize(new
+            {
+                mod = mod.Id,
+                name = mod.Manifest.Name,
+                version = mod.Manifest.Version,
+                complete = checklist.CompleteCount,
+                total = checklist.Steps.Count,
+                steps = checklist.Steps.Select(s => new { number = s.Number, name = s.Name, complete = s.Complete, missing = s.Missing }),
+                recommended = checklist.Recommended.Select(r => r.Text),
+            }, ReportJson));
+        }
+        else
+        {
+            Out.WriteLine($"{mod.Manifest.Name} {mod.Manifest.Version} ({mod.Id}): {checklist.Summary}");
+            foreach (var step in checklist.Steps)
+                Out.WriteLine($"{step.Number}. {step.Name}: {(step.Complete ? "done" : string.Join(" ", step.Missing))}");
+            if (checklist.Recommended.Count > 0)
+            {
+                Out.WriteLine("Recommended:");
+                foreach (var item in checklist.Recommended)
+                    Out.WriteLine($"- {item.Text}");
+            }
+        }
+        return checklist.AllComplete ? ExitOk : ExitProblems;
     }
 
     /// <summary>Installs the mods of a profile into the play copy of a game (section 8.9 of the M11 design). It starts no

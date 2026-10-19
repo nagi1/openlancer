@@ -7,6 +7,7 @@ using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Overlay;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Data.Strings;
 using OpenLancer.Data.Thn;
 using OpenLancer.Data.Validation;
@@ -34,7 +35,8 @@ public sealed record ExportRequest
     /// target.</summary>
     public required Func<ExportTarget, GameReport?> BaseOf { get; init; }
 
-    /// <summary>The folder of the packages. The export makes it.</summary>
+    /// <summary>The exact folder of the packages. The export makes it. The editor and the default of
+    /// <c>oltool export</c> give <see cref="ModExport.VersionFolder"/>.</summary>
     public required string OutputFolder { get; init; }
 
     public ExportForms Forms { get; init; } = ExportForms.All;
@@ -48,6 +50,9 @@ public sealed record ExportRequest
     /// <summary>The base of the checklist of the target OpenLancer, or null. A retail target uses its own base.</summary>
     public GameBase? OpenLancerBase { get; init; }
 
+    /// <summary>The publish settings of the mod (milestone M11c). The texts of the packages use them.</summary>
+    public PublishSettings Publish { get; init; } = PublishSettings.Empty;
+
     public required IStringResourceWriter StringWriter { get; init; }
 
     public required IThnEvaluator Thn { get; init; }
@@ -55,7 +60,27 @@ public sealed record ExportRequest
 
 /// <summary>One package of an export.</summary>
 /// <param name="Path">The full path of the written file, or null when the export refused the package.</param>
-public sealed record ExportedPackage(ExportTarget Target, string FileName, string? Path);
+public sealed record ExportedPackage(ExportTarget Target, string FileName, string? Path)
+{
+    public PackageForm Form { get; init; }
+
+    /// <summary>The SHA-256 of the written file, or null.</summary>
+    public string? Sha256 { get; init; }
+
+    /// <summary>The guard digest of the game files of the package (decision D589), or null when the export refused
+    /// the package.</summary>
+    public string? GameFiles { get; init; }
+}
+
+/// <summary>The result of the checks of one target (decision D572).</summary>
+/// <param name="Base">The base of the check: <c>&lt;root&gt;|&lt;build&gt;</c>, or empty for the target OpenLancer and
+/// for a target without a base.</param>
+public sealed record TargetCheck(ExportTarget Target, string Base, int Errors, int Warnings)
+{
+    /// <summary>The base key of a linked game: its root and its build.</summary>
+    public static string BaseKey(GameReport? report) =>
+        report?.Root is { } root ? $"{GameFolders.Normal(root)}|{report.Build}" : "";
+}
 
 /// <summary>The result of an export.</summary>
 public sealed record ExportResult(
@@ -68,187 +93,500 @@ public sealed record ExportResult(
     /// <summary>True when the export wrote each package that the request asks for.</summary>
     public bool Succeeded => Packages.Count > 0 && Packages.All(p => p.Path != null) &&
                              Problems.All(p => p.Severity != DiagnosticSeverity.Error);
+
+    /// <summary>The version of the mod at the export.</summary>
+    public string Version { get; init; } = "";
+
+    /// <summary>The content fingerprint of the mod at the export (decision D583).</summary>
+    public string Content { get; init; } = "";
+
+    /// <summary>The page fingerprint of the mod at the export.</summary>
+    public string Page { get; init; } = "";
+
+    /// <summary>The result of the checks of each target.</summary>
+    public IReadOnlyList<TargetCheck> Checks { get; init; } = [];
+}
+
+/// <summary>A package of a prepared export, before its compression.</summary>
+public sealed record PreparedPackage(ExportTarget Target, PackageForm Form, string FileName, string? GameFiles)
+{
+    /// <summary>Makes the bytes, or null when a problem refuses the package.</summary>
+    internal Func<byte[]>? Make { get; init; }
+
+    public bool Refused => Make == null;
 }
 
 /// <summary>
-/// The export of one mod (milestone M11): for each retail target, the merge on the files of a linked game, the format
-/// checks, the drop-in zip and the FLMM package. For the target OpenLancer, a zip of the mod folder. Then the text of
-/// the Nexus page and the checklist for testers.
+/// An export after its checks and before its writes (section 13.1 of the M11c design): the problems, the checklist,
+/// the guard digests and the plan of each package. A check of a mod is a <see cref="ModExport.Prepare"/> without a
+/// <see cref="ModExport.Write"/>.
+/// </summary>
+public sealed class PreparedExport
+{
+    private readonly List<PreparedPackage> packages = [];
+    private readonly List<Diagnostic> problems = [];
+    private readonly List<(ExportTarget, IReadOnlyList<string>)> blocks = [];
+    private readonly Dictionary<ExportTarget, TargetFiles> builds = [];
+    private readonly List<TargetCheck> checks = [];
+    private readonly List<PublishScreenshot> screenshots = [];
+
+    internal PreparedExport(ExportRequest request, string outputFolder)
+    {
+        Request = request;
+        OutputFolder = outputFolder;
+        Texts = new PublishTexts(request.Mod.Manifest, request.Publish);
+    }
+
+    public ExportRequest Request { get; }
+
+    public string OutputFolder { get; }
+
+    public PublishTexts Texts { get; }
+
+    public string Version => Request.Mod.Manifest.Version;
+
+    /// <summary>True when the export can write nothing: the output folder is refused, the last save of the mod is not
+    /// complete, or the version is not safe in a file name.</summary>
+    public bool Refused { get; internal set; }
+
+    public IReadOnlyList<PreparedPackage> Packages => packages;
+
+    public IReadOnlyList<Diagnostic> Problems => problems;
+
+    /// <summary>The change list of each target that passed its checks, in target order.</summary>
+    public IReadOnlyList<(ExportTarget Target, IReadOnlyList<string> Lines)> ChecklistBlocks => blocks;
+
+    /// <summary>The change lists of all targets, each after the line "Target: &lt;name&gt;".</summary>
+    public IReadOnlyList<string> Checklist =>
+    [
+        .. ChecklistBlocks.SelectMany((b, i) =>
+            (i > 0 ? [""] : Array.Empty<string>()).Append(PackageTexts.ChecklistTarget(b.Target)).Concat(b.Lines)),
+    ];
+
+    public IReadOnlyDictionary<ExportTarget, TargetFiles> Builds => builds;
+
+    public IReadOnlyList<TargetCheck> Checks => checks;
+
+    /// <summary>The content fingerprint of the mod (decision D583).</summary>
+    public string Content { get; internal set; } = "";
+
+    /// <summary>The page fingerprint of the mod.</summary>
+    public string Page { get; internal set; } = "";
+
+    /// <summary>The screenshots that pass the screenshot rule, in list order: the path relative to the mod folder and
+    /// the caption. The list is empty when one screenshot fails (decision D586).</summary>
+    public IReadOnlyList<PublishScreenshot> Screenshots => screenshots;
+
+    /// <summary>The target, the form and the guard digest of each package that is not refused, for the guard.</summary>
+    public IReadOnlyList<(string Target, string Form, string GameFiles)> Digests =>
+    [
+        .. Packages.Where(p => p.GameFiles != null).Select(p => (p.Target.Id, PackageForms.Of(p.Form), p.GameFiles!)),
+    ];
+
+    internal void Add(PreparedPackage package) => packages.Add(package);
+
+    internal void Add(TargetCheck check) => checks.Add(check);
+
+    internal void Add(Diagnostic problem) => problems.Add(problem);
+
+    internal void AddRange(IEnumerable<Diagnostic> more) => problems.AddRange(more);
+
+    internal void AddBlock(ExportTarget target, IReadOnlyList<string> lines) => blocks.Add((target, lines));
+
+    internal void SetBuild(ExportTarget target, TargetFiles files) => builds[target] = files;
+
+    /// <summary>Keeps the screenshots that passed the screenshot rule, or none when one failed.</summary>
+    internal void SetScreenshots(IEnumerable<PublishScreenshot> accepted)
+    {
+        screenshots.Clear();
+        screenshots.AddRange(accepted);
+    }
+}
+
+/// <summary>
+/// The export of one mod (milestones M11 and M11c): for each retail target, the merge on the files of a linked game,
+/// the format checks, the drop-in zip and the FLMM package. For the target OpenLancer, a zip of the mod folder. Then the
+/// text of the Nexus page, the checklist for testers and the screenshots.
 /// </summary>
 /// <remarks>
-/// The export only reads the game folders and the mod folder. It writes only into the output folder, which must not
-/// overlap a game folder or the mod folder.
+/// <para>The export only reads the game folders and the mod folder. It writes only into the output folder, which must
+/// not overlap a game folder or the mod folder.</para>
+/// <para>The export runs in two steps. <see cref="Prepare"/> runs each step that can give a problem and computes the
+/// guard digests, without compression. <see cref="Write"/> makes and writes one package at a time. The guard of the
+/// publish history runs between them. <see cref="Write"/> does not write the history: its caller does.</para>
 /// </remarks>
 public static class ModExport
 {
     public const string NexusPageFile = "nexus-page.txt";
     public const string ChecklistFile = "CHECKLIST.txt";
 
+    /// <summary>The folder of the screenshots in the output folder, for the Nexus upload.</summary>
+    public const string ScreenshotsFolder = "screenshots";
+
     /// <summary>The text after the errors of a target.</summary>
     public const string Stopped = "The export stopped. Fix the errors, then export again.";
 
-    /// <summary>The default output folder of a mod: <c>exports\&lt;mod id&gt;</c> next to the folder of the profile
-    /// folder.</summary>
+    /// <summary>The default output root of a mod: <c>exports\&lt;mod id&gt;</c> next to the folder of the profile
+    /// folder. The publish history of the mod is in this folder too.</summary>
     public static string DefaultFolder(string profilePath, string modId) =>
         Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(profilePath))!, "..", "exports", modId));
+
+    /// <summary>The folder of a version in an output root: <c>&lt;root&gt;\&lt;version&gt;</c> (decision D566).</summary>
+    /// <exception cref="ArgumentException">The version is not safe in a path (decision D585).</exception>
+    public static string VersionFolder(string root, ModManifest mod) =>
+        ModVersion.SafeProblem(mod.Version) is { } problem
+            ? throw new ArgumentException(problem, nameof(mod))
+            : Path.Combine(Path.GetFullPath(root), mod.Version);
 
     /// <summary>The prefix of the file name of the text DLL of an exported mod.</summary>
     public static string DllName(string modId) => $"ol_{modId}.dll";
 
-    public static ExportResult Run(ExportRequest request)
+    /// <summary>Prepares and writes an export without earlier packages of the version, as M11 did.</summary>
+    public static ExportResult Run(ExportRequest request) => Write(Prepare(request), []);
+
+    /// <summary>
+    /// Runs the merge, the format checks, the content checks, the FLMM script, the game file rule and the screenshot
+    /// rule of each target, and computes the guard digests. It writes no file and compresses nothing.
+    /// </summary>
+    public static PreparedExport Prepare(ExportRequest request)
     {
         var mod = request.Mod;
-        var output = Path.GetFullPath(request.OutputFolder);
-        var problems = new List<Diagnostic>();
-        var packages = new List<ExportedPackage>();
-        var checklist = new List<string>();
-        var builds = new Dictionary<ExportTarget, TargetFiles>();
-        var nexus = new List<(ExportTarget, IReadOnlyList<string>)>();
+        var prepared = new PreparedExport(request, Path.GetFullPath(request.OutputFolder));
+        var output = prepared.OutputFolder;
+        var fingerprint = new ModFingerprint();
+        prepared.Content = fingerprint.Content(mod.Manifest, mod.Folder);
+        prepared.Page = fingerprint.Page(mod.Manifest, mod.Folder, request.Publish);
 
         if (OutputRefusal(output, request) is { } refusal)
         {
-            problems.Add(Diagnostic.Error(output, refusal));
-            return new ExportResult(output, packages, problems, checklist, builds);
+            prepared.Add(Diagnostic.Error(output, refusal));
+            prepared.Refused = true;
+            return prepared;
+        }
+        // A save that is not complete leaves a mix of old and new files (finding R31).
+        if (mod.HasPendingSave)
+        {
+            prepared.Add(Diagnostic.Error(mod.Folder, PublishMessages.CheckRefusedPendingSave));
+            prepared.Refused = true;
+            return prepared;
+        }
+        if (ModVersion.SafeProblem(mod.Manifest.Version) is { } unsafeVersion)
+        {
+            prepared.Add(Diagnostic.Error(Path.Combine(mod.Folder, ModManifest.FileName), unsafeVersion));
+            prepared.Refused = true;
+            return prepared;
         }
         if (!request.ChecklistOnly && InGitWorkTree(output))
-            problems.Add(Diagnostic.Warning(output, "The export folder is in a git repository. The packages hold merged " +
+            prepared.Add(Diagnostic.Warning(output, "The export folder is in a git repository. The packages hold merged " +
                                                     "game files. Do not commit them."));
+        var screenshotErrors = Screenshots(prepared);
+        prepared.AddRange(screenshotErrors);
 
         foreach (var target in request.Targets)
         {
-            var written = new List<string>();
-            var targetProblems = new List<Diagnostic>();
             if (target.Refusal(mod.Manifest) is { } reason)
             {
-                problems.Add(Diagnostic.Error(mod.Folder, reason));
-                packages.Add(new ExportedPackage(target, target.IsRetail ? DropInPackage.FileName(mod.Manifest, target)
-                    : ModZip.FileName(mod.Manifest), null));
+                prepared.Add(Diagnostic.Error(mod.Folder, reason));
+                prepared.Add(new PreparedPackage(target, target.IsRetail ? PackageForm.DropIn : PackageForm.ModFolder,
+                    target.IsRetail ? DropInPackage.FileName(mod.Manifest, target) : ModZip.FileName(mod.Manifest), null));
+                prepared.Add(new TargetCheck(target, "", 1, 0));
                 continue;
             }
             if (!target.IsRetail)
-            {
-                if (request.OpenLancerBase is { } openLancerBase)
-                {
-                    var build = TargetBuild.Run(openLancerBase, [mod], ModOverlay.StringsDllName, request.StringWriter,
-                        request.Thn);
-                    builds[target] = build;
-                    Checklist(checklist, target, build);
-                }
-                if (request.ChecklistOnly)
-                    continue;
-                var zip = ModZip.Write(mod);
-                problems.AddRange(zip.Problems);
-                packages.Add(Save(output, zip, target, written));
-                nexus.Add((target, written));
-                continue;
-            }
-
-            var report = request.BaseOf(target);
-            if (target.BaseRefusal(report) is { } noBase)
-            {
-                problems.Add(Diagnostic.Error(mod.Folder, noBase));
-                AddRefused(packages, request, target);
-                continue;
-            }
-            targetProblems.AddRange(target.BaseWarnings(report!).Select(w => Diagnostic.Warning(report!.Root!, w)));
-            targetProblems.AddRange(PackageRules.RefusedFiles(mod));
-            var gameBase = GameBase.Standard(report!.Root!);
-            var files = TargetBuild.Run(gameBase, [mod], DllName(mod.Id), request.StringWriter, request.Thn);
-            builds[target] = files;
-            targetProblems.AddRange(files.Diagnostics);
-            targetProblems.AddRange(FormatChecks.Run(files));
-            targetProblems.AddRange(TargetChecks.Run(files));
-            if (RetailReference(request, target) is { } retail)
-                targetProblems.AddRange(TargetChecks.HdEditionLines(files, retail));
-            if (files.File(ModOverlay.FreelancerIniPath) != null && FreelancerIniDiffers(gameBase, report))
-                targetProblems.Add(Diagnostic.Warning(ModOverlay.FreelancerIniPath,
-                    $"Your freelancer.ini differs from the file list of {GameDetector.BuildName(report.Build!)}. The " +
-                    "drop-in zip carries these differences to each player."));
-            problems.AddRange(targetProblems);
-            if (targetProblems.Any(p => p.Severity == DiagnosticSeverity.Error))
-            {
-                problems.Add(Diagnostic.Error(mod.Folder, Stopped));
-                AddRefused(packages, request, target);
-                continue;
-            }
-            Checklist(checklist, target, files);
-            if (request.ChecklistOnly)
-                continue;
-
-            if (request.Forms.HasFlag(ExportForms.DropIn))
-            {
-                var dropIn = DropInPackage.Write(files, mod.Manifest, target);
-                problems.AddRange(dropIn.Problems);
-                packages.Add(Save(output, dropIn, target, written));
-            }
-            if (request.Forms.HasFlag(ExportForms.Flmm))
-            {
-                var placeholders = TargetBuild.Run(gameBase, [mod], DllName(mod.Id), request.StringWriter, request.Thn,
-                    keepPlaceholders: true);
-                var flmm = FlmmPackage.Write(placeholders, mod, target, request.FlmmProbe);
-                problems.AddRange(flmm.Problems);
-                packages.Add(Save(output, flmm, target, written));
-            }
-            nexus.Add((target, written));
+                PrepareOpenLancer(prepared, target, screenshotErrors);
+            else
+                PrepareRetail(prepared, target);
         }
-
-        if (!request.ChecklistOnly && packages.Any(p => p.Path != null))
-        {
-            AtomicFile.WriteAllBytes(Path.Combine(output, NexusPageFile),
-                Encoding.UTF8.GetBytes(PackageTexts.NexusPage(mod.Manifest, nexus)));
-            AtomicFile.WriteAllBytes(Path.Combine(output, ChecklistFile),
-                Encoding.UTF8.GetBytes(string.Join("\r\n", checklist) + "\r\n"));
-        }
-        return new ExportResult(output, packages, problems, checklist, builds);
+        return prepared;
     }
 
-    /// <summary>The reason why the export cannot write into the folder, or null: the folder overlaps the mod folder
-    /// or the folder of a base, or it is in a game folder.</summary>
-    private static string? OutputRefusal(string output, ExportRequest request)
+    /// <summary>
+    /// Makes and writes each package of a prepared export, one at a time. Then it copies the screenshots and writes
+    /// <c>nexus-page.txt</c> and <c>CHECKLIST.txt</c>.
+    /// </summary>
+    /// <param name="earlier">The valid packages of earlier exports of the same version into the same folder (see
+    /// <see cref="PublishHistory.ValidPackages"/>). The Nexus page and the checklist list them too.</param>
+    public static ExportResult Write(PreparedExport prepared, IReadOnlyList<ExportedPackage> earlier)
     {
-        if (PathRules.Overlaps(output, request.Mod.Folder))
-            return $"The export folder {output} overlaps the mod folder {request.Mod.Folder}. Pick another folder.";
-        foreach (var target in request.Targets.Where(t => t.IsRetail))
+        var output = prepared.OutputFolder;
+        var packages = new List<ExportedPackage>();
+        if (!prepared.Refused && !prepared.Request.ChecklistOnly)
         {
-            if (request.BaseOf(target)?.Root is { } root && PathRules.Overlaps(output, root))
-                return $"The export folder {output} overlaps the game folder {root}. OpenLancer does not write into the " +
+            foreach (var package in prepared.Packages)
+                packages.Add(Save(output, package));
+        }
+        var written = packages.Where(p => p.Path != null).ToList();
+        if (written.Count > 0)
+        {
+            var images = CopyScreenshots(output, prepared);
+            var listed = earlier.Where(e => written.All(w => !w.FileName.Equals(e.FileName, StringComparison.OrdinalIgnoreCase)))
+                .Concat(written)
+                .OrderBy(p => ExportTarget.All.ToList().IndexOf(p.Target)).ThenBy(p => p.Form)
+                .ToList();
+            AtomicFile.WriteAllBytes(Path.Combine(output, NexusPageFile),
+                Encoding.UTF8.GetBytes(PackageTexts.NexusPage(prepared.Texts, listed, images)));
+            AtomicFile.WriteAllBytes(Path.Combine(output, ChecklistFile),
+                Encoding.UTF8.GetBytes(PackageTexts.ChecklistFile(prepared.Texts, Blocks(output, prepared, listed))));
+        }
+        return new ExportResult(output, packages, prepared.Problems, prepared.Checklist, prepared.Builds)
+        {
+            Version = prepared.Version,
+            Content = prepared.Content,
+            Page = prepared.Page,
+            Checks = prepared.Checks,
+        };
+    }
+
+    /// <summary>The reason why OpenLancer cannot write into a folder of a mod, or null: the folder overlaps the mod
+    /// folder or a game folder, or it is in a game folder. The export and the publish history use it.</summary>
+    public static string? FolderRefusal(string folder, string modFolder, IEnumerable<string> gameRoots)
+    {
+        folder = Path.GetFullPath(folder);
+        if (PathRules.Overlaps(folder, Path.GetFullPath(modFolder)))
+            return $"The export folder {folder} overlaps the mod folder {modFolder}. Pick another folder.";
+        foreach (var root in gameRoots)
+        {
+            if (PathRules.Overlaps(folder, root))
+                return $"The export folder {folder} overlaps the game folder {root}. OpenLancer does not write into the " +
                        "game folder. Pick another folder.";
         }
         // Also a game that is not a base of the export, for example the profile base or another install.
-        if (GameRoot.Containing(output) is { } game)
-            return $"The export folder {output} is in the game folder {game}. OpenLancer does not write into a game " +
+        if (GameRoot.Containing(folder) is { } game)
+            return $"The export folder {folder} is in the game folder {game}. OpenLancer does not write into a game " +
                    "folder. Pick another folder.";
         return null;
     }
 
-    private static void AddRefused(List<ExportedPackage> packages, ExportRequest request, ExportTarget target)
+    /// <summary>The roots of the linked games that are the bases of the retail targets of a request.</summary>
+    private static IReadOnlyList<string> GameRoots(ExportRequest request) =>
+    [
+        .. request.Targets.Where(t => t.IsRetail).Select(t => request.BaseOf(t)?.Root).OfType<string>(),
+    ];
+
+    private static string? OutputRefusal(string output, ExportRequest request) =>
+        FolderRefusal(output, request.Mod.Folder, GameRoots(request));
+
+    /// <summary>Checks each listed screenshot (decision D586). A failure is an error, and then no screenshot goes into
+    /// the export.</summary>
+    private static List<Diagnostic> Screenshots(PreparedExport prepared)
     {
+        var request = prepared.Request;
+        var errors = new List<Diagnostic>();
+        var accepted = new List<PublishScreenshot>();
+        var source = Path.Combine(request.Mod.Folder, PublishSettings.FileName);
+        foreach (var screenshot in request.Publish.Screenshots)
+        {
+            if (ScreenshotRules.Check(request.Mod.Folder, screenshot.File, GameRoots(request)) is { } reason)
+                errors.Add(Diagnostic.Error(source, reason));
+            else
+                accepted.Add(screenshot);
+        }
+        prepared.SetScreenshots(errors.Count > 0 ? [] : accepted);
+        return errors;
+    }
+
+    /// <summary>The checks and the zip of the target OpenLancer: the rules of the zip and the screenshot rule.</summary>
+    private static void PrepareOpenLancer(PreparedExport prepared, ExportTarget target, IReadOnlyList<Diagnostic> screenshotErrors)
+    {
+        var request = prepared.Request;
+        var mod = request.Mod;
+        if (request.OpenLancerBase is { } openLancerBase)
+        {
+            var build = TargetBuild.Run(openLancerBase, [mod], ModOverlay.StringsDllName, request.StringWriter, request.Thn);
+            prepared.SetBuild(target, build);
+            prepared.AddBlock(target, PackageTexts.Checklist(build));
+        }
+        if (request.ChecklistOnly)
+            return;
+        var plan = ModZip.Plan(mod, prepared.Texts, [.. prepared.Screenshots.Select(s => s.File)], prepared.Content, null);
+        prepared.AddRange(plan.Problems);
+        var targetProblems = plan.Problems.Concat(screenshotErrors).ToList();
+        prepared.Add(Check(target, "", targetProblems));
+        var refused = screenshotErrors.Count > 0 || plan.Make == null;
+        prepared.Add(new PreparedPackage(target, PackageForm.ModFolder, plan.FileName, refused ? null : plan.GameFiles)
+        {
+            Make = refused ? null : plan.Make,
+        });
+    }
+
+    /// <summary>The merge, the checks and the package plans of a retail target.</summary>
+    private static void PrepareRetail(PreparedExport prepared, ExportTarget target)
+    {
+        var request = prepared.Request;
+        var mod = request.Mod;
+        var report = request.BaseOf(target);
+        if (target.BaseRefusal(report) is { } noBase)
+        {
+            prepared.Add(Diagnostic.Error(mod.Folder, noBase));
+            AddRefused(prepared, target);
+            prepared.Add(new TargetCheck(target, "", 1, 0));
+            return;
+        }
+        var baseKey = TargetCheck.BaseKey(report);
+        var targetProblems = new List<Diagnostic>();
+        targetProblems.AddRange(target.BaseWarnings(report!).Select(w => Diagnostic.Warning(report!.Root!, w)));
+        targetProblems.AddRange(PackageRules.RefusedFiles(mod));
+        var gameBase = GameBase.Standard(report!.Root!);
+        var files = TargetBuild.Run(gameBase, [mod], DllName(mod.Id), request.StringWriter, request.Thn);
+        prepared.SetBuild(target, files);
+        targetProblems.AddRange(files.Diagnostics);
+        targetProblems.AddRange(FormatChecks.Run(files));
+        targetProblems.AddRange(TargetChecks.Run(files));
+        if (RetailReference(request, target) is { } retail)
+            targetProblems.AddRange(TargetChecks.HdEditionLines(files, retail));
+        if (files.File(ModOverlay.FreelancerIniPath) != null && FreelancerIniDiffers(gameBase, report))
+            targetProblems.Add(Diagnostic.Warning(ModOverlay.FreelancerIniPath,
+                $"Your freelancer.ini differs from the file list of {GameDetector.BuildName(report.Build!)}. The " +
+                "drop-in zip carries these differences to each player."));
+        prepared.AddRange(targetProblems);
+        if (targetProblems.Any(p => p.Severity == DiagnosticSeverity.Error))
+        {
+            prepared.Add(Diagnostic.Error(mod.Folder, Stopped));
+            AddRefused(prepared, target);
+            prepared.Add(Check(target, baseKey, targetProblems));
+            return;
+        }
+        prepared.AddBlock(target, PackageTexts.Checklist(files));
+        if (request.ChecklistOnly)
+        {
+            prepared.Add(Check(target, baseKey, targetProblems));
+            return;
+        }
+
+        if (request.Forms.HasFlag(ExportForms.DropIn))
+        {
+            var dropIn = DropInPackage.Plan(files, prepared.Texts, target, null);
+            prepared.AddRange(dropIn.Problems);
+            targetProblems.AddRange(dropIn.Problems);
+            prepared.Add(new PreparedPackage(target, PackageForm.DropIn, dropIn.FileName, dropIn.GameFiles)
+            {
+                Make = dropIn.Make,
+            });
+        }
+        if (request.Forms.HasFlag(ExportForms.Flmm))
+        {
+            var placeholders = TargetBuild.Run(gameBase, [mod], DllName(mod.Id), request.StringWriter, request.Thn,
+                keepPlaceholders: true);
+            var flmm = FlmmPackage.Plan(placeholders, mod, prepared.Texts, target, request.FlmmProbe, null);
+            prepared.AddRange(flmm.Problems);
+            targetProblems.AddRange(flmm.Problems);
+            prepared.Add(new PreparedPackage(target, PackageForm.Flmm, flmm.FileName, flmm.GameFiles)
+            {
+                Make = flmm.Make,
+            });
+        }
+        prepared.Add(Check(target, baseKey, targetProblems));
+    }
+
+    private static TargetCheck Check(ExportTarget target, string baseKey, IReadOnlyCollection<Diagnostic> problems) =>
+        new(target, baseKey, problems.Count(p => p.Severity == DiagnosticSeverity.Error),
+            problems.Count(p => p.Severity == DiagnosticSeverity.Warning));
+
+    private static void AddRefused(PreparedExport prepared, ExportTarget target)
+    {
+        var request = prepared.Request;
         if (request.ChecklistOnly)
             return;
         if (request.Forms.HasFlag(ExportForms.DropIn))
-            packages.Add(new ExportedPackage(target, DropInPackage.FileName(request.Mod.Manifest, target), null));
+            prepared.Add(new PreparedPackage(target, PackageForm.DropIn,
+                DropInPackage.FileName(request.Mod.Manifest, target), null));
         if (request.Forms.HasFlag(ExportForms.Flmm))
-            packages.Add(new ExportedPackage(target, FlmmPackage.FileName(request.Mod.Manifest, target, request.FlmmProbe),
-                null));
+            prepared.Add(new PreparedPackage(target, PackageForm.Flmm,
+                FlmmPackage.FileName(request.Mod.Manifest, target, request.FlmmProbe), null));
     }
 
-    private static ExportedPackage Save(string output, Package package, ExportTarget target, List<string> written)
+    private static ExportedPackage Save(string output, PreparedPackage package)
     {
-        if (package.Bytes == null)
-            return new ExportedPackage(target, package.FileName, null);
+        if (package.Make == null)
+            return new ExportedPackage(package.Target, package.FileName, null) { Form = package.Form };
+        var bytes = package.Make();
         Directory.CreateDirectory(output);
         var path = Path.Combine(output, package.FileName);
-        AtomicFile.WriteAllBytes(path, package.Bytes);
-        written.Add(package.FileName);
-        return new ExportedPackage(target, package.FileName, path);
+        AtomicFile.WriteAllBytes(path, bytes);
+        return new ExportedPackage(package.Target, package.FileName, path)
+        {
+            Form = package.Form,
+            Sha256 = ContentHash.Of(bytes),
+            GameFiles = package.GameFiles,
+        };
     }
 
-    private static void Checklist(List<string> checklist, ExportTarget target, TargetFiles files)
+    /// <summary>
+    /// Copies the screenshots that passed the screenshot rule into <c>screenshots</c> of the output folder, with the
+    /// names <c>01-&lt;name&gt;.&lt;ext&gt;</c> in list order (decision D567). It first deletes the images of an earlier
+    /// export in that folder, so the folder holds the images of the current list only.
+    /// </summary>
+    /// <returns>The file names and the captions, in list order.</returns>
+    private static List<(string File, string Caption)> CopyScreenshots(string output, PreparedExport prepared)
     {
-        if (checklist.Count > 0)
-            checklist.Add("");
-        checklist.Add($"Target: {target.Name}");
-        checklist.AddRange(PackageTexts.Checklist(files));
+        var folder = Path.Combine(output, ScreenshotsFolder);
+        if (Directory.Exists(folder))
+        {
+            foreach (var old in Directory.EnumerateFiles(folder).Where(f => IsNumberedImage(Path.GetFileName(f))))
+                File.Delete(old);
+        }
+        var images = new List<(string, string)>();
+        for (var i = 0; i < prepared.Screenshots.Count; i++)
+        {
+            var screenshot = prepared.Screenshots[i];
+            var name = $"{i + 1:00}-{Path.GetFileName(screenshot.File)}";
+            Directory.CreateDirectory(folder);
+            var source = Path.Combine(prepared.Request.Mod.Folder, screenshot.File.Replace('/', Path.DirectorySeparatorChar));
+            AtomicFile.WriteAllBytes(Path.Combine(folder, name), File.ReadAllBytes(source));
+            images.Add((name, screenshot.Caption));
+        }
+        return images;
+    }
+
+    /// <summary>True for a name that <see cref="CopyScreenshots"/> gives: two digits, a <c>-</c> and an image
+    /// extension.</summary>
+    private static bool IsNumberedImage(string name) =>
+        name.Length > 3 && char.IsAsciiDigit(name[0]) && char.IsAsciiDigit(name[1]) && name[2] == '-' &&
+        ScreenshotRules.Extensions.Contains(Path.GetExtension(name).ToLowerInvariant());
+
+    /// <summary>
+    /// The change list of each target of the listed packages: the list of this export, or else the block of the target
+    /// in the <c>CHECKLIST.txt</c> of an earlier export in the folder.
+    /// </summary>
+    private static IEnumerable<(ExportTarget, IReadOnlyList<string>)> Blocks(string output, PreparedExport prepared,
+        IReadOnlyList<ExportedPackage> listed)
+    {
+        var old = OldBlocks(Path.Combine(output, ChecklistFile));
+        foreach (var target in ExportTarget.All.Where(t => listed.Any(p => p.Target == t)))
+        {
+            var block = prepared.ChecklistBlocks.FirstOrDefault(b => b.Target == target).Lines;
+            if (block != null)
+                yield return (target, block);
+            else if (old.TryGetValue(PackageTexts.ChecklistTarget(target), out var earlier))
+                yield return (target, earlier);
+        }
+    }
+
+    /// <summary>The blocks of an existing <c>CHECKLIST.txt</c>, by their line "Target: &lt;name&gt;".</summary>
+    private static Dictionary<string, IReadOnlyList<string>> OldBlocks(string path)
+    {
+        var blocks = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+        if (!File.Exists(path))
+            return blocks;
+        string? name = null;
+        var lines = new List<string>();
+        foreach (var line in File.ReadAllText(path).Replace("\r\n", "\n").Split('\n').Append("Target: "))
+        {
+            if (!line.StartsWith("Target: ", StringComparison.Ordinal))
+            {
+                lines.Add(line);
+                continue;
+            }
+            if (name != null)
+            {
+                while (lines.Count > 0 && lines[^1].Length == 0)
+                    lines.RemoveAt(lines.Count - 1);
+                blocks[name] = lines;
+            }
+            name = line;
+            lines = [];
+        }
+        return blocks;
     }
 
     /// <summary>The files of a linked Freelancer 1.0 or 1.1 game for the check of the lines that HD Edition changed, or

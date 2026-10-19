@@ -8,6 +8,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Publishing;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Games;
 using OpenLancer.Editor.Logs;
@@ -181,19 +182,24 @@ internal sealed class ExportDialog(EditorWindow window) : ModalDialog
         var chosen = ExportTarget.All.Where(t => targets.Contains(t.Id)).ToList();
         window.Settings.SetExport(exported.Folder, new ExportChoices([.. chosen.Select(t => t.Id)], dropIn, flmm, folder));
         window.Settings.Save();
-        var reports = bases;
-        var request = new ExportRequest
-        {
-            Mod = exported,
-            Targets = chosen,
-            BaseOf = target => BaseOf(target, reports),
-            OutputFolder = folder,
-            Forms = (dropIn ? ExportForms.DropIn : 0) | (flmm ? ExportForms.Flmm : 0),
-            StringWriter = DllStringResourceWriter.Instance,
-            Thn = ThornEvaluator.Instance,
-        };
+        var request = RequestOf(exported, chosen, bases, folder, (dropIn ? ExportForms.DropIn : 0) | (flmm ? ExportForms.Flmm : 0));
         running = Task.Run(() => ModExport.Run(request));
     }
+
+    /// <summary>The request of an export. The texts of the packages come from the publish.json of the mod (milestone
+    /// M11c).</summary>
+    internal static ExportRequest RequestOf(Mod exported, IReadOnlyList<ExportTarget> chosen, IReadOnlyList<GameReport> reports,
+        string folder, ExportForms forms) => new()
+    {
+        Mod = exported,
+        Targets = chosen,
+        BaseOf = target => BaseOf(target, reports),
+        OutputFolder = folder,
+        Forms = forms,
+        Publish = PublishSettings.Load(exported.Folder).Settings,
+        StringWriter = DllStringResourceWriter.Instance,
+        Thn = ThornEvaluator.Instance,
+    };
 
     /// <summary>Takes the result of the export, and writes its problems and its summary to the Console.</summary>
     private void Finish(Task<ExportResult> task)

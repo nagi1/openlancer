@@ -26,7 +26,8 @@ public static class ModWorkspace
     /// <summary>The id of the empty mod of a new profile, before a number that makes it unique.</summary>
     public const string StarterModId = "my-mod";
 
-    private const string StarterModName = "My mod";
+    /// <summary>The display name of the empty mod of a new profile. The publish checklist asks for another name.</summary>
+    public const string StarterModName = "My mod";
 
     /// <summary>The default workspace folder: <c>Documents\OpenLancer</c>. It follows a moved Documents folder.</summary>
     public static string DefaultFolder =>
@@ -81,6 +82,15 @@ public static class ModWorkspace
     /// it does not have a mod that the mod depends on, or the load order has a cycle.</exception>
     /// <exception cref="IOException">The file could not be written.</exception>
     public static void AddToProfile(string profilePath, string modFolder) => ProfileFile.AddMod(profilePath, modFolder);
+
+    /// <summary>
+    /// Removes a mod folder from the mods list of a profile file (decision D574 of the M11c design). The folder stays.
+    /// The file keeps its other fields, its byte order mark and its line ends.
+    /// </summary>
+    /// <exception cref="ModLoadException">The profile does not list the folder, another mod of the profile names the
+    /// mod in its dependsOn list, or the file has a JSON comment.</exception>
+    /// <exception cref="IOException">The file could not be written.</exception>
+    public static void RemoveFromProfile(string profilePath, string modFolder) => ProfileFile.RemoveMod(profilePath, modFolder);
 
     /// <summary>
     /// Makes <c>profiles\&lt;name&gt;.json</c> in the workspace, with the game root as its absolute base, and an empty

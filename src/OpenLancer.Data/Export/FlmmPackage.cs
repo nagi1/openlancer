@@ -2,6 +2,7 @@ using System.Linq;
 using System.Text;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Mods;
+using OpenLancer.Data.Publishing;
 
 namespace OpenLancer.Data.Export;
 
@@ -25,23 +26,33 @@ public static class FlmmPackage
         Write(files, mod, target, probe, null);
 
     /// <param name="builds">The builds of the game file rule, or null for the embedded manifests.</param>
-    internal static Package Write(TargetFiles files, Mod mod, ExportTarget target, bool probe, KnownBuilds? builds)
+    internal static Package Write(TargetFiles files, Mod mod, ExportTarget target, bool probe, KnownBuilds? builds) =>
+        Plan(files, mod, PublishTexts.Of(mod.Manifest), target, probe, builds).ToPackage();
+
+    /// <summary>
+    /// The plan of the package. The header of the script holds the publish texts as ASCII (decision D580), and each
+    /// character that FLMM cannot show gives a warning. The guard digest holds the files of the <c>.flmod</c> tree and
+    /// the script without its header (decision D589).
+    /// </summary>
+    internal static PackagePlan Plan(TargetFiles files, Mod mod, PublishTexts texts, ExportTarget target, bool probe,
+        KnownBuilds? builds)
     {
         var manifest = mod.Manifest;
-        var script = FlmmScript.Build(files, mod, $"{manifest.Name} {manifest.Version} for {target.Name}", probe);
+        var script = FlmmScript.Build(files, mod, FlmmHeader.Of(texts, target), probe);
         var problems = script.Problems.ToList();
         problems.AddRange(script.Files.Select(f => PackageRules.GameFile(f.Path, f.Bytes, builds)).OfType<Diagnostic>());
         var name = FileName(manifest, target, probe);
         if (problems.Any(p => p.Severity == DiagnosticSeverity.Error))
-            return new Package(name, null, problems);
+            return new PackagePlan(name, null, problems, null);
+        problems.AddRange(texts.FlmmLost().Select(lost =>
+            Diagnostic.Warning(mod.Folder, PublishMessages.FlmmCharacter(lost.Character, lost.Field))));
 
         var tree = script.Files.Select(f => (f.Path, f.Bytes)).ToList();
+        var digest = PackageDigest.Of([.. tree, (FlmmScript.FileName, Encoding.ASCII.GetBytes(script.OperationsXml))]);
         tree.Add((FlmmScript.FileName, Encoding.ASCII.GetBytes(script.Xml)));
-        var flmod = DeterministicZip.Write(tree);
-        var readme = PackageTexts.Readme(manifest, target, PackageForm.Flmm, files, script.Files.Select(f => f.Path).ToList(),
+        var readme = PackageTexts.Readme(texts, target, PackageForm.Flmm, files, script.Files.Select(f => f.Path).ToList(),
             probe);
-        var zip = DeterministicZip.Write([($"{manifest.Id}.flmod", flmod),
-            (PackageTexts.ReadmeName(manifest), Encoding.UTF8.GetBytes(readme))]);
-        return new Package(name, zip, problems);
+        return new PackagePlan(name, () => DeterministicZip.Write([($"{manifest.Id}.flmod", DeterministicZip.Write(tree)),
+            (PackageTexts.ReadmeName(manifest), Encoding.UTF8.GetBytes(readme))]), problems, digest);
     }
 }

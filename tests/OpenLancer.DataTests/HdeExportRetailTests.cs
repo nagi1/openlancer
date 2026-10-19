@@ -90,7 +90,8 @@ public sealed class HdeExportRetailTests(ITestOutputHelper output)
         var files = Build(GameDataPaths.RequireHde(), keepPlaceholders: true);
         var mod = Mod.Load(GameDataPaths.SampleMod("ol-sample"));
 
-        var script = FlmmScript.Build(files, mod, "probe", probe: true);
+        var script = FlmmScript.Build(files, mod, FlmmHeader.Of(PublishTexts.Of(mod.Manifest), ExportTarget.HdEdition),
+            probe: true);
 
         foreach (var problem in script.Problems)
             output.WriteLine(problem.ToString());

@@ -95,6 +95,19 @@ public sealed class ModProfile
         return BaseOf(profilePath, Read(profilePath));
     }
 
+    /// <summary>
+    /// The full paths of the mod folders that a profile file lists, in the order of the file. It reads the JSON as a
+    /// load does, also with comments, and it loads no mod. So it also reads a profile whose mods do not load.
+    /// </summary>
+    /// <exception cref="ModLoadException">The file is not found, or it is not a valid profile.</exception>
+    public static IReadOnlyList<string> ListedFolders(string profilePath)
+    {
+        profilePath = Path.GetFullPath(profilePath);
+        var folder = Path.GetDirectoryName(profilePath)!;
+        return [.. (Read(profilePath)?.Mods ?? []).Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => Path.GetFullPath(Path.Combine(folder, m)))];
+    }
+
     /// <exception cref="ModLoadException">The file is not found, or it is not valid JSON of a profile.</exception>
     private static ProfileJson? Read(string path)
     {
