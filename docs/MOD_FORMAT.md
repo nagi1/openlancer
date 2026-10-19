@@ -601,7 +601,9 @@ A blue label marks a value that the active mod sets. The tooltip of the label na
 
 Revert, in the menu of a row or in the item menu, puts back the lines of the lower layer: the base data with the mods that load before the active mod. The next save then writes no line for them. A section that the active mod adds has no lower lines, so it has no Revert. A key of a group of lines that belong together (see "Lines that belong together") reverts only with its whole section. When the active mod sets the `file` of a `[system]` of `universe.ini`, the Revert of the whole item is not available, because the revert would move the contents of the system to another file.
 
-"Sold at" lists the market lines that sell a good. The lines of a lower layer are read-only, because a patch cannot change them. "Add to base" adds a line to a `[BaseGood]` of that base that the active mod adds. Without one, a new `[BaseGood]` goes into the market file in which the base sells goods of the same category, else into the first market file of the base. The editor refuses a base that already sells the good in a market file.
+"Markets" lists the market lines of a good, by base. Each value of a line has its own field: "Rank", "Reputation", "Minimum stock", "Maximum stock" and "Price multiplier". "Buys or sells" under them sets the transaction type: "Buys and sells", "Only buys" or "Only sells". An edit of a field changes only its value. The engine ignores a line without the price multiplier. So an edit of a shorter line also writes the values of a new line in the missing places.
+
+The market lines of a lower layer are read-only, because a patch cannot change them. "Add to base" adds a line to a `[BaseGood]` of that base that the active mod adds. Without one, a new `[BaseGood]` goes into the market file in which the base sells goods of the same category, else into the first market file of the base. The editor refuses a base that already sells the good in a market file.
 
 ### Edits in the Scene
 
@@ -946,6 +948,8 @@ Each save shows its result in the status bar and as the last Console line of the
 | The session is read-only, for example because the mod is in the game folder | `The editor did not save mod 'my-mod' because it is read-only.` and the reason |
 
 Above the result, the Console lists the files that the save wrote and deleted, or the problems that stopped it. After a save that changed files, the game data loads again in the background, and `oltool validate --active <mod> --json` checks the save in its own process. One validation runs at a time. The oltool process reads the files of the mod, so a save of new edits stops the validation of the save before it, before the save moves files. When that save then changes no file, the stopped validation starts again. The Console labels each result with the number of its save. A click on a problem of a cutscene opens the cutscene and selects the element of the problem (see "The validation of cutscenes").
+
+One load of the game data runs at a time, because each load fills the same resources. A save can come while the game data loads, for example a save of the restored edits of an earlier session before the first load ends. The save writes its files at once. The game data then loads again with the saved files after the running load, and the Console tells it. More saves during one load give only one more load.
 
 When a file does not move into place, for example because a program uses it, the save is not complete. The game data then does not load again, and no validation runs. The next save completes the files first. Then the game data loads again, and the validation runs.
 

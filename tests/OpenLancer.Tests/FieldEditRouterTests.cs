@@ -432,8 +432,8 @@ public sealed class FieldEditRouterTests
     }
 
     /// <summary>
-    /// Each market line is its own key, so the widget of one line cannot change another line of the same section. The
-    /// window close commits the last text of the line.
+    /// Each market line is its own key, so the widget of a field of one line cannot change another line of the same
+    /// section. The window close commits the last text of the field.
     /// </summary>
     [Fact]
     public void TheFieldOfAMarketLineCommitsOnlyItsOwnLine()
@@ -443,24 +443,26 @@ public sealed class FieldEditRouterTests
         session.Execute(MarketEdits.AddToBase(session, "eng1", "b1", MarketEdits.DefaultValues("equipment")));
         session.Execute(MarketEdits.AddToBase(session, "s1_hull", "b1", MarketEdits.DefaultValues("equipment")));
         var router = new FieldEditRouter(_ => { });
+        var maximum = MarketEdits.Fields.Single(f => f.Index == MarketLine.MaximumIndex);
         MarketLine Line(string good) => session.MarketLines(good).Single(l => l.Base == "b1");
         void Field(MarketLine line, FieldEvents events, string text, int frame) =>
-            Commit(router, X, MarketEdits.LineKey(line), events, MarketEdits.ValuesText(line), text, (values, _) =>
-            {
-                session.Execute(MarketEdits.SetLine(session, line, values));
-                return null;
-            }, frame);
+            Commit(router, X, MarketEdits.LineKey(line), events, MarketEdits.FieldText(line, maximum), text,
+                (value, _) =>
+                {
+                    session.Execute(MarketEdits.SetValue(session, line, maximum, value));
+                    return null;
+                }, frame);
         Assert.Equal(Line("eng1").Section, Line("s1_hull").Section);
         Assert.NotEqual(MarketEdits.LineKey(Line("eng1")), MarketEdits.LineKey(Line("s1_hull")));
 
-        Field(Line("eng1"), Activated, "0, -1, 10, 10, 0, 1", 1);
-        Field(Line("eng1"), Typed, "0, -1, 20, 20, 0, 1", 2);
+        Field(Line("eng1"), Activated, "10", 1);
+        Field(Line("eng1"), Typed, "20", 2);
         // The rows moved, and the active widget now draws the other line.
-        Field(Line("s1_hull"), Typed, "0, -1, 99, 99, 0, 1", 3);
+        Field(Line("s1_hull"), Typed, "99", 3);
         router.EndAtClose();
 
-        Assert.Equal("0, -1, 20, 20, 0, 1", MarketEdits.ValuesText(Line("eng1")));
-        Assert.Equal("0, -1, 10, 10, 0, 1", MarketEdits.ValuesText(Line("s1_hull")));
+        Assert.Equal("0, -1, 10, 20, 0, 1", FieldEdit.FormatLine(Line("eng1").Values.Skip(1).ToList()));
+        Assert.Equal("0, -1, 10, 10, 0, 1", FieldEdit.FormatLine(Line("s1_hull").Values.Skip(1).ToList()));
     }
 
     /// <summary>

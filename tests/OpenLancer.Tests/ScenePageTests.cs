@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using LibreLancer.Data.GameData;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Data.Editing;
@@ -273,6 +274,23 @@ public sealed class ScenePageTests
         Assert.Equal(36UL, Bits());
         session.Execute(EditCommand.SetLinesFromText(system, "visit", ["128", "flag"]));
         Assert.Null(Bits());
+    }
+
+    /// <summary>
+    /// Without a bound section, the "Trade lane" rows of a zone show for each zone that the game uses as a trade lane
+    /// zone, also when the engine reads its lane_id as 0. A lane_id alone does not show them, because the game does not
+    /// read it.
+    /// </summary>
+    [Fact]
+    public void TheTradeLaneRowsOfAZoneWithoutASectionFollowTheRuleOfTheGame()
+    {
+        var lane = SystemIndexTests.Zone("Zone_Xx01_Tradelane_1", ShapeKind.Box);
+        lane.Size = new Vector3(500, 500, 10_000);
+        var other = SystemIndexTests.Zone("Zone_Xx01_lane", ShapeKind.Box, laneId: 3);
+        other.Size = lane.Size;
+
+        Assert.True(ZonePage.ShowsLaneRows(null, lane));
+        Assert.False(ZonePage.ShowsLaneRows(null, other));
     }
 
     private static LightSource Light(LightKind kind, string? curve) =>

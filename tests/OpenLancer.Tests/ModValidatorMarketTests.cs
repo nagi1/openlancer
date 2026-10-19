@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text;
 using LibreLancer.Data.Ini;
 using LibreLancer.Data.Schema.Goods;
+using OpenLancer.Data;
 using OpenLancer.Data.Validation;
 using Xunit;
 
@@ -33,6 +34,14 @@ public sealed class ModValidatorMarketTests
     [InlineData("pkg1, 0, -1, 0, 0, 2, 1")]
     public void AShipWithMinAndMaxZeroThatTheBaseCanSellGivesTheWarning(string values) =>
         Assert.True(ModValidator.ShipNotForSale(Line(values)));
+
+    /// <summary>The rule reads the same transaction types as the "Buys or sells" dropdown of the Inspector.</summary>
+    [Theory]
+    [InlineData(MarketTransaction.BuyAndSell, true)]
+    [InlineData(MarketTransaction.BuyOnly, false)]
+    [InlineData(MarketTransaction.SellOnly, true)]
+    public void TheRuleReadsTheTransactionTypeOfTheInspector(MarketTransaction type, bool warning) =>
+        Assert.Equal(warning, ModValidator.ShipNotForSale(Line($"pkg1, 0, -1, 0, 0, {(int)type}, 1")));
 
     [Fact]
     public void AShipWithStockGivesNoWarning() =>

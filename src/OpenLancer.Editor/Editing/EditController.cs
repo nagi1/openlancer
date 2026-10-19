@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Threading.Tasks;
 using LibreLancer;
 using LibreLancer.Data;
 using OpenLancer.Data;
@@ -35,8 +34,10 @@ internal sealed record SaveOutcome(bool Saved, int Number, bool Incomplete)
 /// </summary>
 /// <remarks>
 /// <para>A save writes the files of the active mod at once. Then the game data loads again in the background from a
-/// new file system of the edit view (review finding F5, roadmap rule R5). One reload runs at a time, and a save
-/// during a reload queues one more. The validation runs in an oltool process (see <see cref="ValidationRunner"/>).</para>
+/// new file system of the edit view (review finding F5, roadmap rule R5). One load of the game data runs at a time
+/// (see <see cref="DataLoads"/>). A save during the first load or during a reload writes its files at once, and its
+/// reload starts after the running load. The validation runs in an oltool process (see
+/// <see cref="ValidationRunner"/>).</para>
 /// <para>A close of the window with unsaved edits asks first: Save, Don't Save or Cancel (see
 /// <see cref="ClosePrompt"/>, roadmap decision D78). A crash or a kill of the editor cannot ask. So the editor also
 /// writes the unsaved edits to the recovery file a moment after each edit, and in the cleanup after a crash.</para>
@@ -46,11 +47,13 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     public const string Source = "Edit";
     private const string ValidationSource = "Validation";
 
+    /// <summary>The Console line of a reload that waits for the running load.</summary>
+    internal const string ReloadWaitsText = "The game data loads now. It loads again with the saved files after this load.";
+
     /// <summary>The time without edits before the editor writes the recovery file.</summary>
     private static readonly TimeSpan RecoveryDelay = TimeSpan.FromSeconds(2);
 
     private readonly ValidationRunner validation = new();
-    private bool reloadQueued;
 
     private ConsoleLog Log => window.Log;
 
@@ -502,23 +505,40 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         session.RecoveryWritten();
     }
 
-    /// <summary>Loads the game data again from the edit view, or queues one more reload while one runs.</summary>
+    /// <summary>
+    /// Loads the game data again from the edit view. While the first load or a reload runs, the reload starts after it
+    /// ends, because each load uses the resources of the session (see <see cref="DataLoads"/>).
+    /// </summary>
     private void Reload(EditorSession session)
     {
-        if (session.IsReloading)
+        if (RequestReload(session.Loads, () => StartReload(session)) is { } waits)
         {
-            reloadQueued = true;
-            return;
+            Log.Add(ConsoleSeverity.Info, Source, waits);
         }
+    }
 
-        session.ReloadStarted();
+    /// <summary>
+    /// Asks the loads for a reload after a save (see <see cref="DataLoads.Reload"/>). Returns the Console line when the
+    /// reload waits for the running load, else null. More saves during one load give one line, because they give one
+    /// reload.
+    /// </summary>
+    internal static string? RequestReload(DataLoads loads, Func<DataLoad> start)
+    {
+        var waited = loads.ReloadWaits;
+        return loads.Reload(start) || waited ? null : ReloadWaitsText;
+    }
+
+    /// <summary>Starts a reload on the UI thread. It reads the saved files now, and gives the load that runs in the
+    /// background.</summary>
+    private DataLoad StartReload(EditorSession session)
+    {
         Log.SkipKnownEngineLines = true;
         // Each reload reads its own file system of the edit view, which no later save changes.
         var fs = session.Edits.EditView.CreateFileSystem();
         var saves = session.Saves;
         // The engine lines of the reload form a batch, which the Console compares with the base run.
         var batch = window.BeginConsoleBatch();
-        Task.Run(() =>
+        return () =>
         {
             GameDataManager? data = null;
             string? error = null;
@@ -537,8 +557,8 @@ internal sealed class EditController(EditorWindow window) : IDisposable
             ConsoleLog.EndBatch(batch);
             // FLLog gives its lines to the UI thread in order. So after the flush, the lines of the load come first.
             FLLog.Flush();
-            window.QueueUIThread(() => Reloaded(session, data, error, saves));
-        });
+            return () => Reloaded(session, data, error, saves);
+        };
     }
 
     private void Reloaded(EditorSession session, GameDataManager? data, string? error, int saves)
@@ -560,12 +580,6 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         {
             Log.Add(ConsoleSeverity.Error, Source,
                 $"The game data did not load again after save {saves}: {error} The editor shows the data before the save.");
-        }
-
-        if (reloadQueued)
-        {
-            reloadQueued = false;
-            Reload(session);
         }
     }
 
@@ -654,7 +668,6 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     public void Stop()
     {
         validation.Reset();
-        reloadQueued = false;
         IncompleteSave = 0;
     }
 

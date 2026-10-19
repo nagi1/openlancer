@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Scene;
 
@@ -259,7 +260,7 @@ internal sealed class SystemIndex
             {
                 Add(zone, Ui.ZoneRole.PatrolPath);
             }
-            else if (zone.LaneId != 0)
+            else if (ZoneRules.IsTradeLaneZone(zone))
             {
                 Add(zone, Ui.ZoneRole.TradeLane);
             }
