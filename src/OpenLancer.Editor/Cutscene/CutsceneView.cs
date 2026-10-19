@@ -81,9 +81,12 @@ internal sealed class CutsceneView
     private string timeText = "";
     private bool timeActive;
 
-    // The visible player whose draw failed, and the exception. The view does not draw that player again, and a banner
-    // shows the message. The next player draws again.
-    private (CutscenePlayer Player, Exception Problem)? drawFailure;
+    // The visible player whose draw failed, the exception and the script time of the frame. The view does not draw that
+    // player again, and a banner shows the message. The next player draws again.
+    private (CutscenePlayer Player, Exception Problem, double Time)? drawFailure;
+
+    // The draw failure that the Console has.
+    private Exception? reportedDraw;
 
     // The cutscene for which the free camera has a place, and the cutscene whose camera the view checked.
     private string? placedFor;
@@ -138,6 +141,7 @@ internal sealed class CutsceneView
         gizmo.End();
         picker.Reset();
         drawFailure = null;
+        reportedDraw = null;
         placedFor = null;
         checkedCamera = null;
         hovered = null;
@@ -242,6 +246,12 @@ internal sealed class CutsceneView
         if (drawFailure is { } failure && !ReferenceEquals(failure.Player, player))
         {
             drawFailure = null;
+        }
+        else if (drawFailure is { } failed && !ReferenceEquals(failed.Problem, reportedDraw))
+        {
+            // The render callback keeps the failure. The report comes in the next frame, outside the callback.
+            reportedDraw = failed.Problem;
+            workspace.ReportDrawFailure(failed.Problem, failed.Time);
         }
 
         // A script without a camera shows nothing in Shot mode, so it opens in Free mode (section 7.6).
@@ -621,7 +631,7 @@ internal sealed class CutsceneView
         }
         catch (Exception e)
         {
-            drawFailure = (player, e);
+            drawFailure = (player, e, player.Time);
         }
         finally
         {

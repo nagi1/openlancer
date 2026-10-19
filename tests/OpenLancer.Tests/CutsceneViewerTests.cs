@@ -349,6 +349,35 @@ public sealed class CutsceneViewerTests
         }
     }
 
+    /// <summary>A preview that stops and a frame that does not draw each give one Console line with the path, the script
+    /// time and the message (decision D657). The time has three decimals in each culture.</summary>
+    [Fact]
+    public void TheLinesOfAStoppedPreviewNameThePathTheTimeAndTheMessage()
+    {
+        var culture = CultureInfo.CurrentCulture;
+        var comma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        comma.NumberFormat.NumberDecimalSeparator = ",";
+        try
+        {
+            CultureInfo.CurrentCulture = comma;
+            var problem = new InvalidOperationException("The chain is too deep.");
+
+            Assert.Equal(@"The preview of DATA\x.thn stopped at 0.017 s: The chain is too deep. The view keeps the last " +
+                         "frame.", CutsceneWorkspace.StoppedLine(@"DATA\x.thn", 1.0 / 60, problem));
+            Assert.Equal(@"The preview of DATA\x.thn stopped at 0.000 s: The chain is too deep. The view keeps the last " +
+                         "frame.", CutsceneWorkspace.StoppedLine(@"DATA\x.thn", 0, problem));
+            Assert.Equal(@"The preview of DATA\x.thn cannot draw the frame at 12.500 s: The chain is too deep.",
+                CutsceneWorkspace.DrawFailedLine(@"DATA\x.thn", 12.5, problem));
+            // The message has no parameter text of .NET.
+            Assert.Equal(@"The preview of DATA\x.thn cannot draw the frame at 1.000 s: No model.",
+                CutsceneWorkspace.DrawFailedLine(@"DATA\x.thn", 1, new ArgumentException("No model.", "model")));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+        }
+    }
+
     /// <summary>A line through the near plane draws only its part in front of the camera.</summary>
     [Fact]
     public void ALineBehindTheCameraIsCutAtTheNearPlane()

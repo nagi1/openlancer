@@ -57,6 +57,10 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     private double catchUpWall;
     private double catchUpStart;
 
+    // The problem of the clock that the Console has. The clock keeps one exception object until the next invalidate,
+    // so each new object gives one Console line.
+    private Exception? reported;
+
     // The timeline of W, made again when W or the context changes, and at the end of a gesture, which pinned the
     // sub-rows of the bars.
     private (ThnScriptModel? Working, ScriptPlay Play, TimelineModel? Model, bool Pinned) timeline;
@@ -203,6 +207,37 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     internal static string OpenedLine(string path, double duration, string context, string? timeline) =>
         string.Create(CultureInfo.InvariantCulture,
             $"Opened cutscene {path} ({duration:0.###} s). Context: {context}. {timeline}").TrimEnd();
+
+    /// <summary>The Console line of a build or a step of the preview that failed (decision D657). The time does not
+    /// depend on the culture of the user.</summary>
+    /// <param name="time">The script time of the work that failed, in seconds.</param>
+    internal static string StoppedLine(string path, double time, Exception problem) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"The preview of {path} stopped at {time:0.000} s: {ErrorText.Of(problem)} The view keeps the last frame.");
+
+    /// <summary>The Console line of a draw of the preview that failed (decision D657).</summary>
+    /// <param name="time">The script time of the frame that did not draw, in seconds.</param>
+    internal static string DrawFailedLine(string path, double time, Exception problem) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"The preview of {path} cannot draw the frame at {time:0.000} s: {ErrorText.Of(problem)}");
+
+    /// <summary>Writes one Console error for a draw of the open cutscene that failed. The view calls it one time for
+    /// each failure, outside the render callback.</summary>
+    public void ReportDrawFailure(Exception problem, double time)
+    {
+        if (Path != null)
+        {
+            Report(DrawFailedLine(Path, time, problem), problem);
+        }
+    }
+
+    /// <summary>Writes a Console error, and the line with the full exception text to the log file. The log file gets an
+    /// info line, because FLLog sends each warning and error line to the Console too.</summary>
+    private void Report(string line, Exception problem)
+    {
+        window.Log.Add(ConsoleSeverity.Error, EditorWindow.EditorSource, line);
+        FLLog.Info(EditorWindow.EditorSource, $"{line}{Environment.NewLine}{problem}");
+    }
 
     /// <summary>
     /// Follows the shown tab of the center group: each of the Scene and the Cutscene tab gets back its own selection.
@@ -520,6 +555,12 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         }
 
         Transport.Frame(elapsed, window.IsEditing ? GestureBudget : IdleBudget);
+        if (clock.Problem is { } problem && !ReferenceEquals(problem, reported))
+        {
+            reported = problem;
+            Report(StoppedLine(Path!, clock.ProblemTime, problem), problem);
+        }
+
         if (!ReferenceEquals(shown, clock.Visible))
         {
             shown = clock.Visible;
@@ -765,6 +806,7 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         Builds = 0;
         CameraAfterBuild = null;
         shown = null;
+        reported = null;
         CatchUpLeft = null;
         catchUpWall = 0;
         EffectsStartAtPlayhead = false;
