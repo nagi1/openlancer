@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace OpenLancer.Data;
 
 /// <summary>Who causes a message of the Console (decision D500 of the console filter design).</summary>
@@ -12,7 +14,9 @@ public enum OriginKind
     /// <summary>A mod causes the message, but OpenLancer cannot find which mod.</summary>
     SomeMod,
 
-    /// <summary>The message is about the work of OpenLancer, not about the game data.</summary>
+    /// <summary>The message is about the work of OpenLancer, not about the game data. JSON writes it as
+    /// <c>openlancer</c>, not as the snake case <c>open_lancer</c>.</summary>
+    [JsonStringEnumMemberName("openlancer")]
     OpenLancer,
 
     /// <summary>OpenLancer did not compare the message with the base game.</summary>

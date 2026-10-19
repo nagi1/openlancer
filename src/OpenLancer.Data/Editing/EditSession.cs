@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
@@ -50,6 +51,7 @@ public sealed partial class EditSession : IDisposable
 
     private ModText text;
     private ChangeSet? transaction;
+    private EditBatch? batch;
 
     /// <summary>The lock of the active mod, or null when the session does not hold it. Without the lock, the session
     /// does not read, write or delete the recovery file.</summary>
@@ -128,6 +130,29 @@ public sealed partial class EditSession : IDisposable
     public string? UndoLabel => history.UndoLabel;
 
     public string? RedoLabel => history.RedoLabel;
+
+    /// <summary>Who made the entry that <see cref="Undo()"/> takes back, or null when there is nothing to
+    /// undo.</summary>
+    public EditOrigin? UndoOrigin => history.UndoOrigin;
+
+    /// <summary>Who made the entry that <see cref="Redo"/> puts back, or null when there is nothing to redo.</summary>
+    public EditOrigin? RedoOrigin => history.RedoOrigin;
+
+    /// <summary>Who undid the entry that <see cref="Redo"/> puts back, or null when there is nothing to redo. An agent
+    /// redoes only an entry that it undid itself (decision D709 of the MCP1 design).</summary>
+    public EditOrigin? RedoUndoneBy => history.RedoUndoneBy;
+
+    /// <summary>
+    /// The revision of the session (decision D764 of the MCP1 design). It grows when the history changes the state: a
+    /// commit that changes data, an undo, a redo and a restore of unsaved edits. A preview, a cancel, a refused
+    /// command, a step of a transaction and a save do not change it. A caller that read data can compare it before
+    /// an edit (<c>if_revision</c>).
+    /// </summary>
+    public long Revision { get; private set; }
+
+    /// <summary>The open batch, or null (see <see cref="BeginBatch"/>). A command of the command layer joins
+    /// it.</summary>
+    public EditBatch? OpenBatch => batch;
 
     /// <summary>True when the session has edits that it did not save.</summary>
     public bool IsDirty => history.IsDirty;
@@ -346,11 +371,11 @@ public sealed partial class EditSession : IDisposable
     /// <summary>Runs a command as one entry of the edit history.</summary>
     /// <exception cref="ArgumentException">The command refers to a section or a file that the edit view does not
     /// have.</exception>
-    /// <exception cref="InvalidOperationException">The session or the section is read-only, a transaction is open,
-    /// or the command does not apply. The edit view does not change.</exception>
+    /// <exception cref="InvalidOperationException">The session or the section is read-only, a transaction or a batch
+    /// is open, or the command does not apply. The edit view does not change.</exception>
     public void Execute(EditCommand command)
     {
-        ThrowIfTransaction();
+        ThrowIfBusy();
         ThrowIfNoEdits();
         var change = new ChangeSet(command.Label);
         Run(change, command);
@@ -358,31 +383,60 @@ public sealed partial class EditSession : IDisposable
     }
 
     /// <summary>Starts a transaction: one entry of the edit history for many steps.</summary>
-    /// <exception cref="InvalidOperationException">A transaction is open, or the session takes no edits.</exception>
+    /// <exception cref="InvalidOperationException">A transaction or a batch is open, or the session takes no
+    /// edits.</exception>
     public EditTransaction Begin(string label)
     {
-        ThrowIfTransaction();
+        ThrowIfBusy();
         ThrowIfNoEdits();
         transaction = new ChangeSet(label);
         return new EditTransaction(this, transaction);
     }
 
-    /// <exception cref="InvalidOperationException">There is nothing to undo, or a transaction is open.</exception>
-    public void Undo()
+    /// <summary>
+    /// Opens a batch: commands that give one entry of the edit history and one validation (see
+    /// <see cref="EditBatch"/>). Only one batch is open at a time.
+    /// </summary>
+    /// <param name="label">The label of the request, or null for the label of the first step.</param>
+    /// <param name="origin">Who makes the batch. A host sets it. A request cannot set it.</param>
+    /// <exception cref="InvalidOperationException">A transaction or a batch is open, or the session takes no
+    /// edits.</exception>
+    public EditBatch BeginBatch(string? label = null, EditOrigin origin = EditOrigin.User)
     {
-        ThrowIfTransaction();
-        var change = history.Undo();
+        ThrowIfBusy();
+        ThrowIfNoEdits();
+        batch = new EditBatch(this, new ChangeSet(label ?? "", origin), label, origin);
+        return batch;
+    }
+
+    /// <summary>Takes back the top entry of the edit history, as the user does.</summary>
+    /// <exception cref="InvalidOperationException">There is nothing to undo, or a transaction or a batch is
+    /// open.</exception>
+    public void Undo() => Undo(EditOrigin.User);
+
+    /// <summary>Takes back the top entry of the edit history.</summary>
+    /// <param name="by">Who undoes the entry. <see cref="RedoUndoneBy"/> gives it while the entry is on the redo
+    /// stack.</param>
+    /// <exception cref="InvalidOperationException">There is nothing to undo, or a transaction or a batch is
+    /// open.</exception>
+    public void Undo(EditOrigin by)
+    {
+        ThrowIfBusy();
+        var change = history.Undo(by);
         text = change.Undo(FileAt) ?? text;
+        CacheRevision++;
         Revision++;
         Changed?.Invoke(change.UndoChange);
     }
 
-    /// <exception cref="InvalidOperationException">There is nothing to redo, or a transaction is open.</exception>
+    /// <exception cref="InvalidOperationException">There is nothing to redo, or a transaction or a batch is
+    /// open.</exception>
     public void Redo()
     {
-        ThrowIfTransaction();
+        ThrowIfBusy();
         var change = history.Redo();
         text = change.Redo(FileAt) ?? text;
+        CacheRevision++;
         Revision++;
         Changed?.Invoke(change.Change);
     }
@@ -397,7 +451,7 @@ public sealed partial class EditSession : IDisposable
         }
         finally
         {
-            Revision++;
+            CacheRevision++;
             // Also when the command throws: the edit view is then back at its state before the transaction, not at
             // the state of the step before.
             if (!change.IsEmpty)
@@ -408,7 +462,7 @@ public sealed partial class EditSession : IDisposable
     internal void EndTransaction(ChangeSet change, bool commit)
     {
         transaction = null;
-        Revision++;
+        CacheRevision++;
         if (commit)
         {
             Push(change);
@@ -417,6 +471,34 @@ public sealed partial class EditSession : IDisposable
         text = change.Undo(FileAt) ?? text;
         if (!change.IsEmpty)
             Changed?.Invoke(change.UndoChange);
+    }
+
+    /// <summary>Runs a step of a batch on top of the steps before it.</summary>
+    internal void RunInBatch(ChangeSet change, EditCommand command) => Run(change, command);
+
+    /// <summary>True when the change set of a batch changes a state now. It records the states after the
+    /// steps.</summary>
+    internal bool ChangesState(ChangeSet change)
+    {
+        change.Finish(FileAt, text);
+        return change.ChangesState;
+    }
+
+    /// <summary>Adds the change set of a committed batch to the history.</summary>
+    internal void PushBatch(ChangeSet change) => Push(change);
+
+    /// <summary>Puts back the states before a batch. Raises no <see cref="Changed"/>.</summary>
+    internal void CancelBatch(ChangeSet change)
+    {
+        text = change.Undo(FileAt) ?? text;
+        CacheRevision++;
+    }
+
+    /// <summary>Forgets a batch that ended.</summary>
+    internal void EndBatch(EditBatch ended)
+    {
+        if (ReferenceEquals(batch, ended))
+            batch = null;
     }
 
     /// <summary>Runs a command. When it throws, puts back the states before the change set.</summary>
@@ -434,27 +516,31 @@ public sealed partial class EditSession : IDisposable
         finally
         {
             // Also a command that throws: it changed W and put back the states before.
-            Revision++;
+            CacheRevision++;
         }
     }
 
     /// <summary>Adds a change set to the history, when it changed anything.</summary>
     private void Push(ChangeSet change)
     {
-        Revision++;
+        CacheRevision++;
         change.Finish(FileAt, text);
         // A transaction whose last step threw ends in its state before, so it can change nothing.
         if (!change.ChangesState)
             return;
+        Revision++;
         history.Push(change);
         touched.UnionWith(change.Paths);
         Changed?.Invoke(change.Change);
     }
 
-    private void ThrowIfTransaction()
+    /// <summary>Throws while a transaction or a batch is open.</summary>
+    private void ThrowIfBusy()
     {
         if (transaction != null)
             throw new InvalidOperationException("A transaction is open. Commit or cancel it first.");
+        if (batch != null)
+            throw new InvalidOperationException("A batch is open. Commit or cancel it first.");
     }
 
     /// <summary>The INI document or the cutscene of a path that the session opened.</summary>
@@ -484,9 +570,10 @@ public sealed partial class EditSession : IDisposable
     private bool TryDocument(string path, out EditDocument? document)
     {
         document = null;
-        var normal = VfsPath.Normalize(path);
-        // An install path is relative to the game folder, so it has no drive.
-        if (normal == null || normal.Contains(':') || !normal.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
+        // An install path is relative to the game folder, so the session refuses a drive, a ':' and a rooted path
+        // (decision D763 of the MCP1 design).
+        var normal = InstallPaths.TryParse(path);
+        if (normal == null || !normal.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
             return false;
         if (documents.TryGetValue(normal, out document))
             return true;
@@ -586,8 +673,8 @@ public sealed partial class EditSession : IDisposable
         public ThnDocument NewCutscene(string path)
         {
             session.ThrowIfReadOnly();
-            var normal = VfsPath.Normalize(path);
-            if (normal == null || normal.Contains(':') || !normal.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
+            var normal = InstallPaths.TryParse(path);
+            if (normal == null || !normal.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException($"{path} is not an install path of a cutscene.", nameof(path));
             var document = session.NewCutsceneDocument(normal);
             if (document.State.Exists || document.Kind != ThnFileKind.NewHere)

@@ -15,7 +15,7 @@ public sealed partial class EditSession
     private IReadOnlyList<Section>? freelancerIni;
 
     /// <summary>The item files of the edit view: the ship, equipment, goods and market files.</summary>
-    internal ItemIndex Items => items ??= new ItemIndex(ItemIndex.ReadPaths(DataFiles), Table, () => Revision);
+    internal ItemIndex Items => items ??= new ItemIndex(ItemIndex.ReadPaths(DataFiles), Table, () => CacheRevision);
 
     /// <summary>
     /// The section of the files of a kind with a nickname, or null when no section has it, or when more than one

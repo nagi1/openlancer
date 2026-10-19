@@ -72,9 +72,9 @@ internal sealed class FieldFiles(EditSession session, Func<IReadOnlyList<Section
 
     private void Refresh()
     {
-        if (revision == session.Revision)
+        if (revision == session.CacheRevision)
             return;
-        revision = session.Revision;
+        revision = session.CacheRevision;
         var systems = session.Systems.Files;
         if (read.Length == systems.Count &&
             read.Zip(systems).All(p => VfsPath.Comparer.Equals(p.First.Path, p.Second) &&

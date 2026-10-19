@@ -35,7 +35,7 @@ internal interface IEditFile
 /// To undo the entry, the session puts back the states before. To redo it, the session puts back the states after.
 /// A state holds W and the pins, so an undo also gives back the pins that the edit removed.
 /// </remarks>
-internal sealed class ChangeSet(string label)
+internal sealed class ChangeSet(string label, EditOrigin origin = EditOrigin.User)
 {
     private readonly Dictionary<string, (IFileState Before, IFileState After)> files = new(VfsPath.Comparer);
     private readonly List<SectionRef> sections = [];
@@ -43,7 +43,12 @@ internal sealed class ChangeSet(string label)
     private readonly List<(SectionRef From, SectionRef To)> renames = [];
     private (ModText Before, ModText After)? text;
 
-    public string Label { get; } = label;
+    /// <summary>The label of the entry. A batch sets it at its commit, because its label can change until
+    /// then.</summary>
+    public string Label { get; set; } = label;
+
+    /// <summary>Who made the entry.</summary>
+    public EditOrigin Origin { get; } = origin;
 
     /// <summary>The install paths of the files that the entry changed.</summary>
     public IReadOnlyCollection<string> Paths => files.Keys;
@@ -140,8 +145,8 @@ internal sealed class EditHistory
     /// <summary>The id of the state that the session opened with.</summary>
     private const long OpenId = 0;
 
-    private readonly List<(long Id, ChangeSet Change)> undo = [];
-    private readonly List<(long Id, ChangeSet Change)> redo = [];
+    private readonly List<Entry> undo = [];
+    private readonly List<Entry> redo = [];
     private long nextId = OpenId + 1;
     private long savedId = OpenId;
 
@@ -153,6 +158,16 @@ internal sealed class EditHistory
 
     public string? RedoLabel => CanRedo ? redo[^1].Change.Label : null;
 
+    /// <summary>Who made the top entry, or null when there is nothing to undo.</summary>
+    public EditOrigin? UndoOrigin => CanUndo ? undo[^1].Change.Origin : null;
+
+    /// <summary>Who made the top entry of the redo stack, or null when there is nothing to redo.</summary>
+    public EditOrigin? RedoOrigin => CanRedo ? redo[^1].Change.Origin : null;
+
+    /// <summary>Who undid the top entry of the redo stack the last time, or null when there is nothing to redo. The
+    /// agent redoes only an entry that it undid itself (decision D709 of the MCP1 design).</summary>
+    public EditOrigin? RedoUndoneBy => CanRedo ? redo[^1].UndoneBy : null;
+
     /// <summary>True when the top entry is not the entry of the last save.</summary>
     public bool IsDirty => TopId != savedId;
 
@@ -161,26 +176,39 @@ internal sealed class EditHistory
     /// <summary>Adds an entry on top. The redo stack goes.</summary>
     public void Push(ChangeSet change)
     {
-        undo.Add((nextId++, change));
+        undo.Add(new Entry(nextId++, change, null));
         redo.Clear();
     }
 
     /// <summary>Moves the top entry to the redo stack and returns it.</summary>
-    public ChangeSet Undo() => Move(undo, redo);
+    /// <param name="by">Who undoes the entry.</param>
+    public ChangeSet Undo(EditOrigin by)
+    {
+        var entry = Pop(undo);
+        redo.Add(entry with { UndoneBy = by });
+        return entry.Change;
+    }
 
     /// <summary>Moves the top entry of the redo stack back on top and returns it.</summary>
-    public ChangeSet Redo() => Move(redo, undo);
+    public ChangeSet Redo()
+    {
+        var entry = Pop(redo);
+        undo.Add(entry);
+        return entry.Change;
+    }
 
     /// <summary>Makes the top entry the entry of the last save.</summary>
     public void MarkSaved() => savedId = TopId;
 
-    private static ChangeSet Move(List<(long Id, ChangeSet Change)> from, List<(long Id, ChangeSet Change)> to)
+    private static Entry Pop(List<Entry> from)
     {
         if (from.Count == 0)
             throw new InvalidOperationException("There is no entry to move.");
         var entry = from[^1];
         from.RemoveAt(from.Count - 1);
-        to.Add(entry);
-        return entry.Change;
+        return entry;
     }
+
+    /// <param name="UndoneBy">Who undid the entry the last time, or null when no undo moved it.</param>
+    private sealed record Entry(long Id, ChangeSet Change, EditOrigin? UndoneBy);
 }

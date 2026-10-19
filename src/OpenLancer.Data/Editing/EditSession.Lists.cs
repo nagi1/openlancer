@@ -16,11 +16,13 @@ public sealed partial class EditSession
     private DataLists? lists;
 
     /// <summary>
-    /// A number that changes at each change of W: each command, each step and end of a transaction, an undo, a redo, a
-    /// restore of unsaved edits and a save. The caches of the lists and of the item index compare it, so a call at the
-    /// same revision reads no file.
+    /// A number that changes at each change of W: each command, also one that throws, each step of a batch, each step
+    /// and end of a transaction, the cancel of a batch, an undo, a redo, a restore of unsaved edits and a save. The
+    /// caches of the lists and of the item index compare it, so a call at the same number reads no file.
     /// </summary>
-    internal int Revision { get; private set; }
+    /// <remarks>It is not the public <see cref="Revision"/>. A preview changes W and puts it back, so the number must
+    /// grow then too. Else a later edit could use a cache of the preview (decision D764 of the MCP1 design).</remarks>
+    internal int CacheRevision { get; private set; }
 
     /// <summary>The shared index of the sections of the edit view (decision D121).</summary>
     internal SectionTable Table => table ??= new SectionTable(OpenDocument);

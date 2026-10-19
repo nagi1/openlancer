@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using LibreLancer.Data.IO;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
@@ -75,7 +76,7 @@ public sealed partial class EditSession
     /// <exception cref="ArgumentException">The path is not an install path.</exception>
     public ThnFileSource CutsceneSource(string path)
     {
-        var normal = VfsPath.Normalize(path) ?? throw new ArgumentException($"{path} is not an install path.", nameof(path));
+        var normal = InstallPaths.TryParse(path) ?? throw new ArgumentException($"{path} is not an install path.", nameof(path));
         var lowerMods = lower.Any(m => m.Files.ContainsKey(normal) || m.Patches.ContainsKey(normal));
         ThnFileKind kind;
         // A new cutscene that is not saved yet is new here too.
@@ -197,6 +198,9 @@ public sealed partial class EditSession
             : (ValueOrigin.Base, null, false);
     }
 
+    /// <summary>The names of the THN environment, with their group and number.</summary>
+    internal IReadOnlyDictionary<string, ThnSymbolInfo> ThnSymbols => thn.Symbols;
+
     /// <summary>The files of the lower layer, made at the first use.</summary>
     private FileSystem LowerFiles => lowerFiles ??= lowerView.CreateFileSystem();
 
@@ -228,9 +232,10 @@ public sealed partial class EditSession
     private bool TryCutscene(string path, [NotNullWhen(true)] out ThnDocument? document)
     {
         document = null;
-        var normal = VfsPath.Normalize(path);
-        // An install path is relative to the game folder, so it has no drive.
-        if (normal == null || normal.Contains(':') || !normal.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
+        // An install path is relative to the game folder, so the session refuses a drive, a ':' and a rooted path
+        // (decision D763 of the MCP1 design).
+        var normal = InstallPaths.TryParse(path);
+        if (normal == null || !normal.EndsWith(".thn", StringComparison.OrdinalIgnoreCase))
             return false;
         if (cutscenes.TryGetValue(normal, out document))
             return true;

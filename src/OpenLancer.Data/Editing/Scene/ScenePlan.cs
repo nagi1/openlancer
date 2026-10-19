@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Lists;
 
 namespace OpenLancer.Data.Editing.Scene;
@@ -77,42 +78,22 @@ public sealed record NamedMention(string Nickname, string Path, int Count);
 /// The plan of a Create, a Duplicate, a Delete or a Rename in the Scene (milestone M3): what the action changes, what it
 /// fixes, what it refuses and what it warns about, and the command that runs it as one entry of the edit history.
 /// </summary>
-/// <remarks>A plan reads the edit view when it is made. Its command runs only while the edit view and the text are as
-/// the plan read them, so make the plan and run it at once.</remarks>
-public sealed class ScenePlan
+/// <remarks>
+/// <para>A plan reads the edit view when it is made. Its command runs only while the edit view and the text are as the
+/// plan read them, so make the plan and run it at once.</para>
+/// <para><see cref="EditPlan.NeedsConfirmation"/> is true when the editor asks before it runs the command (decisions
+/// D238 and D242): a Delete that removes more than the targets and their child sections, fixes a line, leaves "Missing"
+/// or has a warning or a mention, and a Rename with a warning or a mention. A Create and a Duplicate never ask, as in
+/// Unity.</para>
+/// </remarks>
+public sealed class ScenePlan : EditPlan
 {
-    internal ScenePlan(SceneAction action, string label)
+    internal ScenePlan(SceneAction action, string label) : base(label)
     {
         Action = action;
-        Label = label;
     }
 
     public SceneAction Action { get; }
-
-    /// <summary>The label of the entry of the edit history, for example "Delete Li01_14 and 5 more".</summary>
-    public string Label { get; internal set; }
-
-    /// <summary>The sections that a Create or a Duplicate adds, in order.</summary>
-    public IReadOnlyList<SectionRef> Adds { get; internal set; } = [];
-
-    /// <summary>The sections that a Delete removes: the targets, then the sections that go with them.</summary>
-    public IReadOnlyList<PlannedDelete> Deletes { get; internal set; } = [];
-
-    /// <summary>The safe fixes of a Delete.</summary>
-    public IReadOnlyList<PlannedFix> Fixes { get; internal set; } = [];
-
-    /// <summary>The lines that show "Missing" after a Delete.</summary>
-    public IReadOnlyList<MissingReference> Missing { get; internal set; } = [];
-
-    /// <summary>Why the action cannot run. A plan with a refusal has no command.</summary>
-    public IReadOnlyList<Diagnostic> Refusals { get; internal set; } = [];
-
-    /// <summary>The warnings: the later mods, the bases without an object, the words of a zone nickname, the lines that
-    /// a new name adopts, and the lines that the editor cannot change.</summary>
-    public IReadOnlyList<Diagnostic> Warnings { get; internal set; } = [];
-
-    /// <summary>The files that name the old nickname of a Rename, or a nickname of a Delete, as text.</summary>
-    public IReadOnlyList<NamedMention> Mentions { get; internal set; } = [];
 
     /// <summary>The lines of a placement of a prop group whose list checks give an error (decision D290 of the M23
     /// design). A plan with such lines has no command, unless it leaves them out. Empty for the other actions.</summary>
@@ -122,17 +103,4 @@ public sealed class ScenePlan
     /// the M23 design), or null. The loaded game data does not have it, so the Scene shows the object after the save
     /// and the reload of the game data.</summary>
     public SectionRef? NewArchetype { get; internal set; }
-
-    /// <summary>The section to select after the action, or null to clear the selection (decision D249).</summary>
-    public SectionRef? SelectAfter { get; internal set; }
-
-    /// <summary>The command, or null when the plan has a refusal.</summary>
-    public EditCommand? Command { get; internal set; }
-
-    /// <summary>
-    /// True when the editor asks before it runs the command (decisions D238 and D242): a Delete that removes more than
-    /// the targets and their child sections, fixes a line, leaves "Missing" or has a warning or a mention, and a Rename
-    /// with a warning or a mention. A Create and a Duplicate never ask, as in Unity.
-    /// </summary>
-    public bool NeedsConfirmation { get; internal set; }
 }

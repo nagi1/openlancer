@@ -79,10 +79,10 @@ public sealed partial class EditSession
     /// of the mod changed after the editor wrote the recovery file, this restores nothing and returns the problems.
     /// The edits then do not apply, so <see cref="DiscardRecovery"/> is the next step.
     /// </summary>
-    /// <exception cref="InvalidOperationException">A transaction is open.</exception>
+    /// <exception cref="InvalidOperationException">A transaction or a batch is open.</exception>
     public IReadOnlyList<Diagnostic> RestoreRecovery()
     {
-        ThrowIfTransaction();
+        ThrowIfBusy();
         if (ActiveMod == null || !HasRecovery)
             return [];
         var file = RecoveryFile.PathOf(ActiveMod.Folder);
@@ -97,7 +97,7 @@ public sealed partial class EditSession
         }
 
         var problems = new List<Diagnostic>();
-        var change = new ChangeSet("Restore unsaved edits");
+        var change = new ChangeSet("Restore unsaved edits", EditOrigin.Recovery);
         var scope = new CommandScope(this, change);
         const string changed = "The mod changed after the editor wrote the recovery file, so the edits do not apply to it.";
         try
@@ -158,7 +158,7 @@ public sealed partial class EditSession
         if (problems.Count > 0)
         {
             text = change.Undo(FileAt) ?? text;
-            Revision++;
+            CacheRevision++;
             return problems;
         }
         change.NoteStructural();

@@ -22,7 +22,7 @@ namespace OpenLancer.Data.Editing.Lists;
 /// <para>The rule data (see <see cref="ListRules"/>) maps a value of a key of a section type to a list. A list is
 /// available when its files have at least one file in the edit view, or when it is an enum. An unavailable list gives
 /// no result, so a synthetic profile without the files of a role gets no list check.</para>
-/// <para>Each cache keeps the revision of W at its last check (see <see cref="EditSession.Revision"/>). A call at the same
+/// <para>Each cache keeps the revision of W at its last check (see <see cref="EditSession.CacheRevision"/>). A call at the same
 /// revision returns at once. At a new revision, a cache compares the W states of its own files only, so an edit of one
 /// file builds again only the lists and the reverse index parts of that file.</para>
 /// <para>"Missing" is a pure function of W: no state stores it. So an undo of a delete heals each referrer at once
@@ -247,11 +247,11 @@ public sealed class DataLists
     /// <summary>Clears the check results of an older revision of W.</summary>
     private void RefreshChecks()
     {
-        if (checksRevision == session.Revision)
+        if (checksRevision == session.CacheRevision)
             return;
         problems.Clear();
         unusable.Clear();
-        checksRevision = session.Revision;
+        checksRevision = session.CacheRevision;
     }
 
     /// <summary>True when the active mod adds or changes the section at an index of a table: a section of W that is
@@ -390,9 +390,9 @@ public sealed class DataLists
         var key = (string.Join("+", ids).ToLowerInvariant(), scope?.ToLowerInvariant());
         if (!views.TryGetValue(key, out var cached))
             views[key] = cached = new CachedView();
-        if (cached.Revision == session.Revision)
+        if (cached.Revision == session.CacheRevision)
             return cached.View;
-        cached.Revision = session.Revision;
+        cached.Revision = session.CacheRevision;
         var paths = new List<string>();
         var other = new List<object?>();
         foreach (var id in ids)
@@ -720,7 +720,7 @@ public sealed class DataLists
 
     private (IReadOnlyList<RemovedEntry> Entries, Dictionary<(string, string, string), RemovedEntry> Keys) RemovedState()
     {
-        if (removed is { } known && known.Revision == session.Revision)
+        if (removed is { } known && known.Revision == session.CacheRevision)
             return (known.Entries, known.Keys);
         var entries = new List<RemovedEntry>();
         if (session.ActiveMod is { } active)
@@ -743,7 +743,7 @@ public sealed class DataLists
         foreach (var e in entries)
             keys.TryAdd((e.List.ToLowerInvariant(), IsScoped(e.List) ? e.LowerSection.Path.ToLowerInvariant() : "",
                 e.Value.ToLowerInvariant()), e);
-        removed = (session.Revision, entries, keys);
+        removed = (session.CacheRevision, entries, keys);
         return (entries, keys);
     }
 
@@ -800,9 +800,9 @@ public sealed class DataLists
     {
         if (!merged.TryGetValue(list, out var cached))
             merged[list] = cached = new MergedReferences();
-        if (cached.Revision == session.Revision)
+        if (cached.Revision == session.CacheRevision)
             return cached.Map;
-        cached.Revision = session.Revision;
+        cached.Revision = session.CacheRevision;
         var roles = rules.All.Where(r => r.Lists.Contains(list, StringComparer.OrdinalIgnoreCase))
             .Select(r => r.Role).Distinct(StringComparer.OrdinalIgnoreCase);
         var paths = roles.SelectMany(Files.Paths).Distinct(VfsPath.Comparer).ToList();

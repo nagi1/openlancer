@@ -66,9 +66,9 @@ internal sealed class RoomFiles(EditSession session, Func<IReadOnlyList<Section>
 
     private void Refresh()
     {
-        if (revision == session.Revision)
+        if (revision == session.CacheRevision)
             return;
-        revision = session.Revision;
+        revision = session.CacheRevision;
         if (read.Length > 0 && read.All(r => ReferenceEquals(StateOf(r.Path), r.State)))
             return;
         var used = new List<(string, object?)>();

@@ -143,7 +143,7 @@ internal sealed class ItemIndex
 
     /// <param name="files">The item files in load order.</param>
     /// <param name="table">The shared section index of the edit view.</param>
-    /// <param name="revision">Gives the revision of W (see <see cref="EditSession.Revision"/>). A call at the revision
+    /// <param name="revision">Gives the revision of W (see <see cref="EditSession.CacheRevision"/>). A call at the revision
     /// of the last refresh reads no file.</param>
     public ItemIndex(IReadOnlyList<(string Path, ItemFileKind Kind)> files, SectionTable table, Func<int> revision)
     {

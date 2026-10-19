@@ -45,14 +45,14 @@ public sealed partial class EditSession
     /// </list>
     /// </remarks>
     /// <param name="overwrite">True to replace the files of the active mod that changed outside the editor.</param>
-    /// <exception cref="InvalidOperationException">A transaction is open.</exception>
+    /// <exception cref="InvalidOperationException">A transaction or a batch is open.</exception>
     public SaveResult Save(bool overwrite = false) => Save(overwrite, null);
 
     /// <param name="afterSteps">Called with k after k moves and deletes of the save transaction, from k = 0 at its
     /// commit point. The fault tests use it.</param>
     internal SaveResult Save(bool overwrite, Action<int>? afterSteps)
     {
-        ThrowIfTransaction();
+        ThrowIfBusy();
         if (readOnlyReason != null)
             return NotSaved([Diagnostic.Error(Profile.FilePath, readOnlyReason)]);
         var active = ActiveMod!;
@@ -77,7 +77,7 @@ public sealed partial class EditSession
             // The completed save changed the files of the mod.
             ActiveMod = activeNow;
             EditView = BuildEditView(activeNow);
-            Revision++;
+            CacheRevision++;
         }
 
         // The save gate runs on each save, also when no file changes, so that Play never starts with an error.
@@ -409,7 +409,7 @@ public sealed partial class EditSession
         }
         savedText = text;
         history.MarkSaved();
-        Revision++;
+        CacheRevision++;
 
         if (plan.Any(p => !p.SameAsDisk))
         {

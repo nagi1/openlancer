@@ -142,9 +142,9 @@ internal sealed class Nicknames(EditSession session)
 
     private void Refresh()
     {
-        if (revision == session.Revision)
+        if (revision == session.CacheRevision)
             return;
-        revision = session.Revision;
+        revision = session.CacheRevision;
         var changed = false;
         var files = session.Systems.Files;
         foreach (var path in files)
