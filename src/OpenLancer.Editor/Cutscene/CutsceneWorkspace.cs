@@ -45,6 +45,21 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     // The scan of the INI files of the game data that the references came from.
     private (GameDataManager? Data, ThnReferences? References) scan;
 
+    // The space lines of the game data (decision D641).
+    private (GameDataManager? Data, SpaceScenes? Scenes) spaces;
+
+    // The star system behind a space script, kept between scripts (decision D646), and the system of a load that
+    // failed, with the banner text. The next frame does not load that system of that data again.
+    private readonly StageCache<SpaceStage> stages = new();
+    private (string System, GameDataManager Data)? failedStage;
+    private string? stageProblem;
+
+    // The game data that the plan of the context read.
+    private GameDataManager? planData;
+
+    // The banner of a system with unsaved edits (decision D648).
+    private string? unsavedSystem;
+
     // The cutscene scripts of the game data, and the categories of the scripts and of the new unsaved cutscenes.
     private (GameDataManager? Data, IReadOnlyList<string> Paths) scripts = (null, []);
     private readonly CategoriesCache categories = new();
@@ -56,6 +71,10 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     private ICutscenePlayer? shown;
     private double catchUpWall;
     private double catchUpStart;
+
+    // The problem of the clock that the Console has. The clock keeps one exception object until the next invalidate,
+    // so each new object gives one Console line.
+    private Exception? reported;
 
     // The timeline of W, made again when W or the context changes, and at the end of a gesture, which pinned the
     // sub-rows of the bars.
@@ -84,6 +103,62 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
 
     /// <summary>The Preview controls, or null without a preview.</summary>
     public PreviewTransport? Transport { get; private set; }
+
+    /// <summary>The star system that the open context plays in, or null. The builds of the context use its
+    /// world.</summary>
+    public SpaceStage? Stage =>
+        Plan?.System is { } system && session?.GameData is { } data && stages.Holds(system, data)
+            ? stages.Stage
+            : null;
+
+    /// <summary>The banners of the plan of the open context, in the order of <see cref="BannersOf"/>.</summary>
+    public IEnumerable<string> Banners() => Plan == null
+        ? []
+        : BannersOf(Plan, Visible is { InHostWorld: true } visible ? visible.MainObjectNote : null, unsavedSystem,
+            stageProblem);
+
+    /// <summary>
+    /// The banners of a plan (section 3.3 of the cutscene fixes plan), in order. First come the note of the plan and
+    /// the main object. Then come the position of the mission line, a system with unsaved edits, and a system that did
+    /// not load. The banner of a system that did not load replaces the note, because the note says that the preview
+    /// shows the system.
+    /// </summary>
+    /// <param name="mainObject">The banner of the main object of a player in the stage, or null.</param>
+    /// <param name="unsaved">The banner of a system with unsaved edits, or null.</param>
+    /// <param name="stageFailed">The banner of a system that did not load, or null.</param>
+    internal static IEnumerable<string> BannersOf(PreviewPlan plan, string? mainObject, string? unsaved,
+        string? stageFailed)
+    {
+        if (plan.Note is { } note && stageFailed == null)
+        {
+            yield return note;
+        }
+
+        if (mainObject != null)
+        {
+            yield return mainObject;
+        }
+
+        if (plan.ScriptPosition != null)
+        {
+            yield return ScriptPositionLine;
+        }
+
+        if (unsaved != null)
+        {
+            yield return unsaved;
+        }
+
+        if (stageFailed != null)
+        {
+            yield return stageFailed;
+        }
+    }
+
+    /// <summary>The banner of a mission line of the form <c>script, x, y, z</c> (decision D650).</summary>
+    internal const string ScriptPositionLine =
+        "The mission line gives a position for the script. The game moves the script to that position. The preview " +
+        "does not.";
 
     /// <summary>The clock, or null without a preview.</summary>
     public CutsceneClock? Clock => clock;
@@ -198,6 +273,37 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     internal static string OpenedLine(string path, double duration, string context, string? timeline) =>
         string.Create(CultureInfo.InvariantCulture,
             $"Opened cutscene {path} ({duration:0.###} s). Context: {context}. {timeline}").TrimEnd();
+
+    /// <summary>The Console line of a build or a step of the preview that failed (decision D657). The time does not
+    /// depend on the culture of the user.</summary>
+    /// <param name="time">The script time of the work that failed, in seconds.</param>
+    internal static string StoppedLine(string path, double time, Exception problem) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"The preview of {path} stopped at {time:0.000} s: {ErrorText.Of(problem)} The view keeps the last frame.");
+
+    /// <summary>The Console line of a draw of the preview that failed (decision D657).</summary>
+    /// <param name="time">The script time of the frame that did not draw, in seconds.</param>
+    internal static string DrawFailedLine(string path, double time, Exception problem) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"The preview of {path} cannot draw the frame at {time:0.000} s: {ErrorText.Of(problem)}");
+
+    /// <summary>Writes one Console error for a draw of the open cutscene that failed. The view calls it one time for
+    /// each failure, outside the render callback.</summary>
+    public void ReportDrawFailure(Exception problem, double time)
+    {
+        if (Path != null)
+        {
+            Report(DrawFailedLine(Path, time, problem), problem);
+        }
+    }
+
+    /// <summary>Writes a Console error, and the line with the full exception text to the log file. The log file gets an
+    /// info line, because FLLog sends each warning and error line to the Console too.</summary>
+    private void Report(string line, Exception problem)
+    {
+        window.Log.Add(ConsoleSeverity.Error, EditorWindow.EditorSource, line);
+        FLLog.Info(EditorWindow.EditorSource, $"{line}{Environment.NewLine}{problem}");
+    }
 
     /// <summary>
     /// Keeps a cutscene selection valid in each frame, before the panels draw: when an undo removed the element or some
@@ -444,6 +550,14 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
             return;
         }
 
+        // The next frame loads the stage of the plan, when the session does not load the data.
+        (failedStage, stageProblem, planData) = (null, null, data);
+        UpdateUnsavedSystem();
+        if (context is { Kind: PreviewContextKind.Space, System: null })
+        {
+            window.Log.Add(ConsoleSeverity.Info, EditorWindow.EditorSource, NoSystemLine(Path));
+        }
+
         clock = new CutsceneClock(Build);
         Transport = new PreviewTransport(clock, () => Duration);
         if (previous != null)
@@ -478,7 +592,16 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
             EffectsStartAtPlayhead = false;
         }
 
+        // The stage loads before a build can use it, and never while the session loads the data again (rule S-3).
+        LoadStage(session.GameData);
         Transport.Frame(elapsed, window.IsEditing ? GestureBudget : IdleBudget);
+        Stage?.Update(clock.DrawSeconds);
+        if (clock.Problem is { } problem && !ReferenceEquals(problem, reported))
+        {
+            reported = problem;
+            Report(StoppedLine(Path!, clock.ProblemTime, problem), problem);
+        }
+
         if (!ReferenceEquals(shown, clock.Visible))
         {
             shown = clock.Visible;
@@ -488,6 +611,82 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         Progress(elapsed);
         Sound();
     }
+
+    /// <summary>
+    /// Loads the star system of a space plan into the stage (decision D646). The stage of another system or of older
+    /// game data goes first. A load that fails keeps a banner and a Console warning, and the builds then play the
+    /// script without the system.
+    /// </summary>
+    private void LoadStage(GameDataManager data)
+    {
+        // New data that the context did not read yet: the reload of the context disposes the clock first.
+        if (!ReferenceEquals(planData, data))
+        {
+            return;
+        }
+
+        // The clock of other data is gone: a reload of the data builds the context again.
+        FreeStageOfOtherData(data);
+        if (Plan?.System is not { } system || stages.Holds(system, data) ||
+            failedStage is { } failed && failed.System == system && ReferenceEquals(failed.Data, data))
+        {
+            return;
+        }
+
+        var start = Stopwatch.GetTimestamp();
+        // The engine lines of the load form a batch of the Console, as the lines of a system open in the Scene view.
+        var batch = window.BeginConsoleBatch();
+        try
+        {
+            var source = data.Items.Systems.Get(system) ??
+                         throw new InvalidOperationException("The game data has no such system.");
+            stages.Get(system, data, () => SpaceStage.Load(source, data, session!.Resources, window));
+            var line = StageLoadedLine(system, Stopwatch.GetElapsedTime(start));
+            window.Log.Add(ConsoleSeverity.Info, EditorWindow.EditorSource, line);
+            FLLog.Info(EditorWindow.EditorSource, line);
+        }
+        catch (Exception e)
+        {
+            failedStage = (system, data);
+            stageProblem = StageFailedLine(system, e);
+            window.Log.Add(ConsoleSeverity.Warning, EditorWindow.EditorSource, stageProblem);
+            FLLog.Info(EditorWindow.EditorSource, $"{stageProblem}{Environment.NewLine}{e}");
+        }
+        finally
+        {
+            ConsoleLog.EndBatch(batch);
+        }
+    }
+
+    /// <summary>The Console line of a stage that loaded. The time does not depend on the culture of the user.</summary>
+    internal static string StageLoadedLine(string system, TimeSpan time) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"The cutscene preview loaded the system {system} in {time.TotalSeconds:0.00} s.");
+
+    /// <summary>The Console line of a space script whose mission lines give no system.</summary>
+    internal static string NoSystemLine(string script) =>
+        $"No mission line names the system of {script}. The preview shows the script without a system.";
+
+    /// <summary>The banner and the Console line of a stage that did not load.</summary>
+    internal static string StageFailedLine(string system, Exception problem) =>
+        $"The preview cannot load the system {system}: {ErrorText.Of(problem)} The preview shows the script without " +
+        "the system.";
+
+    /// <summary>The banner of decision D648 when the file of the system of the plan has unsaved edits, else
+    /// null.</summary>
+    private void UpdateUnsavedSystem()
+    {
+        unsavedSystem = Plan?.System is { } system && session?.Edits is { IsDirty: true } edits &&
+                        edits.SystemPath(system) is { } file && edits.EditedPaths.Contains(file, VfsPath.Comparer)
+            ? UnsavedSystemLine(session.ItemName(session.GameData?.Items.Systems.Get(system)) is { Length: > 0 } name
+                ? name
+                : system)
+            : null;
+    }
+
+    /// <summary>The banner of a system with unsaved edits (decision D648).</summary>
+    internal static string UnsavedSystemLine(string name) =>
+        $"The system {name} has unsaved edits. The Cutscene tab shows the saved system. Save to see the edits here.";
 
     /// <summary>
     /// A frame in which the preview does not run, because neither the Cutscene tab nor the Timeline shows. The clock
@@ -552,20 +751,38 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     /// <summary>
     /// The game data loaded again after a save. The sound gets a new sound manager, the contexts that fit the cutscene
     /// come again from the INI files, the plan reads the new data, and the clock builds again. So the room of a room
-    /// line that the save wrote is a choice now. The chosen context stays when it is still a choice.
+    /// line that the save wrote is a choice now. The chosen context stays when it is still a choice. The stage of the
+    /// old data goes, also when no cutscene is open.
     /// </summary>
     public void DataReplaced()
     {
-        if (Path == null || window.Session?.GameData is not { } data)
+        if (window.Session?.GameData is not { } data)
         {
             return;
         }
 
-        UseSound(data);
-        if (Context != null)
+        if (Path != null)
         {
-            Choices = MakeChoices(data);
-            SetContext(ContextAfterReload(Choices, Context));
+            UseSound(data);
+            if (Context != null)
+            {
+                Choices = MakeChoices(data);
+                SetContext(ContextAfterReload(Choices, Context));
+            }
+        }
+
+        // SetContext disposed the clock of the old data, so no player uses the old stage now.
+        FreeStageOfOtherData(data);
+    }
+
+    /// <summary>Disposes a stage of other game data, and forgets a failed load of other game data. Call it only when no
+    /// clock of that data exists.</summary>
+    private void FreeStageOfOtherData(GameDataManager data)
+    {
+        stages.ForgetOtherData(data);
+        if (failedStage is { } failed && !ReferenceEquals(failed.Data, data))
+        {
+            failedStage = null;
         }
     }
 
@@ -578,8 +795,23 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     private List<PreviewContext> MakeChoices(GameDataManager data)
     {
         var package = window.Settings.PlayPackageOf(session!.Profile.FilePath);
-        return PreviewContext.Choices(Path!, References(), data.Items).Select(c => c with { ShipPackage = package })
-            .ToList();
+        return PreviewContext.Choices(Path!, References(), data.Items, SpaceScenes())
+            .Select(c => c with { ShipPackage = package }).ToList();
+    }
+
+    /// <summary>
+    /// The space lines of the loaded game data (decision D641). They build once for each load of the data, from the
+    /// same view as the references, and each mission file is read once.
+    /// </summary>
+    public SpaceScenes SpaceScenes()
+    {
+        var data = window.Session?.GameData ?? throw new InvalidOperationException("The game data is not loaded.");
+        if (!ReferenceEquals(spaces.Data, data) || spaces.Scenes == null)
+        {
+            spaces = (data, new SpaceScenes(data.Items.VFS, References(), SpaceFacts.From(data.Items)));
+        }
+
+        return spaces.Scenes;
     }
 
     /// <summary>
@@ -692,13 +924,16 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         timeline = default;
     }
 
-    /// <summary>Closes the cutscene, for example when the profile closes. Forgets the references, the script list, the
-    /// categories, the kept selections and the sound manager of the game data.</summary>
+    /// <summary>Closes the cutscene, for example when the profile closes. Forgets the references, the space lines, the
+    /// script list, the categories and the sound manager of the game data. Frees the stage after the clock.</summary>
     public void Reset()
     {
         Close();
+        stages.Reset();
+        failedStage = null;
         sound.Use(null);
         scan = default;
+        spaces = default;
         scripts = (null, []);
         categories.Reset();
     }
@@ -723,6 +958,7 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         Builds = 0;
         CameraAfterBuild = null;
         shown = null;
+        reported = null;
         CatchUpLeft = null;
         catchUpWall = 0;
         EffectsStartAtPlayhead = false;
@@ -736,7 +972,7 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     {
         var data = session!.GameData!;
         var start = Stopwatch.GetTimestamp();
-        var player = CutscenePlayer.Build(Plan!, Script, data, session.Resources, window, Viewport, Meter);
+        var player = CutscenePlayer.Build(Plan!, Script, data, session.Resources, window, Viewport, Meter, Stage?.World);
         LastBuild = Stopwatch.GetElapsedTime(start);
         CameraAfterBuild = player.CameraName;
         Builds++;
@@ -772,6 +1008,7 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     /// </summary>
     private void Changed(EditChange change)
     {
+        UpdateUnsavedSystem();
         // An undo of New cutscene takes the open cutscene away, so the clock cannot build it.
         if (Path != null && change.Cutscenes.Contains(Path, VfsPath.Comparer) && session?.Edits.Cutscene(Path) == null)
         {

@@ -39,13 +39,18 @@ public sealed class PreviewMeter
 /// <summary>A scene object as the Free view of the editor draws it (section 7.6 of the M8 design).</summary>
 /// <param name="Name">The name of the object: the name of its entity.</param>
 /// <param name="Type">The type of the entity of the object.</param>
-/// <param name="Pose">The pose now, as <c>GetTransform</c> gives it (ThnSceneObject.cs:34).</param>
+/// <param name="Pose">The pose now, as <c>GetTransform</c> gives it (ThnSceneObject.cs:34). After a step that failed, the
+/// pose of the last update.</param>
 /// <param name="FovH">The horizontal field of view of a camera now, as THN gives it: half the angle in degrees for a
 /// 4:3 screen (ThnCamera.cs:68-75). Null for an object that is not a camera.</param>
 /// <param name="LightColor">The color of a light now, or null.</param>
 /// <param name="Path">The points of a motion path in the scene, from its start to its end, or null.</param>
 public sealed record PreviewObject(string Name, EntityTypes Type, Transform3D Pose, float? FovH, Color3f? LightColor,
     IReadOnlyList<Vector3>? Path);
+
+/// <summary>The pose and the lens of the active THN camera, as <c>ThnCamera</c> reads them (ThnCamera.cs:85).</summary>
+/// <param name="FovH">Half the horizontal angle for a 4:3 screen, in degrees.</param>
+public readonly record struct ShotPose(Vector3 Position, Quaternion Orientation, float FovH);
 
 /// <summary>
 /// The player of the editor's preview: one engine <see cref="Cutscene"/>, built from a <see cref="PreviewPlan"/> as the
@@ -62,13 +67,33 @@ public sealed class CutscenePlayer : ICutscenePlayer
 
     private readonly Cutscene cutscene;
     private readonly PreviewMeter? meter;
+    private readonly GameObject[] scriptObjects;
     private bool disposed;
 
-    private CutscenePlayer(Cutscene cutscene, PreviewMeter? meter)
+    // A step failed. The attachments of that step can stay on the objects, and a chain of them can be too deep to
+    // resolve (OL-0054). So the poses come from the last update.
+    private bool stopped;
+
+    private CutscenePlayer(Cutscene cutscene, PreviewMeter? meter, bool inHostWorld, GameObject[] scriptObjects,
+        string? mainObjectNote)
     {
         this.cutscene = cutscene;
         this.meter = meter;
+        this.scriptObjects = scriptObjects;
+        InHostWorld = inHostWorld;
+        MainObjectNote = mainObjectNote;
     }
+
+    /// <summary>True when the scene plays in a world that the host owns and draws, for example the system of a space
+    /// script. Then the cutscene has no renderer, and the host draws the world.</summary>
+    public bool InHostWorld { get; }
+
+    /// <summary>The objects that the scripts made in the world of the host. Each step updates them. Empty when the
+    /// player owns its world.</summary>
+    public IReadOnlyList<GameObject> ScriptObjects => scriptObjects;
+
+    /// <summary>The banner about the <c>main_object</c> marker of a space script in its system, or null.</summary>
+    public string? MainObjectNote { get; }
 
     public double Time => cutscene.CurrentTime;
 
@@ -92,10 +117,14 @@ public sealed class CutscenePlayer : ICutscenePlayer
     /// the session.</param>
     /// <param name="viewport">The first viewport of the THN camera. The view sets it again for each draw.</param>
     /// <param name="meter">Counts the steps, or null.</param>
+    /// <param name="hostWorld">The world of the system of a space plan, or null. With a system in the plan, the scripts
+    /// make their objects in this world, and the main object stands at its start. The static stand-ins of a local
+    /// layout follow it (decisions D644 and D658). The player does not dispose this world.</param>
     /// <exception cref="Exception">The engine cannot build the scene, or the room camera is not a CAMERA entity. The
     /// message tells why.</exception>
     public static CutscenePlayer Build(PreviewPlan plan, Func<string, ThnScript> scripts, GameDataManager data,
-        GameResourceManager resources, Game game, Rectangle viewport, PreviewMeter? meter = null)
+        GameResourceManager resources, Game game, Rectangle viewport, PreviewMeter? meter = null,
+        GameWorld? hostWorld = null)
     {
         var items = data.Items;
         var room = plan.Base != null ? items.Bases.Get(plan.Base)?.Rooms.Get(plan.Room) : null;
@@ -115,10 +144,18 @@ public sealed class CutscenePlayer : ICutscenePlayer
             }
         }
 
-        var cutscene = new Cutscene(context, data, resources, null, viewport, game);
+        var space = plan.System != null && hostWorld != null;
+        var cutscene = space
+            ? new Cutscene(context, hostWorld!, data, resources, null, viewport, game)
+            : new Cutscene(context, data, resources, null, viewport, game);
+        string? note = null;
+        GameObject[] made = [];
         try
         {
             var played = plan.Scripts.Select(scripts).ToList();
+            Transform3D? frame = null;
+            if (space)
+                (frame, note) = MainObject(plan, played, context);
             var actors = new List<ThnSceneObject>();
             if (plan.Cutscene != null && room != null)
             {
@@ -135,6 +172,8 @@ public sealed class CutscenePlayer : ICutscenePlayer
             }
 
             cutscene.BeginScene(played, actors);
+            if (frame is { } mainMarker && plan.MainObjectStart is { } start)
+                PlaceStandIns(cutscene, played, mainMarker, new Transform3D(start.Position, start.Orientation));
             if (plan.RoomCamera != null)
             {
                 RequireCamera(cutscene.GetObject(plan.RoomCamera), plan.RoomCamera);
@@ -148,23 +187,110 @@ public sealed class CutscenePlayer : ICutscenePlayer
             // The events of time 0 ran in BeginScene. The poses that they set apply in an update (Cutscene.cs:424). The
             // update adds no time, so the clock counts the player at time 0.
             cutscene._Update(0);
+            if (space)
+                made = GameObjectsOf(cutscene);
         }
         catch
         {
-            Free(cutscene);
+            Free(cutscene, !space);
             throw;
         }
 
-        return new CutscenePlayer(cutscene, meter);
+        return new CutscenePlayer(cutscene, meter, space, made, note);
     }
 
-    /// <summary>One fixed step: <c>Cutscene._Update</c> (Cutscene.cs:398-432).</summary>
+    /// <summary>
+    /// Gives the context a stand-in of the main object at its start, when the <c>main_object</c> marker of the scripts
+    /// stands at the origin and the mission data gives a start (decision D644). The stand-in is not in the world. Gives
+    /// the pose of the marker in the script when the marker moves, and the banner of the main object.
+    /// </summary>
+    private static (Transform3D? Marker, string? Note) MainObject(PreviewPlan plan, List<ThnScript> played,
+        ThnScriptContext context)
+    {
+        var entity = played.SelectMany(s => s.Entities.Values)
+            .FirstOrDefault(e => e.MainObject && e.Type == EntityTypes.Marker);
+        if (entity == null || plan.MainObject == null)
+            return (null, null);
+
+        var note = SpaceFrame.MainObjectNote(entity.Name, entity.Position, plan.MainObject, plan.MainObjectStart != null);
+        if (!SpaceFrame.MovesMarker(entity.Position) || plan.MainObjectStart is not { } start)
+            return (null, note);
+
+        var stand = new GameObject { Name = new ObjectName(plan.MainObject), Nickname = plan.MainObject };
+        stand.SetTransform(new Transform3D(start.Position, start.Orientation));
+        context.MainObject = stand;
+        return (new Transform3D(entity.Position ?? Vector3.Zero, entity.Rotation), note);
+    }
+
+    /// <summary>The static stand-ins of a local layout keep their pose relative to the marker (decision D658). The main
+    /// object stands still, so the build places them one time. The update of time 0 gives the models the pose.</summary>
+    private static void PlaceStandIns(Cutscene cutscene, List<ThnScript> played, Transform3D marker,
+        Transform3D start)
+    {
+        foreach (var name in played.SelectMany(SpaceFrame.StaticStandIns))
+        {
+            if (cutscene.GetObject(name) is not { PosFromObject: false } obj)
+                continue;
+            var pose = SpaceFrame.Place(new Transform3D(obj.Translate, obj.Rotate), marker, start);
+            obj.Translate = pose.Position;
+            obj.Rotate = pose.Orientation;
+        }
+    }
+
+    /// <summary>
+    /// The objects that the scripts made in the world of the host: the object of each scene object that does not read
+    /// its pose from an object of the host. Each model gets the lighting of a game object (decision D645): light group
+    /// 0, the dynamic lights and the ambient of the system, and the fog.
+    /// </summary>
+    private static GameObject[] GameObjectsOf(Cutscene cutscene)
+    {
+        var objects = cutscene.AllObjects.Where(o => o is { Object: not null, PosFromObject: false })
+            .Select(o => o.Object!).Distinct().ToArray();
+        // The engine sets the lighting of a script object on its root renderer only (ThnScriptInstance.cs).
+        foreach (var renderer in objects.Select(o => o.RenderComponent).OfType<ModelRenderer>())
+        {
+            renderer.LightGroup = 0;
+            renderer.LitDynamic = true;
+            renderer.LitAmbient = true;
+            renderer.NoFog = false;
+        }
+
+        return objects;
+    }
+
+    /// <summary>
+    /// One fixed step: <c>Cutscene._Update</c> (Cutscene.cs:398-432). In the world of a host, the cutscene does not
+    /// step the world, so the step updates the objects of the scripts, for example the animations of the characters.
+    /// It never steps the objects of the host or of another player. After a step that throws, <see cref="Find"/> gives
+    /// the poses of the last update.
+    /// </summary>
     public void Step(double seconds)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
         var start = Stopwatch.GetTimestamp();
-        cutscene._Update(seconds);
+        try
+        {
+            cutscene._Update(seconds);
+            foreach (var obj in scriptObjects)
+                obj.Update(seconds, cutscene.World);
+        }
+        catch
+        {
+            stopped = true;
+            throw;
+        }
+
         meter?.Add(Stopwatch.GetElapsedTime(start));
+    }
+
+    /// <summary>The pose and the lens of the active THN camera, as the THN camera reads them, or null when no scene
+    /// object is the camera.</summary>
+    public ShotPose? ShotLens()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return CameraName != null && cutscene.CameraHandle is ThnCamera { Object: { Camera: { } lens } camera }
+            ? new ShotPose(camera.Translate, camera.Rotate, lens.FovH)
+            : null;
     }
 
     /// <summary>
@@ -197,7 +323,7 @@ public sealed class CutscenePlayer : ICutscenePlayer
         ObjectDisposedException.ThrowIf(disposed, this);
         if (cutscene.GetObject(name) is not { } obj)
             return null;
-        var pose = obj.GetTransform();
+        var pose = PoseOf(obj, stopped);
         IReadOnlyList<Vector3>? path = null;
         // A scene object that a room handler makes has no entity until it binds one (ThnSceneObject.cs:20).
         var entity = (ThnEntity?)obj.Entity;
@@ -212,6 +338,14 @@ public sealed class CutscenePlayer : ICutscenePlayer
         return new PreviewObject(obj.Name, entity?.Type ?? EntityTypes.Deformable, pose, obj.Camera?.FovH,
             obj.Light?.Light.Color, path);
     }
+
+    /// <summary>The pose of a scene object now. After a step that failed, the pose of the last update: the object does
+    /// not resolve its attachments again (decision D655).</summary>
+    /// <param name="stopped">True after a step that failed.</param>
+    internal static Transform3D PoseOf(ThnSceneObject obj, bool stopped) =>
+        !stopped ? obj.GetTransform()
+        : obj.PosFromObject ? obj.Object!.Transform
+        : new Transform3D(obj.Translate, obj.Rotate);
 
     /// <summary>
     /// The voice and the actor of the scene object with a name, or null when the scene has no such object. A
@@ -229,14 +363,16 @@ public sealed class CutscenePlayer : ICutscenePlayer
         if (disposed)
             return;
         disposed = true;
-        Free(cutscene);
+        Free(cutscene, !InHostWorld);
     }
 
-    /// <summary>The cutscene and its world. <c>Cutscene.Dispose</c> keeps the world that it made.</summary>
-    private static void Free(Cutscene cutscene)
+    /// <summary>The cutscene, and the world that it made. <c>Cutscene.Dispose</c> keeps that world. In the world of a
+    /// host, <c>Cutscene.Dispose</c> removes the objects of the scripts, and the host keeps its world.</summary>
+    private static void Free(Cutscene cutscene, bool ownsWorld)
     {
         cutscene.Dispose();
-        cutscene.World?.Dispose();
+        if (ownsWorld)
+            cutscene.World?.Dispose();
     }
 
     /// <summary>

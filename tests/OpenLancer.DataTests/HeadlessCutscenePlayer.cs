@@ -96,6 +96,17 @@ internal sealed class HeadlessCutscenePlayer : ICutscenePlayer
 
     public double Time => instance.CurrentTime;
 
+    /// <summary>The duration of the script. A step past it throws.</summary>
+    public double Duration => instance.Duration;
+
+    /// <summary>The name of the first scene object whose position or orientation has a value that is not finite, or
+    /// null.</summary>
+    public string? NotFinite() => objects.FirstOrDefault(o =>
+        !float.IsFinite(o.Value.Translate.X) || !float.IsFinite(o.Value.Translate.Y) ||
+        !float.IsFinite(o.Value.Translate.Z) || !float.IsFinite(o.Value.Rotate.X) ||
+        !float.IsFinite(o.Value.Rotate.Y) || !float.IsFinite(o.Value.Rotate.Z) ||
+        !float.IsFinite(o.Value.Rotate.W)).Key;
+
     /// <summary>The scene objects that are not at the pose of their entity.</summary>
     public int Moved => objects.Values.Count(o =>
         o.Translate != (o.Entity.Position ?? Vector3.Zero) || o.Rotate != o.Entity.Rotation);

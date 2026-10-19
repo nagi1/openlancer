@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
@@ -534,6 +535,42 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
         Assert.Equal(5000, scene.Zone(Death).Size.X);
         Assert.Equal(1, scene.Host.VolumeLoads);
         Assert.False(scene.Applier.HasPending);
+    }
+
+    /// <summary>
+    /// A size edit changes the role of a zone only when the zone starts or stops being a trade lane zone (see
+    /// <see cref="ZoneRules.IsTradeLaneZone"/>). Only then does the index build again, so the steps of a scale drag of
+    /// another zone do not build the index and the Hierarchy again (review of fix S2).
+    /// </summary>
+    [Fact]
+    public void ASizeEditBuildsTheIndexAgainOnlyWhenTheTradeLaneRuleChanges()
+    {
+        using var workspace = Workspace();
+        var session = workspace.Open();
+        using var scene = new HeadlessScene(session, "Li01");
+        scene.Applier.CatchUp();
+        scene.Host.IndexChanges.Clear();
+        var lane = scene.System.Zones.First(ZoneRules.IsTradeLaneZone);
+        IReadOnlyList<ValueBase>[] Size(int x, int y, int z) =>
+            [[new Int32Value(x), new Int32Value(y), new Int32Value(z)]];
+
+        // A sphere zone gets a new size, and the trade lane zone gets longer.
+        session.Execute(EditCommand.SetLines(scene.SectionOf(scene.Zone(Death)), "size", [[new Int32Value(5000)]]));
+        session.Execute(EditCommand.SetLines(scene.SectionOf(lane), "size", Size(1000, 1000, 50_000)));
+        scene.Applier.Run();
+        Assert.Equal(50_000, lane.Size.Z);
+        Assert.Empty(scene.Host.IndexChanges);
+
+        // Now the zone is only 5 times longer than wide, so it is not a trade lane zone.
+        session.Execute(EditCommand.SetLines(scene.SectionOf(lane), "size", Size(1000, 1000, 5000)));
+        scene.Applier.Run();
+        Assert.False(ZoneRules.IsTradeLaneZone(lane));
+        Assert.Equal(SceneEffect.Roles, Assert.Single(scene.Host.IndexChanges));
+
+        session.Undo();
+        scene.Applier.Run();
+        Assert.True(ZoneRules.IsTradeLaneZone(lane));
+        Assert.Equal([SceneEffect.Roles, SceneEffect.Roles], scene.Host.IndexChanges);
     }
 
     /// <summary>

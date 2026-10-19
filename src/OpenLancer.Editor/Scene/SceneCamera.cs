@@ -47,11 +47,6 @@ internal sealed class SceneCamera(CameraScale? scale = null)
     // A view direction nearer than this to straight up or down has no yaw of its own (see SetPose).
     private const float VerticalLimit = 0.9999f;
 
-    // The near and far planes of the sky camera. The engine gives these planes to the starsphere of a cutscene
-    // (ThnCamera.DefaultZ). The largest retail starsphere part has a radius of 19,456 units, so the far plane is far
-    // enough.
-    private static readonly Vector2 SkyRange = new(2.5f, 1_000_000);
-
     private readonly CameraScale scale = scale ?? CameraScale.System;
     private Vector3 position;
     private Vector3 target;
@@ -191,7 +186,7 @@ internal sealed class SceneCamera(CameraScale? scale = null)
         // A near plane that follows the distance keeps depth precision over the size of a whole system. At the
         // whole-system view, this near plane is farther than the starsphere models, so they need the sky camera.
         camera.ZRange = ZRange;
-        sky.ZRange = SkyRange;
+        sky.ZRange = StarspherePass.SkyRange;
         sky.GameFOV = camera.GameFOV;
         camera.Update(width, height, position, position + Forward, Rotation);
         sky.Update(width, height, position, position + Forward, Rotation);

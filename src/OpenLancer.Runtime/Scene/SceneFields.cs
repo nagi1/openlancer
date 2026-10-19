@@ -160,7 +160,8 @@ public static class SceneFields
         Row(SceneSection.Zone, "rotate", SceneEffect.Transform, "GameItemDb.cs:1647-1661"),
         Row(SceneSection.Zone, "size", SceneEffect.Transform | SceneEffect.Volume,
             "GameItemDb.cs:1664-1673. A ring stores (outer, height, inner) from the line (outer, inner, height). " +
-            "AsteroidFieldRenderer.cs:45 reads the size only when it starts."),
+            "AsteroidFieldRenderer.cs:45 reads the size only when it starts. ZoneRules.IsTradeLaneZone reads the " +
+            "size of a box, so SceneApplier adds Roles only when the size changes that rule for the zone."),
         Row(SceneSection.Zone, "shape", SceneEffect.Transform | SceneEffect.Roles | SceneEffect.Volume,
             "GameItemDb.cs:1663. The ring swap depends on the shape, and Zone.cs:660-666 gives the roles."),
         LockedRow(SceneSection.Zone, "encounter", DataRoles,
@@ -170,7 +171,8 @@ public static class SceneFields
         LockedRow(SceneSection.Zone, "faction_weight", DataRoles,
             "GameItemDb.cs:1637. A linked group (SectionKeys.cs:74): a later milestone edits the group."),
         Row(SceneSection.Zone, "path_label", DataRoles, "GameItemDb.cs:1634, Zone.cs:660-666"),
-        Row(SceneSection.Zone, "lane_id", DataRoles, "GameItemDb.cs:1620 and SystemIndex.ZoneRoles"),
+        Row(SceneSection.Zone, "lane_id", SceneEffect.Data,
+            "GameItemDb.cs:1620. The retail game does not read it (decision D513), so the zone roles do not use it."),
         Row(SceneSection.Zone, "ids_name", DataLabel, "GameItemDb.cs:1604"),
         Row(SceneSection.Zone, "ids_info", SceneEffect.Data, "GameItemDb.cs:1605"),
         Row(SceneSection.Zone, "edge_fraction", SceneEffect.Data,

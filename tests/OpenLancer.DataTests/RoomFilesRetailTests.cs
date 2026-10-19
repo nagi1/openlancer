@@ -144,7 +144,9 @@ public sealed class RoomFilesRetailTests(ITestOutputHelper output)
         Assert.Equal(VfsPath.Normalize(path), VfsPath.Normalize(room.StartScript!.DataPath!), VfsPath.Comparer);
         var script = new ThnScript(view.ReadAllBytes(path), items.ThornReadCallback, path);
         Assert.Equal(ThnTemplates.NewScriptDuration, script.Duration);
-        var choices = PreviewContext.Choices(path, ThnReferences.Scan(view), items);
+        var references = ThnReferences.Scan(view);
+        var choices = PreviewContext.Choices(path, references, items,
+            new SpaceScenes(view, references, SpaceFacts.From(items)));
         Assert.Contains(choices, c => c is { Kind: PreviewContextKind.Room, Base: "Li01_01_Base", Room: "Bar" });
     }
 }

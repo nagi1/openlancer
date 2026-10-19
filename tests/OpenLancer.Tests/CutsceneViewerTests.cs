@@ -360,6 +360,37 @@ public sealed class CutsceneViewerTests
                 CutsceneWorkspace.OpenedLine(@"DATA\x.thn", 92.75, "Script only", "Timeline: 1 row."));
             Assert.Equal(@"Opened cutscene DATA\x.thn (0.5 s). Context: Script only.",
                 CutsceneWorkspace.OpenedLine(@"DATA\x.thn", 0.5, "Script only", null));
+            Assert.Equal(@"Opened cutscene DATA\x.thn (0.5 s). Context: Space: Zz01.",
+                CutsceneWorkspace.OpenedLine(@"DATA\x.thn", 0.5, "Space: Zz01", null));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = culture;
+        }
+    }
+
+    /// <summary>A preview that stops and a frame that does not draw each give one Console line with the path, the script
+    /// time and the message (decision D657). The time has three decimals in each culture.</summary>
+    [Fact]
+    public void TheLinesOfAStoppedPreviewNameThePathTheTimeAndTheMessage()
+    {
+        var culture = CultureInfo.CurrentCulture;
+        var comma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        comma.NumberFormat.NumberDecimalSeparator = ",";
+        try
+        {
+            CultureInfo.CurrentCulture = comma;
+            var problem = new InvalidOperationException("The chain is too deep.");
+
+            Assert.Equal(@"The preview of DATA\x.thn stopped at 0.017 s: The chain is too deep. The view keeps the last " +
+                         "frame.", CutsceneWorkspace.StoppedLine(@"DATA\x.thn", 1.0 / 60, problem));
+            Assert.Equal(@"The preview of DATA\x.thn stopped at 0.000 s: The chain is too deep. The view keeps the last " +
+                         "frame.", CutsceneWorkspace.StoppedLine(@"DATA\x.thn", 0, problem));
+            Assert.Equal(@"The preview of DATA\x.thn cannot draw the frame at 12.500 s: The chain is too deep.",
+                CutsceneWorkspace.DrawFailedLine(@"DATA\x.thn", 12.5, problem));
+            // The message has no parameter text of .NET.
+            Assert.Equal(@"The preview of DATA\x.thn cannot draw the frame at 1.000 s: No model.",
+                CutsceneWorkspace.DrawFailedLine(@"DATA\x.thn", 1, new ArgumentException("No model.", "model")));
         }
         finally
         {
@@ -467,6 +498,21 @@ public sealed class CutsceneViewerTests
 
         Assert.Equal(scene.Projection, lens.Projection);
         Assert.Equal(scene.View, lens.View);
+    }
+
+    /// <summary>A space script in Shot mode uses the planes of the space camera of the game: 3 and 250,000.</summary>
+    [Fact]
+    public void TheSpaceShotLensHasThePlanesOfTheSpaceCamera()
+    {
+        var lens = new LensCamera();
+
+        lens.Update(1600, 900, Vector3.Zero, Quaternion.Identity, LensCamera.DefaultFovH, 16 / 9f,
+            LensCamera.SpaceShotRange);
+
+        // A perspective projection keeps near * far / (near - far) in M43 and far / (near - far) in M33.
+        var projection = lens.Projection;
+        Assert.InRange(projection.M43 / projection.M33, 2.99f, 3.01f);
+        Assert.InRange(projection.M43 / (projection.M33 + 1), 245_000f, 255_000f);
     }
 
     /// <summary>A wider field of view or a wider screen widens the lens, as the THN camera widens the

@@ -45,7 +45,7 @@ internal sealed class CutsceneView
     private const double ScrubSeconds = 600;
 
     // Sizes in unscaled points.
-    private const float ContextWidth = 210;
+    private const float ContextWidth = 260;
     private const float AspectWidth = 70;
     private const float TimeFieldWidth = 90;
     private const float BannerPadding = 6;
@@ -65,6 +65,11 @@ internal sealed class CutsceneView
     private readonly TransformGizmo gizmo;
     private readonly SceneCamera freeCamera = new(CameraScale.Room);
     private readonly LensCamera lens = new();
+
+    // The lenses of a space script in its system: the THN camera with the planes of the space camera, and the sky
+    // camera of the starsphere with the pose of the view.
+    private readonly LensCamera shotLens = new();
+    private readonly LensCamera skyLens = new();
     private readonly CutsceneOverlay overlay = new();
     private readonly ScrubGesture scrub = new();
     private ShotAspect aspect = ShotAspect.Window;
@@ -81,9 +86,12 @@ internal sealed class CutsceneView
     private string timeText = "";
     private bool timeActive;
 
-    // The visible player whose draw failed, and the exception. The view does not draw that player again, and a banner
-    // shows the message. The next player draws again.
-    private (CutscenePlayer Player, Exception Problem)? drawFailure;
+    // The visible player whose draw failed, the exception and the script time of the frame. The view does not draw that
+    // player again, and a banner shows the message. The next player draws again.
+    private (CutscenePlayer Player, Exception Problem, double Time)? drawFailure;
+
+    // The draw failure that the Console has.
+    private Exception? reportedDraw;
 
     // The cutscene for which the free camera has a place, and the cutscene whose camera the view checked.
     private string? placedFor;
@@ -138,6 +146,7 @@ internal sealed class CutsceneView
         gizmo.End();
         picker.Reset();
         drawFailure = null;
+        reportedDraw = null;
         placedFor = null;
         checkedCamera = null;
         hovered = null;
@@ -150,6 +159,17 @@ internal sealed class CutsceneView
         picker.Draw(CutscenePicker.Width * scale);
         ImGui.SameLine();
         ContextMenu(ContextWidth * scale);
+        ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
+        ImGui.TextDisabled(EditorIcons.InfoCircle.ToString());
+        WrappedTooltip(ContextInfo);
+        // The toggle has an effect only when the stage of a system loaded behind the script (Editor UI rule 4).
+        if (workspace.Stage != null)
+        {
+            ImGui.SameLine();
+            window.Settings.CutsceneScriptObjects = ToolbarItems.Toggle("script-objects", EditorIcons.Cubes,
+                ScriptObjectsTooltip, window.Settings.CutsceneScriptObjects);
+        }
+
         ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
@@ -242,6 +262,12 @@ internal sealed class CutsceneView
         if (drawFailure is { } failure && !ReferenceEquals(failure.Player, player))
         {
             drawFailure = null;
+        }
+        else if (drawFailure is { } failed && !ReferenceEquals(failed.Problem, reportedDraw))
+        {
+            // The render callback keeps the failure. The report comes in the next frame, outside the callback.
+            reportedDraw = failed.Problem;
+            workspace.ReportDrawFailure(failed.Problem, failed.Time);
         }
 
         // A script without a camera shows nothing in Shot mode, so it opens in Free mode (section 7.6).
@@ -453,6 +479,9 @@ internal sealed class CutsceneView
 
         var screenAspect = aspect == ShotAspect.Window ? size.X / size.Y : shot.ScreenAspect;
         lens.Update(size.X, size.Y, freeCamera.Position, freeCamera.Orientation, fovH, screenAspect, freeCamera.ZRange);
+        // The starsphere of a system behind a space script draws with the pose of the free camera.
+        skyLens.Update(size.X, size.Y, freeCamera.Position, freeCamera.Orientation, fovH, screenAspect,
+            StarspherePass.SkyRange);
         var projection = new SceneProjection(lens, freeCamera.ZRange.X, origin, size, ImGuiHelper.Scale);
         ImGui.GetWindowDrawList().AddCallback((_, _) => DrawScene(panel, screenAspect, seconds, lens), IntPtr.Zero);
         if (player == null || workspace.Timeline is not { } timeline)
@@ -537,20 +566,58 @@ internal sealed class CutsceneView
         drawList.PopClipRect();
     }
 
-    /// <summary>The context menu: the contexts that fit the cutscene, the suggested one first.</summary>
+    /// <summary>The info icon of the context (Editor UI rule 10, section 3.3 of the cutscene fixes plan).</summary>
+    internal const string ContextInfo =
+        "The context sets how the preview plays the script. Room: the base room, as the game builds it. Fidget: a " +
+        "stand-in character plays the motions of the script. In space: the system of the mission line. The game makes " +
+        "none of the script objects in space and shows the mission objects in their place. The preview shows the script " +
+        "objects as stand-ins. Script only: the script alone. The context is a preview setting. It writes nothing to the " +
+        "game files.";
+
+    /// <summary>The tooltip of the toggle "Script objects".</summary>
+    internal const string ScriptObjectsTooltip =
+        "Script objects: show the ships, stations, effects and characters that the script makes. The game makes none of " +
+        "them in space. It shows the mission objects in their place.";
+
+    /// <summary>
+    /// The context menu: the contexts that fit the cutscene, the suggested one first. The rooms and the fidgets come
+    /// first, then the systems of the mission lines under "In space", then the script alone.
+    /// </summary>
     private void ContextMenu(float width)
     {
         ImGui.SetNextItemWidth(width);
         ImGui.BeginDisabled(workspace.Context == null);
         EditorTheme.PushMenuColors();
-        var label = workspace.Context?.Label ?? "No context";
-        if (ImGui.BeginCombo("##context", label))
+        var label = workspace.Context is { } current ? ContextLabel(current) : "No context";
+        var style = ImGui.GetStyle();
+        var preview = TextFit.CutRight(label, width - ImGui.GetFrameHeight() - 2 * style.FramePadding.X);
+        if (ImGui.BeginCombo("##context", preview))
         {
-            foreach (var choice in workspace.Choices)
+            var space = false;
+            for (var i = 0; i < workspace.Choices.Count; i++)
             {
-                if (ImGui.Selectable(choice.Label, choice == workspace.Context))
+                var choice = workspace.Choices[i];
+                var row = choice.Label;
+                if (choice.Kind == PreviewContextKind.Space)
+                {
+                    if (!space)
+                    {
+                        ImGui.TextDisabled("In space");
+                        space = true;
+                    }
+
+                    row = choice.System is { } system ? SpaceRow(system, SystemName(system)) : "No system";
+                }
+
+                if (ImGui.Selectable($"{row}##context{i}",
+                        workspace.Context != null && PreviewContext.Same(choice, workspace.Context)))
                 {
                     workspace.SetContext(choice);
+                }
+
+                if (choice.Kind == PreviewContextKind.Space)
+                {
+                    WrappedTooltip(SpaceRowTooltip(choice.Use));
                 }
             }
 
@@ -558,13 +625,71 @@ internal sealed class CutsceneView
         }
         else
         {
-            ImGui.SetItemTooltip(
-                "The context of the preview: the room that plays the script, the fidget of a room NPC, or the script " +
-                $"alone. {label}.");
+            WrappedTooltip(
+                "The context of the preview. It is a room that plays the script, the fidget of a room NPC, the system of " +
+                $"a mission line, or the script alone. {label}.");
         }
 
         EditorTheme.PopMenuColors();
         ImGui.EndDisabled();
+    }
+
+    /// <summary>The label of a context in the toolbar: a Space context shows the name of its system (decision
+    /// D652).</summary>
+    private string ContextLabel(PreviewContext context) =>
+        context is { Kind: PreviewContextKind.Space, System: { } system } ? $"Space: {SystemName(system)}" : context.Label;
+
+    /// <summary>The name of a system of the loaded data, or its nickname when it has no name.</summary>
+    private string SystemName(string system) =>
+        window.Session is { GameData: { } data } session &&
+        session.ItemName(data.Items.Systems.Get(system)) is { Length: > 0 } name
+            ? name
+            : system;
+
+    /// <summary>The row of a system in the context menu (section 3.3 of the cutscene fixes plan). It shows the name and
+    /// the nickname, or only the nickname when the system has no name.</summary>
+    /// <param name="name">The name of the system, or its nickname when it has no name.</param>
+    internal static string SpaceRow(string system, string name) =>
+        name.Equals(system, StringComparison.OrdinalIgnoreCase) ? system : $"{name} ({system})";
+
+    /// <summary>The tooltip of a Space row (section 3.3 of the cutscene fixes plan). It tells which mission line plays
+    /// the script in the system, the rule that found the system, and the problem of the line.</summary>
+    internal static string SpaceRowTooltip(SpaceUse? use)
+    {
+        if (use == null)
+        {
+            return "The game plays this script in space.";
+        }
+
+        var plays = use.Trigger.Length > 0
+            ? $"The trigger {use.Trigger} plays this script."
+            : $"A trigger without a nickname in {use.Line.File} plays this script.";
+        var found = use.SystemRule switch
+        {
+            SpaceSystemRule.TriggerKey => $"{plays} It runs only in {use.System}.",
+            SpaceSystemRule.Condition when use.SystemSource?.StartsWith("the system ", StringComparison.Ordinal) == true =>
+                $"{plays} Its condition names {use.SystemSource}.",
+            SpaceSystemRule.Condition => $"{plays} Its condition names {use.SystemSource}, which is in {use.System}.",
+            SpaceSystemRule.ActivatingTrigger =>
+                $"{plays} The trigger {use.SystemSource} starts it and runs only in {use.System}.",
+            _ => null,
+        };
+        return found == null ? use.NoSystemText : use.Problem != null ? $"{found} {use.Problem}" : found;
+    }
+
+    /// <summary>A tooltip of the last item that wraps at a readable width.</summary>
+    private static void WrappedTooltip(string text)
+    {
+        if (!ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
+        {
+            return;
+        }
+
+        ImGui.BeginTooltip();
+        ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30);
+        ImGui.Text(text);
+        ImGui.PopTextWrapPos();
+        ImGui.EndTooltip();
     }
 
     private void AspectMenu(float width)
@@ -609,6 +734,8 @@ internal sealed class CutsceneView
             return;
         }
 
+        // A player in the world of the stage reads the stage when the callback runs.
+        var stage = player.InHostWorld ? workspace.Stage : null;
         var context = window.RenderContext;
         var clearColor = context.ClearColor;
         context.PushViewport(viewport.X, viewport.Y, viewport.Width, viewport.Height);
@@ -617,11 +744,18 @@ internal sealed class CutsceneView
         {
             context.Cull = true;
             context.DepthEnabled = true;
-            player.Draw(seconds, viewport, screenAspect, camera);
+            if (stage != null)
+            {
+                DrawStage(stage, player, viewport, screenAspect, seconds, camera);
+            }
+            else
+            {
+                player.Draw(seconds, viewport, screenAspect, camera);
+            }
         }
         catch (Exception e)
         {
-            drawFailure = (player, e);
+            drawFailure = (player, e, player.Time);
         }
         finally
         {
@@ -632,6 +766,34 @@ internal sealed class CutsceneView
             context.BlendMode = BlendMode.Normal;
             context.Cull = false;
         }
+    }
+
+    /// <summary>
+    /// Draws a space script in its system (decision D643): the player updates the THN camera, and the stage draws the
+    /// system and the objects of the player. Shot mode uses the pose and the field of view of the THN camera with the
+    /// planes of the space camera. Free mode uses the free camera. The starsphere draws with a sky camera with the pose
+    /// of the view.
+    /// </summary>
+    /// <param name="free">The free camera, or null for the THN camera of the shot.</param>
+    private void DrawStage(SpaceStage stage, CutscenePlayer player, Rectangle viewport, float screenAspect,
+        double seconds, ICamera? free)
+    {
+        player.Draw(seconds, viewport, screenAspect, free);
+        if (free == null)
+        {
+            if (player.ShotLens() is not { } shot)
+            {
+                return;
+            }
+
+            shotLens.Update(viewport.Width, viewport.Height, shot.Position, shot.Orientation, shot.FovH, screenAspect,
+                LensCamera.SpaceShotRange);
+            skyLens.Update(viewport.Width, viewport.Height, shot.Position, shot.Orientation, shot.FovH, screenAspect,
+                StarspherePass.SkyRange);
+        }
+
+        stage.Draw(player.ScriptObjects, window.Settings.CutsceneScriptObjects, free ?? shotLens, skyLens, viewport,
+            seconds);
     }
 
     /// <summary>
@@ -682,9 +844,9 @@ internal sealed class CutsceneView
                 $"{EditorIcons.ExclamationTriangle}  The preview cannot draw this frame: {failure.Problem.Message}");
         }
 
-        if (workspace.Plan?.Note is { } note)
+        foreach (var banner in workspace.Banners())
         {
-            Banner(drawList, origin, size.X, top, EditorTheme.Warning, $"{EditorIcons.InfoCircle}  {note}");
+            top = Banner(drawList, origin, size.X, top, EditorTheme.Warning, $"{EditorIcons.InfoCircle}  {banner}");
         }
 
         var bottom = max.Y - pad - ImGui.GetTextLineHeight();

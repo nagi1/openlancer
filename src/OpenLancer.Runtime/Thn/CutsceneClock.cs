@@ -19,7 +19,8 @@ namespace OpenLancer.Runtime.Thn;
 /// <para>A step that fails stops its player. The steps are deterministic, so each player of the same cutscene fails in
 /// that step. So until the next <see cref="Invalidate"/>, no player runs that step again: the clock builds only for a
 /// target before it, stops a catch-up to a target at or after it, and steps the visible player up to the step before
-/// it. A build that fails stops all builds and steps until the next <see cref="Invalidate"/>.</para>
+/// it. A build that fails stops all builds and steps until the next <see cref="Invalidate"/>. <see cref="Problem"/> and
+/// <see cref="ProblemTime"/> keep the failure until then.</para>
 /// <para>All work runs in <see cref="Frame"/>, on the UI thread, within the time budget of the frame. A player shares
 /// the resource manager and the game data with the editor, and neither is safe for threads.</para>
 /// </remarks>
@@ -98,8 +99,13 @@ public sealed class CutsceneClock : IDisposable
     public double DrawSeconds { get; private set; }
 
     /// <summary>The exception of the last build or step that failed, or null. The view keeps the last frame. The next
-    /// <see cref="Invalidate"/> clears it.</summary>
+    /// <see cref="Invalidate"/> clears it. The clock keeps the same exception object until then, so the view can report
+    /// each new problem one time.</summary>
     public Exception? Problem { get; private set; }
+
+    /// <summary>The script time of the work that failed, in seconds: 0 for a build, and the end time of the step for a
+    /// step. It is 0 without a problem.</summary>
+    public double ProblemTime { get; private set; }
 
     /// <summary>Moves the playhead. A time below 0 moves it to 0. The next frames do the work.</summary>
     public void Seek(double time)
@@ -123,6 +129,7 @@ public sealed class CutsceneClock : IDisposable
         Discard(ref next);
         visibleStale = visible != null;
         Problem = null;
+        ProblemTime = 0;
         stepLimit = long.MaxValue;
         gestureChange = gesture ? now() : null;
     }
@@ -188,6 +195,7 @@ public sealed class CutsceneClock : IDisposable
             {
                 // The engine message goes to the view. The last frame stays.
                 Problem = e;
+                ProblemTime = 0;
                 stepLimit = -1;
                 return;
             }
@@ -261,6 +269,7 @@ public sealed class CutsceneClock : IDisposable
         catch (Exception e)
         {
             Problem = e;
+            ProblemTime = Seconds(steps + 1);
             stepLimit = steps;
             return false;
         }

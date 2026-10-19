@@ -93,7 +93,7 @@ internal sealed class ShipPage(EditorWindow window, PropertyGrid grid)
             if (packages[i].Id.Key is { } package)
             {
                 market.Draw(package, i == 0 ? "Ship.SoldAt" : $"Ship.SoldAt{i + 1}",
-                    packages.Count == 1 ? "Sold at" : $"Sold at: {package}");
+                    packages.Count == 1 ? "Markets" : $"Markets: {package}");
             }
         }
     }

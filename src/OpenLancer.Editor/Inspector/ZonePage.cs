@@ -5,6 +5,7 @@ using LibreLancer.Data.GameData.World;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Runtime.Scene;
 
 namespace OpenLancer.Editor.Inspector;
 
@@ -173,7 +174,7 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
         grid.Number("Power modifier", zone.PowerModifier, iniKey: "power_modifier");
         grid.Number("Drag modifier", zone.DragModifier, iniKey: "drag_modifier");
         grid.Number("Damage", zone.Damage, iniKey: "damage");
-        if (grid.Shows(zone.LaneId != 0, LaneKeys))
+        if (ShowsLaneRows(grid.Layout, zone))
         {
             grid.SubHeading("Trade lane");
             grid.Number("Attack chance", zone.TradelaneAttack, iniKey: "tradelane_attack");
@@ -182,6 +183,15 @@ internal sealed class ZonePage(EditorWindow window, PropertyGrid grid)
 
         grid.EndSection();
     }
+
+    /// <summary>
+    /// True when the page shows the "Trade lane" rows. Without a bound section, that is when the game uses the zone as
+    /// the zone of a trade lane (see <see cref="ZoneRules.IsTradeLaneZone"/>). The game does not read <c>lane_id</c>, so
+    /// the rows do not depend on it.
+    /// </summary>
+    /// <param name="layout">The section that the page lays out its rows from, or null without a bound section.</param>
+    internal static bool ShowsLaneRows(SectionView? layout, Zone zone) =>
+        PropertyGrid.Shows(layout, ZoneRules.IsTradeLaneZone(zone), LaneKeys);
 
     /// <summary>The keys that have no effect in the retail game, in a closed section (decision D513 of the console filter
     /// design, UI rule 4).</summary>

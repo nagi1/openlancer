@@ -579,6 +579,41 @@ public sealed class CutsceneClockTests
         Assert.Equal(3, fakes.Built.Count);
     }
 
+    /// <summary>The time of a problem is the end time of the step that failed, or 0 for a build. The clock keeps the same
+    /// exception object over the next frames, so the workspace reports each problem one time (decision D657). An
+    /// invalidate clears the time.</summary>
+    [Fact]
+    public void TheProblemTimeIsTheTimeOfTheWorkThatFailed()
+    {
+        fakes.FailAtStep = 10;
+        using var clock = fakes.Clock();
+        Settle(clock);
+        Assert.Equal(0, clock.ProblemTime);
+
+        clock.Seek(1);
+        clock.Frame(Frame60, Budget40);
+        var problem = Assert.IsType<InvalidOperationException>(clock.Problem);
+        Assert.Equal(10 / 60.0, clock.ProblemTime, 9);
+        for (var i = 0; i < 5; i++)
+        {
+            clock.Frame(Frame60, Budget40);
+            Assert.Same(problem, clock.Problem);
+            Assert.Equal(10 / 60.0, clock.ProblemTime, 9);
+        }
+
+        clock.Invalidate();
+        Assert.Null(clock.Problem);
+        Assert.Equal(0, clock.ProblemTime);
+
+        fakes.FailAtStep = null;
+        fakes.BuildFailure = new InvalidOperationException("No camera");
+        clock.Frame(Frame60, Budget40);
+        Assert.Same(fakes.BuildFailure, clock.Problem);
+        Assert.Equal(0, clock.ProblemTime);
+        clock.Frame(Frame60, Budget40);
+        Assert.Same(fakes.BuildFailure, clock.Problem);
+    }
+
     /// <summary>Dispose disposes the visible player and the player that catches up.</summary>
     [Fact]
     public void DisposeDisposesBothPlayers()

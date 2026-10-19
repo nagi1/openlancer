@@ -19,11 +19,13 @@ internal sealed class EditorSession : IDisposable
     private readonly Dictionary<int, string> infoTexts = [];
 
     /// <param name="repoRoot">The OpenLancer repo that holds the active mod, or null (see <see cref="RepoCheck"/>).</param>
-    public EditorSession(EditSession edits, GameResourceManager resources, string? repoRoot)
+    /// <param name="ui">The UI thread, which ends each load of the engine data (see <see cref="Loads"/>).</param>
+    public EditorSession(EditSession edits, GameResourceManager resources, string? repoRoot, IUIThread ui)
     {
         Edits = edits;
         Resources = resources;
         RepoRoot = repoRoot;
+        Loads = new DataLoads(ui);
         Texts = new ItemTexts(edits, Name, InfoText);
         edits.Changed += _ => Touch();
     }
@@ -41,16 +43,19 @@ internal sealed class EditorSession : IDisposable
     public GameDataManager? GameData { get; private set; }
 
     /// <summary>
-    /// True while the engine data loads in the background. The load uses <see cref="Resources"/>, so the session must
-    /// not be disposed before the load ends.
+    /// The loads of the engine data: the first load and a reload after each save that changed files. Each load uses
+    /// <see cref="Resources"/>, so one load runs at a time, and the session must not be disposed before a load ends.
     /// </summary>
-    public bool IsLoading { get; private set; } = true;
+    public DataLoads Loads { get; }
+
+    /// <summary>True while the first load of the engine data runs in the background.</summary>
+    public bool IsLoading => Loads.IsLoading;
 
     /// <summary>True while the engine data loads again after a save.</summary>
-    public bool IsReloading { get; private set; }
+    public bool IsReloading => Loads.IsReloading;
 
     /// <summary>True while a load or a reload runs. The profile cannot close and no model loads until it ends.</summary>
-    public bool IsBusy => IsLoading || IsReloading;
+    public bool IsBusy => Loads.IsBusy;
 
     /// <summary>A number that changes each time the edit view or the text of the active mod changes.</summary>
     public int Version { get; private set; }
@@ -106,16 +111,12 @@ internal sealed class EditorSession : IDisposable
         return changedFiles ? ++Saves : 0;
     }
 
-    /// <summary>Ends the load. Call it on the UI thread, with the data, or with null when the load failed.</summary>
-    public void LoadEnded(GameDataManager? data)
-    {
-        GameData = data;
-        IsLoading = false;
-    }
+    /// <summary>Keeps the data of the first load. Call it on the UI thread when the load ends, with the data, or with
+    /// null when the load failed.</summary>
+    public void LoadEnded(GameDataManager? data) => GameData = data;
 
-    public void ReloadStarted() => IsReloading = true;
-
-    /// <summary>Ends a reload. Call it on the UI thread. A null result keeps the old data.</summary>
+    /// <summary>Keeps the data of a reload. Call it on the UI thread when the reload ends. A null result keeps the old
+    /// data.</summary>
     public void ReloadEnded(GameDataManager? data)
     {
         if (data != null)
@@ -123,8 +124,6 @@ internal sealed class EditorSession : IDisposable
             GameData = data;
             infoTexts.Clear();
         }
-
-        IsReloading = false;
     }
 
     /// <summary>

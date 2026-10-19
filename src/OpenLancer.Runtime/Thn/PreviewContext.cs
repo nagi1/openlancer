@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using LibreLancer.Data;
 using LibreLancer.Data.GameData;
 using LibreLancer.Data.GameData.World;
@@ -21,7 +22,8 @@ public enum PreviewContextKind
     /// <summary>The START_MOTION events of the script on a stand-in character, as the game plays a fidget.</summary>
     Fidget,
 
-    /// <summary>A mission script that the game plays in space. The preview plays it alone.</summary>
+    /// <summary>A mission script that the game plays in space. The preview plays it in the system of its mission line,
+    /// or alone when no rule finds the system.</summary>
     Space,
 }
 
@@ -56,6 +58,12 @@ public sealed record PreviewContext(PreviewContextKind Kind, string? Base, strin
     /// <summary>The context of a script alone.</summary>
     public static readonly PreviewContext ScriptOnly = new(PreviewContextKind.ScriptOnly, null, null, null, null);
 
+    /// <summary>The nickname of the system of a Space context, as the game data spells it, or null.</summary>
+    public string? System { get; init; }
+
+    /// <summary>The mission line of a Space context, or null.</summary>
+    public SpaceUse? Use { get; init; }
+
     /// <summary>The templates that the context of a room fills in with the terrain of its base
     /// (ThnRoomHandler.cs:23-51, ThnScriptInstance.cs:106-109).</summary>
     private static readonly (string Template, Func<Base, string?> Terrain)[] TerrainTemplates =
@@ -74,41 +82,64 @@ public sealed record PreviewContext(PreviewContextKind Kind, string? Base, strin
         PreviewContextKind.Room => $"Room: {Base}, {Room}",
         PreviewContextKind.Fidget when Room != null => $"Fidget: {Base}, {Room}, {Fixture ?? "origin"}",
         PreviewContextKind.Fidget => "Fidget: stand-in at the origin",
-        PreviewContextKind.Space => "Space",
+        PreviewContextKind.Space => System != null ? $"Space: {System}" : "Space",
         _ => "Script only",
     };
 
     /// <summary>The context that copies how the game plays a script. It is the first of <see cref="Choices"/>.</summary>
-    public static PreviewContext Suggest(string path, ThnReferences references, GameItemDb items) =>
-        Choices(path, references, items)[0];
+    public static PreviewContext Suggest(string path, ThnReferences references, GameItemDb items, SpaceScenes spaces) =>
+        Choices(path, references, items, spaces)[0];
 
     /// <summary>
     /// The contexts that fit a script, the best first: each room that plays it and that the game data has, a fidget
-    /// without a room, the space context of a mission script, and always the script alone at the end.
+    /// without a room, the space contexts of a mission script, and always the script alone at the end.
     /// </summary>
-    public static IReadOnlyList<PreviewContext> Choices(string path, ThnReferences references, GameItemDb items)
+    /// <param name="spaces">The space lines of the game data. Each system of the lines of the script is one Space
+    /// context, in the order of decision D642. When the lines give no system, the script gets one Space context without
+    /// a system.</param>
+    public static IReadOnlyList<PreviewContext> Choices(string path, ThnReferences references, GameItemDb items,
+        SpaceScenes spaces)
     {
         var choices = new List<PreviewContext>();
-        void Add(PreviewContext context)
+        foreach (var context in RoomChoices(path, references, items).Concat(SpaceChoices(spaces.Of(path)))
+                     .Append(ScriptOnly))
         {
             if (!choices.Any(c => Same(c, context)))
                 choices.Add(context);
         }
 
+        return choices;
+    }
+
+    /// <summary>The rooms that play a script and that the game data has, as Room and Fidget contexts, and a fidget
+    /// without a room.</summary>
+    private static IEnumerable<PreviewContext> RoomChoices(string path, ThnReferences references, GameItemDb items)
+    {
         foreach (var use in references.Rooms(path))
         {
             if (FindRoom(items, use.Base, use.Room) == null)
                 continue;
-            Add(use.Role == ThnRoomRole.Fixture
+            yield return use.Role == ThnRoomRole.Fixture
                 ? new PreviewContext(PreviewContextKind.Fidget, use.Base, use.Room, use.Spot, null)
-                : new PreviewContext(PreviewContextKind.Room, use.Base, use.Room, null, null));
+                : new PreviewContext(PreviewContextKind.Room, use.Base, use.Room, null, null);
         }
+
         if (references.IsFidget(path))
-            Add(new PreviewContext(PreviewContextKind.Fidget, null, null, null, null));
-        if (references.InSpace(path))
-            Add(new PreviewContext(PreviewContextKind.Space, null, null, null, null));
-        Add(ScriptOnly);
-        return choices;
+            yield return new PreviewContext(PreviewContextKind.Fidget, null, null, null, null);
+    }
+
+    /// <summary>One Space context for each system of the lines, with the first line of that system that gives a start,
+    /// else its first line. Lines without a system give one Space context without a system, but only when no line
+    /// gives a system.</summary>
+    internal static IEnumerable<PreviewContext> SpaceChoices(IReadOnlyList<SpaceUse> uses)
+    {
+        var systems = uses.Where(u => u.System != null).GroupBy(u => u.System!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.FirstOrDefault(u => u.Start != null) ?? g.First())
+            .Select(u => new PreviewContext(PreviewContextKind.Space, null, null, null, null) { System = u.System, Use = u })
+            .ToList();
+        return systems.Count > 0 || uses.Count == 0
+            ? systems
+            : [new PreviewContext(PreviewContextKind.Space, null, null, null, null) { Use = uses[0] }];
     }
 
     /// <summary>
@@ -140,19 +171,42 @@ public sealed record PreviewContext(PreviewContextKind Kind, string? Base, strin
                     Fidget = open,
                     ShipPackage = ShipPackage,
                 };
+            case PreviewContextKind.Space:
+                // The main object binds only to a main_object marker of the script.
+                var main = script == null || HasMainObject(script) ? Use : null;
+                return new PreviewPlan(null, [open], open, null, null, null, none)
+                {
+                    ShipPackage = ShipPackage,
+                    Note = SpaceNote(System, Use),
+                    System = System,
+                    MainObject = main?.MainObject,
+                    MainObjectStart = main?.Start,
+                    ScriptPosition = Use?.Position,
+                };
             default:
                 return new PreviewPlan(null, [open], open, null, null, null, none)
                 {
                     ShipPackage = ShipPackage,
-                    Note = Kind == PreviewContextKind.Space
-                        ? "The game plays this script in space with the objects of the mission, and it does not make the " +
-                          "compounds of the script (Cutscene.cs:101-113). The preview makes them."
-                        : script != null && HasTerrainTemplates(script)
-                            ? TemplateNote(open, items, references)
-                            : null,
+                    Note = script != null && HasTerrainTemplates(script) ? TemplateNote(open, items, references) : null,
                 };
         }
     }
+
+    /// <summary>The note of a Space plan (section 3.3 of the cutscene fixes plan). The advice to fix the trigger shows
+    /// only for a line in a trigger with a nickname.</summary>
+    internal static string SpaceNote(string? system, SpaceUse? use) => system != null
+        ? "The game plays this script in space with the mission objects. It makes none of the script objects. The " +
+          $"preview shows the system {system}, and the script objects as stand-ins."
+        : $"{use?.NoSystemText ?? "No rule finds the system of the mission line."} The preview shows the script " +
+          "without a system." + (use is { Trigger.Length: > 0 }
+              ? " Give the trigger a system key, or a condition that names a system or a base."
+              : "");
+
+    /// <summary>An entity of the script has the user property <c>main_object</c>. The engine reads the user properties
+    /// without case (ThnScript.cs).</summary>
+    private static bool HasMainObject(ThnScriptModel script) =>
+        script.Entities.Any(e => e.Table["userprops"] is ThnTable props &&
+                                 props.Record.Any(f => f.Key.Equals("main_object", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>An entity of the script has a <c>$terrain_*</c> template. The engine compares the names without case
     /// (ThnScriptContext.cs:18).</summary>
@@ -166,7 +220,7 @@ public sealed record PreviewContext(PreviewContextKind Kind, string? Base, strin
     private static string TemplateNote(string open, GameItemDb items, ThnReferences references)
     {
         const string templates = "This script has $terrain_* templates, and only the context of a room fills them in.";
-        return Choices(open, references, items).FirstOrDefault(c => c.Kind == PreviewContextKind.Room) is { } room
+        return RoomChoices(open, references, items).FirstOrDefault(c => c.Kind == PreviewContextKind.Room) is { } room
             ? $"{templates} Choose {room.Label} in the context list."
             : $"{templates} No room of the game data plays this script.";
     }
@@ -241,7 +295,8 @@ public sealed record PreviewContext(PreviewContextKind Kind, string? Base, strin
     public static bool Same(PreviewContext a, PreviewContext b) =>
         a.Kind == b.Kind && string.Equals(a.Base, b.Base, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(a.Room, b.Room, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(a.Fixture, b.Fixture, StringComparison.OrdinalIgnoreCase);
+        string.Equals(a.Fixture, b.Fixture, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(a.System, b.System, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -279,6 +334,19 @@ public sealed record PreviewPlan(string? SetScript, IReadOnlyList<string> Script
 
     /// <summary>How the game plays the script differently, for a banner over the view, or null.</summary>
     public string? Note { get; init; }
+
+    /// <summary>The nickname of the system that a Space plan plays in, or null.</summary>
+    public string? System { get; init; }
+
+    /// <summary>The main object of a Space plan whose script has a <c>main_object</c> marker, or null.</summary>
+    public string? MainObject { get; init; }
+
+    /// <summary>The start pose of the main object in the mission data, or null (decision D644).</summary>
+    public SpacePose? MainObjectStart { get; init; }
+
+    /// <summary>The position of the form <c>Act_CallThorn = script, x, y, z</c>, or null. The preview does not move the
+    /// script to it (decision D650).</summary>
+    public Vector3? ScriptPosition { get; init; }
 
     /// <summary>How the plan plays a script: as the set script of the room, as the fidget, or else with all its
     /// events.</summary>

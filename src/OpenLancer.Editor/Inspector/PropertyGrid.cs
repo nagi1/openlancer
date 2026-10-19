@@ -792,7 +792,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// <param name="dragLabel">Draws the button of label i in the size of its prefix, and returns true when the button
     /// is hovered or active (see <see cref="DragLabel"/>). Null for labels without a button. Label i and field i share
     /// the id scope i.</param>
-    private static void ComponentFields(IReadOnlyList<string> components, IReadOnlyList<ComponentLabel> labels,
+    internal static void ComponentFields(IReadOnlyList<string> components, IReadOnlyList<ComponentLabel> labels,
         Action<int, string, float> field, float reserve = 0, Func<int, Vector2, bool>? dragLabel = null)
     {
         var style = ImGui.GetStyle();

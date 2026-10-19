@@ -17,6 +17,13 @@ internal sealed class LensCamera : ICamera
     /// <summary>The field of view of the editor camera, as <c>LookAtCamera</c> has it with <c>GameFOV</c>.</summary>
     public const float DefaultFovH = 35;
 
+    /// <summary>
+    /// The near and far planes of a space script in Shot mode. The game shows a space script through the space camera:
+    /// the CAMERA entity gives the pose, and the space camera keeps its own planes, 3 and 250,000. The planes of the
+    /// CAMERA entity do not apply in space.
+    /// </summary>
+    public static readonly Vector2 SpaceShotRange = new(3, 250_000);
+
     private BoundingFrustum frustum = new(Matrix4x4.Identity);
 
     public Matrix4x4 ViewProjection { get; private set; } = Matrix4x4.Identity;
