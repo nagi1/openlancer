@@ -20,6 +20,9 @@ exports/
 # Local notes of each contributor. Git never commits them. Private plans stay outside the repo.
 /notes/
 
+# The build log of start.bat.
+/logs/
+
 # Retail Freelancer content must never enter this repo.
 # The game data lives outside the repo, in ..\GameData\.
 *.iso
