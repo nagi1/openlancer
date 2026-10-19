@@ -24,6 +24,9 @@ internal sealed record SystemLink(string Nickname);
 /// <summary>A link to a bundle row of a mission: a click does what the row does in the Missions tab.</summary>
 internal sealed record BundleLink(string Script, MissionBundleRow Row);
 
+/// <summary>A link to a space cutscene: a click opens it in the Cutscene tab. The value is the path of the line.</summary>
+internal sealed record CutsceneLink(string Value);
+
 /// <summary>One field of a page section: a plain name and a value, with an optional help text and an item to go
 /// to.</summary>
 /// <param name="Help">The help text of the field, or null.</param>
@@ -39,6 +42,20 @@ internal sealed record PageField(string Label, string Value, string? Help = null
     /// <summary>True for a field that the schema marks as hard to understand. Its label gets the help glyph (section
     /// 11.3 of the M6a design).</summary>
     public bool Hard { get; init; }
+
+    /// <summary>The list of a list field in place of the value, or null (section 11.1 of the M6a design). The page shows
+    /// it read-only in M6a.</summary>
+    public ListFieldModel? List { get; init; }
+
+    /// <summary>True for a heading row of the lines that follow it, for example "Line 3: Spawn ship".</summary>
+    public bool Heading { get; init; }
+
+    /// <summary>True for a line that the game ignores, for example a condition before the last one. The value is struck
+    /// through.</summary>
+    public bool Struck { get; init; }
+
+    /// <summary>True for a name that does not resolve. The value has the "Missing" look of M21.</summary>
+    public bool Missing { get; init; }
 }
 
 /// <summary>One component section of a mission page (section 10.1 of the M6a design).</summary>
@@ -60,7 +77,7 @@ internal sealed record PageSection(string Id, string Title, char Glyph, HelpText
 /// <param name="Help">The text of the info icon of the header line.</param>
 /// <param name="Completeness">The completeness report, or null for an item without parts.</param>
 /// <param name="Ini">The section of the INI block, or null.</param>
-internal sealed record MissionPageModel(string Title, string Kind, char Glyph, HelpText Help,
+internal sealed partial record MissionPageModel(string Title, string Kind, char Glyph, HelpText Help,
     CompletenessReport? Completeness, IReadOnlyList<PageSection> Sections, SectionRef? Ini)
 {
     /// <summary>The read-only note of each mission page (section 13.1 of the M6a design).</summary>
@@ -73,6 +90,20 @@ internal sealed record MissionPageModel(string Title, string Kind, char Glyph, H
 
     /// <summary>The section of an id, or null.</summary>
     public PageSection? Section(string id) => Sections.FirstOrDefault(s => s.Id == id);
+
+    /// <summary>The lines under the read-only note, before the completeness panel, for example "Part of".</summary>
+    public IReadOnlyList<PageField> Lead { get; init; } = [];
+
+    /// <summary>The chips of the header, for example "Start" and "Repeats" of a trigger.</summary>
+    public IReadOnlyList<string> HeaderChips { get; init; } = [];
+
+    /// <summary>The sections of the INI block when it shows more than one, for example all triggers of a prefab
+    /// instance. Empty for the one section of <see cref="Ini"/>.</summary>
+    public IReadOnlyList<SectionRef> IniSections { get; init; } = [];
+
+    /// <summary>The id of a section that the page opens and scrolls to, for example the group of a selected line, or
+    /// null.</summary>
+    public string? FocusSection { get; init; }
 
     /// <summary>The Mission page (section 10.2 of the M6a design).</summary>
     /// <param name="text">Gives the text of a text id, or an empty text.</param>
@@ -136,8 +167,9 @@ internal sealed record MissionPageModel(string Title, string Kind, char Glyph, H
     private static string FileTooltip(MissionBundleRow row) =>
         row.ActionPhrase is { } action ? $"{row.Tooltip}\nClick to {action}." : row.Tooltip;
 
-    /// <summary>The page of another item of a mission in M6a: the header, the read-only note, the problems of its
-    /// section and its INI block. M6a-2 gives each kind its own page.</summary>
+    /// <summary>The page of another section of a mission, for example <c>[MetaBehavior]</c>: the header, the read-only
+    /// note, the problems of its section and its INI block. Each other kind has its own page (see
+    /// <see cref="For"/>).</summary>
     public static MissionPageModel Item(MissionAnalysis analysis, MissionRef item, bool showBaseGame)
     {
         var schema = MissionSchema.Retail;
@@ -149,23 +181,6 @@ internal sealed record MissionPageModel(string Title, string Kind, char Glyph, H
         var problems = analysis.Problems.Where(p => section != null && Equals(p.Target, section.Ref) &&
                                                     (item.Row < 0 || p.EntryIndex == item.Row || p.EntryIndex < 0)).ToList();
         var sections = new List<PageSection> { Problems(analysis, problems, showBaseGame) };
-        if (section?.Kind == MissionSectionKind.Trigger && analysis.Index.Trigger(section.Nickname ?? "") is { } trigger &&
-            trigger.Section == section)
-        {
-            var keys = schema.Section("Trigger");
-            PageField Key(string key, string value, string fallback) => keys?.Key(key) is { } spec
-                ? new PageField(spec.Label, value, spec.Help ?? fallback) { Hard = spec.Hard }
-                : new PageField(key, value, fallback);
-            sections.Insert(0, new PageSection("trigger", "Trigger", EditorIcons.Bolt, schema.Help["triggerComponent"],
-            [
-                Key("InitState", trigger.StartsActive ? "Yes" : "No",
-                    "The game starts this trigger when the mission starts (InitState = ACTIVE)."),
-                Key("repeatable", trigger.Repeats ? "Yes" : "No",
-                    "The trigger becomes active again each time it runs (repeatable = true)."),
-                new("Starts when", trigger.Condition?.Sentence() ?? "No condition",
-                    "The event that the trigger waits for. The game uses only the last condition."),
-            ], []));
-        }
         return new MissionPageModel(title, kind, glyph, help, null, sections, section?.Ref);
     }
 

@@ -78,8 +78,9 @@ public static class MissionCompleteness
         };
     }
 
-    /// <summary>A step whose state comes from the problems of its rules.</summary>
-    private static CompletenessStep RuleStep(string name, string reason, IReadOnlyList<Diagnostic> problems)
+    /// <summary>A step whose state comes from the problems of its rules: done without a problem, missing with a problem
+    /// that shows, and hidden when each problem is a base-game problem (decision D551).</summary>
+    public static CompletenessStep RuleStep(string name, string reason, IReadOnlyList<Diagnostic> problems)
     {
         if (problems.Count == 0)
             return new CompletenessStep(name, CompletenessState.Done, reason);

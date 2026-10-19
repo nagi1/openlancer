@@ -50,7 +50,7 @@ internal sealed class MissionLayer(EditorWindow window)
         [PlacementKind.CutsceneAnchor] = Kind("Cutscene anchor", EditorIcons.Film),
     };
 
-    private (MissionAnalysis? Analysis, StarSystemKey System, int Names) built;
+    private (MissionAnalysis? Analysis, StarSystemKey System, int Names, int Overrides) built;
     private IReadOnlyList<(MissionRef Ref, MissionPlacement Placement)> items = [];
     private Dictionary<string, IReadOnlyList<Vector3>>? slots;
     private object? slotsView;
@@ -78,7 +78,7 @@ internal sealed class MissionLayer(EditorWindow window)
     public void Update(SystemIndex index, int namesVersion)
     {
         var analysis = window.Missions.Open;
-        var key = (analysis, new StarSystemKey(index.Source.Nickname, index), namesVersion);
+        var key = (analysis, new StarSystemKey(index.Source.Nickname, index), namesVersion, window.Missions.OverridesVersion);
         if (key == built)
         {
             return;
@@ -92,7 +92,8 @@ internal sealed class MissionLayer(EditorWindow window)
         }
 
         var placements = MissionPlacements.In(analysis.Index, index.Source.Nickname,
-            name => index.ObjectsByNickname.GetValueOrDefault(name)?.Position, FormationSlots);
+            name => index.ObjectsByNickname.GetValueOrDefault(name)?.Position, FormationSlots,
+            section => window.Missions.SystemOverride(section.Ref));
         items = placements.Select(p => (RefOf(analysis.Script.Path, p), p)).ToList();
     }
 

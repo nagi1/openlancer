@@ -67,6 +67,9 @@ internal sealed class HierarchyNode
     /// <summary>"14", or "3 / 14" during a search. Empty for an item and for the system row.</summary>
     public string CountText { get; internal set; } = "";
 
+    /// <summary>The mark of the worst problem of a row of a mission, or none.</summary>
+    public RowProblem Problem { get; init; }
+
     public void Add(HierarchyNode child)
     {
         child.Parent = this;
@@ -103,7 +106,7 @@ internal enum RowMark
 /// keyboard can move along them, also to rows that are not on the screen.
 /// </summary>
 /// <remarks>An item compares by its equality, so a value such as a cutscene element can be an item.</remarks>
-internal sealed class HierarchyModel
+internal sealed partial class HierarchyModel
 {
     /// <summary>
     /// The types that a "t:" word in the search selects. Each one tests the kind of an item and the item. A zone has
@@ -431,7 +434,8 @@ internal sealed class HierarchyModel
     {
         if (node.Item != null)
         {
-            nodes[node.Item] = node;
+            // An item can have more than one row, for example a ship in Cast and in a label. Its first row is its row.
+            nodes.TryAdd(node.Item, node);
             items.Add(node);
         }
 

@@ -17,23 +17,29 @@ namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
 /// The Inspector page of a mission selection (section 10 of the M6a design). From the top, it has the header line with
-/// the glyph of the kind and the info icon, the read-only note and the completeness panel. Then come the component
-/// sections and the INI block in the raw INI editor. It draws from the page model (<see cref="MissionPageModel"/>). In
-/// M6a-1, the Mission page has all its sections. The other mission items show their problems and their INI block until
-/// M6a-2 gives each kind its page.
+/// the glyph of the kind, the chips and the info icon, the read-only note, the lead lines and the completeness panel.
+/// Then come the component sections and the INI block in the raw INI editor. It draws from the page model
+/// (<see cref="MissionPageModel"/>), so each page kind has the same frame: the mission, a trigger or a line, a prefab
+/// instance or kind, the cast, an order list, an objective, a conversation, a random encounter, a label, an act, and the
+/// cutscene and base scene links.
 /// </summary>
 /// <remarks>The page keeps its model and the marks of its INI block until the run of the checks, the selection or a
-/// toggle changes. So it does not make them again in each frame.</remarks>
+/// toggle changes. So it does not make them again in each frame. The list fields are read-only in M6a, with the same
+/// widget as an editable list field (section 11.1).</remarks>
 internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDisposable
 {
     // Sizes in unscaled points.
     private const float HeaderPaddingX = 10;
     private const float IniHeight = 220;
 
+    /// <summary>The reason of the read-only list fields (section 2 of the M6a design).</summary>
+    private const string ReadOnlyReason = "This editor version shows mission scripts but does not change them.";
+
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
+    private readonly Dictionary<string, ListField> lists = [];
     private (MissionRunResult? Result, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer, MissionPageModel? Model)
         page;
-    private (MissionRunResult? Result, SectionRef? Target, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
+    private (MissionRunResult? Result, string? Key, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
         block = (null, null, false, null, []);
 
     public void Draw(MissionRef item)
@@ -51,12 +57,16 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             return;
         }
 
-        var model = Model(result, analysis, item);
+        var model = Model(result, analysis, item, out var changed);
         if (missions.PendingSection is var (script, section) && VfsPath.Comparer.Equals(script, item.Script) &&
             item.Kind == MissionItemKind.Mission)
         {
             missions.PendingSection = null;
             grid.RequestSection(SectionKey(section));
+        }
+        else if (changed && model.FocusSection is { } focus)
+        {
+            grid.RequestSection(SectionKey(focus));
         }
 
         Header(model);
@@ -68,6 +78,11 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             var padding = MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale);
             ImGui.Indent(padding);
             ImGui.TextDisabled(MissionPageModel.ReadOnlyNote);
+            foreach (var field in model.Lead)
+            {
+                LeadLine(field);
+            }
+
             if (model.Completeness is { } report)
             {
                 CompletenessPanel.Draw("completeness", report, missions.ShowBaseGame, GoTo);
@@ -89,27 +104,39 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
     private static string SectionKey(string id) => $"Mission.{id}";
 
     /// <summary>The model of the page, made again only when the run, the selection or a toggle changes.</summary>
-    private MissionPageModel Model(MissionRunResult result, MissionAnalysis analysis, MissionRef item)
+    /// <param name="changed">True when the page made a new model for another item.</param>
+    private MissionPageModel Model(MissionRunResult result, MissionAnalysis analysis, MissionRef item, out bool changed)
     {
         var session = window.Session!;
         var showBaseGame = window.Missions.ShowBaseGame;
         var hidesOpenLancer = session.Edits.HidesOpenLancer;
-        if (page.Model is { } known && ReferenceEquals(page.Result, result) && Equals(page.Item, item) &&
+        changed = !Equals(page.Item, item);
+        if (page.Model is { } known && ReferenceEquals(page.Result, result) && !changed &&
             page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer)
         {
             return known;
         }
 
-        var model = item.Kind == MissionItemKind.Mission
-            ? MissionPageModel.Mission(result, analysis, id => session.Name(id), CommFile, showBaseGame, hidesOpenLancer,
-                SystemName)
-            : MissionPageModel.Item(analysis, item, showBaseGame);
+        var context = new PageContext(result, analysis, showBaseGame, hidesOpenLancer)
+        {
+            Text = id => session.Name(id),
+            CommFile = CommFile,
+            SystemName = SystemName,
+            NameOf = NameOf,
+            ShipBuild = ShipBuild,
+        };
+        var model = MissionPageModel.For(context, item);
         page = (result, item, showBaseGame, hidesOpenLancer, model);
+        if (changed)
+        {
+            lists.Clear();
+        }
+
         return model;
     }
 
-    /// <summary>The header line: the glyph of the kind, the title, the kind as a dim label and the info icon at the
-    /// right end.</summary>
+    /// <summary>The header line: the glyph of the kind, the title, the kind as a dim label, the chips and the info icon
+    /// at the right end.</summary>
     private static void Header(MissionPageModel model)
     {
         var padding = MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale);
@@ -123,11 +150,48 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         ImGui.PopStyleColor();
         ImGui.SameLine();
         ImGui.TextDisabled(model.Kind);
+        if (model.HeaderChips.Count > 0)
+        {
+            ImGui.SameLine();
+            Chip.Flow(model.HeaderChips.Select(c => new ChipItem(c, ChipLook.Grey, ChipTip(c))).ToList());
+        }
+
         ImGui.SetCursorScreenPos(new Vector2(min.X + width - InfoIcon.Width - padding,
             min.Y + MathF.Truncate((height - ImGui.GetFrameHeight()) / 2)));
         InfoIcon.Draw("header", model.Help);
         ImGui.SetCursorScreenPos(min + new Vector2(0, height));
         ImGui.Dummy(new Vector2(width, 1));
+    }
+
+    /// <summary>The tooltip of a header chip of a trigger (section 13.1 of the M6a design).</summary>
+    private static string ChipTip(string chip) => chip switch
+    {
+        "Start" => "This trigger starts with the mission (InitState = ACTIVE).",
+        "Repeats" => "This trigger becomes active again each time it runs (repeatable = true).",
+        _ => "The system line of this trigger. The game does not use it. The editor uses it to place the trigger.",
+    };
+
+    /// <summary>A line under the read-only note, for example "Part of: Spawn wave t_spawn" with a link.</summary>
+    private void LeadLine(PageField field)
+    {
+        ImGui.TextDisabled($"{field.Label}:");
+        ImGui.SameLine();
+        if (field.Link is { } link)
+        {
+            if (ImGui.TextLink($"{field.Value}##lead-{field.Label}"))
+            {
+                GoTo(link);
+            }
+        }
+        else
+        {
+            ImGui.Text(field.Value);
+        }
+
+        if (field.Help != null)
+        {
+            ImGui.SetItemTooltip(field.Help);
+        }
     }
 
     private void Section(PageSection section)
@@ -137,45 +201,9 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             return;
         }
 
-        foreach (var field in section.Fields)
+        for (var i = 0; i < section.Fields.Count; i++)
         {
-            if (field.Help != null)
-            {
-                grid.Help(field.Help, field.Hard);
-            }
-
-            if (field.Severity != null && field.Link is LineLink)
-            {
-                Problem(field);
-            }
-            else if (field.Chips.Count > 0)
-            {
-                grid.Row(field.Label, () =>
-                {
-                    var clicked = Chip.Flow(field.Chips.Select(c => new ChipItem(c.Text, ChipLook.Grey, c.Tooltip,
-                        c.Link != null)).ToList());
-                    if (clicked >= 0 && field.Chips[clicked].Link is { } link)
-                    {
-                        GoTo(link);
-                    }
-                });
-            }
-            else if (field.Link is { } link)
-            {
-                if (grid.Link(field.Label, field.Value, field.Help ?? "Go to the item."))
-                {
-                    GoTo(link);
-                }
-            }
-            else if (field.Severity is { } severity)
-            {
-                grid.Row(field.Label, () => ImGui.TextColored(
-                    severity == DiagnosticSeverity.Error ? EditorTheme.Error : EditorTheme.Warning, field.Value));
-            }
-            else
-            {
-                grid.Text(field.Label, field.Value);
-            }
+            Field(section, i, section.Fields[i]);
         }
 
         foreach (var note in section.Notes)
@@ -184,6 +212,102 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         }
 
         grid.EndSection();
+    }
+
+    /// <summary>One field: a problem, a heading, a list field, chips, a link, a struck or missing value, or a
+    /// text.</summary>
+    private void Field(PageSection section, int index, PageField field)
+    {
+        if (field.Help != null && !field.Heading)
+        {
+            grid.Help(field.Help, field.Hard);
+        }
+
+        if (field.Severity != null && field.Link is LineLink)
+        {
+            Problem(field);
+        }
+        else if (field.Heading)
+        {
+            Heading(field);
+        }
+        else if (field.List is { } list)
+        {
+            var key = $"{section.Id}.{index}";
+            if (!lists.TryGetValue(key, out var widget))
+            {
+                lists[key] = widget = new ListField();
+            }
+
+            ImGui.Indent(MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale));
+            widget.Draw(key, list, null, ReadOnlyReason);
+            ImGui.Unindent(MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale));
+        }
+        else if (field.Chips.Count > 0)
+        {
+            grid.Row(field.Label, () =>
+            {
+                var clicked = Chip.Flow(field.Chips.Select(c => new ChipItem(c.Text, ChipLook.Grey, c.Tooltip,
+                    c.Link != null)).ToList());
+                if (clicked >= 0 && field.Chips[clicked].Link is { } link)
+                {
+                    GoTo(link);
+                }
+            });
+        }
+        else if (field.Struck || field.Missing)
+        {
+            grid.Row(field.Label, () => StruckOrMissing(field));
+        }
+        else if (field.Link is { } link)
+        {
+            if (grid.Link(field.Label, field.Value, field.Help ?? "Go to the item."))
+            {
+                GoTo(link);
+            }
+        }
+        else if (field.Severity is { } severity)
+        {
+            grid.Row(field.Label, () => ImGui.TextColored(
+                severity == DiagnosticSeverity.Error ? EditorTheme.Error : EditorTheme.Warning, field.Value));
+        }
+        else
+        {
+            grid.Text(field.Label, field.Value);
+        }
+    }
+
+    /// <summary>A heading row, for example "Line 3: Spawn ship", with a link to the line when it has one.</summary>
+    private void Heading(PageField field)
+    {
+        if (field.Link is { } link)
+        {
+            if (grid.Link(field.Label, field.Value, field.Help ?? "Select the line."))
+            {
+                GoTo(link);
+            }
+
+            return;
+        }
+
+        grid.SubHeading($"{field.Label}: {field.Value}");
+    }
+
+    /// <summary>A value that the game ignores, struck through, or a name that does not resolve, with the "Missing" look
+    /// of M21.</summary>
+    private static void StruckOrMissing(PageField field)
+    {
+        if (field.Missing)
+        {
+            ImGui.TextColored(EditorTheme.Error, $"{EditorIcons.ExclamationTriangle} {field.Value}");
+            return;
+        }
+
+        ImGui.TextDisabled(field.Value);
+        var min = ImGui.GetItemRectMin();
+        var max = ImGui.GetItemRectMax();
+        var y = MathF.Round((min.Y + max.Y) / 2);
+        ImGui.GetWindowDrawList().AddLine(new Vector2(min.X, y), new Vector2(max.X, y), ImGui.GetColorU32(EditorTheme.TextDim));
     }
 
     /// <summary>A row of the Problems section: the glyph of the severity, or the lock glyph of a base-game problem, the
@@ -210,42 +334,54 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         });
     }
 
-    /// <summary>The INI block of the section of the page, read-only, with the marks of the checks (section 10.1 item
-    /// 7 of the M6a design). The Mission page also has a button that opens the whole script.</summary>
+    /// <summary>The INI block of the sections of the page, read-only, with the marks of the checks (section 10.1 item
+    /// 7 of the M6a design). The Mission page also has a button that opens the whole script. A page with several
+    /// sections, for example a prefab instance, shows them all in one block that starts closed.</summary>
     /// <param name="wholeScript">True for the Mission page, which has the button for the whole script.</param>
     private void Ini(MissionRunResult result, MissionAnalysis analysis, MissionPageModel model, bool wholeScript)
     {
-        if (model.Ini is not { } target || analysis.Document.Find(target) is not { } section)
+        var targets = model.IniSections.Count > 0 ? model.IniSections
+            : model.Ini is { } one ? [one]
+            : [];
+        var sections = targets.Select(t => analysis.Document.Find(t)).OfType<MissionSection>().ToList();
+        if (sections.Count == 0)
         {
             return;
         }
 
-        if (!grid.BeginSection(SectionKey("ini"), EditorIcons.Terminal, "INI", true, MissionSchema.Retail.Help["rawIni"]))
+        var title = model.IniSections.Count > 0 ? "INI (all triggers)" : "INI";
+        if (!grid.BeginSection(SectionKey(model.IniSections.Count > 0 ? "iniAll" : "ini"), EditorIcons.Terminal, title,
+                model.IniSections.Count == 0, MissionSchema.Retail.Help["rawIni"]))
         {
             return;
         }
 
         grid.EndSection();
         var showBaseGame = window.Missions.ShowBaseGame;
-        if (block.Text is not { } text || !ReferenceEquals(block.Result, result) || !Equals(block.Target, target) ||
+        var key = string.Join("|", sections.Select(s => s.Ref.ToString()));
+        if (block.Text is not { } text || !ReferenceEquals(block.Result, result) || block.Key != key ||
             block.ShowBaseGame != showBaseGame)
         {
-            // The block keeps the identity of the section in its file, so a repeated nickname finds its marks.
-            text = RawText.Canonical(target.Path, [section.Section], ids: [target.Id]);
-            block = (result, target, showBaseGame, text,
-                IniLint.Marks(text, analysis.Problems.Where(p => Equals(p.Target, target)), showBaseGame));
+            // The block keeps the identity of each section in its file, so a repeated nickname finds its marks.
+            text = RawText.Canonical(sections[0].Ref.Path, sections.Select(s => s.Section).ToList(),
+                ids: sections.Select(s => s.Ref.Id).ToList());
+            var refs = sections.Select(s => s.Ref).ToHashSet();
+            block = (result, key, showBaseGame, text,
+                IniLint.Marks(text, analysis.Problems.Where(p => p.Target != null && refs.Contains(p.Target)), showBaseGame));
         }
 
-        var height = MathF.Min(IniHeight * ImGuiHelper.Scale, (text.Lines.Count + 2) * ImGui.GetTextLineHeightWithSpacing());
+        var height = MathF.Min(IniHeight * ImGuiHelper.Scale * (sections.Count > 1 ? 2 : 1),
+            (text.Lines.Count + 2) * ImGui.GetTextLineHeightWithSpacing());
         ini.Draw("##ini", text, block.Marks, new Vector2(ImGui.GetContentRegionAvail().X, height));
         if (wholeScript && ImGui.Button("Open the whole script"))
         {
+            window.Missions.ShowRaw = true;
             window.Missions.OpenMission(analysis.Script.Path, show: true);
         }
     }
 
-    /// <summary>Goes to the item of a link: a mission selection, a line of a problem, a system, or the action of a bundle
-    /// row.</summary>
+    /// <summary>Goes to the item of a link: a mission selection, a line of a problem, a system, a cutscene, or the action
+    /// of a bundle row.</summary>
     private void GoTo(object link)
     {
         var missions = window.Missions;
@@ -262,6 +398,9 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
                 break;
             case SystemLink system when window.Session?.GameData?.Items.Systems.Get(system.Nickname) is { } found:
                 window.OpenSystem(found);
+                break;
+            case CutsceneLink cutscene:
+                missions.OpenCutscene(cutscene.Value);
                 break;
             case BundleLink { Row.Action: MissionBundleAction.ShowSection, Row.Section: { } id }:
                 grid.RequestSection(SectionKey(id));
@@ -288,11 +427,45 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             ? session.ItemName(system)
             : null;
 
+    /// <summary>The name text of an item of the game data: a system, a base, a faction or a ship archetype. Null for
+    /// another kind or an item that the game data does not have.</summary>
+    private string? NameOf(MissionValueKind kind, string nickname)
+    {
+        if (window.Session is not { GameData: { } data } session)
+        {
+            return null;
+        }
+
+        object? item = kind switch
+        {
+            MissionValueKind.System => data.Items.Systems.Get(nickname),
+            MissionValueKind.Base => data.Items.Bases.Get(nickname),
+            MissionValueKind.Faction => data.Items.Factions.Get(nickname),
+            MissionValueKind.ShipArch => data.Items.Ships.Get(nickname),
+            _ => null,
+        };
+        return item != null ? session.ItemName(item) : null;
+    }
+
+    /// <summary>The lines of a ship build of the mission ship files by nickname, from the list of the edit view, or
+    /// null.</summary>
+    private IReadOnlyList<(string Key, string Value)>? ShipBuild(string nickname)
+    {
+        if (window.Session?.Edits is not { } edits ||
+            edits.Lists.List("npc_ship_arch")?.Find(nickname)?.Section is not { } section || edits.Get(section) is not { } view)
+        {
+            return null;
+        }
+
+        return view.Entries.Select(e => (e.Name, string.Join(", ", e.Values.Select(MissionIndex.Text)))).ToList();
+    }
+
     /// <summary>Forgets the model and the texts of the profile.</summary>
     public void Reset()
     {
         page = default;
         block = (null, null, false, null, []);
+        lists.Clear();
     }
 
     public void Dispose() => ini.Dispose();

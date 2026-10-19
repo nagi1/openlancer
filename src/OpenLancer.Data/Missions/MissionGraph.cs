@@ -779,7 +779,7 @@ public sealed class MissionGraph
     }
 
     /// <summary>The plain name and the targets of an action line, for a tooltip.</summary>
-    internal static string ActionText(MissionLine line)
+    public static string ActionText(MissionLine line)
     {
         if (MissionIndex.Is(line.Key, "Act_ChangeState"))
             return MissionIndex.Is(line.Value(0), "SUCCEED") ? "End mission: success" : "End mission: fail";
@@ -819,7 +819,7 @@ public sealed class MissionGraph
 
     /// <summary>The plain name and the values of a line. A name without values in the schema, for example Cnd_True,
     /// shows its plain name only, because its value is only a placeholder.</summary>
-    internal static string LineText(MissionLine line)
+    public static string LineText(MissionLine line)
     {
         var plain = line.Name?.Plain ?? line.Key;
         if (line.Name is { Values.Count: 0 })

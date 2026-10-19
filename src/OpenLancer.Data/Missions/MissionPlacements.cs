@@ -151,10 +151,13 @@ public static class MissionPlacements
     /// <param name="objectPosition">Gives the position of an object of the system by its nickname, or null when the
     /// system has no such object.</param>
     /// <param name="formationSlots">Gives the slot offsets of a formation shape by its nickname, or null.</param>
+    /// <param name="systemOverride">Gives the system that the user picked for an item, or null for the system that the
+    /// index finds (the Hierarchy menu "Show in system...").</param>
     public static IReadOnlyList<MissionPlacement> In(MissionIndex index, string system,
-        Func<string, Vector3?> objectPosition, Func<string, IReadOnlyList<Vector3>?>? formationSlots = null)
+        Func<string, Vector3?> objectPosition, Func<string, IReadOnlyList<Vector3>?>? formationSlots = null,
+        Func<MissionSection, string?>? systemOverride = null)
     {
-        var context = new Context(index, system, objectPosition, formationSlots);
+        var context = new Context(index, system, objectPosition, formationSlots, systemOverride);
         context.Cast();
         context.Triggers();
         context.Objectives();
@@ -190,8 +193,11 @@ public static class MissionPlacements
     }
 
     private sealed class Context(MissionIndex index, string system, Func<string, Vector3?> objectPosition,
-        Func<string, IReadOnlyList<Vector3>?>? formationSlots)
+        Func<string, IReadOnlyList<Vector3>?>? formationSlots, Func<MissionSection, string?>? systemOverride)
     {
+        /// <summary>The system of an item: the system that the user picked, or the system that the index finds.</summary>
+        private string? SystemOf(MissionSection section) => systemOverride?.Invoke(section) ?? index.SystemOf(section);
+
         // The items whose start this context finds now. An anchor that leads back to such an item has no place.
         private readonly HashSet<MissionSection> resolving = [];
 
@@ -209,11 +215,11 @@ public static class MissionPlacements
                          MissionSectionKind.Loot })
             {
                 if (index.Item(kind, name) is { } section)
-                    return InSystem(index.SystemOf(section)) ? Start(section) : null;
+                    return InSystem(SystemOf(section)) ? Start(section) : null;
             }
             if (index.Labels.TryGetValue(name.Trim(), out var members))
             {
-                return members.Where(m => InSystem(index.SystemOf(m))).Select(Start).FirstOrDefault(p => p != null);
+                return members.Where(m => InSystem(SystemOf(m))).Select(Start).FirstOrDefault(p => p != null);
             }
             return objectPosition(name.Trim());
         }
@@ -260,7 +266,7 @@ public static class MissionPlacements
                     MissionSectionKind.Loot => PlacementKind.LootStart,
                     _ => (PlacementKind?)null,
                 };
-                if (kind == null || !InSystem(index.SystemOf(section)))
+                if (kind == null || !InSystem(SystemOf(section)))
                     continue;
                 var label = section.Nickname ?? section.Ref.Id.ToString();
                 if (Line(section, "rel_pos") is { Count: > 2 } rel)
@@ -314,7 +320,7 @@ public static class MissionPlacements
                     var lineSystem = trigger.SystemHint is { } hint && !MissionIndex.Is(hint, "ANY")
                         ? hint
                         : line.References.FirstOrDefault(r => r.Section != null) is { Section: { } item }
-                            ? index.SystemOf(item)
+                            ? SystemOf(item)
                             : null;
                     if (!InSystem(lineSystem) || Placement(trigger, line) is not { } placement)
                         continue;
@@ -481,7 +487,7 @@ public static class MissionPlacements
         /// or of the first ship whose first orders it is.</summary>
         private string? SystemOfOrders(MissionSection section)
         {
-            if (index.SystemOf(section) is { } own)
+            if (SystemOf(section) is { } own)
                 return own;
             foreach (var reference in index.ReferencesTo(MissionValueKind.ObjList, section.Nickname ?? ""))
             {

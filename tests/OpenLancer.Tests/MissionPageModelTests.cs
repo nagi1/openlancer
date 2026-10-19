@@ -150,19 +150,21 @@ public sealed class MissionPageModelTests
         var (_, analysis) = Run(Full);
         var trigger = analysis.Index.Trigger("t_more")!;
 
-        var page = MissionPageModel.Item(analysis, new MissionRef(Script, MissionItemKind.Trigger, trigger.Section.Ref),
-            false);
+        var page = MissionPageModel.For(new PageContext(Run(Full).Result, analysis, false, false),
+            new MissionRef(Script, MissionItemKind.Trigger, trigger.Section.Ref));
 
         Assert.Equal("Trigger", page.Kind);
         Assert.Equal("t_more", page.Title);
         var section = page.Section("trigger")!;
         Assert.Equal("Trigger", section.Title);
         Assert.False(section.Advanced);
-        Assert.Equal(["Starts with the mission", "Repeats", "Starts when"], section.Fields.Select(f => f.Label));
+        Assert.Equal(["Starts with the mission", "Repeats"], section.Fields.Select(f => f.Label));
         // The schema marks both fields as hard, so their labels get the help glyph.
-        Assert.Equal([true, true, false], section.Fields.Select(f => f.Hard));
-        Assert.Equal(["No", "Yes"], section.Fields.Take(2).Select(f => f.Value));
-        Assert.DoesNotContain(page.Sections, s => s.Advanced);
+        Assert.Equal([true, true], section.Fields.Select(f => f.Hard));
+        Assert.Equal(["No", "Yes"], section.Fields.Select(f => f.Value));
+        // The Advanced section holds only the compact list of the lines, not the fields that decide when the trigger
+        // runs.
+        Assert.DoesNotContain(page.Section("advanced")!.Fields, f => f.Label is "Starts with the mission" or "Repeats");
         Assert.Equal(trigger.Section.Ref, page.Ini);
     }
 

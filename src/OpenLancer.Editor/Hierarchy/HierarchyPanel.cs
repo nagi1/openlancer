@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Numerics;
 using ImGuiNET;
 using LibreLancer.Data;
@@ -8,6 +9,7 @@ using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
+using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
 
@@ -34,10 +36,16 @@ internal sealed class HierarchyPanel(EditorWindow window)
         "Search by name. A t: word shows one type, for example t:camera.\n" +
         "Types: camera, monitor, character, prop, light, effect, sound, marker, path, scene, other.";
 
+    private const string MissionSearchTip =
+        "Search by nickname, name or value. A t: word shows one type, for example t:ship.\n" +
+        "Types: trigger, ship, formation, solar, loot, npc, label, orders, objective, conversation, encounter, prefab.";
+
     private HierarchyModel? model;
     private HierarchyModel? cutsceneModel;
+    private HierarchyModel? missionModel;
     private string search = "";
     private string cutsceneSearch = "";
+    private string missionSearch = "";
 
     // The selection at the last frame. A different selection that another panel made opens the tree to its row.
     private object? lastSeenSelection;
@@ -52,6 +60,12 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (window.CenterMode == CenterMode.Cutscene)
         {
             ToolbarItems.SearchField("search-cutscene", "Search (t:camera)", ref cutsceneSearch, -1, CutsceneSearchTip);
+            return;
+        }
+
+        if (window.CenterMode == CenterMode.Mission)
+        {
+            ToolbarItems.SearchField("search-mission", "Search (t:ship)", ref missionSearch, -1, MissionSearchTip);
             return;
         }
 
@@ -84,6 +98,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
     {
         model = null;
         cutsceneModel = null;
+        missionModel = null;
         lastSeenSelection = null;
         scrollRequest = null;
     }
@@ -111,6 +126,20 @@ internal sealed class HierarchyPanel(EditorWindow window)
             cutsceneModel = tree;
             tree.SetSearch(cutsceneSearch);
         }
+        else if (window.CenterMode == CenterMode.Mission)
+        {
+            // In Mission mode, the tree shows the open mission (section 9 of the M6a design).
+            if (window.Missions.Open is not { } analysis)
+            {
+                PanelStates.Message("No mission is open.", "Double-click a mission in the Missions tab.");
+                return;
+            }
+
+            tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel);
+            Show(tree, missionModel);
+            missionModel = tree;
+            tree.SetSearch(missionSearch);
+        }
         else
         {
             if (window.Scene.Index is not { } index)
@@ -137,14 +166,14 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         var focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
-        if (window.CenterMode != CenterMode.Cutscene)
+        if (IsScene)
         {
             FollowRename(tree);
         }
 
         Rows(tree, focused);
         // The empty space below the rows takes a tile: the asset spawns at the camera pivot.
-        if (window.CenterMode != CenterMode.Cutscene && ImGui.GetContentRegionAvail().Y > 1)
+        if (IsScene && ImGui.GetContentRegionAvail().Y > 1)
         {
             ImGui.Dummy(new Vector2(Math.Max(1, ImGui.GetContentRegionAvail().X), ImGui.GetContentRegionAvail().Y));
             window.AssetDrag.Hierarchy(null);
@@ -153,12 +182,14 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (tree.IsSearching && tree.Root.Matches == 0)
         {
             PanelStates.Message(
-                window.CenterMode == CenterMode.Cutscene ? "No entity matches the search." : "No object matches the search.",
+                window.CenterMode == CenterMode.Cutscene ? "No entity matches the search."
+                : window.CenterMode == CenterMode.Mission ? "No item matches the search."
+                : "No object matches the search.",
                 "Esc in the search field clears it.");
         }
 
         // A right click on empty space opens the Create menu (decision D255 of the M3 design).
-        if (window.CenterMode != CenterMode.Cutscene &&
+        if (IsScene &&
             ImGui.BeginPopupContextWindow("##hierarchy-create", ImGuiPopupFlags.MouseButtonRight | ImGuiPopupFlags.NoOpenOverItems))
         {
             EditorTheme.PushMenuColors();
@@ -170,12 +201,15 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (focused && !ImGui.GetIO().WantTextInput)
         {
             Keys(tree);
-            if (window.CenterMode != CenterMode.Cutscene)
+            if (IsScene)
             {
                 window.SceneEdits.Keys(window.Selection);
             }
         }
     }
+
+    /// <summary>True while the tree shows the open system: the edits of the Scene apply to its rows.</summary>
+    private bool IsScene => window.CenterMode == CenterMode.Scene;
 
     /// <summary>
     /// Opens the tree to the row of the rename and scrolls to it. A rename of an item that the scene does not show
@@ -310,7 +344,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.SetItemTooltip(node.Tooltip);
         }
 
-        if (window.CenterMode != CenterMode.Cutscene)
+        if (IsScene)
         {
             DragAndDrop(node);
         }
@@ -322,7 +356,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             {
                 ContextMenu(node.Item);
             }
-            else if (window.CenterMode != CenterMode.Cutscene)
+            else if (IsScene)
             {
                 // A group row opens the Create menu (decision D255 of the M3 design).
                 window.SceneEdits.CreateMenu(null);
@@ -334,7 +368,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
 
         // The text starts where ImGui puts the label of a tree node: after the arrow.
         var textStart = start.X + ImGui.GetFontSize() + 2 * style.FramePadding.X;
-        var section = window.CenterMode == CenterMode.Cutscene ? null : window.SceneEdits.SectionOf(node.Item);
+        var section = IsScene ? window.SceneEdits.SectionOf(node.Item) : null;
         if (section != null && section.Equals(window.SceneEdits.Renaming))
         {
             RenameField(start, textStart, right);
@@ -342,9 +376,39 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         ListRow.Text(start, textStart, right, node.Kind.Icon, node.Kind.Abgr, node.Name, node.Detail, node.CountText);
+        ProblemMark(node.Problem, start, right);
         if (section != null)
         {
             Mark(HierarchyModel.MarkOf(window.Session?.Edits.Get(section)), start, textStart);
+        }
+    }
+
+    /// <summary>
+    /// The mark of a row of a mission with a problem (section 9 of the M6a design): the error or warning glyph at the
+    /// right end of the row, or the muted lock glyph of a base-game problem while the base-game messages show.
+    /// </summary>
+    private static void ProblemMark(RowProblem problem, Vector2 start, float right)
+    {
+        if (problem == RowProblem.None)
+        {
+            return;
+        }
+
+        var (glyph, color, tip) = problem switch
+        {
+            RowProblem.Error => (EditorIcons.TimesCircle, EditorTheme.Error, "This item has an error. Its page lists it."),
+            RowProblem.Warning => (EditorIcons.ExclamationTriangle, EditorTheme.Warning,
+                "This item has a warning. Its page lists it."),
+            _ => (EditorIcons.Lock, EditorTheme.TextDim, "This item has a base-game message. Its page lists it."),
+        };
+        var text = glyph.ToString();
+        var size = ImGui.CalcTextSize(text);
+        var height = ImGui.GetFrameHeight();
+        var min = new Vector2(right - size.X - ImGui.GetStyle().FramePadding.X, start.Y + (height - size.Y) / 2);
+        ImGui.GetWindowDrawList().AddText(min, ImGui.GetColorU32(color), text);
+        if (ImGui.IsMouseHoveringRect(min, min + size))
+        {
+            ImGui.SetTooltip(tip);
         }
     }
 
@@ -522,6 +586,12 @@ internal sealed class HierarchyPanel(EditorWindow window)
                 break;
             case CutsceneRoot or ThnRef:
                 break;
+            case MissionRef mission:
+                // A double-click frames the item in the graph and in the Scene part (section 9 of the M6a design).
+                window.Selection = mission;
+                window.Missions.PendingGraphFrame = true;
+                window.Missions.FrameInScene(mission);
+                break;
             default:
                 window.Scene.Focus(item);
                 break;
@@ -533,7 +603,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
     private static string? CopyText(HierarchyModel tree, object item) => item switch
     {
         CutsceneRoot root => root.Path,
-        ThnRef => tree.NodeOf(item)?.Name,
+        ThnRef or MissionRef => tree.NodeOf(item)?.Name,
         _ => SceneItems.Nickname(item),
     };
 
@@ -542,6 +612,12 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (item is ThnRef or CutsceneRoot)
         {
             CutsceneMenu(item);
+            return;
+        }
+
+        if (item is MissionRef mission)
+        {
+            MissionMenu(mission);
             return;
         }
 
@@ -624,6 +700,51 @@ internal sealed class HierarchyPanel(EditorWindow window)
                 window.Selection = previous;
             }
         }
+    }
+
+    /// <summary>The menu of a row of a mission: frame it, copy its name, and for an item without a system, "Show in
+    /// system..." (section 9 of the M6a design).</summary>
+    private void MissionMenu(MissionRef item)
+    {
+        if (Theme.IconMenuItem(EditorIcons.CompressArrowsAlt, "Frame in the graph and the Scene", true))
+        {
+            Frame(item);
+        }
+
+        var name = missionModel?.NodeOf(item)?.Name;
+        if (Theme.IconMenuItem(EditorIcons.Copy, "Copy nickname", name != null))
+        {
+            ImGui.SetClipboardText(name!);
+        }
+
+        if (item.Section is not { } section || window.Missions.Open is not { } analysis ||
+            analysis.Document.Find(section) is not { } found ||
+            !OpenLancer.Data.Missions.MissionPlacements.SystemUnknown(analysis.Index).Contains(found))
+        {
+            return;
+        }
+
+        ImGui.Separator();
+        if (!Theme.BeginIconMenu(EditorIcons.Map, "Show in system..."))
+        {
+            return;
+        }
+
+        ImGui.SetItemTooltip("Pick the system where the Scene shows this item. The choice lasts until you close the editor.");
+        var current = window.Missions.SystemOverride(section);
+        foreach (var system in window.Session?.GameData?.Items.Systems.OrderBy(s => s.Nickname,
+                     StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<StarSystem>())
+        {
+            var label = window.Session!.ItemName(system) is { Length: > 0 } systemName
+                ? $"{systemName} ({system.Nickname})"
+                : system.Nickname;
+            if (ImGui.MenuItem(label, "", string.Equals(current, system.Nickname, StringComparison.OrdinalIgnoreCase)))
+            {
+                window.Missions.ShowInSystem(section, system.Nickname);
+            }
+        }
+
+        ImGui.EndMenu();
     }
 
     /// <summary>The menu of the cutscene row and of an entity row.</summary>

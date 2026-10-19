@@ -85,6 +85,24 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// node.</summary>
     public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
 
+    // The systems that the user picked for items whose system the index cannot find (the Hierarchy menu "Show in
+    // system...", section 9 of the M6a design). The choice lasts until the editor closes and writes nothing.
+    private readonly Dictionary<SectionRef, string> systemOverrides = [];
+
+    /// <summary>A number that changes with each choice of "Show in system...", so the mission layer reads its items
+    /// again.</summary>
+    public int OverridesVersion { get; private set; }
+
+    /// <summary>The system that the user picked for an item, or null.</summary>
+    public string? SystemOverride(SectionRef section) => systemOverrides.GetValueOrDefault(section);
+
+    /// <summary>Shows an item of the group "System unknown" in a system, for the session only.</summary>
+    public void ShowInSystem(SectionRef section, string system)
+    {
+        systemOverrides[section] = system;
+        OverridesVersion++;
+    }
+
     /// <summary>True while the base-game messages show (decision D527). One setting for the Console and the mission
     /// views.</summary>
     public bool ShowBaseGame => window.Settings.ShowBaseGameMessages;
