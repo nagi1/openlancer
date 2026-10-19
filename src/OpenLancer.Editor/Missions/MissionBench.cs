@@ -12,8 +12,8 @@ namespace OpenLancer.Editor.Missions;
 /// loads and the mission checks run, it opens each script in the Mission tab with the Scene part on. For each script, it
 /// runs two cases: the Beats lens at the summary level, and the Logic lens with "Show lines". Each case draws 300 frames
 /// with a pan and a zoom of the graph, after 30 frames to warm up. The bench writes the median and the 95th percentile of
-/// the frame times to the log and checks the gates: a median under 16 ms in the Beats lens and under 33 ms in the Logic
-/// lens. Then the editor closes. It needs no input.
+/// the frame times to the log. The gates are a median under 16 ms in the Beats lens and under 33 ms in the Logic lens.
+/// Then the editor closes. It needs no input.
 /// </summary>
 /// <remarks>A frame time is the time of the work of one frame of the editor, without the wait for the screen.</remarks>
 internal sealed class MissionBench(EditorWindow window, MissionView view, IReadOnlyList<string> paths)

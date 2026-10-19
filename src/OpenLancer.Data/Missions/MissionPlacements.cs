@@ -483,8 +483,8 @@ public static class MissionPlacements
             }
         }
 
-        /// <summary>The system of an order list: its own system, or the system of the first trigger line that gives it,
-        /// or of the first ship whose first orders it is.</summary>
+        /// <summary>The system of an order list: its own system, or the system of the first trigger line that gives it.
+        /// Else it is the system of the first ship that has it as its first orders.</summary>
         private string? SystemOfOrders(MissionSection section)
         {
             if (SystemOf(section) is { } own)

@@ -552,7 +552,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
     private void Move(HierarchyModel tree, int step)
     {
         var rows = tree.Rows;
-        var current = tree.IndexOf(window.Selection);
+        var current = tree.IndexOf(tree.RowItemOf(window.Selection));
         var start = current >= 0 ? current + step : step > 0 ? 0 : rows.Count - 1;
         for (var i = start; i >= 0 && i < rows.Count; i += step)
         {

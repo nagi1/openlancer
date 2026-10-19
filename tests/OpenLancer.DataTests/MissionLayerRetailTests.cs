@@ -64,11 +64,14 @@ public sealed class MissionLayerRetailTests(ITestOutputHelper output)
         var run = RetailMissions.Run();
         var uses = objects.Keys.ToDictionary(k => k, k => MissionSummary.ObjectUses(run, k));
         var named = uses.Count(u => u.Value.Count > 0);
-        var total = uses.Values.Sum(u => u.Count);
+        var lines = uses.Values.SelectMany(u => u).ToList();
+        var inTriggers = lines.Count(u => u.Line.Trigger != null);
 
-        output.WriteLine($"{named} objects of Li01 have {total} mission lines.");
-        Assert.All(uses.Values.SelectMany(u => u), u => Assert.NotNull(u.Line.Trigger));
-        Assert.Equal((47, 335), (named, total));
+        output.WriteLine($"{named} objects of Li01 have {lines.Count} mission lines, {inTriggers} of them in triggers.");
+        // A line outside a trigger, for example the arrival object of a mission ship or a dock order, names its section.
+        Assert.All(lines, u => Assert.NotNull(u.Line.Trigger?.Nickname ?? u.Line.Section.Nickname));
+        Assert.All(lines, u => Assert.StartsWith($"{u.Script.Slot!.Slot}: ", u.Text));
+        Assert.Equal((47, 335, 275), (named, lines.Count, inTriggers));
     }
 
     [Fact]

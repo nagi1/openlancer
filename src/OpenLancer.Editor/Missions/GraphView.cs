@@ -225,8 +225,8 @@ internal sealed class GraphView : IDisposable
     public void FrameSelection() => pending = Navigation.Selection;
 
     /// <summary>
-    /// A move of the view for the frame bench (<see cref="MissionBench"/>): a zoom to the whole graph each 100 frames, a
-    /// zoom in on a node in the middle of each 100 frames, and a pan from node to node in the other frames.
+    /// A move of the view for the frame bench (<see cref="MissionBench"/>). Each 100 frames, the view zooms to the whole
+    /// graph, and in the middle of them, it zooms in on a node. In the other frames, it pans from node to node.
     /// </summary>
     public void BenchStep(int frame)
     {

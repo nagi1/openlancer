@@ -73,7 +73,7 @@ public static class GraphNavigation
 
     /// <summary>
     /// The shortest path of Start and Load links from a start trigger to a trigger, or null when no start trigger reaches
-    /// it. A walk in breadth-first order from all start triggers in file order finds it, so of two paths of the same
+    /// it. A walk in breadth-first order from all start triggers in file order finds it. So when two paths have the same
     /// length, the path of the earlier start trigger and of the earlier lines wins.
     /// </summary>
     public static GraphPath? PathFromStart(MissionIndex index, MissionTrigger target)

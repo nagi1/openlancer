@@ -13,7 +13,7 @@ namespace OpenLancer.Editor.Missions;
 /// <summary>
 /// The Mission tab (section 7.1 of the M6a design): the graph of the open mission, or its raw INI text, beside the Scene,
 /// with a splitter between them. The graph toolbar is the strip of the tab, and the Scene toolbar is a strip above the
-/// Scene part. In the raw view, the text has the colors of the INI mode and the marks of the checks, a cursor in a
+/// Scene part. In the raw view, the text has the colors of the INI mode and the marks of the checks. A cursor in a
 /// section selects its item, and a selection of an item scrolls the text to its section.
 /// </summary>
 internal sealed class MissionView : IDisposable
@@ -324,7 +324,7 @@ internal sealed class MissionView : IDisposable
         }
 
         ImGui.EndChild();
-        // The connector lines draw on a child window after both parts. Thus they go over both parts and under the
+        // The connector lines draw on a child window after both parts. So they go over both parts and under the
         // popups. The child window takes no mouse input.
         if (!missions.ShowRaw)
         {
@@ -355,9 +355,9 @@ internal sealed class MissionView : IDisposable
         Keys();
     }
 
-    /// <summary>The keys of the graph (decision D558): F frames the selection, A or Home frame all, Ctrl+F goes to the
-    /// search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are off, so
-    /// Delete does nothing.</summary>
+    /// <summary>The keys of the graph (decision D558). F frames the selection, and A or Home frame all. Ctrl+F goes to
+    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are off,
+    /// so Delete does nothing.</summary>
     private void Keys()
     {
         var io = ImGui.GetIO();

@@ -78,8 +78,8 @@ public static class MissionCompleteness
         };
     }
 
-    /// <summary>A step whose state comes from the problems of its rules: done without a problem, missing with a problem
-    /// that shows, and hidden when each problem is a base-game problem (decision D551).</summary>
+    /// <summary>A step whose state comes from the problems of its rules (decision D551). The step is done without a
+    /// problem, and missing with a problem that shows. It is hidden when each problem is a base-game problem.</summary>
     public static CompletenessStep RuleStep(string name, string reason, IReadOnlyList<Diagnostic> problems)
     {
         if (problems.Count == 0)

@@ -12,11 +12,11 @@ using OpenLancer.Editor.Ui;
 namespace OpenLancer.Editor.Missions;
 
 /// <summary>
-/// The cross-highlighting of the Mission tab (section 7.3 of the M6a design, UI rule 6). From a node to the world: the
-/// Scene highlights the items that the lines of the selected trigger, row or prefab name, and connector lines go from the
-/// rows or chips to them. From the world to the graph: the graph outlines the triggers that use the selected world
-/// item, and a bar counts them with "Previous" and "Next". It also has the banner of an item in another system (section
-/// 7.4) and the frame of the world items of a node in the Scene part.
+/// The cross-highlighting of the Mission tab (section 7.3 of the M6a design, UI rule 6). From a node to the world, the
+/// Scene highlights the items that the lines of the selected trigger, row or prefab name. Connector lines go from the
+/// rows or chips to them. From the world to the graph, the graph outlines the triggers that use the selected world
+/// item, and a bar counts them with "Previous" and "Next". The class also has the banner of an item in another system
+/// (section 7.4) and the frame of the world items of a node in the Scene part.
 /// </summary>
 /// <remarks><see cref="CrossLinks"/> gives the sets and the line ends. This class keeps them for the selection and
 /// draws them.</remarks>
