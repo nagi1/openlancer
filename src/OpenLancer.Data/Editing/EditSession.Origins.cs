@@ -92,7 +92,7 @@ public sealed partial class EditSession
             return MessageOrigin.OpenLancer;
         if (problem is { Target: { } target, Key: { } key } && TryFind(target, out _, out _) &&
             Origin(target, key) is (ValueOrigin.LowerMod, { } lowerMod))
-            return MessageOrigin.Mod(lowerMod, ModEvidence.Section);
+            return MessageOrigin.Mod(lowerMod, ModEvidence.Key);
         return MessageOrigin.Mod(active.Id, ModEvidence.ActiveMod);
     }
 

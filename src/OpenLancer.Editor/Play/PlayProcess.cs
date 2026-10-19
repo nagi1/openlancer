@@ -62,8 +62,8 @@ internal sealed class PlayProcess : IDisposable
     /// <summary>Starts the program with redirected input and output, and without a console window. The game window
     /// shows, because it is not a console window.</summary>
     /// <param name="onEvent">Gets each event on the UI thread.</param>
-    /// <param name="onLogLine">Gets each warning or error line of the engine log on the UI thread (see
-    /// <see cref="ConsoleLog.ParseGameLine"/>).</param>
+    /// <param name="onLogLine">Gets each warning or error line of the engine log, and each line that starts a load, on
+    /// the UI thread (see <see cref="ConsoleLog.ParseGameLine"/>).</param>
     /// <param name="onExit">Gets the exit code and the first lines of the error output on the UI thread, after the
     /// last event.</param>
     /// <exception cref="Win32Exception">The program did not start, for example because it is missing.</exception>

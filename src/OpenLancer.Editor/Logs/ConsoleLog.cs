@@ -37,6 +37,9 @@ internal sealed record ConsoleEntry(ConsoleSeverity Severity, string Source, str
     /// <summary>The first line of the message. A list row shows only this line.</summary>
     public string FirstLine { get; } = Message.Split('\n', 2)[0].TrimEnd('\r');
 
+    /// <summary>The text of an engine line for the dedupe of the log, or null for another entry.</summary>
+    internal EngineText? EngineText { get; init; }
+
     /// <summary>The number of the entry in the order of arrival.</summary>
     internal long Sequence { get; set; }
 
@@ -48,16 +51,32 @@ internal sealed record ConsoleEntry(ConsoleSeverity Severity, string Source, str
         string.Create(CultureInfo.InvariantCulture, $"[{Severity} {Time:HH:mm:ss}] {Source}: {Message}");
 }
 
-/// <summary>The engine lines of one Play run (decision D514 of the console filter design): the count of each key, and
-/// the lines that wait for the base run.</summary>
+/// <summary>An engine line as the dedupe of the Console sees it: its severity, its component and its message with the
+/// place.</summary>
+internal readonly record struct EngineText(ConsoleSeverity Severity, string Source, string Message);
+
+/// <summary>
+/// The engine lines of one Play run (decision D514 of the console filter design): the count of each key in the load of
+/// the game now, and the lines that wait for the base run.
+/// </summary>
+/// <remarks>The game loads data more than one time in a run. A hot reload loads all game data again, and the game loads
+/// the files of a mission or a system each time that it starts it. A second load gives the lines of the first load
+/// again. So the counts start again at each load (see <see cref="LoadStarted"/>). A line is a base-game line when the
+/// load gives its key as often as the base run or less often.</remarks>
 internal sealed class GameRunLines
 {
     internal Dictionary<string, int> Seen { get; } = new(StringComparer.Ordinal);
 
-    internal List<(EngineLine Line, int Occurrence, ConsoleEntry Entry)> Waiting { get; } = [];
+    /// <summary>The lines that wait for the base run. A held entry is not in the log yet (see
+    /// <see cref="ConsoleLog.AddGameLine"/>).</summary>
+    internal List<(EngineLine Line, int Occurrence, ConsoleEntry Entry, bool Held)> Waiting { get; } = [];
 
     /// <summary>True after the run gave its notice of the slow game server (decision D507).</summary>
     internal bool Noticed { get; set; }
+
+    /// <summary>Starts the counts of a new load of the game: a hot reload, or a line of the game that starts a load
+    /// (see <see cref="EngineLineRules.StartsLoad"/>).</summary>
+    internal void LoadStarted() => Seen.Clear();
 }
 
 /// <summary>
@@ -93,8 +112,10 @@ internal sealed class ConsoleLog
     private readonly List<ConsoleEntry> entries = [];
     private readonly int[,] counts = new int[3, 3];
 
-    // Each engine line that the log added: its severity, source and message.
-    private readonly HashSet<(ConsoleSeverity, string, string)> engineLines = [];
+    // Each engine line that the log added, and each engine line that the log added with an origin that shows while the
+    // base-game messages are hidden.
+    private readonly HashSet<EngineText> engineLines = [];
+    private readonly HashSet<EngineText> shownEngineLines = [];
 
     // The batches whose start line came, by id, and the batches that ended and wait for the base run.
     private readonly Dictionary<string, Batch> openBatches = new(StringComparer.Ordinal);
@@ -123,8 +144,10 @@ internal sealed class ConsoleLog
 
     /// <summary>
     /// True while the game data loads again after a save, and during an action of <see cref="SkipKnownEngineLinesOf"/>.
-    /// That load logs the lines of the first load again, so the log then adds only the engine lines that it did not add
-    /// before. The batch of the load still counts each line for the comparison with the base run.
+    /// That load logs the lines of the first load again, so the log then adds only the engine lines that it does not
+    /// have yet (see <see cref="Has"/>). The batch of the load still counts each line for the comparison with the base
+    /// run. A line of a known text that waits for the base run gets its entry when it resolves. A mod line can have the
+    /// text of a base-game line, for example in a binary file, which has no line numbers.
     /// </summary>
     public bool SkipKnownEngineLines { get; set; }
 
@@ -138,7 +161,7 @@ internal sealed class ConsoleLog
         set
         {
             foreach (var entry in PendingEntries())
-                Resolve(entry, new ResolvedLine(MessageOrigin.Unknown, null));
+                Resolve(entry, held: false, new ResolvedLine(MessageOrigin.Unknown, null));
             openBatches.Clear();
             openOrder.Clear();
             endedBatches.Clear();
@@ -190,16 +213,21 @@ internal sealed class ConsoleLog
         if (entries.Count == Capacity)
         {
             var oldest = entries[0];
-            counts[(int)oldest.Severity, Group(oldest)]--;
+            counts[(int)oldest.Severity, Group(oldest.Origin)]--;
             oldest.Removed = true;
             entries.RemoveAt(0);
         }
 
         entry.Sequence = ++sequence;
         entries.Add(entry);
-        counts[(int)entry.Severity, Group(entry)]++;
+        counts[(int)entry.Severity, Group(entry.Origin)]++;
         Version++;
-        if (Group(entry) == Shown)
+        if (entry.EngineText is { } text)
+        {
+            engineLines.Add(text);
+        }
+
+        if (Group(entry.Origin) == Shown)
         {
             Note(entry);
         }
@@ -211,6 +239,11 @@ internal sealed class ConsoleLog
     /// <see cref="Last"/> when it is newer.</summary>
     private void Note(ConsoleEntry entry)
     {
+        if (entry.EngineText is { } text)
+        {
+            shownEngineLines.Add(text);
+        }
+
         if (entry.Severity == ConsoleSeverity.Info)
         {
             return;
@@ -290,22 +323,26 @@ internal sealed class ConsoleLog
         }
 
         var consoleSeverity = severity == LogSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning;
+        var text = new EngineText(consoleSeverity, parsed.Source, parsed.Message);
         var batch = openOrder.Count > 0 ? openOrder[^1] : null;
-        ConsoleEntry? entry = null;
-        if (engineLines.Add((consoleSeverity, parsed.Source, parsed.Message)) || !SkipKnownEngineLines)
+        var entry = new ConsoleEntry(consoleSeverity, parsed.Source, parsed.Message, DateTime.Now)
         {
-            var origin = origins == null ? MessageOrigin.OpenLancer
+            Kind = kind,
+            Origin = origins == null ? MessageOrigin.OpenLancer
                 : batch == null ? MessageOrigin.Unknown
                 : origins.NeedsBaseRun ? MessageOrigin.Pending
-                : MessageOrigin.BaseGame;
-            entry = Add(new ConsoleEntry(consoleSeverity, parsed.Source, parsed.Message, DateTime.Now)
-            {
-                Kind = kind,
-                Origin = origin,
-            });
+                : MessageOrigin.BaseGame,
+            EngineText = text,
+        };
+        var waits = entry.Origin.Kind == OriginKind.Pending;
+        // While the skip is on, a line of a known text that waits for the base run waits outside the log.
+        var held = SkipKnownEngineLines && engineLines.Contains(text);
+        if (!held || !waits && !Has(text, entry.Origin))
+        {
+            Add(entry);
         }
 
-        batch?.Add(parsed, entry is { Origin.Kind: OriginKind.Pending } ? entry : null);
+        batch?.Add(parsed, waits ? entry : null, held && waits);
     }
 
     /// <summary>
@@ -336,16 +373,24 @@ internal sealed class ConsoleLog
     }
 
     /// <summary>
-    /// Adds a warning or an error line of the game process of Play (decision D57). The game loads the same data as the
-    /// editor and writes many of the same lines. So the log adds a line only when it did not add the same engine line
-    /// before: the same severity, component and message. The entry has the source of the caller, and its message starts
-    /// with the component. The rules table drops the process lines, and the lines of a slow game server give one info
-    /// entry for each run (decisions D506 and D507).
+    /// Adds a line of the game process of Play (decision D57). The game loads the same data as the editor and writes many
+    /// of the same lines. So the log adds a line only when it does not have the same engine line yet (see
+    /// <see cref="Has"/>): the same severity, component and message. The line gets its origin first, from the count of
+    /// its key in the load of the game. So a mod line with the text of a base-game line shows. The entry has the source
+    /// of the caller, and its message starts with the component. The rules table drops the process lines, and the lines
+    /// of a slow game server give one info entry for each run (decisions D506 and D507). A line that starts a load of
+    /// the game starts the counts again (see <see cref="GameRunLines"/>).
     /// </summary>
     /// <param name="line">A line of <see cref="ParseGameLine"/>.</param>
     /// <param name="source">The source of the entry, for example "Play".</param>
     public void AddGameLine(GameRunLines run, EngineLine line, string source)
     {
+        if (EngineLineRules.StartsLoad(line))
+        {
+            run.LoadStarted();
+            return;
+        }
+
         var kind = EngineLineRules.Match(line);
         if (kind?.Disposition == EngineLineDisposition.Drop)
         {
@@ -365,24 +410,32 @@ internal sealed class ConsoleLog
 
         var occurrence = run.Seen[line.Key] = run.Seen.GetValueOrDefault(line.Key) + 1;
         var severity = line.Severity == LogSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning;
-        if (!engineLines.Add((severity, line.Source, line.Message)))
-        {
-            return;
-        }
-
+        var text = new EngineText(severity, line.Source, line.Message);
         var resolved = origins == null
             ? new ResolvedLine(MessageOrigin.OpenLancer, null)
             : origins.CanResolve ? origins.ResolveRunning(line, occurrence)
             : new ResolvedLine(MessageOrigin.Pending, null);
-        var entry = Add(new ConsoleEntry(severity, source, $"{line.Source}: {line.Message}", DateTime.Now)
+        var entry = new ConsoleEntry(severity, source, $"{line.Source}: {line.Message}", DateTime.Now)
         {
             Kind = kind,
             Origin = resolved.Origin,
             Target = resolved.Target,
-        });
+            EngineText = text,
+        };
         if (entry.Origin.Kind == OriginKind.Pending)
         {
-            run.Waiting.Add((line, occurrence, entry));
+            // A line of a known text waits outside the log for its origin.
+            var held = engineLines.Contains(text);
+            if (!held)
+            {
+                Add(entry);
+            }
+
+            run.Waiting.Add((line, occurrence, entry, held));
+        }
+        else if (!Has(text, entry.Origin))
+        {
+            Add(entry);
         }
     }
 
@@ -390,10 +443,14 @@ internal sealed class ConsoleLog
     internal static string SlowServerNotice(string ms) =>
         $"The game server was slow. An update took {ms} ms. The Play log has each slow update.";
 
-    /// <summary>A warning or an error line of FLLog with a component, for example "[Warning: 12:34:56] Ini: message".
-    /// Null for a line of another severity or in another form.</summary>
+    /// <summary>A line of FLLog with a component that the Console reads from the game of Play: a warning or an error
+    /// line, for example "[Warning: 12:34:56] Ini: message", or an info line that starts a load of the game (see
+    /// <see cref="EngineLineRules.StartsLoad"/>). Null for another line.</summary>
     internal static EngineLine? ParseGameLine(string line) =>
-        EngineLine.Parse(line) is { Severity: LogSeverity.Warning or LogSeverity.Error } parsed ? parsed : null;
+        EngineLine.Parse(line) is { } parsed &&
+        (parsed.Severity is LogSeverity.Warning or LogSeverity.Error || EngineLineRules.StartsLoad(parsed))
+            ? parsed
+            : null;
 
     /// <summary>Gives the result of the base run of the open profile to the origin rules, and resolves the entries that
     /// wait.</summary>
@@ -418,6 +475,18 @@ internal sealed class ConsoleLog
         foreach (var entry in entries)
         {
             entry.Removed = true;
+        }
+
+        // The held entries of a batch that did not end do not come back when it ends.
+        foreach (var batch in openOrder)
+        {
+            foreach (var waiting in batch.Waiting)
+            {
+                if (waiting is ({ } entry, _))
+                {
+                    entry.Removed = true;
+                }
+            }
         }
 
         entries.Clear();
@@ -477,9 +546,9 @@ internal sealed class ConsoleLog
             var results = rules.Resolve(batch.Lines);
             for (var i = 0; i < results.Count; i++)
             {
-                if (batch.Entries[i] is { Removed: false } entry)
+                if (batch.Waiting[i] is ({ } entry, var held))
                 {
-                    Resolve(entry, results[i]);
+                    Resolve(entry, held, results[i]);
                 }
             }
         }
@@ -487,36 +556,56 @@ internal sealed class ConsoleLog
         endedBatches.Clear();
         foreach (var run in gameRuns)
         {
-            foreach (var (line, occurrence, entry) in run.Waiting)
+            foreach (var (line, occurrence, entry, held) in run.Waiting)
             {
-                if (!entry.Removed)
-                {
-                    Resolve(entry, rules.ResolveRunning(line, occurrence));
-                }
+                Resolve(entry, held, rules.ResolveRunning(line, occurrence));
             }
 
             run.Waiting.Clear();
         }
     }
 
-    /// <summary>Gives a pending entry its origin. An entry that then shows counts as a new entry.</summary>
-    private void Resolve(ConsoleEntry entry, ResolvedLine resolved)
+    /// <summary>
+    /// Gives an entry that waits its origin. A pending entry of the log that then shows counts as a new entry. A held
+    /// entry waits outside the log, because the log had its text. It goes into the log only when the log does not have
+    /// the same line for its origin (see <see cref="Has"/>).
+    /// </summary>
+    private void Resolve(ConsoleEntry entry, bool held, ResolvedLine resolved)
     {
         if (entry.Origin.Kind != OriginKind.Pending || entry.Removed)
         {
             return;
         }
 
+        entry.Target ??= resolved.Target;
+        if (held)
+        {
+            entry.Origin = resolved.Origin;
+            if (!Has(entry.EngineText!.Value, entry.Origin))
+            {
+                Add(entry);
+            }
+
+            return;
+        }
+
         counts[(int)entry.Severity, Pending]--;
         entry.Origin = resolved.Origin;
-        entry.Target ??= resolved.Target;
-        counts[(int)entry.Severity, Group(entry)]++;
+        counts[(int)entry.Severity, Group(entry.Origin)]++;
         Version++;
-        if (Group(entry) == Shown)
+        if (Group(entry.Origin) == Shown)
         {
             Note(entry);
         }
     }
+
+    /// <summary>
+    /// True when the log has an engine line for an origin, so the dedupe drops the line. A line with an origin that
+    /// shows while the base-game messages are hidden needs an entry of the same text that shows too. A base-game line
+    /// needs only an entry of the same text.
+    /// </summary>
+    private bool Has(EngineText text, MessageOrigin origin) =>
+        Group(origin) == Shown ? shownEngineLines.Contains(text) : engineLines.Contains(text);
 
     /// <summary>The entries that wait for the base run.</summary>
     private IEnumerable<ConsoleEntry> PendingEntries()
@@ -530,7 +619,7 @@ internal sealed class ConsoleLog
         }
     }
 
-    private static int Group(ConsoleEntry entry) => entry.Origin.Kind switch
+    private static int Group(MessageOrigin origin) => origin.Kind switch
     {
         OriginKind.BaseGame => BaseGame,
         OriginKind.Pending => Pending,
@@ -539,18 +628,18 @@ internal sealed class ConsoleLog
 
     private int Sum(int group) => counts[0, group] + counts[1, group] + counts[2, group];
 
-    /// <summary>The engine lines of one load, with the entry of each line that waits, or null for a line that the log
-    /// did not add.</summary>
+    /// <summary>The engine lines of one load, with the entry of each line that waits for its origin, or null for a line
+    /// that does not wait. A held entry waits outside the log (see <see cref="SkipKnownEngineLines"/>).</summary>
     private sealed class Batch
     {
         public List<EngineLine> Lines { get; } = [];
 
-        public List<ConsoleEntry?> Entries { get; } = [];
+        public List<(ConsoleEntry Entry, bool Held)?> Waiting { get; } = [];
 
-        public void Add(EngineLine line, ConsoleEntry? entry)
+        public void Add(EngineLine line, ConsoleEntry? waiting, bool held)
         {
             Lines.Add(line);
-            Entries.Add(entry);
+            Waiting.Add(waiting == null ? null : (waiting, held));
         }
     }
 }

@@ -105,6 +105,33 @@ public sealed class OverlayPatchTests
         Assert.Equal(["Ship s2", "CollisionGroup s2_part"], Describe(overlay, @"DATA\ships.ini"));
     }
 
+    /// <summary>The server fuse actions that the engine reads since OL-0046 are child sections of a fuse. So a delete of
+    /// the fuse also deletes its <c>[damage_hp_attachment]</c>, and the next fuse keeps its own action.</summary>
+    [Fact]
+    public void DeletingAFuseAlsoDeletesItsDamageHpAttachment()
+    {
+        using var ws = new TestWorkspace();
+        ws.WriteBase(@"DATA\FX\fuse.ini", """
+            [fuse]
+            name = f1
+
+            [damage_hp_attachment]
+            at_t = 0.5
+            hardpoint = HpA
+
+            [fuse]
+            name = f2
+
+            [damage_hp_attachment]
+            at_t = 0.2
+            hardpoint = HpB
+            """);
+        var overlay = ws.Build(ws.Mod("m", new() { [@"patches\DATA\FX\fuse.ini"] = "[fuse]\nname = f1\nol.delete = true" }));
+
+        Assert.Empty(overlay.Diagnostics);
+        Assert.Equal(["fuse f2", "damage_hp_attachment 0.2"], Describe(overlay, @"DATA\FX\fuse.ini"));
+    }
+
     [Fact]
     public void ANewChildGoesAfterTheChildrenOfItsParent()
     {

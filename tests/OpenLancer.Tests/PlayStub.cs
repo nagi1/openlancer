@@ -17,15 +17,19 @@ namespace OpenLancer.Tests;
 /// <param name="IgnoreStop">True: the stub does not end at <c>stop</c>, only at the end of its input.</param>
 /// <param name="Sleep">Seconds that the stub waits before it ends. It writes nothing and reads no input.</param>
 /// <param name="ReloadLines">The lines that the stub writes when it reads <c>reload n</c>: the first line at the first
-/// reload, the second line at the second reload, and the last line at each later reload. Without them, the stub does
-/// not answer a reload.</param>
+/// reload, the second line at the second reload, and the last line at each later reload. A line can hold more lines,
+/// each after <see cref="NextLine"/>. Without them, the stub does not answer a reload.</param>
 internal sealed record StubPlan(
     string[] Lines,
     string[]? StartLines = null,
     int? Exit = null,
     bool IgnoreStop = false,
     int Sleep = 0,
-    string[]? ReloadLines = null);
+    string[]? ReloadLines = null)
+{
+    /// <summary>The character between two lines of one reload in <see cref="ReloadLines"/>.</summary>
+    public const char NextLine = '\u001f';
+}
 
 /// <summary>
 /// A stub of the play program (section 16.1 of the M4 design): a PowerShell script, because it must read lines of its
@@ -67,7 +71,9 @@ internal sealed class PlayStub
             Write-Record $line
             if ($line -eq 'start') { Write-Lines $StartLines }
             if ($line.StartsWith('reload ') -and $reloads.Count -gt 0) {
-                [Console]::Out.WriteLine($reloads[[Math]::Min($reloadCount, $reloads.Count - 1)])
+                foreach ($out in $reloads[[Math]::Min($reloadCount, $reloads.Count - 1)].Split([char]0x1F)) {
+                    [Console]::Out.WriteLine($out)
+                }
                 [Console]::Out.Flush()
                 $reloadCount++
             }

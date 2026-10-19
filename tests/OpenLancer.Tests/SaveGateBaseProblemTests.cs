@@ -3,6 +3,7 @@ using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Inspector;
 using Xunit;
 using static OpenLancer.Tests.ListWorkspace;
 
@@ -99,6 +100,11 @@ public sealed class SaveGateBaseProblemTests
 
         var error = Assert.Single(session.SaveProblems());
         Assert.Equal((DiagnosticSeverity.Error, before.Message), (error.Severity, error.Message));
+        // The base game gives the same message, so the origin does not say that the base game does not give it.
+        var origin = session.SaveProblemOrigin(error);
+        Assert.Equal(MessageOrigin.Mod("act", ModEvidence.ActiveMod), origin);
+        Assert.Equal("Origin: mod 'act'. Mod 'act' is the active mod, and a check of its data finds the problem.",
+            origin.Text);
         Assert.False(session.Save().Saved);
     }
 
@@ -151,6 +157,44 @@ public sealed class SaveGateBaseProblemTests
         var error = Assert.Single(session.SaveProblems());
         Assert.Equal((DiagnosticSeverity.Error, "pos"), (error.Severity, error.Key));
         Assert.False(session.Save().Saved);
+    }
+
+    /// <summary>An error in a key that a lower mod writes blocks the save and has the origin of that mod (decision
+    /// D518). The origin does not say that the base game does not give the message, because the save gate does not
+    /// compare with the base game.</summary>
+    [Fact]
+    public void AnErrorInAKeyOfALowerModHasTheOriginOfThatMod()
+    {
+        using var ws = Create(lowerFiles: new() { [@"patches\" + Li01Path] = "[Object]\nnickname = bad\npos = 1, 2, y\n" });
+        var session = ws.Session("act");
+
+        session.Execute(EditCommand.SetLinesFromText(Bad, "reputation", ["li_n_grp"]));
+
+        var error = Assert.Single(session.SaveProblems());
+        Assert.Equal((DiagnosticSeverity.Error, "pos"), (error.Severity, error.Key));
+        var origin = session.SaveProblemOrigin(error);
+        Assert.Equal(MessageOrigin.Mod("lower", ModEvidence.Key), origin);
+        Assert.Equal("Origin: mod 'lower'. Mod 'lower' changes this key, and a check of its data finds the problem.",
+            origin.Text);
+        Assert.False(session.Save().Saved);
+    }
+
+    /// <summary>The raw INI block shows a base-game field problem with the base-game look (decision D512). A list
+    /// problem keeps its normal look, as on its row, also when it does not block the save (section 6 of the console
+    /// filter design).</summary>
+    [Fact]
+    public void TheRawBlockGivesTheBaseGameLookOnlyToAFieldProblem()
+    {
+        using var ws = Create();
+        var session = ws.Session("act");
+
+        var field = Assert.Single(SectionExtras.SectionProblems(session, Bad, session.Get(Bad)!), p => p.Problem.Key == "pos");
+        var list = Assert.Single(SectionExtras.SectionProblems(session, Loose, session.Get(Loose)!),
+            p => p.Problem.Key == "archetype");
+
+        Assert.True(field.BaseGame);
+        Assert.False(list.BaseGame);
+        Assert.True(session.IsBaseGameProblem(list.Problem));
     }
 
     /// <summary>The same error in a new section of the active mod blocks, because the base game has no such

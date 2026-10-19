@@ -38,6 +38,10 @@ public enum ModEvidence
     /// <summary>The mod is the active mod, and a check of its data finds the problem: the save gate or the validation
     /// of a save.</summary>
     ActiveMod,
+
+    /// <summary>A lower mod changes the key of the problem, and the save gate finds the problem in that key (decision
+    /// D518).</summary>
+    Key,
 }
 
 /// <summary>The origin of a Console message: who causes it.</summary>
@@ -57,14 +61,19 @@ public sealed record MessageOrigin(OriginKind Kind, string? ModId = null, ModEvi
     public bool IsBaseGame => Kind == OriginKind.BaseGame;
 
     /// <summary>The origin line of the details pane of the Console.</summary>
+    /// <remarks>Only the comparison with the base run (<see cref="ModEvidence.Section"/>, <see cref="ModEvidence.File"/>
+    /// and <see cref="ModEvidence.OnlyMod"/>) shows that the base game does not give the message. A check of the data
+    /// of a mod does not compare with the base game. For example, a mod can write a key again with the error that the
+    /// base game has too.</remarks>
     public string Text => Kind switch
     {
         OriginKind.BaseGame => "Origin: base game. The base game without mods gives the same message.",
-        OriginKind.Mod => $"Origin: mod '{ModId}'. {NotInBase} " + Evidence switch
+        OriginKind.Mod => $"Origin: mod '{ModId}'. " + Evidence switch
         {
-            ModEvidence.Section => $"Mod '{ModId}' changes this section.",
-            ModEvidence.File => $"Mod '{ModId}' changes this file.",
-            ModEvidence.OnlyMod => $"Mod '{ModId}' is the only mod that changes game files.",
+            ModEvidence.Section => $"{NotInBase} Mod '{ModId}' changes this section.",
+            ModEvidence.File => $"{NotInBase} Mod '{ModId}' changes this file.",
+            ModEvidence.OnlyMod => $"{NotInBase} Mod '{ModId}' is the only mod that changes game files.",
+            ModEvidence.Key => $"Mod '{ModId}' changes this key, and a check of its data finds the problem.",
             _ => $"Mod '{ModId}' is the active mod, and a check of its data finds the problem.",
         },
         OriginKind.SomeMod => $"Origin: a mod. {NotInBase} OpenLancer cannot find the mod that causes it.",

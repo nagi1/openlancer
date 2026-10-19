@@ -93,6 +93,26 @@ public sealed class EngineLineRulesTests
         Assert.Empty(log.Entries);
     }
 
+    /// <summary>The info lines of the game that start a load of a mission or a system start the counts of a Play run
+    /// again. The Console reads them from the game, but they give no entry. Another info line, and a warning with the
+    /// same text, start no load.</summary>
+    [Theory]
+    [InlineData("[Info: 12:00:00] Mission: Loading mission: msn_a with 0 saved triggers", true)]
+    [InlineData("[Info: 12:00:00] Game: Entering system sys_a", true)]
+    [InlineData("[Info: 12:00:00] Server: Spun up sys_a (System A)", true)]
+    [InlineData("[Warning: 12:00:00] Game: Entering system sys_a", false)]
+    [InlineData("[Info: 12:00:00] Game: Initial load took 3 seconds", false)]
+    public void AnInfoLineOfTheGameCanStartALoad(string text, bool startsLoad)
+    {
+        Assert.Equal(startsLoad, EngineLineRules.StartsLoad(Line(text)));
+        Assert.Equal(startsLoad || text.StartsWith("[Warning", System.StringComparison.Ordinal),
+            ConsoleLog.ParseGameLine(text) != null);
+        var log = new ConsoleLog();
+        if (ConsoleLog.ParseGameLine(text) is { } line && startsLoad)
+            log.AddGameLine(log.BeginGameRun(), line, "Play");
+        Assert.Empty(log.Entries);
+    }
+
     /// <summary>The lines of a slow game server give one info entry for each Play run (decision D507).</summary>
     [Fact]
     public void ANoticeGivesOneInfoEntryForEachPlayRun()

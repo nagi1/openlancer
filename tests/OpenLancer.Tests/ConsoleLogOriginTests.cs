@@ -18,6 +18,9 @@ public sealed class ConsoleLogOriginTests
     private const string KnownError = @"[Error: 12:00:00] Ini: Missing required field effect at section start_effect: data\fx.ini, line 9";
     private const string New = @"[Warning: 12:00:00] Ini: Unknown entry typo at section Object: data\other.ini, line 5";
 
+    // A line of a binary file has no line number, so each line of one key in the file has the same text.
+    private const string Binary = @"[Warning: 12:00:00] Ini: Duplicate of ids_info in section Object: data\base.ini (line not available)";
+
     /// <summary>A Console with the origin rules of a profile with a mod file, so its batches wait for the base
     /// run.</summary>
     private static (ConsoleLog Log, TestWorkspace Workspace) Profile(bool modFiles = true)
@@ -225,6 +228,119 @@ public sealed class ConsoleLogOriginTests
         log.BaseRunEnded(Counts());
 
         Assert.Equal(MessageOrigin.Mod("act", ModEvidence.OnlyMod), Assert.Single(log.Entries).Origin);
+    }
+
+    /// <summary>
+    /// The reload after a save logs the lines of the first load again, so the log skips the texts that it has. A mod
+    /// line with the text of a base-game line still shows when its batch resolves. Here the base run and the first load
+    /// give a line of a binary file two times, and each reload gives it three times. The second reload adds nothing,
+    /// because the log shows the mod line already.
+    /// </summary>
+    [Fact]
+    public void AReloadShowsAModLineWithTheTextOfABaseGameLine()
+    {
+        var (log, ws) = Profile();
+        using var _ = ws;
+        log.BaseRunEnded(Counts(Binary, Binary));
+        Batch(log, Binary, Binary);
+
+        log.SkipKnownEngineLines = true;
+        Batch(log, Binary, Binary, Binary);
+        Batch(log, Binary, Binary, Binary);
+        log.SkipKnownEngineLines = false;
+
+        var shown = Assert.Single(log.Entries, e => ConsolePanel.IsShown(e.Origin, false));
+        Assert.Equal(MessageOrigin.Mod("act", ModEvidence.OnlyMod), shown.Origin);
+        Assert.Equal((2, 1), (log.BaseGameCount, log.UnseenWarnings));
+        Assert.Same(shown, log.Last);
+    }
+
+    /// <summary>A held line of a batch that did not end does not come back after Clear.</summary>
+    [Fact]
+    public void AHeldLineDoesNotComeBackAfterClear()
+    {
+        var (log, ws) = Profile();
+        using var _ = ws;
+        log.BaseRunEnded(Counts(Binary));
+        Batch(log, Binary);
+        log.SkipKnownEngineLines = true;
+        log.AddEngineLine(ConsoleLog.BatchStartLine("b2"), LogSeverity.Info);
+        log.AddEngineLine(Binary, LogSeverity.Warning);
+        log.AddEngineLine(Binary, LogSeverity.Warning);
+
+        log.Clear();
+        log.AddEngineLine(ConsoleLog.BatchEndLine("b2"), LogSeverity.Info);
+
+        Assert.Empty(log.Entries);
+    }
+
+    /// <summary>A Play line above the base count shows, also when the log has its text as a base-game line. A third
+    /// line of the same text adds nothing, because the log shows the line already (decision D57).</summary>
+    [Fact]
+    public void APlayLineAboveTheBaseCountShowsWithTheTextOfABaseGameLine()
+    {
+        var (log, ws) = Profile();
+        using var _ = ws;
+        log.BaseRunEnded(Counts(Binary));
+        var run = log.BeginGameRun();
+
+        log.AddGameLine(run, EngineLine.Parse(Binary)!, "Play");
+        log.AddGameLine(run, EngineLine.Parse(Binary)!, "Play");
+        log.AddGameLine(run, EngineLine.Parse(Binary)!, "Play");
+
+        Assert.Equal([MessageOrigin.BaseGame, MessageOrigin.Mod("act", ModEvidence.OnlyMod)],
+            log.Entries.Select(e => e.Origin));
+        Assert.Equal(1, log.UnseenWarnings);
+    }
+
+    /// <summary>The game loads a mission or a system each time that it starts it, and a hot reload loads all data again.
+    /// So a line that starts a load starts the counts of the run again, and the lines of a second load stay base-game
+    /// lines.</summary>
+    [Fact]
+    public void ALoadOfTheGameStartsTheCountsOfTheRunAgain()
+    {
+        var (log, ws) = Profile();
+        using var _ = ws;
+        log.BaseRunEnded(Counts(Binary));
+        var run = log.BeginGameRun();
+        var mission = ConsoleLog.ParseGameLine("[Info: 12:00:00] Mission: Loading mission: msn_a with 0 saved triggers")!;
+
+        log.AddGameLine(run, mission, "Play");
+        log.AddGameLine(run, EngineLine.Parse(Binary)!, "Play");
+        log.AddGameLine(run, mission, "Play");
+        log.AddGameLine(run, EngineLine.Parse(Binary)!, "Play");
+        run.LoadStarted();
+        log.AddGameLine(run, EngineLine.Parse(Binary)!, "Play");
+
+        Assert.Equal(MessageOrigin.BaseGame, Assert.Single(log.Entries).Origin);
+        Assert.Equal(0, log.UnseenWarnings);
+    }
+
+    /// <summary>A profile without a mod file needs no base run. The first save of a mod gives the edit view a mod file.
+    /// From then on, the lines of a batch wait for the base run, and a line that the base run does not give
+    /// shows.</summary>
+    [Fact]
+    public void AfterTheFirstSaveTheLinesWaitForTheBaseRun()
+    {
+        using var ws = ListWorkspace.Create();
+        var session = ws.Session("act");
+        var log = new ConsoleLog { Origins = new EngineLineOrigins(session) };
+        Batch(log, Known);
+        Assert.False(log.Origins!.NeedsBaseRun);
+
+        session.Execute(EditCommand.SetLinesFromText(ListWorkspace.Li01("Li01_01"), "loadout", ["lo_shared"]));
+        Assert.True(session.Save().Saved);
+        log.SkipKnownEngineLines = true;
+        Batch(log, Known, New);
+        log.SkipKnownEngineLines = false;
+
+        Assert.True(log.Origins!.NeedsBaseRun);
+        Assert.Equal(1, log.PendingCount);
+        log.BaseRunEnded(Counts(Known));
+
+        var shown = Assert.Single(log.Entries, e => !e.Origin.IsBaseGame);
+        Assert.Equal((MessageOrigin.Mod("act", ModEvidence.OnlyMod), "Ini"), (shown.Origin, shown.Source));
+        Assert.Equal(1, log.BaseGameCount);
     }
 
     /// <summary>A diagnostic keeps its origin. A diagnostic without one has the origin OpenLancer.</summary>

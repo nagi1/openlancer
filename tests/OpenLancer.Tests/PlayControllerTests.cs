@@ -8,6 +8,7 @@ using System.Threading;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.World;
 using OpenLancer.Data;
+using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
@@ -1018,6 +1019,32 @@ public sealed class PlayControllerTests : IDisposable
         Assert.Equal("Playing: Planet New London (Br01_01_Base), save 2", play.StatusText);
         StopAndRunToIdle();
         Assert.Equal(["start", "reload 2", "stop"], stub.Input(0));
+    }
+
+    /// <summary>A hot reload loads all game data again, so the Console counts the engine lines of the run again. A line
+    /// that the base game gives one time stays a base-game line after the reload (decision D514 of the console filter
+    /// design).</summary>
+    [Fact]
+    public void AReloadStartsTheCountsOfTheEngineLinesAgain()
+    {
+        const string line = @"[Warning: 12:00:00] Ini: Unknown entry typo at section Object: data\other.ini, line 5";
+        using var mods = ListWorkspace.Create(activeFiles: new()
+        {
+            [@"patches\" + ListWorkspace.Li01Path] = "[Object]\nnickname = Li01_01\nloadout = lo_shared\n",
+        });
+        editor.Log.Origins = new EngineLineOrigins(mods.Session("act"));
+        editor.Log.BaseRunEnded(new Dictionary<string, int> { [EngineLine.Parse(line)!.Key] = 1 });
+        PlayToRunning(Game with { Lines = [line, Waiting], ReloadLines = [line + StubPlan.NextLine + Reloaded(2)] });
+
+        editor.Commit(2);
+        play.Update(false, false);
+        editor.Finish(2);
+        RunUntil(PlayStatus.Running);
+
+        Assert.Equal(["start", "reload 2"], stub.Input(0));
+        var entry = Assert.Single(editor.Log.Entries, e => e.Source == PlayController.Source && e.Message.StartsWith("Ini: "));
+        Assert.Equal(MessageOrigin.BaseGame, entry.Origin);
+        StopAndRunToIdle();
     }
 
     /// <summary>(15) Validation errors after the spawn: no reload, and the Console tells once which save the game

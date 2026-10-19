@@ -15,23 +15,19 @@ public readonly record struct ResolvedLine(MessageOrigin Origin, SectionRef? Tar
 /// <remarks>
 /// <para>The resolver holds the state of the base run of one profile open: not needed, waiting, known or failed. The
 /// edit view of a profile without a mod file is the base folder, so it needs no base run (decision D516). Each line of
-/// such a profile is a base-game line at once.</para>
+/// such a profile is a base-game line at once. The first save of a mod gives the edit view a mod file. From then on,
+/// the lines wait for the base run.</para>
 /// <para>The resolver parses a merged file only when it needs a section: for a key that the load gives more often
 /// than the base run, and for a line of a mod.</para>
 /// </remarks>
-/// <param name="needsBaseRun">True when the edit view has a mod file. Then a line waits for the base run.</param>
-public sealed class EngineLineOrigins(EditSession session, bool needsBaseRun)
+public sealed class EngineLineOrigins(EditSession session)
 {
     private static readonly ResolvedLine InBase = new(MessageOrigin.BaseGame, null);
     private static readonly ResolvedLine NotCompared = new(MessageOrigin.Unknown, null);
 
-    /// <summary>A resolver for the edit view of a session: it needs the base run when the edit view has a mod file.</summary>
-    public EngineLineOrigins(EditSession session) : this(session, session.EditView.Files.Count > 0)
-    {
-    }
-
-    /// <summary>True when the lines wait for the base run. False when the edit view has no mod file.</summary>
-    public bool NeedsBaseRun { get; } = needsBaseRun;
+    /// <summary>True when the lines wait for the base run: the edit view of the session has a mod file now. A save can
+    /// change the value.</summary>
+    public bool NeedsBaseRun => session.EditView.Files.Count > 0;
 
     /// <summary>The count of each key (<see cref="EngineLine.Key"/>) that the base run gave, or null before it
     /// ends.</summary>

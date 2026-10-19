@@ -561,6 +561,8 @@ internal sealed class PlayController : IDisposable
     private void SendReload(GameRun run, int save, TimeSpan? savedAt)
     {
         run.Reload = new ReloadRun(save, clock(), savedAt);
+        // The reload loads all game data again, so the Console counts the engine lines of the run again.
+        run.Lines.LoadStarted();
         Send(run, PlayCommandKind.Reload, save);
     }
 
@@ -677,8 +679,9 @@ internal sealed class PlayController : IDisposable
             run.LastErrorLine = $"{parsed.Source}: {parsed.Message}";
         }
 
-        // Decision D57: only the lines that the Console did not add before. The run is a batch of the Console, whose
-        // lines resolve when they arrive (decision D514 of the console filter design).
+        // Decision D57: only the lines that the Console does not have yet. The run is a batch of the Console, whose
+        // lines resolve when they arrive (decision D514 of the console filter design). A line that starts a load of the
+        // game starts the counts of the run again.
         editor.Log.AddGameLine(run.Lines, parsed, Source);
     }
 

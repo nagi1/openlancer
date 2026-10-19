@@ -258,18 +258,20 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
     }
 
     /// <summary>The problems of a section for its raw block: the field checks and the list checks, each with the line of
-    /// its key in the text, or 0, and true for a base-game problem (the key rule, decision D512 of the console filter
-    /// design).</summary>
+    /// its key in the text, or 0, and true for a base-game field problem (the key rule, decision D512 of the console
+    /// filter design). A list problem keeps its normal look, as on its row (section 6 of the design).</summary>
     internal static IEnumerable<(int Line, Diagnostic Problem, bool BaseGame)> SectionProblems(EditSession edits,
         SectionRef section, SectionView view)
     {
-        foreach (var problem in edits.Check(section).Concat(edits.CheckLists(section)))
+        var problems = edits.Check(section).Select(p => (Problem: p, BaseGame: edits.IsBaseGameProblem(p)))
+            .Concat(edits.CheckLists(section).Select(p => (Problem: p, BaseGame: false)));
+        foreach (var (problem, baseGame) in problems)
         {
             var index = problem.Key == null
                 ? -1
                 : view.Entries.ToList().FindIndex(e => e.Name.Equals(problem.Key, StringComparison.OrdinalIgnoreCase));
             // Line 1 of the text is the header.
-            yield return (index < 0 ? 0 : index + 2, problem, edits.IsBaseGameProblem(problem));
+            yield return (index < 0 ? 0 : index + 2, problem, baseGame);
         }
     }
 

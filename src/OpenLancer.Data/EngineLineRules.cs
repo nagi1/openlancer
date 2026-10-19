@@ -173,6 +173,14 @@ public static class EngineLineRules
     private static readonly Dictionary<string, EngineLineKind> ById =
         Kinds.ToDictionary(k => k.Id, StringComparer.OrdinalIgnoreCase);
 
+    // The info lines of the engine that start a load in the game (see StartsLoad).
+    private static readonly EngineLinePattern[] LoadStarts =
+    [
+        new("Mission", Pattern(@"^Loading mission: ")),
+        new("Game", Pattern(@"^Entering system ")),
+        new("Server", Pattern(@"^Spun up ")),
+    ];
+
     // The patterns that apply first, then the fallbacks, each in the order of the table.
     private static readonly (EngineLinePattern Pattern, EngineLineKind Kind)[] Order =
     [
@@ -210,6 +218,15 @@ public static class EngineLineRules
             return (EngineLineSubject.Pilot, pilot.Groups["nickname"].Value);
         return null;
     }
+
+    /// <summary>
+    /// True for an info line of the game that starts a load of data in a Play run: the load of a mission script, the
+    /// system that the player enters, and a system that the game server starts. Each later load of the same mission or
+    /// system gives the lines of the first load again. So the Console starts the counts of the run again (decision
+    /// D514 of the console filter design).
+    /// </summary>
+    public static bool StartsLoad(EngineLine line) =>
+        line.Severity == LogSeverity.Info && LoadStarts.Any(p => p.Matches(line));
 
     /// <summary>The time of the update of a line of the slow game server (O02), in milliseconds, as the engine wrote it,
     /// or null for another line.</summary>
