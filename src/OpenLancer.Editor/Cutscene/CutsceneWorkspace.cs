@@ -45,6 +45,10 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     // The scan of the INI files of the game data that the references came from.
     private (GameDataManager? Data, ThnReferences? References) scan;
 
+    // The cutscene scripts of the game data, and the categories of the scripts and of the new unsaved cutscenes.
+    private (GameDataManager? Data, IReadOnlyList<string> Paths) scripts = (null, []);
+    private readonly CategoriesCache categories = new();
+
     // A change of a gesture invalidated the clock, and the end of the gesture must build.
     private bool gesture;
 
@@ -388,14 +392,25 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     /// Console tells why.</summary>
     public bool OpenAndShow(string path)
     {
-        if (!Open(path))
+        if (!OpenOrWarn(path))
         {
-            window.Log.Add(ConsoleSeverity.Warning, EditorWindow.EditorSource, $"The cutscene {path} did not open: {Problem}");
             return false;
         }
 
         ShowPanels();
         return true;
+    }
+
+    /// <summary>Opens a cutscene (see <see cref="Open"/>). When it does not open, the Console tells why.</summary>
+    public bool OpenOrWarn(string path)
+    {
+        if (Open(path))
+        {
+            return true;
+        }
+
+        window.Log.Add(ConsoleSeverity.Warning, EditorWindow.EditorSource, $"The cutscene {path} did not open: {Problem}");
+        return false;
     }
 
     /// <summary>
@@ -631,6 +646,74 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         return scan.References;
     }
 
+    /// <summary>
+    /// The install paths of the cutscene scripts of the loaded game data, sorted by folder and name. The workspace
+    /// makes the list once for each load of the data. The cutscene list of the toolbar and the Cutscenes tab use it.
+    /// </summary>
+    public IReadOnlyList<string> Scripts()
+    {
+        var data = window.Session?.GameData ?? throw new InvalidOperationException("The game data is not loaded.");
+        if (!ReferenceEquals(scripts.Data, data))
+        {
+            scripts = (data, VfsFiles.Find(data.Items.VFS, ".thn").Select(p => VfsPath.Normalize(p) ?? p).ToList());
+        }
+
+        return scripts.Paths;
+    }
+
+    /// <summary>
+    /// The categories of the scripts of the loaded game data and of the new unsaved cutscenes of the session. Section
+    /// 4.5 of the cutscene categories design tells how they build. They build again for new game data and for another
+    /// set of new unsaved cutscenes. The first call after a load needs the references, so it can start their scan.
+    /// </summary>
+    public CutsceneCategories Categories()
+    {
+        var current = window.Session ?? throw new InvalidOperationException("No profile is open.");
+        var data = current.GameData ?? throw new InvalidOperationException("The game data is not loaded.");
+        var mods = current.Profile.Mods;
+
+        string ModName(string id) =>
+            mods.FirstOrDefault(m => m.Id.Equals(id, StringComparison.OrdinalIgnoreCase))?.Manifest.Name ?? id;
+
+        return categories.Get(data, current.Version,
+            () => current.Edits.NewCutscenes.Where(p => !data.Items.VFS.FileExists(p)),
+            unsaved => CutsceneCategories.Build(Scripts(),
+                CutsceneFacts.From(data.Items, References(), current.Name, ModName, unsaved)));
+    }
+
+    /// <summary>
+    /// The categories of one load of the game data (section 4.5 of the cutscene categories design). They build again
+    /// for other game data and for another set of new unsaved cutscenes. Only an edit, an undo or a redo changes that
+    /// set, and each one changes the edit version. So the cache reads the set only for another version.
+    /// </summary>
+    internal sealed class CategoriesCache
+    {
+        private (object? Data, int Version, string[] Unsaved, CutsceneCategories? Model) state = (null, 0, [], null);
+
+        /// <summary>The categories of the data, from the cache or from a new build.</summary>
+        /// <param name="data">The loaded game data. Other data builds again.</param>
+        /// <param name="version">The edit version of the session.</param>
+        /// <param name="unsaved">Gives the install paths of the new unsaved cutscenes.</param>
+        /// <param name="build">Builds the categories with the new unsaved cutscenes, in normal form.</param>
+        public CutsceneCategories Get(object data, int version, Func<IEnumerable<string>> unsaved,
+            Func<string[], CutsceneCategories> build)
+        {
+            var sameData = state.Model != null && ReferenceEquals(state.Data, data);
+            if (sameData && state.Version == version)
+            {
+                return state.Model!;
+            }
+
+            var paths = unsaved().Select(p => VfsPath.Normalize(p) ?? p).ToArray();
+            var model = sameData && paths.SequenceEqual(state.Unsaved, VfsPath.Comparer) ? state.Model! : build(paths);
+            state = (data, version, paths, model);
+            return model;
+        }
+
+        /// <summary>Forgets the categories, for example when the profile closes.</summary>
+        public void Reset() => state = (null, 0, [], null);
+    }
+
     /// <summary>Closes the open cutscene.</summary>
     public void Close()
     {
@@ -650,13 +733,15 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         timeline = default;
     }
 
-    /// <summary>Closes the cutscene and forgets the references, the kept selections and the sound manager of the game
-    /// data, for example when the profile closes.</summary>
+    /// <summary>Closes the cutscene, for example when the profile closes. Forgets the references, the script list, the
+    /// categories, the kept selections and the sound manager of the game data.</summary>
     public void Reset()
     {
         Close();
         sound.Use(null);
         scan = default;
+        scripts = (null, []);
+        categories.Reset();
         (parkedScene, parkedCutscene, cutsceneShown) = (null, null, false);
     }
 

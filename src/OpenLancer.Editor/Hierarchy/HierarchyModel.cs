@@ -18,8 +18,9 @@ internal sealed class HierarchyNode
 
     /// <param name="id">A stable id, unique in the tree. It is also the ImGui id of the row.</param>
     /// <param name="item">The item that a click selects, or null for a group.</param>
+    /// <param name="search">More text that the search matches (see <see cref="Search"/>).</param>
     public HierarchyNode(string id, ObjectKind kind, string name, string detail = "", object? item = null,
-        string? tooltip = null)
+        string? tooltip = null, string search = "")
     {
         Id = id;
         Label = "##" + id;
@@ -28,6 +29,7 @@ internal sealed class HierarchyNode
         Detail = detail;
         Item = item;
         Tooltip = tooltip;
+        Search = search;
     }
 
     public string Id { get; }
@@ -47,6 +49,10 @@ internal sealed class HierarchyNode
     public object? Item { get; }
 
     public string? Tooltip { get; }
+
+    /// <summary>More text that the search matches, but that the row does not show. An example is the words of the
+    /// groups of a row of the cutscene list. Empty for no text.</summary>
+    public string Search { get; }
 
     public HierarchyNode? Parent { get; private set; }
 
@@ -140,6 +146,10 @@ internal sealed class HierarchyModel
             ["other"] = (k, _) => k == ObjectKinds.Thn.Other,
         };
 
+    /// <summary>The types of a plain tree: none, so a "t:" word matches nothing.</summary>
+    private static readonly IReadOnlyDictionary<string, Func<ObjectKind, object?, bool>> NoTypes =
+        new Dictionary<string, Func<ObjectKind, object?, bool>>();
+
     // The groups of the system objects, in the order of the tree.
     private static readonly (string Id, string Name, ObjectKind Kind, ObjectKind[] Members)[] ObjectGroups =
     [
@@ -222,6 +232,17 @@ internal sealed class HierarchyModel
             };
 
     /// <summary>
+    /// A plain tree that the caller makes, for example the cutscene list of the Cutscene toolbar (decision D611 of the
+    /// cutscene categories design). The search has no "t:" words, so a "t:" word matches nothing.
+    /// </summary>
+    /// <param name="root">The root of the tree. Each node with an item is a row that a click selects.</param>
+    /// <param name="identity">What the tree shows. A new tree with the same identity as the tree before keeps its open
+    /// groups and its search.</param>
+    /// <param name="previous">The tree before this one, or null.</param>
+    public static HierarchyModel ForList(HierarchyNode root, object identity, HierarchyModel? previous) =>
+        new(root, identity, NoTypes, previous);
+
+    /// <summary>
     /// The tree of the scene: the tree before when the index and the names did not change, or else a new tree that keeps
     /// the open groups and the search of the tree before for the same system.
     /// </summary>
@@ -283,9 +304,9 @@ internal sealed class HierarchyModel
     public IReadOnlyList<HierarchyRow> Rows => rows ??= BuildRows();
 
     /// <summary>
-    /// Sets the search text. The words match the name or the nickname of an item, and case does not matter. A
-    /// "t:station" word keeps only the items of that type. Several "t:" words keep the items of any of the types. An
-    /// unknown type matches nothing.
+    /// Sets the search text. The words match the name, the nickname or the search text of an item (see
+    /// <see cref="HierarchyNode.Search"/>), and case does not matter. A "t:station" word keeps only the items of that
+    /// type. Several "t:" words keep the items of any of the types. An unknown type matches nothing.
     /// </summary>
     public void SetSearch(string text)
     {
@@ -613,7 +634,8 @@ internal sealed class HierarchyModel
         }
 
         return words.All(w => node.Name.Contains(w, StringComparison.OrdinalIgnoreCase) ||
-                              node.Detail.Contains(w, StringComparison.OrdinalIgnoreCase));
+                              node.Detail.Contains(w, StringComparison.OrdinalIgnoreCase) ||
+                              node.Search.Contains(w, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>Counts the matches of each node and sets the count texts.</summary>

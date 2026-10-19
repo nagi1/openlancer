@@ -245,7 +245,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
                 Row(tree, rows[i], right);
                 if (i == scrollIndex)
                 {
-                    ScrollToRow(center);
+                    ListRow.ScrollToRow(center);
                 }
             }
         }
@@ -446,27 +446,6 @@ internal sealed class HierarchyPanel(EditorWindow window)
         }
 
         ImGui.SetCursorScreenPos(after);
-    }
-
-    /// <summary>Scrolls the panel so that the row that was just drawn is in view.</summary>
-    private static void ScrollToRow(bool center)
-    {
-        if (center)
-        {
-            ImGui.SetScrollHereY(0.5f);
-            return;
-        }
-
-        var top = ImGui.GetWindowPos().Y;
-        var bottom = top + ImGui.GetWindowHeight();
-        if (ImGui.GetItemRectMin().Y < top)
-        {
-            ImGui.SetScrollHereY(0);
-        }
-        else if (ImGui.GetItemRectMax().Y > bottom)
-        {
-            ImGui.SetScrollHereY(1);
-        }
     }
 
     /// <summary>

@@ -165,7 +165,7 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         {
             if (uses.Count == 0)
             {
-                grid.Text("INI lines", "No INI line of the game data names this cutscene.");
+                grid.Text("INI lines", CutsceneBrowser.NoReferenceText);
             }
 
             foreach (var use in uses)

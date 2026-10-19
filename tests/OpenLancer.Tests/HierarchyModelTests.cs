@@ -435,4 +435,38 @@ public sealed class HierarchyModelTests
         Assert.DoesNotContain(after.Rows, r => r.Node.Detail == "gate1" || r.Node.Name == "gate1");
         Assert.True(after.IsOpen(Group(after, "stations")));
     }
+
+    /// <summary>The plain tree of ForList: a node without a search text matches its name and its detail as before. A
+    /// node with a search text also matches a word of that text. A "t:" word matches nothing, and a new tree with the
+    /// same identity keeps the open groups (section 4.4 of the cutscene categories design).</summary>
+    [Fact]
+    public void APlainTreeMatchesTheSearchTextOfANode()
+    {
+        static HierarchyModel Tree(HierarchyModel? previous)
+        {
+            var root = new HierarchyNode("root", ObjectKinds.Thn.Script, "Root");
+            var group = new HierarchyNode("g", ObjectKinds.Thn.Script, "Group");
+            group.Add(new HierarchyNode("a", ObjectKinds.Thn.Script, "alpha", "first", "a"));
+            group.Add(new HierarchyNode("b", ObjectKinds.Thn.Script, "beta", "", "b", search: "hidden words\nharbor"));
+            root.Add(group);
+            return HierarchyModel.ForList(root, "list", previous);
+        }
+
+        var model = Tree(null);
+        Assert.Equal(["Root", "Group"], RowNames(model));
+
+        model.SetSearch("FIRST");
+        Assert.Equal(["Root", "Group", "alpha"], RowNames(model));
+        model.SetSearch("harbor hidden");
+        Assert.Equal(["Root", "Group", "beta"], RowNames(model));
+        Assert.Equal("1 / 2", Group(model, "g").CountText);
+        model.SetSearch("t:camera");
+        Assert.Equal(0, model.Root.Matches);
+
+        model.SetSearch("");
+        model.SetOpen(Group(model, "g"), true);
+        var again = Tree(model);
+        Assert.Equal(["Root", "Group", "alpha", "beta"], RowNames(again));
+        Assert.Equal("", again.NodeOf("a")!.Search);
+    }
 }

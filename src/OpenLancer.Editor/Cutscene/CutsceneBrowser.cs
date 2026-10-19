@@ -18,7 +18,8 @@ namespace OpenLancer.Editor.Cutscene;
 /// The Cutscenes tab (section 7.2 of the M8 design): each cutscene script of the edit view, with its folder, its
 /// duration, its entity and event counts, the INI lines that use it and its state for the active mod. The counts come
 /// from a scan that reads each script once. The commands are New cutscene, Open, Revert, Copy path and Copy INI value.
-/// A new cutscene shows at once, with its counts from W (section 5.4 of the M8b design).
+/// A new cutscene shows at once, with its counts from W (section 5.4 of the M8b design). The group menu shows one
+/// category or group of the cutscene list of the Cutscene toolbar (section 6 of the cutscene categories design).
 /// </summary>
 internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace workspace)
 {
@@ -28,6 +29,10 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
     /// <summary>The note of a new cutscene about the retail engine (risk 7 of the M8b design).</summary>
     public const string OpenLancerOnly =
         "OpenLancer only until the M11 check that the retail engine reads text cutscenes.";
+
+    /// <summary>The text for a cutscene that no INI line names. The table, the cutscene list of the Cutscene toolbar
+    /// and the Inspector show it.</summary>
+    public const string NoReferenceText = "No INI line of the game data names this cutscene.";
 
     private const string NewPopupId = "##new-cutscene";
 
@@ -39,8 +44,14 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
 
     // Sizes in unscaled points.
     private const float IconWidth = 20;
-    private const float FolderWidth = 140;
+    private const float GroupMenuWidth = 180;
+    private const float GroupMenuMinWidth = 260;
     private const float DotRadius = 3;
+
+    /// <summary>The number of entries that the open group menu shows before it scrolls.</summary>
+    private const int GroupMenuRows = 24;
+
+    private const string AllCutscenes = "All cutscenes";
 
     private const ImGuiTableFlags Flags = ImGuiTableFlags.Resizable | ImGuiTableFlags.Reorderable |
                                           ImGuiTableFlags.Hideable | ImGuiTableFlags.Sortable |
@@ -55,18 +66,18 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         ("Events", 70, true), ("Used by", 330, true), ("State", 160, false),
     ];
 
-    private static readonly CutsceneFolder[] Folders = Enum.GetValues<CutsceneFolder>();
-
     private CutsceneCatalog? catalog;
     private GameDataManager? catalogData;
     private readonly Dictionary<string, ThnFileSource> sources = new(VfsPath.Comparer);
     private readonly List<CutsceneEntry> shown = [];
     private string filter = "";
-    private CutsceneFolder? folder;
 
-    // The filter, the folder, the scan count and the edit version of the shown rows. Another value filters and sorts
-    // again.
-    private (string Filter, CutsceneFolder? Folder, int Scanned, int Version)? shownView;
+    // The category or group of the group menu with its label, or null for all cutscenes.
+    private (CutsceneChoice Choice, string Label)? choice;
+
+    // The filter, the choice of the group menu, the scan count and the edit version of the shown rows. Another value
+    // filters and sorts again.
+    private (string Filter, CutsceneChoice? Choice, int Scanned, int Version)? shownView;
     private (int Column, bool Descending)[] sortKeys = [(0, false)];
     private string? selected;
 
@@ -86,9 +97,10 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         shownView = null;
         unsavedVersion = null;
         selected = null;
+        choice = null;
     }
 
-    /// <summary>The filter, the folder, the count and the commands of the selected row.</summary>
+    /// <summary>The filter, the group menu, the count and the commands of the selected row.</summary>
     public void Toolbar()
     {
         var scale = ImGuiHelper.Scale;
@@ -103,7 +115,7 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         ImGui.SameLine();
         ToolbarItems.SearchField("filter", "Filter by name or path", ref filter, 220 * scale);
         ImGui.SameLine();
-        FolderMenu(FolderWidth * scale);
+        GroupMenu(GroupMenuWidth * scale);
         ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
@@ -160,7 +172,7 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
 
         if (!ReferenceEquals(catalogData, data) || catalog == null)
         {
-            catalog = new CutsceneCatalog(VfsFiles.Find(data.Items.VFS, ".thn"));
+            catalog = new CutsceneCatalog(workspace.Scripts());
             catalogData = data;
             sources.Clear();
             shownView = null;
@@ -181,12 +193,22 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
             sources.Clear();
         }
 
-        var view = (filter, folder, catalog.Scanned, version);
+        // A reload, or the undo of the last new cutscene of a mod, can remove the chosen category or group. Then the
+        // menu goes back to all cutscenes.
+        if (choice is { } chosen)
+        {
+            choice = workspace.Categories().LabelOf(chosen.Choice) is { } label ? (chosen.Choice, label) : null;
+        }
+
+        var kept = choice?.Choice;
+        var view = (filter, kept, catalog.Scanned, version);
         if (shownView != view)
         {
             shownView = view;
             shown.Clear();
-            shown.AddRange(catalog.All.Where(e => (folder == null || e.Folder == folder) &&
+            // A new unsaved cutscene has a place too (decision D615).
+            var categories = kept != null ? workspace.Categories() : null;
+            shown.AddRange(catalog.All.Where(e => (kept is not { } c || c.Keeps(categories!.PlaceOf(e.Path))) &&
                 (filter.Length == 0 || e.Path.Contains(filter, StringComparison.OrdinalIgnoreCase))));
             Sort();
         }
@@ -318,34 +340,93 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         return source;
     }
 
-    private void FolderMenu(float width)
+    /// <summary>
+    /// The group menu: "All cutscenes", then each category with its groups indented below it, each with its count. The
+    /// categories are the categories of the cutscene list of the Cutscene toolbar (decision D614).
+    /// </summary>
+    private void GroupMenu(float width)
     {
+        var scale = ImGuiHelper.Scale;
+        var style = ImGui.GetStyle();
         ImGui.SetNextItemWidth(width);
         EditorTheme.PushMenuColors();
-        if (ImGui.BeginCombo("##folder", folder?.ToString() ?? "All folders"))
+        // The menu is wide enough for a label and its count, and it shows up to 24 rows before it scrolls.
+        ImGui.SetNextWindowSizeConstraints(new Vector2(MathF.Round(GroupMenuMinWidth * scale), 0),
+            new Vector2(float.MaxValue, GroupMenuRows * ImGui.GetTextLineHeightWithSpacing() + 2 * style.WindowPadding.Y));
+        if (ImGui.BeginCombo("##group", choice?.Label ?? AllCutscenes))
         {
-            if (ImGui.Selectable("All folders", folder == null))
+            var categories = window.Session?.GameData != null ? workspace.Categories() : null;
+            if (GroupEntry("all", AllCutscenes, categories?.Count, choice == null))
             {
-                folder = null;
+                choice = null;
             }
 
-            foreach (var choice in Folders)
+            foreach (var category in categories?.Categories ?? [])
             {
-                if (ImGui.Selectable(choice.ToString(), choice == folder))
+                var label = CutsceneCategories.Label(category.Category);
+                var entry = new CutsceneChoice(category.Category, null);
+                if (GroupEntry(CutscenePicker.CategoryId(category.Category),
+                        $"{CutscenePicker.KindOf(category.Category).Icon}  {label}", category.Count,
+                        choice?.Choice == entry))
                 {
-                    folder = choice;
+                    choice = (entry, label);
                 }
+
+                if (category.Groups is [{ Label.Length: 0 }])
+                {
+                    continue;
+                }
+
+                ImGui.Indent();
+                foreach (var group in category.Groups)
+                {
+                    var groupEntry = new CutsceneChoice(category.Category, group.Id);
+                    if (GroupEntry(CutscenePicker.GroupId(category.Category, group.Id), group.Label, group.Rows.Count,
+                            choice?.Choice == groupEntry))
+                    {
+                        choice = (groupEntry, group.Label);
+                    }
+                }
+
+                ImGui.Unindent();
             }
 
             ImGui.EndCombo();
         }
         else
         {
-            ImGui.SetItemTooltip("The folder group: the folders of DATA\\SCRIPTS, the missions, or the new cutscenes " +
-                                 "of the mods in DATA\\MODS.");
+            ImGui.SetItemTooltip("Show one category or group. The categories are the same as in the cutscene list of " +
+                                 "the Cutscene toolbar.");
         }
 
         EditorTheme.PopMenuColors();
+    }
+
+    /// <summary>One entry of the group menu: the label, cut with "..." when it is too long, and the dim count at the
+    /// right edge. Returns true when the user chose it.</summary>
+    /// <param name="id">The ImGui id of the entry, unique in the menu. Two groups can have the same label.</param>
+    /// <param name="count">The number of scripts, or null when the game data is not loaded.</param>
+    private static bool GroupEntry(string id, string label, int? count, bool isSelected)
+    {
+        // The text goes where ImGui puts the label of a selectable: from the cursor to the right edge of the content.
+        // The rectangle of the item is larger by half the item spacing on each side.
+        var start = ImGui.GetCursorScreenPos();
+        var textEnd = start.X + ImGui.GetContentRegionAvail().X;
+        ImGui.PushID(id);
+        var chosen = ImGui.Selectable("##entry", isSelected);
+        ImGui.PopID();
+        var drawList = ImGui.GetWindowDrawList();
+        if (count is { } value)
+        {
+            var text = value.ToString("N0", CultureInfo.InvariantCulture);
+            textEnd -= ImGui.CalcTextSize(text).X;
+            drawList.AddText(new Vector2(textEnd, start.Y), ImGui.GetColorU32(ImGuiCol.TextDisabled), text);
+            textEnd -= ImGui.GetStyle().ItemSpacing.X;
+        }
+
+        TextFit.AddText(drawList, ImGui.GetFont(), ImGui.GetFontSize(), start, ImGui.GetColorU32(ImGuiCol.Text), label,
+            textEnd - start.X);
+        return chosen;
     }
 
     private unsafe void Table()
@@ -515,7 +596,7 @@ internal sealed class CutsceneBrowser(EditorWindow window, CutsceneWorkspace wor
         if (uses.Count == 0)
         {
             ImGui.TextDisabled("none");
-            ImGui.SetItemTooltip("No INI line of the game data names this cutscene.");
+            ImGui.SetItemTooltip(NoReferenceText);
             return;
         }
 

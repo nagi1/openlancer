@@ -161,4 +161,28 @@ public sealed class ThnReferencesTests
         var problem = Assert.Single(references.Problems);
         Assert.Equal(@"DATA\broken.ini", problem.Source);
     }
+
+    /// <summary>
+    /// Each [Trigger] Act_AddRTC line shows in RtcLines with its section index, also with a doubled backslash. PathOf of
+    /// its value gives the install path of the RTC file. An Act_AddRTC key outside a [Trigger] section does not show
+    /// (section 4.3 of the cutscene categories design).
+    /// </summary>
+    [Fact]
+    public void TheAddRtcLinesOfTheTriggersShowInScanOrder()
+    {
+        using var ws = new TestWorkspace();
+        ws.WriteBase(@"DATA\MISSIONS\MX07\mx07.ini",
+            "[Mission]\nnickname = mx07\n[Trigger]\nnickname = a\nAct_CallThorn = missions\\\\mx07\\\\zz_a.thn\n" +
+            "[Trigger]\nnickname = b\nAct_AddRTC = missions\\\\mx07\\\\zz_rtc.ini\n" +
+            "[Other]\nAct_AddRTC = missions\\mx07\\zz_not.ini\n");
+
+        var references = ThnReferences.Scan(FileSystem.FromPath(ws.Base));
+
+        var line = Assert.Single(references.RtcLines);
+        Assert.Equal((@"DATA\MISSIONS\MX07\mx07.ini", "Trigger", "Act_AddRTC", 2),
+            (line.File, line.Section, line.Key, line.SectionIndex));
+        Assert.Equal(@"missions\\mx07\\zz_rtc.ini", line.Value);
+        Assert.Equal(@"DATA\missions\mx07\zz_rtc.ini", ThnReferences.PathOf(line.Value));
+        Assert.DoesNotContain(references.All, r => r.Key == "Act_AddRTC");
+    }
 }

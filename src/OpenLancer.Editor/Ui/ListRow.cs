@@ -40,6 +40,32 @@ internal static class ListRow
     public static float Height => ImGui.GetFontSize() + 2 * ImGui.GetStyle().FramePadding.Y;
 
     /// <summary>
+    /// Scrolls the window of the list so that the row that was just drawn is in view. The Hierarchy and the cutscene
+    /// list of the Cutscene toolbar use it.
+    /// </summary>
+    /// <param name="center">True to put the row in the middle of the window. Else the window scrolls only when the row
+    /// is outside the view, by the smallest amount.</param>
+    public static void ScrollToRow(bool center)
+    {
+        if (center)
+        {
+            ImGui.SetScrollHereY(0.5f);
+            return;
+        }
+
+        var top = ImGui.GetWindowPos().Y;
+        var bottom = top + ImGui.GetWindowHeight();
+        if (ImGui.GetItemRectMin().Y < top)
+        {
+            ImGui.SetScrollHereY(0);
+        }
+        else if (ImGui.GetItemRectMax().Y > bottom)
+        {
+            ImGui.SetScrollHereY(1);
+        }
+    }
+
+    /// <summary>
     /// Draws the text of a row: the glyph in its color, the name, the dim detail, and the count in the caption size
     /// at the right edge. The name and the detail stop before the count, with "..." when they are cut.
     /// </summary>

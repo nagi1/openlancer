@@ -18,7 +18,7 @@ This version has these limits:
 2. Click File > Open profile, then click a profile. A profile without mods shows only the retail data.
 3. Click Mod > None (read-only). The editor then shows all mods of the profile and takes no edits.
 4. Click the Cutscenes tab at the bottom of the window. A scan reads each script one time. Until the scan ends, the toolbar of the tab shows "reading" and the count of the scripts that it read.
-5. Type a part of the name or of the path in the filter field, for example `s002xe`. To show one group of scripts, select the group in the folder list next to the filter, for example Story.
+5. Type a part of the name or of the path in the filter field, for example `s002xe`. To show one category or group of scripts, select it in the group menu next to the filter, for example Main story or Mission 1.
 6. Double-click a row. The script opens in the Cutscene tab, beside the Scene tab, and in the Timeline tab, beside the Cutscenes tab.
 7. In the toolbar of the Timeline, click the play button after the label Preview. Or click in the Timeline and press Space.
 8. To go to a time, drag on the ruler of the Timeline or on the scrub bar below the view. Or type the time in the time field at the right end of the scrub bar.
@@ -34,12 +34,12 @@ The Cutscenes tab is at the bottom, beside the Database, the Console and the Tim
 
 | Column | Content |
 |---|---|
-| Name, Folder | The file name, and the folder group: Bases, Story, GCS, Missions, Extras, Vendors or Intro, Mods for the new cutscenes under `DATA/MODS/`, and Other. |
+| Name, Folder | The file name, and the folder group of the path: Bases, Story, GCS, Missions, Extras, Vendors or Intro, Mods for the new cutscenes under `DATA/MODS/`, and Other. The group menu uses the categories of the cutscene list (see "The cutscene list"), not the folder groups. |
 | Duration, Entities, Events | The `duration` global and the number of entities and events. A scan reads each script once, a part in each frame, so the counts fill in during the first seconds. The tooltip of a script that the scan cannot read tells why. |
 | Used by | The INI lines that name the script, for example `M000_s002xe_Li01_01_nrml.ini [CharacterEncounter] action`. The editor reads each value below `DATA`, with either separator and in any case, so `missions\\m01a\\x.thn` and `Missions/M01a/x.thn` name one script. A click on the line shows its section in the Inspector. The tooltip and the menu of the row list all lines. |
 | State | Retail (no mod changes the script), Changed by a lower mod (a mod before the active mod adds it, patches it or replaces it), Patched here (the active mod has a THN patch), Replaced here (the active mod has a whole file for a lower script) or New here (the active mod adds the script). A dot after the state marks unsaved edits. |
 
-Filter the list by name or path, or by folder group. A click on a column header sorts the list. The commands are in the toolbar and in the menu of a row:
+Filter the list by name or path, or by a category or group of the group menu. The group menu has "All cutscenes", then each category of the cutscene list with its groups below it, and the number of scripts of each. A new cutscene that is not saved is in Mod cutscenes. A click on a column header sorts the list. The commands are in the toolbar and in the menu of a row:
 
 - **New cutscene** (the plus button of the toolbar) makes a new script in the active mod (see "Make a new cutscene").
 - **Open** (or a double-click) opens the script in the Cutscene tab and in the Timeline. One cutscene is open at a time.
@@ -64,7 +64,7 @@ The Console and the engine log get one line for each open, with the counts of th
 
 ## The Cutscene tab
 
-The Cutscene tab is beside the Scene tab. It previews the open cutscene script, also in a profile without an active mod. The list of its toolbar opens a script too. The preview reads the script with the unsaved edits of the session.
+The Cutscene tab is beside the Scene tab. It previews the open cutscene script, also in a profile without an active mod. The cutscene list of its toolbar opens a script too (see "The cutscene list"). The preview reads the script with the unsaved edits of the session.
 
 The context list sets how the preview plays the script. The editor suggests the context in which the game plays it:
 
@@ -112,6 +112,33 @@ When the script has no camera, the view shows only "This script has no camera". 
 The readout button shows the build time, the step time and the steps of each frame. The editor option `--bench-cutscene <install path>...` opens the profile of the command line without an active mod, previews each script to its end (at most 600 s), and then jumps back to the middle of that time. The first build loads the models, and the build of the jump back finds them loaded, as each jump back and each edit does. The bench writes the times of both builds and catch-ups and the active camera to the log, and closes. A wrong command line of the bench gives the exit code 2, and a script that fails gives the exit code 1. The bench does not change the editor settings. As each start of the editor, it replaces the engine log of the editor, `%LOCALAPPDATA%\OpenLancer\logs\OpenLancer.Editor.log.txt`, so copy that file first when you need the log of your last session. While another editor runs, the bench writes `OpenLancer.Editor.log.0.txt`.
 
 A wrong command line of a normal start, for example two profile files, opens the editor without a profile. The Welcome screen shows the problem.
+
+### The cutscene list
+
+The cutscene list at the left of the Cutscene toolbar puts each script in one category and one group. The categories and groups come from the paths and from the INI files of the game data:
+
+| Category | Scripts | Groups |
+|---|---|---|
+| Intro scenes | The scenes behind the main menu: `DATA\SCRIPTS\INTRO` and the scene scripts of the start rooms of the intro bases. | None. |
+| Main story | `DATA\SCRIPTS\STORY` and the folders of the story missions. | One group for each story mission, in story order. A script goes to the first mission whose folder has an INI file that names it, else to the mission of its folder. The rows follow the triggers of the mission file, so Mission 1 starts with the game opening. |
+| Bases and rooms | `DATA\SCRIPTS\BASES`. | The region of the bases that play the script, for example Liberty. A tie goes to the region whose prefix starts the file name. Also "Three or more regions" and "Not used by a room". |
+| Bar conversations | `DATA\SCRIPTS\GCS`. | The gender and the posture of `genericscripts.ini`, for example "Male, sitting", and "Not in the conversation list". |
+| Characters | `DATA\SCRIPTS\EXTRAS` and `DATA\SCRIPTS\VENDORS`. | Generic fidgets and Vendor fidgets. |
+| Random missions | `DATA\RANDOMMISSIONS`. | None. |
+| Mod cutscenes | The new cutscenes of the mods in `DATA\MODS`, also the new cutscenes that are not saved. | One group for each mod. |
+| Other | All other scripts. | The first folder below `DATA`. |
+
+1. Click the cutscene list. The list opens with the open cutscene highlighted in its open group. The first time, Intro scenes, Main story and Mission 1 are open.
+2. To open or close a category or a group, click its header. Each header shows the number of its scripts.
+3. To read what a category holds, put the mouse on its header or on its info icon.
+4. To find a script, type in the filter field. The filter searches all categories. It matches the file name, the path, the bases and the systems that play the script. It also matches the labels and the details of its category and group, for example `liberty`, `opening` or `menu`. The headers then show the number of matches and the total, for example "3 / 205".
+5. To move the highlight, press Up or Down.
+6. To open the highlighted script, or to open or close the highlighted header, press Enter.
+7. To close the list, press Escape.
+
+The filter looks for each word of the text by itself. So `mission 3` also finds the rows of other missions that have a 3 in their path.
+
+A row with a dim glyph and the dim detail "not used" is a script that no INI line names. A row with the detail "new" is a new cutscene that is not saved. A click on the open cutscene only closes the list, so the preview keeps its context and its playhead.
 
 ## The Timeline tab
 

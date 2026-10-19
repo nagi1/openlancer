@@ -378,6 +378,21 @@ internal static class ObjectKinds
         /// <summary>A cutscene script.</summary>
         public static readonly ObjectKind Script = new("Cutscene", EditorIcons.Film, EditorTheme.Text);
 
+        /// <summary>A cutscene script that no INI line names. Its glyph is dim (decision D613 of the cutscene categories
+        /// design).</summary>
+        public static readonly ObjectKind UnusedScript = new("Unused cutscene", EditorIcons.Film, EditorTheme.TextDim);
+
+        // The categories of the cutscene list (section 5.1 of the cutscene categories design). They have the text color,
+        // as the script has. So they do not look like the entity kinds with the same glyphs (review finding R18).
+        public static readonly ObjectKind IntroScenes = new("Intro scenes", EditorIcons.Desktop, EditorTheme.Text);
+        public static readonly ObjectKind MainStory = new("Main story", EditorIcons.Star, EditorTheme.Text);
+        public static readonly ObjectKind BasesAndRooms = new("Bases and rooms", EditorIcons.Building, EditorTheme.Text);
+        public static readonly ObjectKind BarConversations = new("Bar conversations", EditorIcons.Users, EditorTheme.Text);
+        public static readonly ObjectKind Characters = new("Characters", EditorIcons.User, EditorTheme.Text);
+        public static readonly ObjectKind RandomMissions = new("Random missions", EditorIcons.Route, EditorTheme.Text);
+        public static readonly ObjectKind ModCutscenes = new("Mod cutscenes", EditorIcons.BoxOpen, EditorTheme.Text);
+        public static readonly ObjectKind OtherScripts = new("Other", EditorIcons.Folder, EditorTheme.Text);
+
         /// <summary>An event of a cutscene.</summary>
         public static readonly ObjectKind Event = new("Event", EditorIcons.Bolt, EditorTheme.Text);
 

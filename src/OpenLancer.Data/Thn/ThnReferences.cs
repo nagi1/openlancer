@@ -106,6 +106,10 @@ public sealed class ThnReferences
     /// <summary>The key of a mission trigger that plays a script in space (CGameSession.Space.cs:565-594).</summary>
     private const string SpaceKey = "Act_CallThorn";
 
+    /// <summary>The key of a mission trigger that adds an RTC file. Its first value is the INI path of the RTC
+    /// file.</summary>
+    private const string RtcKey = "Act_AddRTC";
+
     private static readonly IReadOnlyList<ThnReference> NoReferences = [];
     private static readonly IReadOnlyList<ThnRoomUse> NoRooms = [];
 
@@ -115,11 +119,13 @@ public sealed class ThnReferences
     private readonly Dictionary<string, List<ThnReference>> roomNames;
     private readonly List<(string Base, string Room, ThnReference Spot)> fixtureSpots;
 
-    private ThnReferences(IReadOnlyList<ThnReference> all, Dictionary<string, List<ThnReference>> byPath,
-        Dictionary<string, List<ThnRoomUse>> rooms, HashSet<string> fidgets, Dictionary<string, List<ThnReference>> roomNames,
-        List<(string Base, string Room, ThnReference Spot)> fixtureSpots, IReadOnlyList<Diagnostic> problems)
+    private ThnReferences(IReadOnlyList<ThnReference> all, IReadOnlyList<ThnReference> rtcLines,
+        Dictionary<string, List<ThnReference>> byPath, Dictionary<string, List<ThnRoomUse>> rooms, HashSet<string> fidgets,
+        Dictionary<string, List<ThnReference>> roomNames, List<(string Base, string Room, ThnReference Spot)> fixtureSpots,
+        IReadOnlyList<Diagnostic> problems)
     {
         All = all;
+        RtcLines = rtcLines;
         this.byPath = byPath;
         this.rooms = rooms;
         this.fidgets = fidgets;
@@ -130,6 +136,13 @@ public sealed class ThnReferences
 
     /// <summary>Each value that names a script, in the order of the files and of their lines.</summary>
     public IReadOnlyList<ThnReference> All { get; }
+
+    /// <summary>
+    /// Each <c>[Trigger] Act_AddRTC</c> line, in scan order. The value is the first value of the line: the INI path of
+    /// the RTC file, as the file has it. <see cref="PathOf"/> gives its install path. The cutscene list orders the
+    /// scripts of a story mission by these lines (decision D604 of the cutscene categories design).
+    /// </summary>
+    public IReadOnlyList<ThnReference> RtcLines { get; }
 
     /// <summary>The scripts that the values name, as install paths in normal form, each once.</summary>
     public IReadOnlyCollection<string> Paths => byPath.Keys;
@@ -258,6 +271,7 @@ public sealed class ThnReferences
     private sealed class Scanner
     {
         private readonly List<ThnReference> all = [];
+        private readonly List<ThnReference> rtcLines = [];
         private readonly Dictionary<string, List<ThnReference>> byPath = new(VfsPath.Comparer);
         private readonly HashSet<string> fidgets = new(VfsPath.Comparer);
 
@@ -287,6 +301,10 @@ public sealed class ThnReferences
                     if (section.Name.Equals("GenericScripts", StringComparison.OrdinalIgnoreCase) &&
                         entry.Name.Equals("set_segment", StringComparison.OrdinalIgnoreCase))
                         segment = Text(entry, 0);
+                    // One record for each line, also when the value is not a script.
+                    if (section.Name.Equals("Trigger", StringComparison.OrdinalIgnoreCase) && Same(entry.Name, RtcKey) &&
+                        Text(entry, 0) is { } rtc)
+                        rtcLines.Add(new ThnReference(file, section.Name, entry.Name, rtc, index));
                     foreach (var value in entry)
                     {
                         var text = value.ToString();
@@ -335,7 +353,7 @@ public sealed class ThnReferences
                     list.Add(room);
                 }
             }
-            return new ThnReferences(all, byPath, rooms, fidgets, roomNames, fixtureSpots, problems);
+            return new ThnReferences(all, rtcLines, byPath, rooms, fidgets, roomNames, fixtureSpots, problems);
         }
 
         private void Add(ThnReference reference, Section section, Entry entry, string? segment, string? mbase)
