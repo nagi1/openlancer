@@ -265,6 +265,29 @@ public sealed class PreviewContextRetailTests(ITestOutputHelper output)
         output.WriteLine($"{hardpoint}: {set.Label}, {PlayOf(hardpoint)}. {fidget}: {PlayOf(fidget)}.");
     }
 
+    /// <summary>
+    /// The first Space context of the first Freeport 7 scene plays in the system of its trigger. The script has no
+    /// main_object marker, so the plan has no main object.
+    /// </summary>
+    [Fact]
+    public void TheFirstSpaceContextOfAFreeport7SceneHasItsSystemAndNoMainObject()
+    {
+        var baseFolder = GameDataPaths.RequireBase();
+        var items = RetailGame.Instance.Data.Items;
+        const string path = @"DATA\MISSIONS\M01A\m01a_fp7_01.thn";
+        var spaces = new SpaceScenes(items.VFS, Retail.Value, SpaceFacts.From(items));
+
+        var space = PreviewContext.Choices(path, Retail.Value, items, spaces)
+            .First(c => c.Kind == PreviewContextKind.Space);
+        var plan = space.Plan(path, items, Retail.Value, Model(baseFolder, path));
+
+        Assert.Equal("FP7_system", plan.System, ignoreCase: true);
+        Assert.Null(plan.MainObject);
+        Assert.Null(plan.MainObjectStart);
+        Assert.NotNull(plan.Cutscene);
+        output.WriteLine($"{space.Label}: {plan.Note}");
+    }
+
     /// <summary>The model of a retail script, as the editor reads it.</summary>
     private static ThnScriptModel Model(string baseFolder, string path) =>
         ThnScriptModel.From(ThornEvaluator.Instance.Evaluate(File.ReadAllBytes(Path.Combine(baseFolder, path)), path),
