@@ -47,6 +47,9 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     public const string Source = "Edit";
     private const string ValidationSource = "Validation";
 
+    /// <summary>The Console line of a reload that waits for the running load.</summary>
+    internal const string ReloadWaitsText = "The game data loads now. It loads again with the saved files after this load.";
+
     /// <summary>The time without edits before the editor writes the recovery file.</summary>
     private static readonly TimeSpan RecoveryDelay = TimeSpan.FromSeconds(2);
 
@@ -508,12 +511,21 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// </summary>
     private void Reload(EditorSession session)
     {
-        var waited = session.Loads.ReloadWaits;
-        if (!session.Loads.Reload(() => StartReload(session)) && !waited)
+        if (RequestReload(session.Loads, () => StartReload(session)) is { } waits)
         {
-            Log.Add(ConsoleSeverity.Info, Source,
-                "The game data loads at the moment. It loads again with the saved files after this load.");
+            Log.Add(ConsoleSeverity.Info, Source, waits);
         }
+    }
+
+    /// <summary>
+    /// Asks the loads for a reload after a save (see <see cref="DataLoads.Reload"/>). Returns the Console line when the
+    /// reload waits for the running load, else null. More saves during one load give one line, because they give one
+    /// reload.
+    /// </summary>
+    internal static string? RequestReload(DataLoads loads, Func<DataLoad> start)
+    {
+        var waited = loads.ReloadWaits;
+        return loads.Reload(start) || waited ? null : ReloadWaitsText;
     }
 
     /// <summary>Starts a reload on the UI thread. It reads the saved files now, and gives the load that runs in the

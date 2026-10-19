@@ -54,12 +54,27 @@ public enum ItemRelation
 /// <param name="Section">The <c>[BaseGood]</c> section.</param>
 /// <param name="Base">The base that sells the good.</param>
 /// <param name="Line">The position of the line among the <c>marketgood</c> lines of the section, from 0.</param>
-/// <param name="Values">The values: the good, the rank, the reputation, the minimum and maximum count, the transaction
-/// type and the price multiplier.</param>
+/// <param name="Values">The values: the good, the rank, the reputation, the minimum and maximum stock, the transaction
+/// type and the price multiplier. The engine ignores a line with fewer values.</param>
 public sealed record MarketLine(SectionRef Section, string Base, int Line, IReadOnlyList<ValueBase> Values)
 {
+    /// <summary>The place of the rank in <see cref="Values"/>.</summary>
+    public const int RankIndex = 1;
+
+    /// <summary>The place of the reputation in <see cref="Values"/>.</summary>
+    public const int ReputationIndex = 2;
+
+    /// <summary>The place of the minimum stock in <see cref="Values"/>.</summary>
+    public const int MinimumIndex = 3;
+
+    /// <summary>The place of the maximum stock in <see cref="Values"/>.</summary>
+    public const int MaximumIndex = 4;
+
     /// <summary>The place of the transaction type in <see cref="Values"/>.</summary>
     public const int TransactionIndex = 5;
+
+    /// <summary>The place of the price multiplier in <see cref="Values"/>, the last value that the engine reads.</summary>
+    public const int PriceIndex = 6;
 
     /// <summary>The transaction type of the line, or null when the line has no sixth value or when the value is not 0,
     /// 1 or 2.</summary>

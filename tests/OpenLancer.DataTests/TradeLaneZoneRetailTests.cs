@@ -7,6 +7,7 @@ using LibreLancer.Data;
 using LibreLancer.Resources;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Runtime.Scene;
 using Xunit;
 
 namespace OpenLancer.DataTests;
@@ -75,7 +76,7 @@ public sealed class TradeLaneZoneRetailTests(ITestOutputHelper output)
         foreach (var system in data.Items.Systems)
         {
             var index = new SystemIndex(system, system);
-            foreach (var zone in system.Zones.Where(SystemIndex.IsTradeLaneZone))
+            foreach (var zone in system.Zones.Where(ZoneRules.IsTradeLaneZone))
             {
                 lanes.Add(zone.Nickname);
                 roles.Add(index.ZoneRole(zone));

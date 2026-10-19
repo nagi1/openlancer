@@ -12,17 +12,18 @@ namespace OpenLancer.Editor.Inspector;
 
 /// <summary>
 /// The "Markets" section of a good: each <c>marketgood</c> line of all market files that names it, by base. Each line
-/// has a values field and a "Buys or sells" dropdown for its transaction type. A line of a <c>[BaseGood]</c> that the
-/// active mod adds can change or go. A patch cannot change a line of a lower layer, so such a line is read-only. "Add to
-/// base" makes one more base sell the good (see <see cref="MarketEdits"/>).
+/// has a named field for each of its values (see <see cref="MarketEdits.Fields"/>) and a "Buys or sells" dropdown for
+/// its transaction type. A line of a <c>[BaseGood]</c> that the active mod adds can change or go. A patch cannot change
+/// a line of a lower layer, so such a line is read-only. "Add to base" makes one more base sell the good (see
+/// <see cref="MarketEdits"/>).
 /// </summary>
 internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
 {
     private const string LowerLineReason =
         "A market line of a lower layer. A patch cannot change or remove it. Use a whole-file override for that.";
 
-    private const string ValuesTip =
-        "Rank, reputation, minimum stock, maximum stock and price multiplier. The game does not use more values.";
+    /// <summary>The hint of a field of a value that the line does not have.</summary>
+    private const string NotSet = "Not set";
 
     /// <summary>The label of the dropdown of the transaction type.</summary>
     private const string TransactionLabel = "Buys or sells";
@@ -35,6 +36,10 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
 
     /// <summary>The transaction types in the order of the dropdown.</summary>
     private static readonly MarketTransaction[] Transactions = Enum.GetValues<MarketTransaction>();
+
+    /// <summary>The labels of the value fields of a line, in the order of <see cref="MarketEdits.Fields"/>.</summary>
+    private static readonly PropertyGrid.ComponentLabel[] Labels =
+        MarketEdits.Fields.Select(f => new PropertyGrid.ComponentLabel(f.Name, EditorTheme.Label)).ToArray();
 
     private readonly FilterList<string> bases = new();
     private ListView? basesList;
@@ -68,33 +73,46 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
         grid.EndSection();
     }
 
-    /// <summary>The values of a line after the good, without the transaction type: a field that the user can edit and
-    /// a remove button, or a read-only field.</summary>
+    /// <summary>
+    /// The values of a line that have a field: a named field for each value and a remove button, or read-only fields
+    /// with a lock. Each field edits only its own value, so each value keeps its place in the line.
+    /// </summary>
     /// <param name="reason">Why the line cannot change, or null when it can.</param>
     private void Values(EditorSession session, MarketLine line, string? reason)
     {
-        var text = MarketEdits.FieldText(line);
+        var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+        var texts = MarketEdits.Fields.Select(f => MarketEdits.FieldText(line, f)).ToArray();
         if (reason != null)
         {
-            ReadOnly(text, ValuesTip, reason);
+            PropertyGrid.ComponentFields(texts, Labels, (index, text, width) =>
+            {
+                PropertyGrid.Field(text, width, NotSet);
+                ImGui.SetItemTooltip(MarketEdits.Fields[index].Tip + "\n\n" + reason);
+            }, ToolbarItems.IconWidth + spacing);
+            Lock(spacing);
             return;
         }
 
-        var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
-        var edited = text;
-        ImGui.SetNextItemWidth(Math.Max(1, ImGui.GetContentRegionAvail().X - ToolbarItems.IconWidth - spacing));
-        var changed = ImGui.InputText("##values", ref edited, (uint)Encoding.UTF8.GetByteCount(edited) + 256);
-        // The edit runs when the field ends, also when the window closes, as the other text fields do.
-        grid.CommitField(MarketEdits.LineKey(line), changed, text, edited, (values, _) =>
+        PropertyGrid.ComponentFields(texts, Labels, (index, text, width) =>
         {
-            // Edits.Execute writes a problem of the edit to the Console, so the commit returns no error.
-            window.Edits.Execute(() => MarketEdits.SetValues(session.Edits, line, values));
-            return null;
-        });
-        ImGui.SetItemTooltip(ValuesTip);
+            var field = MarketEdits.Fields[index];
+            var edited = text;
+            ImGui.SetNextItemWidth(width);
+            var changed = ImGui.InputTextWithHint("##value", NotSet, ref edited,
+                (uint)Encoding.UTF8.GetByteCount(edited) + 256);
+            // The edit runs when the field ends, also when the window closes, as the other text fields do.
+            grid.CommitField(MarketEdits.LineKey(line), changed, text, edited, (value, _) =>
+            {
+                // Edits.Execute writes a problem of the edit to the Console, so the commit returns no error.
+                window.Edits.Execute(() => MarketEdits.SetValue(session.Edits, line, field, value));
+                return null;
+            });
+            ImGui.SetItemTooltip(field.Tip);
+        }, ToolbarItems.IconWidth + spacing);
 
         ImGui.SameLine(0, spacing);
-        if (ToolbarItems.Button("remove", EditorIcons.TrashAlt, $"Stop selling it at {line.Base}"))
+        if (ToolbarItems.Button("remove", EditorIcons.TrashAlt,
+                $"Remove the line. Then {line.Base} does not buy or sell the good."))
         {
             window.Edits.Execute(() => MarketEdits.SetLine(session.Edits, line, null));
         }
@@ -137,6 +155,12 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
         var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
         PropertyGrid.Field(text, Math.Max(1, ImGui.GetContentRegionAvail().X - ToolbarItems.IconWidth - spacing));
         ImGui.SetItemTooltip(tip + "\n\n" + reason);
+        Lock(spacing);
+    }
+
+    /// <summary>The lock after a read-only field. Its tooltip tells why the field cannot change.</summary>
+    private static void Lock(float spacing)
+    {
         ImGui.SameLine(0, spacing);
         ImGui.AlignTextToFramePadding();
         ImGui.TextDisabled(EditorIcons.Lock.ToString());
@@ -159,7 +183,7 @@ internal sealed class MarketSection(EditorWindow window, PropertyGrid grid)
         ? Name(type)
         : line.Values.Count > MarketLine.TransactionIndex
             ? $"Unknown type {FieldEdit.FormatValue(line.Values[MarketLine.TransactionIndex])}"
-            : "Not set";
+            : NotSet;
 
     /// <summary>A list of the bases of the data list (milestone M21), so a base that the active mod adds and did not save
     /// is in it. The chosen base gets a line that sells the good.</summary>

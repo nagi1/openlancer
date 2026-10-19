@@ -6,7 +6,8 @@ namespace OpenLancer.Editor;
 
 /// <summary>
 /// One load of the engine data. It runs in the background and gives the action that ends the load on the UI thread. It
-/// must not throw: it gives a failed load to the action that ends it.
+/// must not throw: it gives a failed load to the action that ends it. A load that throws anyway still ends, without an
+/// action (see <see cref="DataLoads"/>).
 /// </summary>
 internal delegate Action DataLoad();
 
@@ -70,16 +71,26 @@ internal sealed class DataLoads(IUIThread ui)
 
     private void Run(DataLoad load) => Task.Run(() =>
     {
-        var end = load();
-        ui.QueueUIThread(() => Ended(end));
+        Action? end = null;
+        try
+        {
+            end = load();
+        }
+        finally
+        {
+            // A load that throws against its rule must also end. If not, the session stays busy, and the profile
+            // cannot close.
+            ui.QueueUIThread(() => Ended(end));
+        }
     });
 
     /// <summary>Ends a load on the UI thread, then starts the reload that waits for it.</summary>
-    private void Ended(Action end)
+    /// <param name="end">The action that ends the load, or null when the load threw.</param>
+    private void Ended(Action? end)
     {
         IsLoading = false;
         IsReloading = false;
-        end();
+        end?.Invoke();
         if (waitingReload is { } start)
         {
             waitingReload = null;

@@ -8,6 +8,13 @@ using OpenLancer.Data.Editing;
 
 namespace OpenLancer.Editor.Editing;
 
+/// <summary>A value of a market line that has its own field in the "Markets" section.</summary>
+/// <param name="Index">The place of the value in <see cref="MarketLine.Values"/>.</param>
+/// <param name="Name">The name of the field.</param>
+/// <param name="Whole">True when the engine reads the value as a whole number.</param>
+/// <param name="Tip">What the value does in the game, for the tooltip of the field.</param>
+internal sealed record MarketValue(int Index, string Name, bool Whole, string Tip);
+
 /// <summary>
 /// The edits of the <c>marketgood</c> lines that sell a good. A patch cannot change a line of a lower layer,
 /// so the edits change only the <c>[BaseGood]</c> sections that the active mod adds (see <c>docs/MOD_FORMAT.md</c>,
@@ -17,8 +24,25 @@ internal static class MarketEdits
 {
     private const string MarketGood = "marketgood";
 
-    /// <summary>The place of the transaction type in the values after the good.</summary>
-    private const int TransactionValue = MarketLine.TransactionIndex - 1;
+    /// <summary>The values of a line that have a field, in the order of the line. The transaction type has its
+    /// dropdown (see <see cref="SetTransaction"/>), and the engine does not read the values after the price
+    /// multiplier.</summary>
+    public static readonly IReadOnlyList<MarketValue> Fields =
+    [
+        new(MarketLine.RankIndex, "Rank", true, "The rank that the player needs to buy the good at the base."),
+        new(MarketLine.ReputationIndex, "Reputation", false,
+            "The reputation with the faction of the base that the player needs to buy the good at the base, from -1 " +
+            "to 1."),
+        new(MarketLine.MinimumIndex, "Minimum stock", true,
+            "The smallest stock of the good at the base. The engine sells a ship only when the minimum stock or the " +
+            "maximum stock is not 0."),
+        new(MarketLine.MaximumIndex, "Maximum stock", true,
+            "The largest stock of the good at the base. The engine sells a ship only when the minimum stock or the " +
+            "maximum stock is not 0. It sells another good only when the maximum stock is more than 0."),
+        new(MarketLine.PriceIndex, "Price multiplier", false,
+            "The price of the good at the base is the price of the good times this value. For example, 2 doubles " +
+            "the price."),
+    ];
 
     /// <summary>
     /// The values of a new line after the good: rank, reputation, minimum, maximum, transaction type and price
@@ -28,50 +52,53 @@ internal static class MarketEdits
     public static string DefaultValues(string? category) =>
         string.Equals(category, "ship", StringComparison.OrdinalIgnoreCase) ? "0, -1, 1, 1, 0, 1, 1" : "0, -1, 10, 10, 0, 1";
 
-    /// <summary>
-    /// The text of the values field of a line: the values after the good, without the transaction type. The
-    /// transaction type has its own dropdown (see <see cref="SetTransaction"/>). So the text holds the rank, the
-    /// reputation, the minimum, the maximum and the price multiplier.
-    /// </summary>
-    public static string FieldText(MarketLine line)
+    /// <summary>The text of the field of a value of a line, or an empty text when the line does not have the
+    /// value.</summary>
+    public static string FieldText(MarketLine line, MarketValue field) =>
+        field.Index < line.Values.Count ? FieldEdit.FormatValue(line.Values[field.Index]) : "";
+
+    /// <summary>The edit that sets one value of a line from the text of its field. The other values stay in their
+    /// places (see <see cref="WithValue"/>).</summary>
+    /// <exception cref="InvalidOperationException">The text is not a number of the kind that the engine reads for the
+    /// value, or the active mod does not add the section of the line.</exception>
+    public static EditCommand SetValue(EditSession session, MarketLine line, MarketValue field, string text)
     {
-        var values = line.Values.Skip(1).ToList();
-        if (values.Count > TransactionValue)
-            values.RemoveAt(TransactionValue);
-        return FieldEdit.FormatLine(values);
+        var value = text.Trim();
+        var valid = field.Whole
+            ? int.TryParse(value, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out _)
+            : float.TryParse(value, NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint,
+                CultureInfo.InvariantCulture, out var number) && float.IsFinite(number);
+        if (!valid)
+            throw new InvalidOperationException(field.Whole
+                ? $"{field.Name} must be a whole number, for example 3."
+                : $"{field.Name} must be a number, for example 1.5.");
+        return WithValue(session, line, field.Index, value);
     }
 
-    /// <summary>
-    /// The edit that sets the values of a line from the text of its values field (see <see cref="FieldText"/>). The
-    /// transaction type of the line stays in its place.
-    /// </summary>
+    /// <summary>The edit that sets the transaction type of a line. The other values stay in their places (see
+    /// <see cref="WithValue"/>).</summary>
     /// <exception cref="InvalidOperationException">The active mod does not add the section of the line.</exception>
-    public static EditCommand SetValues(EditSession session, MarketLine line, string text)
+    public static EditCommand SetTransaction(EditSession session, MarketLine line, MarketTransaction type) =>
+        WithValue(session, line, MarketLine.TransactionIndex, ((int)type).ToString(CultureInfo.InvariantCulture));
+
+    /// <summary>
+    /// The edit that sets the value at place <paramref name="index"/> of <see cref="MarketLine.Values"/>. The engine
+    /// ignores a line without the price multiplier. So a line that ends before it also gets the values of a new line in
+    /// the missing places (see <see cref="DefaultValues"/>), and each value keeps its place. For example, a price
+    /// multiplier on a line without the transaction type also writes the type 0: the base buys and sells the good.
+    /// </summary>
+    private static EditCommand WithValue(EditSession session, MarketLine line, int index, string value)
     {
-        var values = FieldEdit.Values(text).ToList();
-        if (line.Values.Count > MarketLine.TransactionIndex && values.Count >= TransactionValue)
-            values.Insert(TransactionValue, FieldEdit.FormatValue(line.Values[MarketLine.TransactionIndex]));
-        return SetLine(session, line, string.Join(", ", values));
+        var values = line.Values.Select(FieldEdit.FormatValue).ToList();
+        var defaults = FieldEdit.Values(DefaultValues(Category(session, values[0])));
+        for (var place = values.Count; place <= MarketLine.PriceIndex; place++)
+            values.Add(defaults[place - 1]);
+        values[index] = value;
+        return SetLine(session, line, string.Join(", ", values.Skip(1)));
     }
 
-    /// <summary>The edit that sets the transaction type of a line. The other values stay.</summary>
-    /// <exception cref="InvalidOperationException">The line has fewer values than the four before the transaction type,
-    /// or the active mod does not add the section of the line.</exception>
-    public static EditCommand SetTransaction(EditSession session, MarketLine line, MarketTransaction type)
-    {
-        var values = line.Values.Skip(1).Select(FieldEdit.FormatValue).ToList();
-        if (values.Count < TransactionValue)
-            throw new InvalidOperationException("The line needs a rank, a reputation, a minimum and a maximum before " +
-                                                "the transaction type. Type them in the values field first.");
-        var text = ((int)type).ToString(CultureInfo.InvariantCulture);
-        if (values.Count == TransactionValue)
-            values.Add(text);
-        else
-            values[TransactionValue] = text;
-        return SetLine(session, line, string.Join(", ", values));
-    }
-
-    /// <summary>The key of the values field of a line in the "Markets" section.</summary>
+    /// <summary>The key of the value fields of a line in the "Markets" section. Each field of the line is its own
+    /// widget of the key.</summary>
     public static FieldKey LineKey(MarketLine line) => new(line.Section, MarketGood, line.Line);
 
     /// <summary>True when the active mod adds the section of the line, so an edit can change the line.</summary>

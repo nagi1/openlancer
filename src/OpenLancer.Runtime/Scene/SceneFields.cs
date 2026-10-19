@@ -158,10 +158,10 @@ public static class SceneFields
         Locked(SceneSection.Zone, "nickname", "GameItemDb.cs:1603. Rename (F2) in the Hierarchy changes it (milestone M3)."),
         Row(SceneSection.Zone, "pos", SceneEffect.Transform, "GameItemDb.cs:1610"),
         Row(SceneSection.Zone, "rotate", SceneEffect.Transform, "GameItemDb.cs:1647-1661"),
-        Row(SceneSection.Zone, "size", SceneEffect.Transform | SceneEffect.Roles | SceneEffect.Volume,
+        Row(SceneSection.Zone, "size", SceneEffect.Transform | SceneEffect.Volume,
             "GameItemDb.cs:1664-1673. A ring stores (outer, height, inner) from the line (outer, inner, height). " +
-            "AsteroidFieldRenderer.cs:45 reads the size only when it starts. SystemIndex.IsTradeLaneZone reads the " +
-            "size of a box."),
+            "AsteroidFieldRenderer.cs:45 reads the size only when it starts. ZoneRules.IsTradeLaneZone reads the " +
+            "size of a box, so SceneApplier adds Roles only when the size changes that rule for the zone."),
         Row(SceneSection.Zone, "shape", SceneEffect.Transform | SceneEffect.Roles | SceneEffect.Volume,
             "GameItemDb.cs:1663. The ring swap depends on the shape, and Zone.cs:660-666 gives the roles."),
         LockedRow(SceneSection.Zone, "encounter", DataRoles,

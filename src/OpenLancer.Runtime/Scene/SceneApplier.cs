@@ -853,8 +853,13 @@ public sealed class SceneApplier
             case Zone zone:
                 var shape = SceneBuild.ZoneShape(SceneLines.Last(view, "shape"));
                 var rotation = SceneBuild.ZoneRotation(SceneLines.Last(view, "rotate"), out var radians);
+                // A size can make a zone start or stop being a trade lane zone. The zone gets another role only then.
+                // So a scale drag of another zone does not build the index again in each step.
+                var lane = ZoneRules.IsTradeLaneZone(zone);
                 SetTransform(zone, position, rotation, radians, shape,
                     SceneBuild.ZoneSize(SceneLines.Last(view, "size"), shape));
+                if (ZoneRules.IsTradeLaneZone(zone) != lane)
+                    indexChanges |= SceneEffect.Roles;
                 zonesMoved = true;
                 break;
             case LightSource light:

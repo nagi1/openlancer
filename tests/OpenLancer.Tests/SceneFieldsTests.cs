@@ -91,7 +91,9 @@ public sealed class SceneFieldsTests
         // 7.3 [Zone]
         Rows(SceneSection.Zone, none, true, "nickname");
         Rows(SceneSection.Zone, transform, false, "pos", "rotate");
-        Rows(SceneSection.Zone, transform | roles | SceneEffect.Volume, false, "size", "shape");
+        // The applier adds Roles for a size only when the size changes the trade lane rule of the zone.
+        Rows(SceneSection.Zone, transform | SceneEffect.Volume, false, "size");
+        Rows(SceneSection.Zone, transform | roles | SceneEffect.Volume, false, "shape");
         Rows(SceneSection.Zone, data | roles, true, "encounter", "faction", "faction_weight");
         Rows(SceneSection.Zone, data | roles, false, "path_label");
         Rows(SceneSection.Zone, data | label, false, "ids_name");

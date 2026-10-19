@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using OpenLancer.Editor;
+using OpenLancer.Editor.Editing;
 using Xunit;
 
 namespace OpenLancer.Tests;
@@ -81,18 +82,16 @@ public sealed class DataLoadsTests
         }
 
         // Two saves during the first load.
-        Assert.False(loads.Reload(StartReload));
-        Assert.False(loads.Reload(StartReload));
-
-        Assert.True(loads.IsLoading);
-        Assert.False(loads.IsReloading);
-        Assert.True(loads.ReloadWaits);
-        Assert.Equal(0, starts);
+        bool[] started = [loads.Reload(StartReload), loads.Reload(StartReload)];
+        var waiting = (loads.IsLoading, loads.IsReloading, loads.ReloadWaits, starts);
 
         release.Set();
         ui.RunUntil(() => events.Contains("reload 1 loaded"), "the reload after the first load");
 
+        // The race comes first: a reload that starts at once uses the resources with the first load.
         Assert.Equal(1, resources.Most);
+        Assert.Equal([false, false], started);
+        Assert.Equal((true, false, true, 0), waiting);
         Assert.Equal(["loaded", "reload 1 started", "reload 1 loaded"], events);
         Assert.False(loads.IsBusy);
         Assert.False(loads.ReloadWaits);
@@ -136,6 +135,58 @@ public sealed class DataLoadsTests
         Assert.Equal(1, resources.Most);
         Assert.Equal(["loaded", "reload 1 started", "reload 1 loaded", "reload 2 started", "reload 2 loaded"], events);
         Assert.False(loads.IsBusy);
+    }
+
+    /// <summary>
+    /// A load must not throw. A load that throws anyway still ends, so that the session does not stay busy and the
+    /// profile can close. The reload that waits for it then starts.
+    /// </summary>
+    [Fact]
+    public void ALoadThatThrowsStillEnds()
+    {
+        var ui = new QueuedUIThread();
+        var loads = new DataLoads(ui);
+        var events = new List<string>();
+        using var release = new ManualResetEventSlim();
+        loads.Load(() =>
+        {
+            Assert.True(release.Wait(Timeout), "The test did not end the load.");
+            throw new InvalidOperationException("A load that breaks its rule.");
+        });
+        Assert.False(loads.Reload(() => () => () => events.Add("reloaded")));
+
+        release.Set();
+        ui.RunUntil(() => events.Contains("reloaded"), "the reload after the load that threw");
+
+        Assert.False(loads.IsBusy);
+    }
+
+    /// <summary>
+    /// The Console tells one time that the reload of a save waits for the running load, also after more saves. A save
+    /// without a running load gives no line, because its reload starts at once.
+    /// </summary>
+    [Fact]
+    public void TheConsoleTellsOneTimeThatAReloadWaits()
+    {
+        var ui = new QueuedUIThread();
+        var loads = new DataLoads(ui);
+        using var release = new ManualResetEventSlim();
+        loads.Load(() =>
+        {
+            Assert.True(release.Wait(Timeout), "The test did not end the load.");
+            return () => { };
+        });
+        DataLoad Start() => () => () => { };
+
+        Assert.Equal("The game data loads now. It loads again with the saved files after this load.",
+            EditController.RequestReload(loads, Start));
+        Assert.Null(EditController.RequestReload(loads, Start));
+        release.Set();
+        ui.RunUntil(() => !loads.IsBusy, "the reload after the first load");
+
+        Assert.Null(EditController.RequestReload(loads, Start));
+        Assert.True(loads.IsReloading);
+        ui.RunUntil(() => !loads.IsBusy, "the reload of the last save");
     }
 
     /// <summary>The first load starts one time. A second start while it runs is a bug of the caller.</summary>

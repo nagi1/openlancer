@@ -1,8 +1,10 @@
+using System;
 using System.Linq;
 using System.Numerics;
 using LibreLancer.Data.GameData.World;
 using OpenLancer.Editor.Scene;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Runtime.Scene;
 using Xunit;
 using Encounter = LibreLancer.Data.Schema.Universe.Encounter;
 
@@ -164,7 +166,24 @@ public sealed class SystemIndexTests
         var zone = Zone(nickname, shape);
         zone.Size = new Vector3(x, y, z);
 
-        Assert.Equal(lane, SystemIndex.IsTradeLaneZone(zone));
+        Assert.Equal(lane, ZoneRules.IsTradeLaneZone(zone));
+    }
+
+    /// <summary>
+    /// Retail compares the exact products of the sizes. The float after 1000 times 10 is below the float after 10000, but
+    /// the product in float precision rounds up to that value. So the zone is a trade lane zone only with the exact
+    /// product.
+    /// </summary>
+    [Fact]
+    public void TheTradeLaneRuleComparesTheExactProductsOfTheSizes()
+    {
+        var zone = Zone("Zone_Xx01_Tradelane_1", ShapeKind.Box);
+        var x = MathF.BitIncrement(1000f);
+        var z = MathF.BitIncrement(10_000f);
+        zone.Size = new Vector3(x, 500, z);
+
+        Assert.False(x * 10 < z);
+        Assert.True(ZoneRules.IsTradeLaneZone(zone));
     }
 
     [Fact]
