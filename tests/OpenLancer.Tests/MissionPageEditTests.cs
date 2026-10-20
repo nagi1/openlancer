@@ -101,7 +101,7 @@ public sealed class MissionPageEditTests
         var stopped = page.Section("stoppedBy")!;
 
         Assert.Equal(["ol_start", "ol_wave", "Add"], started.Fields.Select(f => f.Label));
-        Assert.Equal(EditWidget.Triggers, started.Fields[^1].Edit!.Widget);
+        Assert.Equal(EditWidget.AddPicker, started.Fields[^1].Edit!.Widget);
         Run(m, started.Fields[0].Actions.Single().Batch);
         Assert.DoesNotContain("Act_ActTrig = ol_end", m.Lines("ol_start"));
         Run(m, Page(m, TriggerItem(m, "ol_end")).Section("stoppedBy")!.Fields[^1].Edit!.Add!("ol_start"));
@@ -142,10 +142,10 @@ public sealed class MissionPageEditTests
         Assert.Contains("label = ol_new", m.Lines(Item("MsnShip", "ol_ship_1")));
 
         var build = Page(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_1")).Section("build")!;
-        Assert.Equal("Used by 2 ships", build.Fields.Single(f => f.Label == "Shared").Value);
+        Assert.Equal("Used by 2 ships", build.Fields.Single(f => f.Label == "Use of the build").Value);
         Run(m, build.Actions.Single(a => a.Label == "This ship only").Batch);
         var after = Page(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_1")).Section("build")!;
-        Assert.Equal("Used by 1 ship", after.Fields.Single(f => f.Label == "Shared").Value);
+        Assert.Equal("Used by 1 ship", after.Fields.Single(f => f.Label == "Use of the build").Value);
     }
 
     [Fact]
@@ -242,26 +242,185 @@ public sealed class MissionPageEditTests
         // A ray that does not meet the plane in front of the camera gives the point at the distance of the pivot.
         Assert.Equal(new System.Numerics.Vector3(0, 150, 0), Editor.Assets.ScenePlacement.PivotPlanePoint(eye,
             System.Numerics.Vector3.UnitY, new System.Numerics.Vector3(0, 50, 0)));
-        var pick = new ScenePick("Start position", _ => { });
+        var pick = new ScenePick("ship.0", "Start position", null, new object(), _ => { });
         Assert.Equal("Click a point in the Scene to set Start position. Esc cancels.", pick.Hint);
     }
     [Fact]
-    public void TheActPageSetsItsNameItsTextAndItsTriggers()
+    public void TheActPageSetsItsNameItsTextAndMovesItsTriggers()
     {
-        using var m = Create();
-        var page = Page(m, new MissionRef(Script, MissionItemKind.Act, Key: "a:1"));
+        using var m = Create(Text + "\n[Trigger]\nnickname = ol_alone\nCnd_True = no_params\n");
+        m.Apply(new AddAct(TestScript) { Name = "The end", Members = ["ol_end"] });
+        var page = ActPage(m, "a:1");
 
         Run(m, Field(page, "act", "Name").Edit!.Make!("The launch"));
-        page = MissionPageModel.For(new PageContext(MissionRun.Execute(m.Missions.RunInputs()), m.Missions.Model(Script).Analysis,
-            false, false) { ReadOnlyOf = m.Missions.ReadOnlyReason, Acts = m.Missions.Model(Script).Acts },
-            new MissionRef(Script, MissionItemKind.Act, Key: "a:1"));
+        page = ActPage(m, "a:1");
         Assert.Equal("The launch", page.Title);
         Run(m, Field(page, "act", "Walkthrough text").Edit!.Make!("The player launches."));
-        Run(m, page.Section("triggers")!.Fields.First(f => f.Label == "ol_end").Actions.Single().Batch);
+        // A trigger that the mission reaches is always in an act, so its menu moves it to another act.
+        var wave = page.Section("triggers")!.Fields.First(f => f.Label == "ol_wave");
+        Assert.Equal(["Move to The end"], wave.Actions.Select(a => a.Label));
+        Run(m, wave.Actions.Single().Batch);
 
-        var act = Assert.Single(m.Missions.Graph(Script).Acts);
-        Assert.Equal(("The launch", "The player launches."), (act.Name, act.Text));
-        Assert.DoesNotContain("ol_end", act.Members);
+        var acts = m.Missions.Model(Script).Acts!;
+        Assert.Equal(("The launch", "The player launches."), (acts.Acts[0].Name, acts.Acts[0].Text));
+        Assert.DoesNotContain(acts.Acts[0].Triggers, t => t.Nickname == "ol_wave");
+        Assert.Contains(acts.Acts[1].Triggers, t => t.Nickname == "ol_wave");
         Assert.Equal(["Delete"], page.PageActions.Select(a => a.Label));
+    }
+
+    [Fact]
+    public void RemoveOnTheActPageTakesATriggerThatTheMissionDoesNotReachOutOfTheAct()
+    {
+        using var m = Create(Text + "\n[Trigger]\nnickname = ol_alone\nCnd_True = no_params\n");
+        m.Apply(new AddAct(TestScript) { Name = "The end", Members = ["ol_end", "ol_alone"] });
+
+        var alone = ActPage(m, "a:2").Section("triggers")!.Fields.First(f => f.Label == "ol_alone");
+        Run(m, alone.Actions.Single(a => a.Label == "Remove").Batch);
+
+        var acts = m.Missions.Model(Script).Acts!;
+        Assert.DoesNotContain(acts.Acts.SelectMany(a => a.Triggers), t => t.Nickname == "ol_alone");
+        Assert.Contains(acts.NotStarted, t => t.Nickname == "ol_alone");
+    }
+
+    /// <summary>The page of an act, with the acts of the graph file.</summary>
+    private static MissionPageModel ActPage(MissionEdits m, string key) =>
+        MissionPageModel.For(new PageContext(MissionRun.Execute(m.Missions.RunInputs()), m.Missions.Model(Script).Analysis,
+            false, false) { ReadOnlyOf = m.Missions.ReadOnlyReason, Acts = m.Missions.Model(Script).Acts },
+            new MissionRef(Script, MissionItemKind.Act, Key: key));
+
+    /// <summary>The page of an item with the marks of the active mod and the read-only reasons of the session.</summary>
+    private static MissionPageModel MarkedPage(MissionEdits m, MissionRef item) =>
+        MissionPageModel.For(new PageContext(MissionRun.Execute(m.Missions.RunInputs()), m.Missions.Model(Script).Analysis,
+            false, false)
+        {
+            ReadOnlyOf = m.Missions.ReadOnlyReason, ChangedOf = m.Missions.ChangedLines, BaseOf = m.Missions.ChangedBase,
+            SharedBuildFile = m.Missions.IsSharedBuildFile,
+        }, item);
+
+    [Fact]
+    public void AKeyThatTheSectionDoesNotHaveShowsNotSetAndItsWidgetAddsIt()
+    {
+        using var m = Create();
+        var page = Page(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_3"));
+
+        var start = Field(page, "ship", "Start");
+        Assert.Equal((EditWidget.Words, "position"), (start.Edit!.Widget, start.Edit.Value));
+        var position = Field(page, "ship", "Start position");
+        Assert.Equal((MissionPageModel.NotSet, EditWidget.Position, ""), (position.Value, position.Edit!.Widget, position.Edit.Value));
+        Assert.Equal(EditWidget.Picker, Field(page, "ship", "System").Edit!.Widget);
+        Assert.Empty(Field(page, "ship", "Labels").List!.Rows);
+        Run(m, position.Edit.Make!(MissionValue.Of(1, 2, 3)));
+        Run(m, Field(page, "ship", "System").Edit!.Make!("ol_system"));
+        Assert.Contains("position = 1, 2, 3", m.Lines(Item("MsnShip", "ol_ship_3")));
+        Assert.Contains("system = ol_system", m.Lines(Item("MsnShip", "ol_ship_3")));
+
+        // "Start" switches to a place near an object, which the user then picks.
+        Run(m, Field(Page(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_3")), "ship", "Start").Edit!.Make!("near"));
+        Assert.Contains(m.Lines(Item("MsnShip", "ol_ship_3")), l => l.StartsWith("rel_pos = ", System.StringComparison.Ordinal));
+        Assert.DoesNotContain(m.Lines(Item("MsnShip", "ol_ship_3")), l => l.StartsWith("position = ", System.StringComparison.Ordinal));
+
+        // A read-only page shows no key that the section does not have (UI rule 4).
+        var readOnly = MissionPageModel.For(new PageContext(MissionRun.Execute(m.Missions.RunInputs()),
+            m.Missions.Model(Script).Analysis, false, false), SectionItem(m, MissionSectionKind.Ship, "ol_ship_2"));
+        Assert.DoesNotContain(readOnly.Section("ship")!.Fields, f => f.Label is "Start" or "Start position" or "System");
+    }
+
+    [Fact]
+    public void AValueThatTheActiveModSetsHasTheBlueBar()
+    {
+        using var m = Create();
+        Run(m, Field(Page(m, TriggerItem(m, "ol_wave")), "startsWhen", "Delay").Edit!.Make!(5));
+
+        var wave = MarkedPage(m, TriggerItem(m, "ol_wave"));
+        var end = MarkedPage(m, TriggerItem(m, "ol_end"));
+
+        Assert.True(Field(wave, "startsWhen", "Delay").Changed);
+        Assert.True(Field(wave, "startsWhen", "Event").Changed);
+        Assert.False(Field(wave, "trigger", "Starts with the mission").Changed);
+        Assert.False(Field(end, "startsWhen", "Event").Changed);
+        Assert.Equal(MissionPageModel.EventTip, Field(end, "startsWhen", "Event").Help);
+    }
+
+    [Fact]
+    public void ASectionWhoseBaseChangedAfterTheEditShowsTheBanner()
+    {
+        using var m = Create(modFiles: new()
+        {
+            [@"patches\" + Script] = "[Trigger]\nnickname = ol_end\nol.replace = true\nol.base = 0123456789abcdef\nCnd_True = no_params\n",
+        });
+
+        var change = MarkedPage(m, TriggerItem(m, "ol_end")).Base!;
+
+        Assert.Equal(["nickname = ol_end", "Cnd_Destroyed = ol_ship_1, -1", "Act_LockDock = Player, ol_station, lock",
+            "Act_ChangeState = SUCCEED"], change.Base);
+        Assert.Equal(["nickname = ol_end", "Cnd_True = no_params"], change.Mine);
+        Assert.IsType<AcceptBase>(Assert.Single(change.Keep.Commands));
+        Assert.IsType<RevertSection>(Assert.Single(change.Revert.Commands));
+        Assert.Null(MarkedPage(m, TriggerItem(m, "ol_wave")).Base);
+        Run(m, change.Keep);
+        Assert.Null(MarkedPage(m, TriggerItem(m, "ol_end")).Base);
+    }
+
+    [Fact]
+    public void AFieldOfASharedShipBuildAsksFirst()
+    {
+        using var m = Create();
+        var build = MarkedPage(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_3")).Section("build")!;
+        var loadout = build.Fields.First(f => f.Edit?.List?.Contains("loadout", System.StringComparison.Ordinal) == true).Edit!;
+
+        Assert.Null(loadout.ReadOnly);
+        Assert.True(loadout.Confirms);
+        Assert.StartsWith("This ship build is in a shared file.", build.Fields.Single(f => f.Label == "Use of the build").Help);
+        var batch = loadout.Make!("ol_loadout_2")!;
+        var asked = m.Missions.Apply(batch);
+        Assert.True(asked.NeedsConfirmation);
+        Run(m, batch with { Confirm = true });
+        Assert.Contains("loadout = ol_loadout_2", m.Lines(ItemRef.Of(SharedShips, "NPCShipArch", "ol_shared_build")));
+        Assert.False(MarkedPage(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_1")).Section("build")!.Fields
+            .First(f => f.Edit?.List?.Contains("loadout", System.StringComparison.Ordinal) == true).Edit!.Confirms);
+    }
+
+    [Fact]
+    public void ThisShipOnlyGivesTheShipItsOwnPilot()
+    {
+        using var m = Create();
+        var pilot = Page(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_1")).Section("pilot")!;
+
+        Assert.Equal("Used by 2 ships", pilot.Fields.Single(f => f.Label == "Use of the pilot").Value);
+        Assert.Equal(MissionPageModel.UseAnotherPilotTip, pilot.Fields[0].Help);
+        Run(m, pilot.Actions.Single(a => a.Label == "This ship only").Batch);
+
+        Assert.Contains("npc = ol_npc_1_2", m.Lines(Item("MsnShip", "ol_ship_1")));
+        Assert.Contains("npc = ol_npc_1", m.Lines(Item("MsnShip", "ol_ship_2")));
+        Assert.Equal(m.Lines(Item("NPC", "ol_npc_1")).Skip(1), m.Lines(Item("NPC", "ol_npc_1_2")).Skip(1));
+        Assert.Empty(Page(m, SectionItem(m, MissionSectionKind.Ship, "ol_ship_1")).Section("pilot")!.Actions);
+    }
+
+    [Fact]
+    public void TheTypeOfAnObjectiveWritesTheValuesOfTheNewType()
+    {
+        using var m = Create(Text + "\n[NNObjective]\nnickname = ol_obj\nstate = HIDDEN\ntype = ids, 1001\n\n" +
+                             "[NNObjective]\nnickname = ol_new_obj\n");
+        var page = Page(m, SectionItem(m, MissionSectionKind.Objective, "ol_obj"));
+
+        var type = Field(page, "objective", "Type");
+        Assert.Equal("A text", type.Value);
+        Assert.Contains(("navmarker", "A point in space", (string?)null), type.Edit!.Choices);
+        Run(m, type.Edit.Make!("navmarker"));
+        Assert.Equal("type = navmarker, none, 1001, 0, 0, 0, 0", m.Lines(Item("NNObjective", "ol_obj"))[^1]);
+
+        page = Page(m, SectionItem(m, MissionSectionKind.Objective, "ol_obj"));
+        Run(m, Field(page, "objective", "System").Edit!.Make!("ol_system"));
+        page = Page(m, SectionItem(m, MissionSectionKind.Objective, "ol_obj"));
+        var position = Field(page, "objective", "Position").Edit!;
+        Assert.Equal("ol_system", position.PickSystem);
+        Run(m, position.Make!(MissionValue.Of(1, 2, 3)));
+        Assert.Equal("type = navmarker, ol_system, 1001, 0, 1, 2, 3", m.Lines(Item("NNObjective", "ol_obj"))[^1]);
+
+        // An objective without a type line gets one from "Type".
+        var empty = Field(Page(m, SectionItem(m, MissionSectionKind.Objective, "ol_new_obj")), "objective", "Type");
+        Assert.Equal(MissionPageModel.NotSet, empty.Value);
+        Run(m, empty.Edit!.Make!("ids"));
+        Assert.Equal("type = ids, 0", m.Lines(Item("NNObjective", "ol_new_obj"))[^1]);
     }
 }

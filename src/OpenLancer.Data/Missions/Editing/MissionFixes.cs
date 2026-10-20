@@ -24,6 +24,9 @@ public static class MissionFixes
     /// <summary>The space between the node of a trigger and the node of a new trigger below it, in canvas points.</summary>
     private const float BesideGap = 200;
 
+    /// <summary>The tooltip of the button "Fix" (section 8.11 of the M6b design).</summary>
+    public const string ButtonTip = "Make the change that the step needs. Undo takes it back.";
+
     /// <summary>The start of the subject of a fix of a completeness step of a prefab instance.</summary>
     public const string StepPrefix = "step|";
 
@@ -94,7 +97,8 @@ public static class MissionFixes
     /// <summary>
     /// The fix of a missing step of a prefab instance (section 8.7 of the M6b design), or null. "Watchers stop each other"
     /// adds the stop lines. "End trigger" of a wave with one spawned item adds a trigger that waits until the item is
-    /// destroyed, and the spawn trigger starts it. "Decline trigger" adds a trigger with the decline answer.
+    /// destroyed, and the spawn trigger starts it. "Decline trigger" adds a trigger with the decline answer, which starts
+    /// where the accept trigger starts.
     /// </summary>
     /// <param name="graph">The graph file of the script, for the place of a new node, or null.</param>
     public static MissionFix? OfStep(MissionAnalysis analysis, MissionPrefabInstance instance, string step,
@@ -135,14 +139,24 @@ public static class MissionFixes
             }
             case ("offer", "decline") when instance.Role("decline").Count == 0 && instance.Core is { } accept:
             {
+                // The decline trigger waits for the answer at the same time as the accept trigger. So it starts with the
+                // mission when the accept trigger does, and each trigger that starts the accept trigger starts it too.
+                // Without a start, the game never runs it.
                 var name = MissionNaming.Free(script, "Trigger", taken, accept.Nickname + "_decline");
-                return new MissionFix("decline", "Add a decline trigger",
-                [
+                var commands = new List<MissionCommand>
+                {
                     new AddTrigger(new ScriptRef(script))
                     {
                         Nickname = name, Condition = LineSpec.Of("Cnd_MsnResponse", ("answer", "reject")),
+                        StartsWithMission = accept.StartsActive,
+                        Place = graph?.Place(accept.Nickname) is { } place ? new GraphPoint(place.X, place.Y + BesideGap) : null,
                     },
-                ]);
+                };
+                commands.AddRange(analysis.Index.LinksTo(accept)
+                    .Where(l => l.Kind == MissionLinkKind.Start && l.Source != accept)
+                    .Select(l => l.Source).Distinct()
+                    .Select(source => new LinkTriggers(new TriggerRef(script, source.Nickname), name, LinkKind.Start)));
+                return new MissionFix("decline", "Add a decline trigger", commands);
             }
             default:
                 return null;
@@ -235,7 +249,7 @@ public sealed record ApplyFix(ScriptRef Script, string Subject, string Fix) : Mi
         var document = d.Script(Script);
         var analysis = d.Editor.ModelOf(document, document.State).Analysis;
         var fix = MissionFixes.OfSubject(analysis, Subject, d.Graph(document)).FirstOrDefault(f => f.Id == Fix) ??
-                  throw d.Refuse(MissionErrors.FixNotFoundError(Fix, document.Path));
+                  throw d.Refuse(MissionErrors.FixNotFoundError(document.Path));
         var inverses = new List<MissionCommand>();
         foreach (var command in fix.Commands)
             inverses.InsertRange(0, d.RunInner(command));

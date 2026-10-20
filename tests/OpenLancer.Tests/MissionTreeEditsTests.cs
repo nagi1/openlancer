@@ -3,6 +3,7 @@ using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Hierarchy;
+using OpenLancer.Editor.Missions;
 using Xunit;
 using static OpenLancer.Tests.MissionEdits;
 
@@ -138,5 +139,34 @@ public sealed class MissionTreeEditsTests
                                                                      s.First(e => e.Name == "nickname")[0].ToString() != "ol_build_1");
         m.Session.Undo();
         Assert.Equal(before, m.State());
+    }
+
+    [Fact]
+    public void ALineOfATriggerDoesNotRenameDuplicateOrDeleteTheTrigger()
+    {
+        using var m = Create();
+        var wave = Analysis(m).Index.Trigger("ol_wave")!;
+        var line = new MissionRef(Script, MissionItemKind.Row, wave.Section.Ref, Row: 3);
+
+        Assert.Null(MissionTreeEdits.Delete(Analysis(m), line, null));
+        Assert.Null(MissionTreeEdits.Duplicate(Analysis(m), line));
+        Assert.Null(MissionTreeEdits.Rename(Analysis(m), line, "ol_other", null));
+        Assert.False(MissionTreeEdits.CanRename(Analysis(m), line, null));
+        Assert.True(MissionTreeEdits.CanRename(Analysis(m), TriggerRow(m, "ol_wave"), null));
+        Assert.False(MissionTreeEdits.CanRename(Analysis(m), MissionRef.Of(Script), null));
+    }
+
+    [Fact]
+    public void TheHierarchyAndTheGraphGiveOneBatchForATrigger()
+    {
+        using var m = Create();
+        var wave = Analysis(m).Index.Trigger("ol_wave")!;
+
+        Assert.Equal(GraphEditModel.Duplicate(Analysis(m).Index, [(wave, null)])!.Commands,
+            MissionTreeEdits.Duplicate(Analysis(m), TriggerRow(m, "ol_wave"))!.Commands);
+        Assert.Equal(GraphEditModel.Rename(wave, "ol_new")!.Commands,
+            MissionTreeEdits.Rename(Analysis(m), TriggerRow(m, "ol_wave"), "ol_new", null)!.Commands);
+        Assert.Equal("Add NPC", MissionTreeEdits.Create(Analysis(m), "npc")!.Label);
+        Assert.Equal("Add mission ship", MissionTreeEdits.Create(Analysis(m), "ship")!.Label);
     }
 }

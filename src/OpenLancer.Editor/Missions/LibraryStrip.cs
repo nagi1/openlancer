@@ -61,29 +61,29 @@ internal sealed class LibraryStrip(EditorWindow window)
     /// <summary>The narrowest Mission tab that shows the strip, in points. A narrower tab closes it.</summary>
     public const float MinTabWidth = 900;
 
+    /// <summary>True when the strip shows (section 8.3 of the M6b design): the setting is on, and the tab is wide or the
+    /// toggle opened the strip in the narrow tab. The toggle shows this state.</summary>
+    /// <param name="narrow">True for a Mission tab that is narrower than <see cref="MinTabWidth"/>.</param>
+    /// <param name="openedInNarrowTab">True when the toggle opened the strip in the narrow tab.</param>
+    public static bool Shows(bool setting, bool narrow, bool openedInNarrowTab) => setting && (!narrow || openedInNarrowTab);
+
+    /// <summary>The state after a click on the toggle. In a wide tab, the click sets the setting. In a narrow tab, the
+    /// click opens or closes the strip for the narrow tab only, and an open strip turns the setting on.</summary>
+    /// <param name="shown">True when the click opens the strip.</param>
+    /// <returns>The setting, and true when the strip shows in the narrow tab.</returns>
+    public static (bool Setting, bool InNarrowTab) Toggled(bool setting, bool narrow, bool shown) =>
+        narrow ? (setting || shown, shown) : (shown, false);
+
     private static readonly HelpText Help = new("Library",
         "The prefabs, events, actions and conditions that you can add to the mission.",
         "Nothing until you drop an item. Each item writes [Trigger] sections or lines.");
 
     private string search = "";
-    private (bool Marks, IReadOnlyList<LibrarySection> Sections)? sections;
 
     /// <summary>The sections of the library, with the OpenLancer marks while the OpenLancer column shows (UI rule
     /// 4).</summary>
-    public IReadOnlyList<LibrarySection> Sections
-    {
-        get
-        {
-            var marks = window.Session?.Edits.HidesOpenLancer != true;
-            if (sections is not var (known, list) || known != marks)
-            {
-                list = MissionLibrary.Sections(marks ? EngineCoverage.Instance : null);
-                sections = (marks, list);
-            }
-
-            return list;
-        }
-    }
+    public IReadOnlyList<LibrarySection> Sections =>
+        MissionLibrary.Studio(window.Session?.Edits.HidesOpenLancer != true);
 
     /// <summary>Draws the strip. Returns the item of a double-click, or null.</summary>
     /// <param name="readOnly">The reason why the session takes no edits, or null.</param>

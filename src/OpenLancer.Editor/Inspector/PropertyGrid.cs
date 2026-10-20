@@ -65,6 +65,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     private int row;
     private string? nextNote;
     private (string Text, bool Hard)? nextHelp;
+    private bool nextChanged;
 
     [LibraryImport("cimgui")]
     private static partial void igTableFullRowBegin();
@@ -240,9 +241,17 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// <param name="hard">True for a field that the schema marks as hard.</param>
     public void Help(string text, bool hard = false) => nextHelp = (text, hard);
 
+    /// <summary>
+    /// Gives the next row the mark of a value that the active mod sets, also with an edit that is not saved: the label in
+    /// the accent color and the blue bar (AGENTS.md UI rule 7). A row that spans the two columns ends the mark. The
+    /// mission pages use it, because their fields have no binding of <see cref="FieldBinding"/>.
+    /// </summary>
+    public void MarkNextChanged() => nextChanged = true;
+
     /// <summary>A dim text that spans the two columns and wraps, for example a note of a section.</summary>
     public void NoteRow(string text)
     {
+        nextChanged = false;
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
         igTableFullRowBegin();
@@ -256,6 +265,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// (section 11.1 of the M6a design).</summary>
     public void FullRow(Action draw)
     {
+        nextChanged = false;
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
         igTableFullRowBegin();
@@ -266,6 +276,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// <summary>A heading that spans the two columns, with a line after it.</summary>
     public void SubHeading(string text)
     {
+        nextChanged = false;
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
         igTableFullRowBegin();
@@ -488,6 +499,27 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         bool missing = false)
     {
         BeginRow(label, iniKey);
+        ReferenceField(kind, nickname, text, follow, missing, pickable: false);
+        EndRow();
+    }
+
+    /// <summary>
+    /// An editable reference in the value cell of a row of <see cref="Row"/>: the field of
+    /// <see cref="ReferenceTo"/> with the kind glyph and the text, and the button that goes to the item. A click on the
+    /// field returns true, so the caller opens its picker (section 8.4 of the M6b design, UI rule 6). A null nickname
+    /// shows the text dim and without the glyph.
+    /// </summary>
+    /// <param name="text">The text of the field, for example "nickname (Name)" or "Not set".</param>
+    /// <param name="go">Goes to the item, or null when the editor cannot go to it.</param>
+    /// <param name="missing">True for a name that the data does not have (the "Missing" look of M21).</param>
+    public bool PickField(ObjectKind kind, string? nickname, string text, Action? go, bool missing) =>
+        ReferenceField(missing ? kind with { Color = EditorTheme.Error } : kind, nickname, text,
+            new Follow(null, $"{kind.Label}: {text}", go), missing, pickable: true);
+
+    /// <summary>The field of a reference and its button in the value cell. Returns true when the user clicks a pickable
+    /// field.</summary>
+    private bool ReferenceField(ObjectKind kind, string? nickname, string text, Follow follow, bool missing, bool pickable)
+    {
         var style = ImGui.GetStyle();
         var height = ImGui.GetFrameHeight();
         var spacing = style.ItemInnerSpacing.X;
@@ -495,8 +527,22 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         var width = Math.Max(1, ImGui.GetContentRegionAvail().X - buttonWidth - spacing);
         var min = ImGui.GetCursorScreenPos();
         var max = min + new Vector2(width, height);
+        var clicked = false;
+        if (pickable)
+        {
+            clicked = ImGui.InvisibleButton("##pick-field", new Vector2(width, height));
+        }
+        else
+        {
+            ImGui.Dummy(new Vector2(width, height));
+        }
+
+        // A pickable field has the colors of an input field. A read-only field has the color of a strip.
+        var fill = !pickable ? ImGui.GetColorU32(EditorTheme.Strip)
+            : ImGui.IsItemHovered() ? ImGui.GetColorU32(ImGuiCol.FrameBgHovered)
+            : ImGui.GetColorU32(ImGuiCol.FrameBg);
         var drawList = ImGui.GetWindowDrawList();
-        drawList.AddRectFilled(min, max, ImGui.GetColorU32(EditorTheme.Strip), style.FrameRounding);
+        drawList.AddRectFilled(min, max, fill, style.FrameRounding);
         drawList.AddRect(min, max, ImGui.GetColorU32(ImGuiCol.Border), style.FrameRounding);
 
         var font = ImGui.GetFont();
@@ -514,15 +560,14 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         TextFit.AddText(drawList, font, fontSize, position,
             missing ? ImGui.GetColorU32(EditorTheme.Error)
             : ImGui.GetColorU32(nickname == null ? ImGuiCol.TextDisabled : ImGuiCol.Text), text, textEnd - position.X);
-        ImGui.Dummy(new Vector2(width, height));
-        if (nickname != null && ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip))
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip) && (nickname != null || pickable))
         {
-            ImGui.SetTooltip(follow.Item);
+            ImGui.SetTooltip(pickable ? $"{follow.Item}\nClick to pick another value." : follow.Item);
         }
 
         ImGui.SameLine(0, spacing);
         FollowButton(follow);
-        EndRow();
+        return clicked;
     }
 
     /// <summary>The button of a reference that selects the item, or that goes to it. A follow without a target and
@@ -714,14 +759,22 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         nextNote = null;
         var help = nextHelp;
         nextHelp = null;
+        var marked = nextChanged;
+        nextChanged = false;
 
         // A long label is cut at the column edge. The tooltip shows all of it, the INI key and the note.
         ImGui.AlignTextToFramePadding();
         var labelMin = ImGui.GetCursorScreenPos();
         ImGui.PushStyleColor(ImGuiCol.Text,
-            field?.Origin == ValueOrigin.ActiveMod ? EditorTheme.AccentText : EditorTheme.Label);
+            marked || field?.Origin == ValueOrigin.ActiveMod ? EditorTheme.AccentText : EditorTheme.Label);
         ImGui.Text(label);
         ImGui.PopStyleColor();
+        // The marks of a bound row draw the bar of a value of the active mod.
+        if (marked && field?.Origin != ValueOrigin.ActiveMod)
+        {
+            ChangedBar(labelMin);
+        }
+
         var hovered = ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip);
         if (field != null)
         {

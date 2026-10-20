@@ -8,7 +8,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Ui;
-using OpenLancer.Editor.Ui.Fields;
+using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -72,8 +72,9 @@ internal enum EditWidget
     /// <summary>A list widget (section 8.5 of the M6b design).</summary>
     List,
 
-    /// <summary>A list of triggers with Add and Remove, for example "Started by".</summary>
-    Triggers,
+    /// <summary>An "Add" button with a picker: a pick adds an item to the rows above it, for example a trigger to
+    /// "Started by" or a member to a label.</summary>
+    AddPicker,
 }
 
 /// <summary>
@@ -112,17 +113,20 @@ internal sealed record FieldEdit(EditWidget Widget, string Label)
     /// <summary>Makes the batch of a list after one gesture of the list widget.</summary>
     public Func<ListFieldModel, MissionBatch?>? MakeList { get; init; }
 
-    /// <summary>The rows of a <see cref="EditWidget.Triggers"/> field.</summary>
-    public IReadOnlyList<string> Rows { get; init; } = [];
-
-    /// <summary>Makes the batch that adds a trigger to a <see cref="EditWidget.Triggers"/> field.</summary>
+    /// <summary>Makes the batch that adds the picked item of an <see cref="EditWidget.AddPicker"/> field.</summary>
     public Func<string, MissionBatch?>? Add { get; init; }
-
-    /// <summary>Makes the batch that removes a trigger of a <see cref="EditWidget.Triggers"/> field.</summary>
-    public Func<string, MissionBatch?>? Remove { get; init; }
 
     /// <summary>True for a position that "Pick in Scene" can set.</summary>
     public bool PickInScene { get; init; }
+
+    /// <summary>The system of the item of a position, or null. "Pick in Scene" takes a point only while the Scene shows
+    /// this system.</summary>
+    public string? PickSystem { get; init; }
+
+    /// <summary>True when an edit can need a confirmation, for example a change of a ship build of a shared file. The
+    /// widget then runs one batch at the end of its gesture, so the dialog can ask (section 4.0.5 of the M6b
+    /// design).</summary>
+    public bool Confirms { get; init; }
 
     /// <summary>Why the field cannot change, or null. The widget then has its read-only state.</summary>
     public string? ReadOnly { get; init; }
@@ -172,8 +176,27 @@ internal sealed record PageField(string Label, string Value, string? Help = null
     /// design).</summary>
     public FieldEdit? Edit { get; init; }
 
+    /// <summary>True when the active mod sets the value, also with an edit that is not saved. The label gets the blue bar
+    /// (section 8.1 of the M6b design, UI rule 7).</summary>
+    public bool Changed { get; init; }
+
     /// <summary>The items of the row menu of the field, for example "Move up" of an action line.</summary>
     public IReadOnlyList<PageAction> Actions { get; init; } = [];
+}
+
+/// <summary>
+/// The banner of a section whose base changed after the edit of the active mod (sections 6.3 and 8.11 of the M6b design):
+/// the lines of the new base and the lines of the edit for "Compare", and the batches of "Keep my lines" and "Use the new
+/// base".
+/// </summary>
+/// <param name="Base">The lines of the new base, each as "key = values".</param>
+/// <param name="Mine">The lines of the edit, each as "key = values".</param>
+internal sealed record BaseChange(IReadOnlyList<string> Base, IReadOnlyList<string> Mine, MissionBatch Keep, MissionBatch Revert)
+{
+    public const string Text = "The base of this section changed after your edit.";
+    public const string CompareTip = "Show your lines and the lines of the new base side by side.";
+    public const string KeepTip = "Keep your lines and accept the new base.";
+    public const string RevertTip = "Remove your edit of this section.";
 }
 
 /// <summary>One component section of a mission page (section 10.1 of the M6a design).</summary>
@@ -210,6 +233,9 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     /// edits of such a field (section 8.8 of the M6b design).</summary>
     public const string FieldNote = "Change this value in the INI block of the page.";
 
+    /// <summary>The value of a field of a key that the section does not have.</summary>
+    public const string NotSet = "Not set";
+
     /// <summary>The section of an id, or null.</summary>
     public PageSection? Section(string id) => Sections.FirstOrDefault(s => s.Id == id);
 
@@ -242,6 +268,10 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
 
     /// <summary>Makes the batch of "Rename" of the page menu, or null for an item without a rename.</summary>
     public Func<string, MissionBatch?>? Rename { get; init; }
+
+    /// <summary>The banner of a section whose base changed after the edit, or null (section 6.3 of the M6b
+    /// design).</summary>
+    public BaseChange? Base { get; init; }
 
     /// <summary>The Mission page (section 10.2 of the M6a design).</summary>
     /// <param name="text">Gives the text of a text id, or an empty text.</param>
@@ -317,14 +347,14 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
             ? MissionIndex.Text(line[0])
             : "";
         const string label = "Ship build file";
-        return new PageField(label, value.Length > 0 ? value : "Not set", key?.Help)
+        return new PageField(label, value.Length > 0 ? value : NotSet, key?.Help)
         {
             Edit = new FieldEdit(EditWidget.Text, $"Set {label}")
             {
                 Value = value,
                 Make = text => text.Scalar is { Length: > 0 } path
-                    ? new MissionBatch($"Set {label}", [new SetItemKey(new ItemRef(analysis.Script.Path, header.Ref.Id),
-                        "npc_ship_file", [LineSpec.Raw("npc_ship_file", path)])])
+                    ? new MissionBatch($"Set {label}", [new SetItemKey(ItemOf(header), "npc_ship_file",
+                        [LineSpec.Raw("npc_ship_file", path)])])
                     : null,
             },
         };
@@ -433,7 +463,7 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     internal static IReadOnlyList<PageAction> FixActions(MissionAnalysis analysis, string subject) =>
         MissionFixes.OfSubject(analysis, subject)
             .Select(f => new PageAction(f.Label, new MissionBatch($"Fix: {f.Label}",
-                [new ApplyFix(new ScriptRef(analysis.Script.Path), subject, f.Id)]), Tooltip: CompletenessPanel.FixTip))
+                [new ApplyFix(new ScriptRef(analysis.Script.Path), subject, f.Id)]), Tooltip: MissionFixes.ButtonTip))
             .ToList();
 
     /// <summary>The place of a problem in plain words, for example "Trigger t_start, line 3", or "Mission" for a

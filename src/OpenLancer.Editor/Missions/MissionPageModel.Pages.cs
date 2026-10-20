@@ -8,6 +8,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Ui;
+using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -44,6 +45,24 @@ internal sealed record PageContext(MissionRunResult Result, MissionAnalysis Anal
 
     /// <summary>True when the user can edit a section.</summary>
     public bool Editable(SectionRef section) => ReadOnlyOf(section) == null;
+
+    /// <summary>Gives the lines of a section that the active mod sets, by their index in the section (section 8.1 of the
+    /// M6b design). Without a function, no line has the blue bar.</summary>
+    public Func<SectionRef, IReadOnlySet<int>> ChangedOf { get; init; } = _ => new HashSet<int>();
+
+    /// <summary>Gives the lines of the new base of a section whose base changed after the edit, or null (section 6.3 of
+    /// the M6b design). Without a function, no page shows the banner.</summary>
+    public Func<SectionRef, IReadOnlyList<string>?> BaseOf { get; init; } = _ => null;
+
+    /// <summary>True for a shared ship build file of the missions. Random encounters can use its builds too.</summary>
+    public Func<string, bool> SharedBuildFile { get; init; } = _ => false;
+
+    /// <summary>True when the active mod sets a line.</summary>
+    public bool Changed(MissionLine line) => ChangedOf(line.Section.Ref).Contains(line.Entry);
+
+    /// <summary>True when the active mod sets a line of a key of a section.</summary>
+    public bool Changed(MissionSection section, string key) =>
+        Analysis.Index.LinesOf(section).Any(l => MissionIndex.Is(l.Key, key) && Changed(l));
 }
 
 /// <summary>The pages of the items of a mission (sections 10.3 to 10.17 of the M6a design).</summary>
@@ -119,11 +138,11 @@ internal sealed partial record MissionPageModel
         var keys = schema.Section("Trigger");
         var script = analysis.Script.Path;
         var sections = new List<PageSection>();
-        var tref = TriggerRefOf(trigger);
+        var tref = TriggerOf(trigger);
         var editable = context.Editable(trigger.Section.Ref);
-        PageField Key(string key, string value) => keys?.Key(key) is { } spec
+        PageField Key(string key, string value) => (keys?.Key(key) is { } spec
             ? new PageField(spec.Label, value, spec.Help) { Hard = spec.Hard }
-            : new PageField(key, value);
+            : new PageField(key, value)) with { Changed = context.Changed(trigger.Section, key) };
 
         sections.Add(new PageSection("trigger", "Trigger", EditorIcons.Bolt, schema.Help["triggerComponent"],
         [
@@ -144,9 +163,9 @@ internal sealed partial record MissionPageModel
         var startsWhen = new List<PageField>();
         if (trigger.Condition is { } condition)
         {
-            startsWhen.Add(new PageField("Event", condition.Sentence(), condition.Name?.Plain ?? EventTip)
+            startsWhen.Add(new PageField("Event", condition.Sentence(), EventTip)
             {
-                Edit = EventEdit(context, trigger),
+                Edit = EventEdit(context, trigger), Changed = context.Changed(condition),
             });
             startsWhen.AddRange(ValueFields(context, condition, (spec, value) => new SetConditionValue(tref, spec.Name, value)));
         }
@@ -160,7 +179,7 @@ internal sealed partial record MissionPageModel
         {
             startsWhen.Add(new PageField($"Line {LineNumber(ignored)}", LineText(ignored), schema.Notes["ignoredCondition"])
             {
-                Struck = true,
+                Struck = true, Changed = context.Changed(ignored),
             });
         }
 
@@ -180,7 +199,7 @@ internal sealed partial record MissionPageModel
                 fields.Add(new PageField($"Line {LineNumber(action)}", MissionGraph.ActionText(action), action.Name?.Plain,
                     new MissionRef(script, MissionItemKind.Row, trigger.Section.Ref, Row: action.Entry))
                 {
-                    Heading = true, Actions = ActionMenu(context, trigger, action),
+                    Heading = true, Actions = ActionMenu(context, trigger, action), Changed = context.Changed(action),
                 });
                 var actionRow = RowOf(action);
                 fields.AddRange(ValueFields(context, action,
@@ -219,8 +238,9 @@ internal sealed partial record MissionPageModel
             {
                 Actions = edits
                     ? [new PageAction("Remove", One($"Unlink {l.Source.Nickname} from {trigger.Nickname}",
-                        new UnlinkTriggers(TriggerRefOf(l.Source), trigger.Nickname, linkKind!.Value)))]
+                        new UnlinkTriggers(TriggerOf(l.Source), trigger.Nickname, linkKind!.Value)))]
                     : [],
+                Changed = context.Changed(l.Line),
             }).ToList();
             if (edits)
                 fields.Add(AddLinkField(context, trigger, linkKind!.Value, "Add"));
@@ -244,6 +264,7 @@ internal sealed partial record MissionPageModel
             var systemLabel = keys?.Key("system")?.Label ?? "System";
             advanced.Add(new PageField(systemLabel, hint != null ? SystemText(context, hint) : "None", keys?.Key("system")?.Help)
             {
+                Changed = context.Changed(trigger.Section, "system"),
                 Edit = new FieldEdit(EditWidget.Picker, $"Set {systemLabel}")
                 {
                     Value = hint ?? "",
@@ -263,7 +284,7 @@ internal sealed partial record MissionPageModel
             var line = index.LinesOf(trigger.Section)[entry];
             advanced.Add(new PageField($"Line {LineNumber(line)}", LineText(line), schema.Notes["beforeNickname"])
             {
-                Struck = true,
+                Struck = true, Changed = context.Changed(line),
                 Actions = editable
                     ?
                     [
@@ -278,7 +299,7 @@ internal sealed partial record MissionPageModel
         advanced.Add(new PageField("Lines in file order", trigger.Rows.Count.ToString(CultureInfo.InvariantCulture)) { Heading = true });
         advanced.AddRange(trigger.Rows.Select((r, i) => new PageField($"Line {LineNumber(r)}", LineText(r))
         {
-            Actions = editable ? FileOrderMenu(trigger, i) : [],
+            Actions = editable ? FileOrderMenu(trigger, i) : [], Changed = context.Changed(r),
         }));
         sections.Add(new PageSection("advanced", "Advanced", EditorIcons.Cog, null, advanced, [], Advanced: true));
 
@@ -297,7 +318,21 @@ internal sealed partial record MissionPageModel
             FocusSection = focus,
             PageTrigger = trigger,
             ReadOnly = ReadOnlyText(context, trigger.Section),
+            Base = BaseOf(context, trigger.Section),
         };
+    }
+
+    /// <summary>The banner of a section whose base changed after the edit, or null (section 6.3 of the M6b design).
+    /// "Keep my lines" runs <see cref="AcceptBase"/>, and "Use the new base" runs <see cref="RevertSection"/>.</summary>
+    private static BaseChange? BaseOf(PageContext context, MissionSection section)
+    {
+        if (!context.Editable(section.Ref) || context.BaseOf(section.Ref) is not { } lines)
+            return null;
+        var item = ItemOf(section);
+        var name = section.Nickname ?? section.Ref.Id.ToString();
+        return new BaseChange(lines, section.Section.Select(MissionEditor.LineText).ToList(),
+            One($"Keep my lines of {name}", new AcceptBase(item)),
+            One($"Use the new base of {name}", new RevertSection(item)));
     }
 
     /// <summary>The tooltip of the field "Event" (section 8.11 of the M6b design).</summary>
@@ -394,7 +429,7 @@ internal sealed partial record MissionPageModel
                 var model = ListFieldModel.Read(listSpec, [ListFieldLine.Of(line.Line)]);
                 yield return new PageField(listSpec.Label, model.Rows.Count.ToString(CultureInfo.InvariantCulture), spec.Help)
                 {
-                    List = model, Hard = spec.Hard,
+                    List = model, Hard = spec.Hard, Changed = context.Changed(line),
                     Edit = make != null ? ValueListEdit(context, line, spec, listSpec.Label, v => make(spec, v)) : null,
                 };
                 continue;
@@ -413,7 +448,7 @@ internal sealed partial record MissionPageModel
     private static PageField ValueField(PageContext context, MissionLine line, MissionValueSpec spec, string label,
         Func<MissionValue, MissionCommand>? make = null)
     {
-        var field = ShownValue(context, line, spec, label);
+        var field = ShownValue(context, line, spec, label) with { Changed = context.Changed(line) };
         return make == null ? field : field with { Edit = ValueEdit(context, line, spec, label, make) };
     }
 
@@ -515,18 +550,25 @@ internal sealed partial record MissionPageModel
     /// <summary>
     /// The fields of keys of a section, in the order of the keys, with the labels and the help texts of the schema. A
     /// key with a list field gives a list field. A key with more than one value gives a heading and one named field for
-    /// each value (section 10.6 of the M6a design). A key that the section does not have does not show (UI rule 4).
+    /// each value (section 10.6 of the M6a design). A key that the section does not have shows only while the user can
+    /// edit the section: as "Not set" with the widget that adds the key (section 8.4 of the M6b design). Else it does not
+    /// show (UI rule 4).
     /// </summary>
     private static List<PageField> KeyFields(PageContext context, MissionSection section, params string[] keys)
     {
         var spec = MissionSchema.Retail.Section(section.Type);
         var lines = context.Analysis.Index.LinesOf(section);
+        var editable = context.Editable(section.Ref);
         var fields = new List<PageField>();
         foreach (var key in keys)
         {
             var keyLines = lines.Where(l => MissionIndex.Is(l.Key, key)).ToList();
             if (keyLines.Count == 0)
+            {
+                if (editable && NewKeyField(context, section, key) is { } added)
+                    fields.Add(added);
                 continue;
+            }
             var keySpec = spec?.Key(key);
             if (MissionSchema.Retail.KeyList(section.Type, key) is { } listSpec)
             {
@@ -534,6 +576,7 @@ internal sealed partial record MissionPageModel
                 fields.Add(new PageField(listSpec.Label, model.Rows.Count.ToString(CultureInfo.InvariantCulture), keySpec?.Help)
                 {
                     List = model, Hard = keySpec?.Hard == true, Edit = KeyListEdit(context, section, key, listSpec.Label),
+                    Changed = keyLines.Any(context.Changed),
                 });
                 continue;
             }
@@ -551,7 +594,10 @@ internal sealed partial record MissionPageModel
             }
 
             // Named slots: the heading has the help of the key, and each value has its own field.
-            fields.Add(new PageField(label, LineText(line), keySpec?.Help) { Heading = true, Hard = keySpec?.Hard == true });
+            fields.Add(new PageField(label, LineText(line), keySpec?.Help)
+            {
+                Heading = true, Hard = keySpec?.Hard == true, Changed = context.Changed(line),
+            });
             fields.AddRange(specs.Where(s => line.ValueOf(s) != null).Select(s => ValueField(context, line, s, s.Label,
                 KeyValue(line, s))));
         }
@@ -582,6 +628,7 @@ internal sealed partial record MissionPageModel
         {
             Lead = lead ?? [],
             ReadOnly = ReadOnlyText(context, section),
+            Base = BaseOf(context, section),
             // The page menu of an item of the script (section 8.4 of the M6b design). A mission ship goes with its NPC
             // and its build when no other item uses them (decision D669).
             PageActions = editable && section.Nickname != null
@@ -612,12 +659,12 @@ internal sealed partial record MissionPageModel
         bool Has(string key) => lines.Any(l => MissionIndex.Is(l.Key, key));
 
         // The start: a position and a rotation, or a place near an anchor.
-        ship.AddRange(Has("rel_pos") ? KeyFields(context, section, "rel_pos") : KeyFields(context, section, "position", "orientation"));
+        ship.AddRange(StartFields(context, section));
         ship.AddRange(KeyFields(context, section, "system", "label"));
-        // The engine keeps the first of the initial orders and the initial behavior.
+        // The engine keeps the first of the initial orders and the initial behavior. Without one, the page offers the
+        // initial orders.
         var first = lines.FirstOrDefault(l => MissionIndex.Is(l.Key, "init_objectives") || MissionIndex.Is(l.Key, "init_metabehavior"));
-        if (first != null)
-            ship.AddRange(KeyFields(context, section, first.Key));
+        ship.AddRange(KeyFields(context, section, first?.Key ?? "init_objectives"));
         ship.AddRange(KeyFields(context, section, "arrival_obj", "jumper", "random_name", "radius", "cargo"));
         var hullLabel = schema.Section("MsnShip")?.Key("hit_points")?.Label ?? "Hull points";
         ship.AddRange(Has("hit_points")
@@ -638,17 +685,7 @@ internal sealed partial record MissionPageModel
 
         var npc = MissionCompleteness.NpcOf(index, section);
         if (npc != null)
-        {
-            // The field "Pilot and voice" of the ship picks another [NPC] (the component menu "Use another pilot..." of
-            // section 8.4 of the M6b design).
-            var pilot = PilotAndVoice(context, npc);
-            sections.Add(context.Editable(section.Ref)
-                ? pilot with
-                {
-                    Fields = [.. KeyFields(context, section, "npc").Select(f => f with { Help = UseAnotherPilotTip }), .. pilot.Fields],
-                }
-                : pilot);
-        }
+            sections.Add(ShipPilot(context, section, npc));
 
         if (MissionCompleteness.BuildOf(context.Result.ShipBuilds, index, section) is { } build)
             sections.Add(ShipBuild(context, build, section));
@@ -665,6 +702,89 @@ internal sealed partial record MissionPageModel
     private static PageSection PilotAndVoice(PageContext context, MissionSection npc) =>
         new("pilot", "Pilot and voice", EditorIcons.User, MissionSchema.Retail.Help["pilotAndVoice"],
             KeyFields(context, npc, "affiliation", "voice", "space_costume", "individual_name", "npc_ship_arch"), []);
+
+    /// <summary>
+    /// The section "Pilot and voice" of a mission ship (section 8.4 of the M6b design). While the user can edit the ship,
+    /// its first field picks another <c>[NPC]</c> ("Use another pilot..."). When other ships of the script use the same
+    /// <c>[NPC]</c>, the chip "Used by {n} ships" shows, and "This ship only" gives the ship its own copy of the
+    /// <c>[NPC]</c> in one undo entry.
+    /// </summary>
+    private static PageSection ShipPilot(PageContext context, MissionSection ship, MissionSection npc)
+    {
+        var pilot = PilotAndVoice(context, npc);
+        if (!context.Editable(ship.Ref) || npc.Nickname is not { } name)
+            return pilot;
+        var index = context.Analysis.Index;
+        var users = index.Document.OfKind(MissionSectionKind.Ship)
+            .Count(s => MissionCompleteness.NpcOf(index, s) == npc);
+        var fields = KeyFields(context, ship, "npc").Select(f => f with { Help = UseAnotherPilotTip }).ToList();
+        if (users > 1)
+        {
+            fields.Add(new PageField("Use of the pilot", UsedByText(users), PilotUsersTip)
+            {
+                Chips = [new PageChip(UsedByText(users), PilotUsersTip, null)],
+            });
+        }
+
+        fields.AddRange(pilot.Fields);
+        var taken = index.Document.OfKind(MissionSectionKind.Npc).Select(s => s.Nickname).OfType<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var copy = MissionNaming.Free(context.Analysis.Script.Path, "NPC", taken, name);
+        return pilot with
+        {
+            Fields = fields,
+            Actions = users > 1
+                ?
+                [
+                    new PageAction("This ship only", new MissionBatch($"This ship only: {name}",
+                    [
+                        new DuplicateItem(ItemOf(npc)) { NewName = copy },
+                        new SetItemKey(ItemOf(ship), "npc", [LineSpec.Raw("npc", copy)]),
+                    ]), Tooltip: ThisShipOnlyPilotTip),
+                ]
+                : [],
+        };
+    }
+
+    /// <summary>The tooltip of the button "This ship only" of the pilot of a ship.</summary>
+    internal const string ThisShipOnlyPilotTip = "Give this ship its own copy of the pilot and voice. Then change the copy.";
+
+    /// <summary>
+    /// The start of a mission ship or a formation (section 8.4 of the M6b design): "Start position" with the rotation, or
+    /// "Placed near" an object. While the user can edit the item, the field "Start" switches between the two with
+    /// <see cref="PlaceMissionShip"/>. A new place near an object names no object, so the anchor shows "Missing" until
+    /// the user picks one.
+    /// </summary>
+    private static List<PageField> StartFields(PageContext context, MissionSection section)
+    {
+        var near = context.Analysis.Index.LinesOf(section).Any(l => MissionIndex.Is(l.Key, "rel_pos"));
+        var fields = new List<PageField>();
+        if (context.Editable(section.Ref))
+        {
+            var item = ItemOf(section);
+            fields.Add(new PageField("Start", near ? StartNear : StartAt, StartTip)
+            {
+                Edit = new FieldEdit(EditWidget.Words, "Set the start")
+                {
+                    Value = near ? "near" : "position",
+                    Choices = [("position", StartAt, null), ("near", StartNear, null)],
+                    Make = value => (value.Scalar == "near") == near ? null
+                        : One("Set the start", value.Scalar == "near"
+                            ? new PlaceMissionShip(item) { Near = new NearSpec(MissionLibrary.NoName) }
+                            : new PlaceMissionShip(item) { Position = MissionValue.Of(0, 0, 0) }),
+                },
+            });
+        }
+
+        fields.AddRange(near ? KeyFields(context, section, "rel_pos") : KeyFields(context, section, "position", "orientation"));
+        return fields;
+    }
+
+    private const string StartAt = "At a position";
+    private const string StartNear = "Near an object";
+
+    private const string StartTip = "Where the item starts: at a position with a rotation, or near an object of the " +
+                                    "system, with a heading and a range.";
 
     /// <summary>The tooltip of the field that picks another pilot of a ship (section 8.11 of the M6b design).</summary>
     internal const string UseAnotherPilotTip = "Pick another pilot and voice for this ship.";
@@ -684,7 +804,10 @@ internal sealed partial record MissionPageModel
         var world = context.Analysis.Index.World;
         var fields = new List<PageField>();
         var buildItem = new ItemRef(build.Ref.Path, build.Ref.Id);
-        var readOnly = context.ReadOnlyOf(ship?.Ref ?? build.Ref);
+        // The build fields take the read-only reason of the ship build file. A change of a build of a shared file asks
+        // first, so each widget runs one batch at the end of its gesture (review finding RB2 of the M6b design).
+        var readOnly = context.ReadOnlyOf(build.Ref);
+        var shared = context.SharedBuildFile(build.Ref.Path);
         FieldEdit Edit(string key, MissionValueKind kind, string label, int row) =>
             new(MissionSchema.ScopeOf(kind) == MissionKindScope.World && MissionSchema.ListOf(kind) != null
                 ? EditWidget.Picker
@@ -695,6 +818,7 @@ internal sealed partial record MissionPageModel
                 Make = value => One($"Set {label}",
                     new SetLineValue(new RowRef(buildItem, row) { ExpectKey = key }, value) { Name = key }),
                 ReadOnly = readOnly,
+                Confirms = shared,
             };
         foreach (var key in schema.ShipBuild.Keys.Where(k => !MissionIndex.Is(k.Key, "nickname")))
         {
@@ -712,6 +836,7 @@ internal sealed partial record MissionPageModel
                         MakeList = list => One($"Set {listSpec.Label}", new SetItemKey(buildItem, key.Key,
                             list.Write().Select(l => LineSpec.Raw(l.Key, [.. l.Texts])).ToList())),
                         ReadOnly = readOnly,
+                        Confirms = shared,
                     },
                 });
                 continue;
@@ -738,14 +863,14 @@ internal sealed partial record MissionPageModel
             if (ship != null && MissionIndex.Is(key.Key, "loadout"))
             {
                 var ships = ShipsOfBuild(context, build);
-                fields.Add(new PageField("Shared", UsedByText(ships), UsedByTip(ships))
+                fields.Add(new PageField("Use of the build", UsedByText(ships), UsedByTip(ships, shared))
                 {
-                    Chips = [new PageChip(UsedByText(ships), UsedByTip(ships), null)],
+                    Chips = [new PageChip(UsedByText(ships), UsedByTip(ships, shared), null)],
                 });
             }
         }
 
-        var actions = ship != null && readOnly == null && build.Value("loadout") is { } loadout
+        var actions = ship != null && context.Editable(ship.Ref) && build.Value("loadout") is { } loadout
             ? new[]
             {
                 new PageAction("This ship only", One("This ship only",
@@ -765,8 +890,10 @@ internal sealed partial record MissionPageModel
         var sections = new List<PageSection>
         {
             new("formation", "Formation", EditorIcons.Users, schema.Help["formation"],
-                KeyFields(context, section, "formation", "position", "orientation", "rel_pos", "system", "npc", "label",
-                    "init_objectives", "arrival_obj"), []),
+            [
+                .. KeyFields(context, section, "formation"), .. StartFields(context, section),
+                .. KeyFields(context, section, "system", "npc", "label", "init_objectives", "arrival_obj"),
+            ], []),
             new("members", "Members", EditorIcons.SpaceShuttle, schema.Help["formationMembers"],
                 KeyFields(context, section, "ship"), []),
         };
@@ -858,10 +985,16 @@ internal sealed partial record MissionPageModel
         var schema = MissionSchema.Retail;
         var typeSpec = schema.Section("NNObjective")?.Key("type");
         var fields = new List<PageField>();
-        if (section.Section.FirstOrDefault(e => MissionIndex.Is(e.Name, "type")) is { Count: > 0 } type)
+        var typeLine = context.Analysis.Index.LinesOf(section).FirstOrDefault(l => MissionIndex.Is(l.Key, "type"));
+        if (context.Editable(section.Ref))
+        {
+            fields.AddRange(ObjectiveEdits(context, section, typeLine));
+        }
+        else if (section.Section.FirstOrDefault(e => MissionIndex.Is(e.Name, "type")) is { Count: > 0 } type)
         {
             var kind = MissionIndex.Text(type[0]);
-            fields.Add(new PageField(typeSpec?.Label ?? "Type", kind, typeSpec?.Help) { Hard = typeSpec?.Hard == true });
+            fields.Add(new PageField(typeSpec?.Label ?? "Type", ObjectiveTypes.GetValueOrDefault(kind.ToLowerInvariant(), kind),
+                typeSpec?.Help) { Hard = typeSpec?.Hard == true });
             foreach (var id in MissionIndex.ObjectiveTextIds(type))
             {
                 var text = int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) &&
@@ -900,8 +1033,6 @@ internal sealed partial record MissionPageModel
         }
 
         fields.AddRange(KeyFields(context, section, "state", "hidden"));
-        if (context.Editable(section.Ref))
-            fields = ObjectiveEdits(context, section, fields);
         var users = MissionUses.Naming(context.Analysis.Index, section);
         var script = context.Analysis.Script.Path;
         var sections = new List<PageSection>
@@ -913,50 +1044,155 @@ internal sealed partial record MissionPageModel
             Problems(context.Analysis, SectionProblems(context.Analysis, section), context.ShowBaseGame),
         };
         return new MissionPageModel(section.Nickname ?? section.Ref.Id.ToString(), "Objective", EditorIcons.Bullseye,
-            schema.Help["objective"], null, sections, section.Ref) { ReadOnly = ReadOnlyText(context, section) };
+            schema.Help["objective"], null, sections, section.Ref)
+        {
+            ReadOnly = ReadOnlyText(context, section), Base = BaseOf(context, section),
+        };
     }
 
-    /// <summary>The words of the type of an objective, as retail writes them.</summary>
-    private static readonly string[] ObjectiveTypes = ["ids", "navmarker", "rep_inst", "base"];
+    /// <summary>The words of the type of an objective, as retail writes them, with their plain names. The game shows an
+    /// objective as a text, as a point in space, as an object or as a base.</summary>
+    private static readonly IReadOnlyDictionary<string, string> ObjectiveTypes = new Dictionary<string, string>
+    {
+        ["ids"] = "A text",
+        ["navmarker"] = "A point in space",
+        ["rep_inst"] = "An object",
+        ["base"] = "A base",
+    };
+
+    /// <summary>The values of the <c>type</c> line of an objective type, by their place in the line: 0 is the type
+    /// word. A text id is a number, and a name that the user picks later is <see cref="MissionLibrary.NoName"/>.</summary>
+    private static readonly IReadOnlyDictionary<string, string[]> ObjectiveSlots = new Dictionary<string, string[]>
+    {
+        ["ids"] = ["type", "text"],
+        ["navmarker"] = ["type", "system", "text", "text2", "x", "y", "z"],
+        ["rep_inst"] = ["type", "system", "text", "text2", "x", "y", "z", "object"],
+        ["base"] = ["type", "base", "text"],
+    };
 
     /// <summary>
-    /// The edit bindings of the fields of an objective (section 8.4 of the M6b design): its type, the system, the
-    /// position with "Pick in Scene" and the base that the type needs. The values of the <c>type</c> line have no names
-    /// in the schema, so each binding sets a value by its index.
+    /// The edit fields of an objective (section 8.4 of the M6b design): "Type", the texts, and the system, the position
+    /// with "Pick in Scene", the object or the base that the type needs. The values of the <c>type</c> line have no
+    /// names in the schema. Each edit writes the whole line with <see cref="SetItemKey"/>, so a line of another type
+    /// gets the values of the new type. A value that both types have keeps its value, and a new value gets a first
+    /// value.
     /// </summary>
-    private static List<PageField> ObjectiveEdits(PageContext context, MissionSection section, List<PageField> fields)
+    /// <param name="type">The <c>type</c> line, or null for an objective without one. "Type" then adds the line.</param>
+    private static List<PageField> ObjectiveEdits(PageContext context, MissionSection section, MissionLine? type)
     {
-        if (context.Analysis.Index.LinesOf(section).FirstOrDefault(l => MissionIndex.Is(l.Key, "type")) is not { } type)
-            return fields;
-        var row = RowOf(type);
-        FieldEdit At(EditWidget widget, string label, int index, string? list = null) => new(widget, $"Set {label}")
-        {
-            Value = type.Value(index) ?? "",
-            List = list,
-            Choices = widget == EditWidget.Words ? ObjectiveTypes.Select(w => (w, w, (string?)null)).ToList() : [],
-            Make = value => One($"Set {label}", new SetLineValue(row, value) { Index = index }),
-            ReadOnly = context.ReadOnlyOf(section.Ref),
-        };
-        return fields.Select(f => f.Label switch
-        {
-            "Type" => f with { Edit = At(EditWidget.Words, f.Label, 0) },
-            "System" => f with { Edit = At(EditWidget.Picker, f.Label, 1, MissionSchema.ListOf(MissionValueKind.System)) },
-            "Base" => f with { Edit = At(EditWidget.Picker, f.Label, 1, MissionSchema.ListOf(MissionValueKind.Base)) },
-            "Position" => f with
+        var item = ItemOf(section);
+        var kind = (type?.Value(0) ?? "").Trim().ToLowerInvariant();
+        var slots = ObjectiveSlots.GetValueOrDefault(kind) ?? ["type"];
+        // The current value of each slot of the line.
+        var current = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; type != null && i < slots.Length && i < type.Count; i++)
+            current[slots[i]] = type.Value(i) ?? "";
+        string[] LineOf(string newKind, IReadOnlyDictionary<string, string> values) =>
+        [
+            newKind,
+            .. ObjectiveSlots[newKind].Skip(1).Select(slot => values.GetValueOrDefault(slot) ?? slot switch
             {
-                Edit = new FieldEdit(EditWidget.Position, "Set the position")
+                "text" or "text2" or "x" or "y" or "z" => "0",
+                _ => MissionLibrary.NoName,
+            }),
+        ];
+        MissionBatch? Write(string label, string newKind, IReadOnlyDictionary<string, string> values) =>
+            ObjectiveSlots.ContainsKey(newKind)
+                ? One($"Set {label}", new SetItemKey(item, "type", [LineSpec.Raw("type", LineOf(newKind, values))]))
+                : null;
+        MissionBatch? Set(string label, params (string Slot, string Value)[] changes)
+        {
+            var values = new Dictionary<string, string>(current, StringComparer.Ordinal);
+            foreach (var (slot, value) in changes)
+                values[slot] = value;
+            return Write(label, kind, values);
+        }
+
+        var readOnly = context.ReadOnlyOf(section.Ref);
+        var changed = type != null && context.Changed(type);
+        var typeSpec = MissionSchema.Retail.Section("NNObjective")?.Key("type");
+        var fields = new List<PageField>
+        {
+            new(typeSpec?.Label ?? "Type", type == null ? NotSet : ObjectiveTypes.GetValueOrDefault(kind, kind), typeSpec?.Help)
+            {
+                Hard = typeSpec?.Hard == true, Changed = changed,
+                Edit = new FieldEdit(EditWidget.Words, "Set the type")
                 {
-                    Value = string.Join(", ", Enumerable.Range(4, 3).Select(i => type.Value(i) ?? "0")),
-                    PickInScene = true,
-                    Make = value => value.Items.Count == 3
-                        ? new MissionBatch("Set the position", Enumerable.Range(0, 3)
-                            .Select(i => (MissionCommand)new SetLineValue(row, value.Items[i]) { Index = 4 + i }).ToList())
+                    Value = kind,
+                    Choices = ObjectiveTypes.Select(p => (p.Key, p.Value, (string?)null)).ToList(),
+                    Make = value => value.Scalar is { } word && !word.Equals(kind, StringComparison.OrdinalIgnoreCase)
+                        ? Write("the type", word.ToLowerInvariant(), current)
                         : null,
-                    ReadOnly = context.ReadOnlyOf(section.Ref),
+                    ReadOnly = readOnly,
                 },
             },
-            _ => f,
-        }).ToList();
+        };
+        if (!ObjectiveSlots.ContainsKey(kind))
+            return fields;
+
+        FieldEdit Pick(string label, string slot, MissionValueKind valueKind) => new(EditWidget.Picker, $"Set {label}")
+        {
+            Value = current.GetValueOrDefault(slot) ?? "",
+            List = MissionSchema.ListOf(valueKind),
+            Scope = context.Analysis.Script.Path,
+            Make = value => Set(label, (slot, value.Scalar ?? "")),
+            ReadOnly = readOnly,
+        };
+        PageField Name(string label, string slot, MissionValueKind valueKind)
+        {
+            var value = current.GetValueOrDefault(slot) ?? MissionLibrary.NoName;
+            var name = valueKind == MissionValueKind.System ? context.SystemName?.Invoke(value) : context.NameOf(valueKind, value);
+            var missing = MissionIndex.Is(value, MissionLibrary.NoName);
+            return new PageField(label, missing ? $"Missing: {value}" : name is { Length: > 0 } ? $"{name} ({value})" : value)
+            {
+                Missing = missing, Changed = changed, Edit = Pick(label, slot, valueKind),
+            };
+        }
+
+        foreach (var slot in ObjectiveSlots[kind].Where(s => s is "text" or "text2"))
+        {
+            var id = current.GetValueOrDefault(slot) ?? "0";
+            var text = int.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) &&
+                       context.Text(number) is { Length: > 0 } named
+                ? $"{named} ({id})"
+                : id;
+            var label = slot == "text" ? "Text" : "Second text";
+            fields.Add(new PageField(label, text, "The text id of the objective text.")
+            {
+                Changed = changed,
+                Edit = new FieldEdit(EditWidget.TextId, $"Set {label}")
+                {
+                    Value = id, Make = value => Set(label, (slot, value.Scalar ?? "0")), ReadOnly = readOnly,
+                },
+            });
+        }
+
+        if (kind is "navmarker" or "rep_inst")
+        {
+            fields.Add(Name("System", "system", MissionValueKind.System));
+            var position = new[] { "x", "y", "z" }.Select(a => current.GetValueOrDefault(a) ?? "0").ToList();
+            fields.Add(new PageField("Position", string.Join(", ", position))
+            {
+                Changed = changed,
+                Edit = new FieldEdit(EditWidget.Position, "Set the position")
+                {
+                    Value = string.Join(", ", position),
+                    PickInScene = true,
+                    PickSystem = current.GetValueOrDefault("system"),
+                    Make = value => value.Items.Count == 3
+                        ? Set("the position", ("x", value.Items[0].Scalar ?? "0"), ("y", value.Items[1].Scalar ?? "0"),
+                            ("z", value.Items[2].Scalar ?? "0"))
+                        : null,
+                    ReadOnly = readOnly,
+                },
+            });
+        }
+
+        if (kind == "rep_inst")
+            fields.Add(Name("Object", "object", MissionValueKind.SystemObject));
+        if (kind == "base")
+            fields.Add(Name("Base", "base", MissionValueKind.Base));
+        return fields;
     }
 
     /// <summary>A section of the lines of other triggers, each with a link.</summary>
@@ -1034,9 +1270,10 @@ internal sealed partial record MissionPageModel
         {
             memberFields.Add(new PageField("Add", "", "Pick a ship, a formation or a solar. It gets this label.")
             {
-                Edit = new FieldEdit(EditWidget.Triggers, $"Add a member to {label}")
+                Edit = new FieldEdit(EditWidget.AddPicker, $"Add a member to {label}")
                 {
-                    List = "mission_ship+mission_formation+mission_solar",
+                    List = string.Join("+", new[] { MissionValueKind.Ship, MissionValueKind.Formation, MissionValueKind.Solar }
+                        .Select(MissionSchema.ListOf).OfType<string>()),
                     Scope = script,
                     Add = name => (index.Item(MissionSectionKind.Ship, name) ?? index.Item(MissionSectionKind.Formation, name) ??
                                    index.Item(MissionSectionKind.Solar, name)) is { } member
@@ -1078,10 +1315,7 @@ internal sealed partial record MissionPageModel
         PageField Link(MissionTrigger t) => new(t.Nickname, t.Condition?.Sentence() ?? "No condition", null,
             new MissionRef(script, MissionItemKind.Trigger, t.Section.Ref))
         {
-            Actions = editable
-                ? [new PageAction("Remove", One($"Remove {t.Nickname} from {title}", new SetActMembers(reference!,
-                    triggers.Where(x => x != t).Select(x => x.Nickname).ToList())))]
-                : [],
+            Actions = editable ? ActMenu(context, acts, act!, t) : [],
         };
         var actFields = new List<PageField>
         {
@@ -1112,7 +1346,7 @@ internal sealed partial record MissionPageModel
         {
             triggerFields.Add(new PageField("Add", "", "Pick a trigger. It moves into this act.")
             {
-                Edit = new FieldEdit(EditWidget.Triggers, "Add a trigger to the act")
+                Edit = new FieldEdit(EditWidget.AddPicker, "Add a trigger to the act")
                 {
                     List = MissionSchema.ListOf(MissionValueKind.Trigger),
                     Scope = script,
@@ -1138,6 +1372,34 @@ internal sealed partial record MissionPageModel
                     : One("Set the name of the act", new SetAct(reference!) { Name = name.Trim() })
                 : null,
         };
+    }
+
+    /// <summary>
+    /// The row menu of a trigger of an act (section 8.4 of the M6b design): "Move to {act}" for each other act, and
+    /// "Remove" for a trigger that the mission does not reach. Each trigger that a start trigger reaches is in an act,
+    /// so a removed trigger would go back to the act of the proposal rule (decision D679). A trigger is in one act, so a
+    /// move takes it out of this act.
+    /// </summary>
+    private static IReadOnlyList<PageAction> ActMenu(PageContext context, MissionActs acts, MissionAct act,
+        MissionTrigger trigger)
+    {
+        var script = context.Analysis.Script.Path;
+        var result = acts.Acts.Where(other => other != act).Select(other =>
+        {
+            var title = MissionGraph.ActTitle(other, context.SystemName);
+            return new PageAction($"Move to {title}", One($"Move {trigger.Nickname} to {title}",
+                new SetActMembers(new ActRef(script, MissionActs.NicknameOf(other)),
+                    [.. other.Triggers.Select(t => t.Nickname), trigger.Nickname])));
+        }).ToList();
+        if (!context.Analysis.Index.Reached.Contains(trigger))
+        {
+            var title = MissionGraph.ActTitle(act, context.SystemName);
+            result.Add(new PageAction("Remove", One($"Remove {trigger.Nickname} from {title}",
+                new SetActMembers(new ActRef(script, MissionActs.NicknameOf(act)),
+                    act.Triggers.Where(t => t != trigger).Select(t => t.Nickname).ToList()))));
+        }
+
+        return result;
     }
 
     // ---- The prefab pages (sections 10.4 and 10.5).

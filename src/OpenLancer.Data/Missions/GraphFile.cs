@@ -12,7 +12,8 @@ namespace OpenLancer.Data.Missions;
 public sealed record GraphNodePlace(string Trigger, float X, float Y);
 
 /// <summary>One act of the graph file (section 6.8 of the M6b design): its nickname, its name, its walkthrough text and
-/// its triggers in order.</summary>
+/// its triggers in order. An act without a name shows the title that the editor gives a proposed act, for example "Act 2:
+/// {system name}".</summary>
 public sealed record GraphAct(string Nickname, string Name, string Text, IReadOnlyList<string> Members)
 {
     public bool Equals(GraphAct? other) =>
@@ -44,6 +45,10 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
     /// <summary>A graph file without records.</summary>
     public static readonly GraphFile Empty = new([], [], []);
 
+    /// <summary>Why the editor cannot write the file, or null. A file of another format reads as no records, and a
+    /// command does not write over it (review finding 12 of M6b-2).</summary>
+    public string? Unreadable { get; init; }
+
     /// <summary>True when the file has a record. A file without a record is not written (section 6.8 of the M6b
     /// design).</summary>
     public bool HasRecords => Nodes.Count + Acts.Count + Others.Count > 0;
@@ -66,7 +71,7 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
 
     /// <summary>
     /// Reads a graph file. A line that the editor cannot read gives a problem and stays out. A file of another format
-    /// gives a problem and no records. Null text gives <see cref="Empty"/>.
+    /// gives a problem and no records, and <see cref="Unreadable"/> tells why. Null text gives <see cref="Empty"/>.
     /// </summary>
     /// <param name="problems">The problems of the text, each with its line.</param>
     public static GraphFile Read(string? text, out IReadOnlyList<string> problems)
@@ -107,7 +112,11 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
             format != Format.ToString(CultureInfo.InvariantCulture))
         {
             found.Add(Problem(formatLine, $"The graph file has format {format}. This editor reads format {Format}."));
-            return Empty;
+            return Empty with
+            {
+                Unreadable = $"The graph file has format {format}. This editor reads only format {Format}, so it does not " +
+                             "change the file.",
+            };
         }
 
         var nodes = new List<GraphNodePlace>();
@@ -144,7 +153,7 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
                     found.Add(Problem(line, "An [Act] record has a 'nickname' line."));
                     continue;
                 }
-                acts.Add(new GraphAct(nickname, Value(entries, "name") ?? nickname, Value(entries, "text") ?? "",
+                acts.Add(new GraphAct(nickname, Value(entries, "name") ?? "", Value(entries, "text") ?? "",
                     entries.Where(e => Is(e.Key, "member") && e.Value.Length > 0).Select(e => e.Value).ToList()));
                 continue;
             }
@@ -174,7 +183,8 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
         {
             text.Append("\n[Act]\n");
             text.Append("nickname = ").Append(act.Nickname).Append('\n');
-            text.Append("name = ").Append(OneLine(act.Name)).Append('\n');
+            if (act.Name.Length > 0)
+                text.Append("name = ").Append(OneLine(act.Name)).Append('\n');
             if (act.Text.Length > 0)
                 text.Append("text = ").Append(OneLine(act.Text)).Append('\n');
             foreach (var member in act.Members)
@@ -203,7 +213,8 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
         foreach (var act in Acts)
         {
             foreach (var member in act.Members.Where(m => !hasTrigger(m)))
-                notes.Add($"Act '{act.Name}' in the graph file of {script} names trigger '{member}', which the script " +
+                notes.Add($"Act '{(act.Name.Length > 0 ? act.Name : act.Nickname)}' in the graph file of {script} names " +
+                          $"trigger '{member}', which the script " +
                           "does not have. The editor removes the name when it writes the file again.");
         }
         return notes;

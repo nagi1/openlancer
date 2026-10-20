@@ -6,6 +6,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -15,25 +16,12 @@ namespace OpenLancer.Editor.Missions;
 /// </summary>
 internal sealed partial record MissionPageModel
 {
-    internal static ItemRef ItemOf(MissionSection section) => new(section.Ref.Path, section.Ref.Id);
-
-    internal static RowRef RowOf(MissionLine line) => new(ItemOf(line.Section), line.Entry) { ExpectKey = line.Key };
-
-    internal static TriggerRef TriggerRefOf(MissionTrigger trigger) => new(trigger.Section.Ref.Path, trigger.Nickname);
-
     private static MissionBatch One(string label, MissionCommand command) => new(label, [command]);
 
-    /// <summary>
-    /// The binding of one value of a line by the kind of its spec (section 8.4 of the M6b design): a picker for a name, a
-    /// dropdown for a word, a number field, three numbers with "Pick in Scene" for a position, a check box for a bool, a
-    /// text id field, or a text field.
-    /// </summary>
-    /// <param name="make">Makes the command of a new value.</param>
-    internal static FieldEdit ValueEdit(PageContext context, MissionLine line, MissionValueSpec spec, string label,
-        Func<MissionValue, MissionCommand> make)
+    /// <summary>The widget of a value spec, and the words of a closed set of the spec.</summary>
+    private static (EditWidget Widget, IReadOnlyList<string> Words) WidgetOf(MissionValueSpec spec)
     {
         var schema = MissionSchema.Retail;
-        var setLabel = $"Set {label}";
         var words = spec.Tokens != null ? schema.Tokens.GetValueOrDefault(spec.Tokens)?.Values ?? [] : [];
         if (spec.Also != null)
             words = [.. words, .. schema.Tokens.GetValueOrDefault(spec.Also)?.Values ?? []];
@@ -49,20 +37,106 @@ internal sealed partial record MissionPageModel
             _ when MissionSchema.ListOf(spec.Kind) != null => EditWidget.Picker,
             _ => EditWidget.Text,
         };
-        return new FieldEdit(widget, setLabel)
+        return (widget, words);
+    }
+
+    /// <summary>The binding of a value spec without a line: the widget of the spec, with no value.</summary>
+    /// <param name="section">The section whose read-only reason the widget takes.</param>
+    private static FieldEdit SpecEdit(PageContext context, MissionSection section, MissionValueSpec spec, string label,
+        Func<MissionValue, MissionBatch?> make)
+    {
+        var (widget, words) = WidgetOf(spec);
+        return new FieldEdit(widget, $"Set {label}")
         {
-            Value = line.ValueOf(spec) ?? "",
             Spec = spec,
             List = widget == EditWidget.Picker ? MissionSchema.ListOf(spec.Kind) : null,
             Scope = context.Analysis.Script.Path,
             NoneWord = spec.NoneToken,
             Choices = words.Distinct(StringComparer.OrdinalIgnoreCase).Select(w => (w, w, (string?)null)).ToList(),
-            Make = value => One(setLabel, make(value)),
-            MakeText = widget == EditWidget.TextId
+            Make = make,
+            PickInScene = widget == EditWidget.Position,
+            PickSystem = context.Analysis.Index.SystemOf(section),
+            ReadOnly = context.ReadOnlyOf(section.Ref),
+        };
+    }
+
+    /// <summary>
+    /// The binding of one value of a line by the kind of its spec (section 8.4 of the M6b design): a picker for a name, a
+    /// dropdown for a word, a number field, three numbers with "Pick in Scene" for a position, a check box for a bool, a
+    /// text id field, or a text field.
+    /// </summary>
+    /// <param name="make">Makes the command of a new value.</param>
+    internal static FieldEdit ValueEdit(PageContext context, MissionLine line, MissionValueSpec spec, string label,
+        Func<MissionValue, MissionCommand> make)
+    {
+        var setLabel = $"Set {label}";
+        var edit = SpecEdit(context, line.Section, spec, label, value => One(setLabel, make(value)));
+        return edit with
+        {
+            Value = line.ValueOf(spec) ?? "",
+            MakeText = edit.Widget == EditWidget.TextId
                 ? text => One(setLabel, new SetLineText(RowOf(line), spec.Name, text))
                 : null,
-            PickInScene = widget == EditWidget.Position,
-            ReadOnly = context.ReadOnlyOf(line.Section.Ref),
+            PickSystem = line.Trigger != null
+                ? MissionPlacements.SystemOfLine(context.Analysis.Index, line)
+                : context.Analysis.Index.SystemOf(line.Section),
+        };
+    }
+
+    /// <summary>The texts of a value as a line writes them: each number of a list, or the one value.</summary>
+    private static IReadOnlyList<string> TextsOf(MissionValue value) =>
+        value.Type == MissionValueType.List ? value.Items.Select(i => i.Scalar ?? "").ToList() : [value.Scalar ?? ""];
+
+    /// <summary>
+    /// The field of a key that a section does not have, while the user can edit the section (section 8.4 of the M6b
+    /// design): "Not set", and the widget that adds the key. A key with a list field gives an empty list field. A key
+    /// with several named values gives "Not set" with the row menu item "Set", which adds the line with first values.
+    /// Null for a key that the schema does not know.
+    /// </summary>
+    private static PageField? NewKeyField(PageContext context, MissionSection section, string key)
+    {
+        var schema = MissionSchema.Retail;
+        if (schema.Section(section.Type)?.Key(key) is not { } keySpec)
+            return null;
+        var item = ItemOf(section);
+        if (schema.KeyList(section.Type, key) is { } listSpec)
+        {
+            return new PageField(listSpec.Label, "0", keySpec.Help)
+            {
+                List = ListFieldModel.Read(listSpec, []), Hard = keySpec.Hard,
+                Edit = KeyListEdit(context, section, key, listSpec.Label),
+            };
+        }
+
+        var label = keySpec.Label;
+        if (keySpec.Values.Count > 1)
+        {
+            return new PageField(label, NotSet, keySpec.Help)
+            {
+                Hard = keySpec.Hard,
+                Actions =
+                [
+                    new PageAction("Set", One($"Set {label}", new SetItemKey(item, key, [MissionLibrary.KeyStarter(keySpec)])),
+                        Tooltip: "Add the line with first values. Then change each value."),
+                ],
+            };
+        }
+
+        var spec = keySpec.Values.FirstOrDefault() ?? new MissionValueSpec(0, key, label, keySpec.Kind)
+        {
+            Help = keySpec.Help, Tokens = keySpec.Tokens, NoneToken = keySpec.NoneToken,
+            Width = keySpec.Kind switch
+            {
+                MissionValueKind.Position => 3,
+                MissionValueKind.Rotation => 4,
+                _ => 1,
+            },
+        };
+        return new PageField(label, NotSet, keySpec.Help)
+        {
+            Hard = keySpec.Hard,
+            Edit = SpecEdit(context, section, spec, label, value => One($"Set {label}",
+                new SetItemKey(item, key, [LineSpec.Raw(key, [.. TextsOf(value)])]))),
         };
     }
 
@@ -98,7 +172,7 @@ internal sealed partial record MissionPageModel
                 .SelectMany(e => schema.Conditions.Where(c => c.Group == e.Id))
                 .Select(c => (c.Name, c.Plain, (string?)groups.GetValueOrDefault(c.Group))).ToList(),
             Make = value => schema.Name(value.Text) is { Kind: MissionNameKind.Condition } name
-                ? One("Set the event", new SetCondition(TriggerRefOf(trigger), MissionLibrary.Starter(name)))
+                ? One("Set the event", new SetCondition(TriggerOf(trigger), MissionLibrary.Starter(name)))
                 : null,
             ReadOnly = context.ReadOnlyOf(trigger.Section.Ref),
         };
@@ -122,7 +196,7 @@ internal sealed partial record MissionPageModel
         if (at >= 0 && at + 1 < actions.Count)
             result.Add(new PageAction("Move down", One("Move action", new ReorderAction(row) { Before = AfterNext() })));
         result.Add(new PageAction("Duplicate", One($"Duplicate {action.Name?.Plain ?? action.Key}",
-            new AddAction(TriggerRefOf(trigger), copy) { Before = at + 1 < actions.Count ? actions[at + 1].Entry : null })));
+            new AddAction(TriggerOf(trigger), copy) { Before = at + 1 < actions.Count ? actions[at + 1].Entry : null })));
         result.Add(new PageAction("Remove", One($"Remove {action.Name?.Plain ?? action.Key}", new RemoveAction(row))));
         result.Add(raw);
         return result;
@@ -135,7 +209,7 @@ internal sealed partial record MissionPageModel
             ? "Pick a trigger. It gets a line that starts this trigger."
             : "Pick a trigger. It gets a line that stops this trigger.")
         {
-            Edit = new FieldEdit(EditWidget.Triggers, label)
+            Edit = new FieldEdit(EditWidget.AddPicker, label)
             {
                 List = MissionSchema.ListOf(MissionValueKind.Trigger),
                 Scope = context.Analysis.Script.Path,
@@ -180,18 +254,29 @@ internal sealed partial record MissionPageModel
             ReadOnly = context.ReadOnlyOf(line.Section.Ref),
         };
 
-    /// <summary>The number of ships of the script whose NPC names a ship build, for the chip "Used by {n} ships".</summary>
+    /// <summary>
+    /// The number of mission ships of all scripts whose <c>[NPC]</c> names a ship build, for the chip "Used by {n}
+    /// ships". A build of the ship build file of a script serves only that script, and a build of a shared file can
+    /// serve each script.
+    /// </summary>
     internal static int ShipsOfBuild(PageContext context, NpcShipBuild build) =>
-        context.Analysis.Index.Document.OfKind(MissionSectionKind.Ship)
-            .Count(s => MissionCompleteness.BuildOf(context.Result.ShipBuilds, context.Analysis.Index, s) is { } b &&
-                        b.Ref.Equals(build.Ref));
+        context.Result.Analyses.Values.Sum(analysis => analysis.Index.Document.OfKind(MissionSectionKind.Ship)
+            .Count(s => MissionCompleteness.BuildOf(context.Result.ShipBuilds, analysis.Index, s) is { } b &&
+                        b.Ref.Equals(build.Ref)));
 
-    /// <summary>The text of the chip of a ship build (section 8.11 of the M6b design).</summary>
+    /// <summary>The text of the chip of a ship build or a pilot (section 8.11 of the M6b design).</summary>
     internal static string UsedByText(int ships) =>
         ships == 1 ? "Used by 1 ship" : $"Used by {ships.ToString(CultureInfo.InvariantCulture)} ships";
 
-    /// <summary>The tooltip of the chip of a ship build.</summary>
-    internal static string UsedByTip(int ships) => ships == 1
-        ? "This ship alone uses this ship build."
+    /// <summary>The tooltip of the chip of a ship build. A build of a shared file can also serve random encounters, so
+    /// its tooltip says so also when one ship uses it.</summary>
+    internal static string UsedByTip(int ships, bool shared = false) =>
+        shared ? "This ship build is in a shared file. Random encounters and other missions can use it too. A change " +
+                 "here changes all of them."
+        : ships == 1 ? "This ship alone uses this ship build."
         : "Other ships use this ship build too. A change here changes all of them.";
+
+    /// <summary>The tooltip of the chip of a pilot that more than one ship uses.</summary>
+    internal const string PilotUsersTip = "Other ships use this pilot and voice too. A change here changes all of them. " +
+                                          "\"This ship only\" gives this ship its own copy.";
 }

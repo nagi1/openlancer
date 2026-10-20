@@ -158,7 +158,10 @@ public sealed class GraphFileTests
 
         var acts = m.Missions.Model(Script).Acts!;
 
-        Assert.Equal(["Act 1", "The end"], acts.Acts.Select(a => a.Name ?? ""));
+        // The first act edit writes the proposed act without a name, so its title stays the title of a proposed act.
+        Assert.Equal([null, "The end"], acts.Acts.Select(a => a.Name));
+        Assert.Equal("Act 1", MissionGraph.ActTitle(acts.Acts[0], null));
+        Assert.Equal("", m.Missions.Graph(Script).Acts[0].Name);
         Assert.DoesNotContain(acts.Acts[0].Triggers, t => t.Nickname == "ol_end");
         Assert.Equal(["ol_end"], acts.Acts[1].Triggers.Select(t => t.Nickname));
         m.Apply(new AddTrigger(TestScript) { Nickname = "ol_later", Condition = LineSpec.Raw("Cnd_True", "no_params") });
@@ -189,5 +192,112 @@ public sealed class GraphFileTests
         m.Apply(result.Inverse!);
 
         Assert.Equal(before, m.State());
+    }
+
+    private const string GraphPath = @"graphs\DATA\MISSIONS\OL_TEST\ol_test.ini";
+
+    /// <summary>A graph file with the nodes of two triggers of the script.</summary>
+    private const string TwoNodes = GraphFile.Header + """
+
+        [Graph]
+        script = DATA\MISSIONS\OL_TEST\ol_test.ini
+        format = 1
+
+        [Node]
+        trigger = ol_end
+        pos = 300, 400
+
+        [Node]
+        trigger = ol_start
+        pos = 10, 20
+
+        """;
+
+    /// <summary>The graph file with a node of a trigger that the script does not have.</summary>
+    private const string Stale = TwoNodes + """
+        [Node]
+        trigger = ol_gone
+        pos = 10, 20
+
+        """;
+
+    [Fact]
+    public void TheInverseOfADeleteGivesTheNodeBackAtItsPlaceInTheFile()
+    {
+        using var m = Create(modFiles: new() { [GraphPath] = TwoNodes });
+        m.Apply(new MoveNodes(TestScript, [new NodePlace("ol_start", 11, 21)]));
+        var before = m.Missions.Graph(Script);
+
+        var result = m.Apply(new RemoveTrigger(T("ol_end")));
+        m.Apply(result.Inverse!);
+
+        Assert.Equal(before.Nodes, m.Missions.Graph(Script).Nodes);
+    }
+
+    [Fact]
+    public void ARenameOntoTheNameOfAStaleNodeGivesOneNodeOfTheTrigger()
+    {
+        using var m = Create(modFiles: new() { [GraphPath] = Stale });
+
+        var result = m.Apply(new RenameTrigger(T("ol_end"), "ol_gone"));
+
+        Assert.Equal(new GraphNodePlace("ol_gone", 300, 400), Assert.Single(m.Missions.Graph(Script).Nodes, n => n.Trigger == "ol_gone"));
+        m.Apply(result.Inverse!);
+        Assert.Equal(new GraphNodePlace("ol_end", 300, 400), Assert.Single(m.Missions.Graph(Script).Nodes, n => n.Trigger == "ol_end"));
+        Assert.DoesNotContain(m.Missions.Graph(Script).Nodes, n => n.Trigger == "ol_gone");
+    }
+
+    [Fact]
+    public void ACommandDoesNotWriteOverAGraphFileOfAnotherFormat()
+    {
+        const string other = "[Graph]\nformat = 2\n[Node]\ntrigger = ol_end\npos = 1, 2\n";
+        using var m = Create(modFiles: new() { [GraphPath] = other });
+
+        var error = m.Refuse(new MoveNodes(TestScript, [new NodePlace("ol_start", 5, 5)]), EditPlan.PlanRefused);
+
+        Assert.Contains("This editor reads only format 1, so it does not change the file.", error.Message);
+        Assert.Equal(other, m.Session.ModFileText(GraphPath)!.Replace("\r\n", "\n"));
+        Assert.NotNull(m.Missions.Graph(Script).Unreadable);
+    }
+
+    [Fact]
+    public void ATriggerOfTheFirstActEditJoinsOnlyTheActOfItsDrop()
+    {
+        using var m = Create("[Mission]\n\n[Trigger]\nnickname = ol_a\nsystem = sys_a\nInitState = ACTIVE\nCnd_True = no_params\n" +
+                             "Act_ActTrig = ol_b\n\n[Trigger]\nnickname = ol_b\nsystem = sys_b\nCnd_True = no_params\n");
+        Assert.Equal(2, m.Missions.Model(Script).Acts!.Acts.Count);
+
+        // The new trigger starts with the mission, so the proposal of the first act edit puts it into act 1 too.
+        m.Apply(new AddTrigger(TestScript)
+        {
+            Nickname = "ol_new", Condition = LineSpec.Raw("Cnd_True", "no_params"), StartsWithMission = true,
+            Act = new ActRef(Script, "act_2"),
+        });
+
+        var acts = m.Missions.Graph(Script).Acts;
+        Assert.Equal(["act_2"], acts.Where(a => a.Members.Contains("ol_new")).Select(a => a.Nickname));
+    }
+
+    [Fact]
+    public void ADuplicateOfATriggerThatStartsItselfStartsTheCopy()
+    {
+        using var m = Create();
+        m.Apply(new LinkTriggers(T("ol_end"), "ol_end", LinkKind.Start));
+
+        m.Apply(new DuplicateTrigger(T("ol_end")) { NewName = "ol_end_copy" });
+
+        Assert.Equal("Act_ActTrig = ol_end_copy", m.Lines("ol_end_copy")[^1]);
+        Assert.Equal("Act_ActTrig = ol_end", m.Lines("ol_end")[^1]);
+    }
+
+    [Fact]
+    public void TheGraphRecordOfAScriptStaysTheSameWhenTheEditorReadsAnotherScript()
+    {
+        using var m = Create(modFiles: new() { [GraphPath] = Text });
+        var first = m.Missions.Graph(Script);
+
+        m.Missions.Graph(@"DATA\MISSIONS\OL_OTHER\ol_other.ini");
+
+        Assert.Same(first, m.Missions.Graph(Script));
     }
 }

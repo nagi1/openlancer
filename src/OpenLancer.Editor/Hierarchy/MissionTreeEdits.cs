@@ -49,11 +49,17 @@ internal static class MissionTreeEdits
             _ => new AddItem(script, kind),
         };
         var label = CreateKinds.FirstOrDefault(k => k.Kind == kind).Label ?? kind;
-        return command == null ? null : new MissionBatch($"Add {label.ToLowerInvariant()}", [command]);
+        return command == null ? null : new MissionBatch($"Add {InText(label)}", [command]);
     }
 
-    /// <summary>The batch of a rename (F2) of a row: a trigger, an item of the script or an act. Null for another row or
-    /// the same name.</summary>
+    /// <summary>A label of the "+" menu inside a text: the first letter in lowercase, except in a name of capitals such as
+    /// "NPC".</summary>
+    private static string InText(string label) =>
+        label.Length > 1 && char.IsUpper(label[1]) ? label : char.ToLowerInvariant(label[0]) + label[1..];
+
+    /// <summary>The batch of a rename (F2) of a row: a trigger, an item of the script or an act. The graph and the
+    /// Hierarchy give the same batch for a trigger. Null for another row, for a line of a trigger or for the same
+    /// name.</summary>
     public static MissionBatch? Rename(MissionAnalysis analysis, MissionRef item, string name, MissionActs? acts)
     {
         name = name.Trim();
@@ -61,36 +67,40 @@ internal static class MissionTreeEdits
             return null;
         var script = analysis.Script.Path;
         if (item.Kind == MissionItemKind.Act && (acts ?? analysis.Acts)?.Act(item.Key ?? "") is { } act)
-            return new MissionBatch($"Rename act {act.Name ?? act.Number.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            return new MissionBatch($"Rename act {MissionGraph.ActTitle(act, null)}",
                 [new SetAct(new ActRef(script, MissionActs.NicknameOf(act))) { Name = name }]);
         if (SectionOf(analysis, item) is not { Nickname: { } old } section || old == name)
             return null;
-        MissionCommand command = section.Kind == MissionSectionKind.Trigger
-            ? new RenameTrigger(new TriggerRef(script, old), name)
-            : new RenameItem(new ItemRef(script, section.Ref.Id), name);
-        return new MissionBatch($"Rename {old} to {name}", [command]);
+        if (section.Kind == MissionSectionKind.Trigger)
+            return TriggerOf(analysis, section) is { } trigger ? GraphEditModel.Rename(trigger, name) : null;
+        return new MissionBatch($"Rename {old} to {name}", [new RenameItem(new ItemRef(script, section.Ref.Id), name)]);
     }
 
-    /// <summary>The batch of Ctrl+D on a row: a copy of a trigger or of an item of the script with a free name. Null for
-    /// another row.</summary>
+    /// <summary>True when F2 can rename a row: a trigger, an item of the script with a nickname, or an act.</summary>
+    public static bool CanRename(MissionAnalysis analysis, MissionRef item, MissionActs? acts) =>
+        item.Kind == MissionItemKind.Act
+            ? (acts ?? analysis.Acts)?.Act(item.Key ?? "") != null
+            : SectionOf(analysis, item) is { Nickname: not null, Kind: not MissionSectionKind.Mission };
+
+    /// <summary>The batch of Ctrl+D on a row: a copy of a trigger or of an item of the script with a free name. The
+    /// graph and the Hierarchy give the same batch for a trigger. Null for another row or for a line of a
+    /// trigger.</summary>
     public static MissionBatch? Duplicate(MissionAnalysis analysis, MissionRef item)
     {
         if (SectionOf(analysis, item) is not { Nickname: { } name } section)
             return null;
-        var script = analysis.Script.Path;
         if (section.Kind == MissionSectionKind.Trigger)
-        {
-            var taken = analysis.Index.Triggers.Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return new MissionBatch($"Duplicate trigger {name}", [new DuplicateTrigger(new TriggerRef(script, name))
-            {
-                NewName = MissionNaming.Free(script, "Trigger", taken, name),
-            }]);
-        }
-        return new MissionBatch($"Duplicate {name}", [new DuplicateItem(new ItemRef(script, section.Ref.Id))]);
+            return TriggerOf(analysis, section) is { } trigger ? GraphEditModel.Duplicate(analysis.Index, [(trigger, null)]) : null;
+        return new MissionBatch($"Duplicate {name}", [new DuplicateItem(new ItemRef(analysis.Script.Path, section.Ref.Id))]);
     }
 
+    /// <summary>The trigger of a section of a trigger, or null.</summary>
+    private static MissionTrigger? TriggerOf(MissionAnalysis analysis, MissionSection section) =>
+        analysis.Index.Triggers.FirstOrDefault(t => t.Section == section);
+
     /// <summary>The batch of Delete on a row: a trigger, a mission ship with its unused parts (decision D669), another
-    /// item of the script, or an act. Lines that name the item stay and show "Missing". Null for another row.</summary>
+    /// item of the script, or an act. Lines that name the item stay and show "Missing". Null for another row and for a
+    /// line of a trigger, so the key does not delete the whole trigger.</summary>
     public static MissionBatch? Delete(MissionAnalysis analysis, MissionRef item, MissionActs? acts)
     {
         var script = analysis.Script.Path;
@@ -156,7 +166,7 @@ internal static class MissionTreeEdits
             case MissionItemKind.Act when (acts ?? analysis.Acts ?? MissionActs.Propose(analysis.Index)).Act(target.Key ?? "") is { } act:
                 if (act.Triggers.Any(t => t.Section == source))
                     return null;
-                return new MissionBatch($"Move {name} to {act.Name ?? $"act {act.Number}"}",
+                return new MissionBatch($"Move {name} to {MissionGraph.ActTitle(act, null)}",
                     [new SetActMembers(new ActRef(script, MissionActs.NicknameOf(act)), [.. act.Triggers.Select(t => t.Nickname), name])]);
             default:
                 return null;
@@ -178,7 +188,8 @@ internal static class MissionTreeEdits
             NewBuild = new ShipBuildSpec(archetype, loadout ?? MissionLibrary.NoName) { Pilot = pilot },
         }]);
 
-    /// <summary>The section of a row of the tree, or null.</summary>
+    /// <summary>The section of a row of the tree, or null. A line of a trigger, for example a row of the group "Links", is
+    /// not its section (review finding 7 of M6b-2).</summary>
     private static MissionSection? SectionOf(MissionAnalysis analysis, MissionRef item) =>
-        item.Section is { } section ? analysis.Document.Find(section) : null;
+        item.Kind != MissionItemKind.Row && item.Section is { } section ? analysis.Document.Find(section) : null;
 }

@@ -34,6 +34,12 @@ internal sealed class MissionView : IDisposable
     private readonly RawIniEditor raw = new(MissionWorkspace.Vocabulary);
     private readonly MissionLinks links;
     private readonly LibraryStrip library;
+
+    // True while the Mission tab is narrower than LibraryStrip.MinTabWidth, from the last frame.
+    private bool narrowTab;
+
+    // True when the toggle opened the library strip in a narrow tab.
+    private bool libraryInNarrowTab;
     private int lastCursor = -1;
     private object? lastSelection;
     private string? shownPath;
@@ -151,12 +157,19 @@ internal sealed class MissionView : IDisposable
         ImGui.SameLine();
         ToolbarItems.Separator();
         ImGui.SameLine();
+        var before = LibraryStrip.Shows(settings.MissionShowLibrary, narrowTab, libraryInNarrowTab);
         var shown = ToolbarItems.Toggle("library", EditorIcons.Boxes,
-            "Library: show the prefabs, events, actions and conditions that you can add.", settings.MissionShowLibrary);
-        if (shown != settings.MissionShowLibrary)
+            "Library: show the prefabs, events, actions and conditions that you can add.", before);
+        if (shown != before)
         {
-            settings.MissionShowLibrary = shown;
-            settings.Save();
+            // In a narrow tab, the toggle opens or closes the strip for this tab width only.
+            var (setting, inNarrowTab) = LibraryStrip.Toggled(settings.MissionShowLibrary, narrowTab, shown);
+            libraryInNarrowTab = inNarrowTab;
+            if (setting != settings.MissionShowLibrary)
+            {
+                settings.MissionShowLibrary = setting;
+                settings.Save();
+            }
         }
 
         if (missions.OpenPath is { } path && missions.NoEditReason(path) == null)
@@ -393,7 +406,14 @@ internal sealed class MissionView : IDisposable
 
         links.UsesBar();
         var path = analysis.Script.Path;
-        if (window.Settings.MissionShowLibrary && tabWidth >= LibraryStrip.MinTabWidth)
+        narrowTab = tabWidth < LibraryStrip.MinTabWidth;
+        if (!narrowTab)
+        {
+            // A tab that gets narrow again closes the strip again.
+            libraryInNarrowTab = false;
+        }
+
+        if (LibraryStrip.Shows(window.Settings.MissionShowLibrary, narrowTab, libraryInNarrowTab))
         {
             var avail = ImGui.GetContentRegionAvail();
             var width = MathF.Truncate(LibraryStrip.Width * ImGuiHelper.Scale);
@@ -410,10 +430,10 @@ internal sealed class MissionView : IDisposable
     }
 
     /// <summary>The keys of the graph (decision D558). F frames the selection, and A or Home frame all. Ctrl+F goes to
-    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are
-    /// off, so Delete does nothing. The keys work only while the graph part or one of its child windows has the focus.
-    /// So a key of the Scene part, for example A to fly left, does not move the graph. A key with Ctrl or Alt other
-    /// than Ctrl+F does nothing.</summary>
+    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts stay off, and the edit
+    /// keys of the graph come first: Delete, F2, Space, Ctrl+C, Ctrl+V and Ctrl+D (section 8.2 of the M6b design). The
+    /// keys work only while the graph part or one of its child windows has the focus. So a key of the Scene part, for
+    /// example A to fly left, does not move the graph.</summary>
     private void Keys(string path)
     {
         var io = ImGui.GetIO();

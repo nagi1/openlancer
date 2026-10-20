@@ -107,11 +107,17 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     /// <c>DATA\MISSIONS</c> that no script names. Encounters and bases use their builds too (review finding
     /// RB2).</summary>
     public IEnumerable<EditDocument> SharedBuildFiles() =>
-        Session.MissionShipPaths
-            .Where(p => Session.DataPath("MISSIONS") is { } missions &&
-                        VfsPath.Comparer.Equals(VfsPath.Normalize(System.IO.Path.GetDirectoryName(p) ?? ""), missions) &&
-                        !IsMissionFile(p))
+        Session.MissionShipPaths.Where(p => IsSharedBuildPath(Session, p, IsMissionFile))
             .Select(Session.OpenDocument).OfType<EditDocument>().Where(d => d.State.Exists);
+
+    /// <summary>True for the path of a shared ship build file: a file of the role <c>mission_ships</c> directly in
+    /// <c>DATA\MISSIONS</c> that is not a mission file.</summary>
+    /// <param name="path">A normal install path.</param>
+    /// <param name="isMissionFile">True for a script, the ship build file of a script or an editor file.</param>
+    internal static bool IsSharedBuildPath(EditSession session, string path, Func<string, bool> isMissionFile) =>
+        session.MissionShipPaths.Any(p => VfsPath.Comparer.Equals(p, path)) && session.DataPath("MISSIONS") is { } missions &&
+        VfsPath.Comparer.Equals(VfsPath.Normalize(System.IO.Path.GetDirectoryName(path) ?? ""), missions) &&
+        !isMissionFile(path);
 
     /// <summary>The document of a path through the scope, with its state before the batch.</summary>
     private EditDocument Edit(string path)

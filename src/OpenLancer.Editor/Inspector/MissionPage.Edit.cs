@@ -20,23 +20,71 @@ namespace OpenLancer.Editor.Inspector;
 /// <summary>
 /// The edit widgets of the mission pages (section 8.4 of the M6b design). Each widget draws the binding of its field
 /// (<see cref="FieldEdit"/>), and one gesture runs one batch through the mission editor of the session. A drag of a
-/// number and a pick in an open picker are one transaction, so one history entry (section 4.11 of the M6b design). The
-/// row menus, the page menu, the "+" of the action groups and "Pick in Scene" are here too.
+/// number and a pick in an open picker are one transaction, so one history entry (section 4.11 of the M6b design). A
+/// field whose edit can need a confirmation runs one batch at the end of its gesture, so the dialog can ask. The row
+/// menus, the page menu, the "+" of the action groups and "Pick in Scene" are here too.
 /// </summary>
 internal sealed partial class MissionPage
 {
     private const string PickTip = "Click a point in the Scene to set this position. Esc cancels.";
 
     private readonly Dictionary<string, ValuePicker> pickers = [];
+
+    // The frame in which the page drew each picker last. A picker that the page does not draw is closed.
+    private readonly Dictionary<string, int> pickerFrames = [];
     private readonly QuickAdd quickAdd = new();
+    private readonly RenamePopup rename = new("##rename");
     private (string Field, MissionTransaction Transaction)? gesture;
     private string? lastRefusal;
     private readonly Dictionary<string, string> texts = [];
-    private string renameText = "";
-    private bool renameOpen;
 
-    /// <summary>Runs the batch of one gesture.</summary>
-    private void Run(MissionBatch? batch) => window.Missions.Run(batch);
+    // The values of the number fields after a change, until the page reads the next model. A step of a transaction does
+    // not make a new model, so a drag adds each step to these values, not to the value of the model (review finding 2
+    // of M6b-2).
+    private readonly Dictionary<string, double[]> numbers = [];
+
+    // The number field that the user drags or types into now, or null.
+    private string? activeNumber;
+
+    // The last pick of an open picker of a field that asks first: it runs when the picker closes.
+    private readonly Dictionary<string, string> pendingPicks = [];
+
+    /// <summary>Runs the batch of one gesture. Returns true when the batch changed W.</summary>
+    private bool Run(MissionBatch? batch) => window.Missions.Run(batch);
+
+    /// <summary>
+    /// True while the user works with the widget of the open gesture: an item is active, or the picker of the gesture is
+    /// open and the page drew it in the last frame. The page does not draw the picker of another item, so a gesture
+    /// ends when the selection changes (review finding 6 of M6b-2).
+    /// </summary>
+    private bool GestureShows() =>
+        gesture is var (owner, _) && (ImGui.IsAnyItemActive() ||
+                                      pickers.TryGetValue(owner, out var picker) && picker.IsOpen &&
+                                      pickerFrames.GetValueOrDefault(owner) >= ImGui.GetFrameCount() - 1);
+
+    /// <summary>Ends the open gesture and forgets the states of the widgets, for example for the page of another
+    /// item.</summary>
+    private void ForgetWidgets()
+    {
+        EndGesture();
+        pickers.Clear();
+        pickerFrames.Clear();
+        pendingAdd.Clear();
+        pendingPicks.Clear();
+        numbers.Clear();
+        activeNumber = null;
+        texts.Clear();
+    }
+
+    /// <summary>Forgets the values of the number fields for a new model. The field that the user drags keeps its
+    /// values.</summary>
+    private void ForgetNumbers()
+    {
+        foreach (var id in numbers.Keys.Where(id => id != activeNumber).ToList())
+        {
+            numbers.Remove(id);
+        }
+    }
 
     /// <summary>One step of a gesture with many steps: the first step opens a transaction, and each step takes the place
     /// of the step before it (section 4.11 of the M6b design).</summary>
@@ -87,6 +135,13 @@ internal sealed partial class MissionPage
         }
 
         var result = transaction.Commit();
+        if (result.Status != EditStatus.Applied)
+        {
+            // The fields show the values of the model again.
+            activeNumber = null;
+            ForgetNumbers();
+        }
+
         foreach (var error in result.Errors)
         {
             window.Log.Add(ConsoleSeverity.Error, MissionChecks.Source, error.Message);
@@ -137,7 +192,7 @@ internal sealed partial class MissionPage
             case EditWidget.Text:
                 grid.Row(field.Label, () => Text(id, edit));
                 break;
-            case EditWidget.Triggers:
+            case EditWidget.AddPicker:
                 grid.Row(field.Label, () => AddPicker(id, edit));
                 break;
         }
@@ -145,46 +200,75 @@ internal sealed partial class MissionPage
         return true;
     }
 
-    /// <summary>A name: a button with the name text, and the list picker with the "Missing" and "None" rows.</summary>
+    /// <summary>
+    /// A name: the reference field with the kind glyph, the name text and the button that goes to the item (UI rule 6),
+    /// and the list picker with the "Missing" and "None" rows. A click on the field opens the picker. Each pick of the
+    /// open picker is a step of one transaction. A field that asks first runs the last pick when the picker closes.
+    /// </summary>
     private void Picker(string id, PageField field, FieldEdit edit)
     {
-        var text = field.Missing ? $"{EditorIcons.ExclamationTriangle} {field.Value}"
-            : edit.Value.Length == 0 ? "None"
-            : field.Value;
-        if (field.Missing)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Error);
-        }
-
-        var open = ImGui.Button($"{text}##pick", new Vector2(ImGui.GetContentRegionAvail().X, 0));
-        if (field.Missing)
-        {
-            ImGui.PopStyleColor();
-        }
-
-        ImGui.SetItemTooltip("Click to pick another value.");
+        var (kind, nickname, text) = field.Reference is { } reference
+            ? (new ObjectKind(reference.Kind, reference.Glyph, EditorTheme.Label), (string?)reference.Nickname,
+                field.Missing ? $"Missing: {reference.Nickname}"
+                : reference.Name is { } name ? $"{reference.Nickname} ({name})"
+                : reference.Nickname)
+            : (new ObjectKind(edit.Spec?.Label ?? field.Label, MissionGlyphs.OfValue(edit.Spec?.Kind ?? MissionValueKind.Text),
+                    EditorTheme.Label), edit.Value.Length > 0 ? edit.Value : null,
+                edit.Value.Length > 0 ? field.Value
+                : field.Value == MissionPageModel.NotSet ? MissionPageModel.NotSet
+                : "None");
+        var link = field.Link;
+        var open = grid.PickField(kind, nickname, text, link != null ? () => GoTo(link) : null, field.Missing);
         if (!pickers.TryGetValue(id, out var picker))
         {
             pickers[id] = picker = new ValuePicker();
         }
 
-        var picked = picker.Draw("##picker", open, edit.Value, () => Entries(edit), edit.NoneWord != null,
-            new ObjectKind(edit.Spec?.Label ?? field.Label, MissionGlyphs.OfValue(edit.Spec?.Kind ?? MissionValueKind.Text),
-                EditorTheme.Label));
+        pickerFrames[id] = ImGui.GetFrameCount();
+        var picked = picker.Draw("##picker", open, edit.Value, () => Entries(edit), edit.NoneWord != null, kind);
         if (picked != null)
         {
             var value = picked.Length == 0 && edit.NoneWord is { Length: > 0 } none ? none : picked;
-            Step(id, edit.Make?.Invoke(MissionValue.Of(value)));
+            if (edit.Confirms)
+            {
+                pendingPicks[id] = value;
+            }
+            else
+            {
+                Step(id, edit.Make?.Invoke(MissionValue.Of(value)));
+            }
         }
 
-        if (!picker.IsOpen && gesture is var (owner, _) && owner == id)
+        if (picker.IsOpen)
+        {
+            return;
+        }
+
+        if (pendingPicks.Remove(id, out var last) && !string.Equals(last, edit.Value, StringComparison.Ordinal))
+        {
+            Run(edit.Make?.Invoke(MissionValue.Of(last)));
+        }
+
+        if (gesture is var (owner, _) && owner == id)
         {
             EndGesture();
         }
     }
 
-    /// <summary>The entries of the lists of a picker, with their display names. A mission list has the entries of the
-    /// script.</summary>
+    /// <summary>The data lists of the ids of a picker, joined with "+". A mission list has the entries of the script of
+    /// the scope. Null for a list that is not available.</summary>
+    private IEnumerable<ListView?> ListsOf(string ids, string? scope)
+    {
+        var lists = window.Session?.Edits.Lists;
+        foreach (var id in ids.Split('+'))
+        {
+            yield return lists == null ? null
+                : id.StartsWith("mission_", StringComparison.Ordinal) && scope != null ? lists.List(id, scope)
+                : lists.List(id);
+        }
+    }
+
+    /// <summary>The entries of the lists of a picker, with their display names.</summary>
     private IReadOnlyList<(ListEntry Entry, string Name)> Entries(FieldEdit edit)
     {
         if (window.Session is not { } session || edit.List == null)
@@ -193,45 +277,21 @@ internal sealed partial class MissionPage
         }
 
         var result = new List<(ListEntry, string)>();
-        foreach (var id in edit.List.Split('+'))
+        foreach (var entry in ListsOf(edit.List, edit.Scope).SelectMany(list => list?.Entries ?? []))
         {
-            var list = id.StartsWith("mission_", StringComparison.Ordinal) && edit.Scope != null
-                ? session.Edits.Lists.List(id, edit.Scope)
-                : session.Edits.Lists.List(id);
-            foreach (var entry in list?.Entries ?? [])
-            {
-                var name = entry.Section != null && session.SectionName(entry.Section) is { Length: > 0 } text
-                    ? text
-                    : entry.Name ?? entry.Value;
-                result.Add((entry, name));
-            }
+            var name = entry.Section != null && session.SectionName(entry.Section) is { Length: > 0 } text
+                ? text
+                : entry.Name ?? entry.Value;
+            result.Add((entry, name));
         }
 
         return result;
     }
 
-    /// <summary>True when a list of the lists of a picker has a value. A mission list has the names of the script.</summary>
-    private bool Resolves(string ids, string? scope, string value)
-    {
-        if (window.Session is not { } session)
-        {
-            return true;
-        }
-
-        foreach (var id in ids.Split('+'))
-        {
-            var list = id.StartsWith("mission_", StringComparison.Ordinal) && scope != null
-                ? session.Edits.Lists.List(id, scope)
-                : session.Edits.Lists.List(id);
-            // A list that is not available checks nothing.
-            if (list == null || list.Find(value) != null)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    /// <summary>True when a list of the lists of a picker has a value. A list that is not available checks
+    /// nothing.</summary>
+    private bool Resolves(string ids, string? scope, string value) =>
+        window.Session == null || ListsOf(ids, scope).Any(list => list == null || list.Find(value) != null);
 
     /// <summary>A dropdown of the words of a set, or of the conditions of the field "Event" by event group.</summary>
     private void Words(PageField field, FieldEdit edit)
@@ -272,34 +332,31 @@ internal sealed partial class MissionPage
     private void Number(string id, FieldEdit edit)
     {
         ImGui.SetNextItemWidth(-1);
+        var value = numbers.TryGetValue(id, out var shown) ? shown[0] : Parse(edit.Value);
+        bool changed;
         if (edit.Widget == EditWidget.WholeNumber)
         {
-            var value = (int)Parse(edit.Value);
-            if (ImGui.DragInt("##number", ref value, 1))
-            {
-                Step(id, edit.Make?.Invoke(MissionValue.Of(value)));
-            }
+            var whole = (int)value;
+            changed = ImGui.DragInt("##number", ref whole, 1);
+            value = whole;
         }
         else
         {
-            var value = (float)Parse(edit.Value);
-            if (ImGui.DragFloat("##number", ref value, Math.Max(0.01f, Math.Abs(value) / 100), 0, 0, "%g"))
-            {
-                Step(id, edit.Make?.Invoke(MissionValue.Of((double)value)));
-            }
+            var single = (float)value;
+            changed = ImGui.DragFloat("##number", ref single, Math.Max(0.01f, Math.Abs(single) / 100), 0, 0, "%g");
+            value = single;
         }
 
-        if (ImGui.IsItemDeactivated())
-        {
-            EndGesture();
-        }
+        NumberGesture(id, edit, changed, [value]);
     }
 
     /// <summary>Three numbers of a position with "Pick in Scene", or four numbers of a rotation.</summary>
     private void Numbers(string id, PageField field, FieldEdit edit)
     {
-        var parts = edit.Value.Split(',').Select(p => (float)Parse(p)).ToList();
         var count = edit.Widget == EditWidget.Rotation ? 4 : 3;
+        var parts = numbers.TryGetValue(id, out var shown) ? shown.ToList()
+            : edit.Value.Length == 0 ? []
+            : edit.Value.Split(',').Select(Parse).ToList();
         while (parts.Count < count)
         {
             parts.Add(edit.Widget == EditWidget.Rotation && parts.Count == 0 ? 1 : 0);
@@ -308,49 +365,91 @@ internal sealed partial class MissionPage
         var pick = edit.PickInScene ? ImGui.CalcTextSize("Pick in Scene").X + ImGui.GetStyle().FramePadding.X * 2 +
                                       ImGui.GetStyle().ItemSpacing.X : 0;
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - pick);
-        var changed = false;
+        bool changed;
+        double[] values;
         if (count == 3)
         {
-            var vector = new Vector3(parts[0], parts[1], parts[2]);
+            var vector = new Vector3((float)parts[0], (float)parts[1], (float)parts[2]);
             changed = ImGui.DragFloat3("##position", ref vector, 1, 0, 0, "%g");
-            parts = [vector.X, vector.Y, vector.Z];
+            values = [vector.X, vector.Y, vector.Z];
         }
         else
         {
-            var vector = new Vector4(parts[0], parts[1], parts[2], parts[3]);
+            var vector = new Vector4((float)parts[0], (float)parts[1], (float)parts[2], (float)parts[3]);
             changed = ImGui.DragFloat4("##rotation", ref vector, 0.01f, 0, 0, "%g");
-            parts = [vector.X, vector.Y, vector.Z, vector.W];
+            values = [vector.X, vector.Y, vector.Z, vector.W];
         }
 
-        if (changed)
+        NumberGesture(id, edit, changed, values);
+        if (edit.PickInScene)
         {
-            Step(id, edit.Make?.Invoke(MissionValue.Of([.. parts.Select(p => (double)p)])));
+            PickInScene(id, field, edit);
+        }
+    }
+
+    /// <summary>
+    /// The end of the frame of a number field. The field shows its own values after a change, so each step of a drag
+    /// adds to the step before it (review finding 2 of M6b-2). Each change is a step of one transaction, and the end of
+    /// the field ends the transaction. A field that asks first runs one batch when it ends.
+    /// </summary>
+    private void NumberGesture(string id, FieldEdit edit, bool changed, double[] values)
+    {
+        var active = ImGui.IsItemActive();
+        if (active)
+        {
+            activeNumber = id;
+        }
+        else if (activeNumber == id)
+        {
+            activeNumber = null;
         }
 
-        if (ImGui.IsItemDeactivated())
+        if (changed || active)
+        {
+            numbers[id] = values;
+        }
+
+        if (changed && !edit.Confirms)
+        {
+            Step(id, edit.Make?.Invoke(MissionValue.Of(values)));
+        }
+
+        if (!ImGui.IsItemDeactivated())
+        {
+            return;
+        }
+
+        if (!edit.Confirms)
         {
             EndGesture();
         }
-
-        if (edit.PickInScene)
+        else if (!ImGui.IsItemDeactivatedAfterEdit() || !Run(edit.Make?.Invoke(MissionValue.Of(values))))
         {
-            ImGui.SameLine();
-            var waiting = window.Missions.PendingPick?.Label == field.Label;
-            if (ImGui.Button(waiting ? "Picking...##pick" : "Pick in Scene##pick"))
-            {
-                if (waiting)
-                {
-                    window.Missions.CancelPick();
-                }
-                else
-                {
-                    window.Missions.StartPick(field.Label, point =>
-                        Run(edit.Make?.Invoke(MissionValue.Of(point.X, point.Y, point.Z))));
-                }
-            }
-
-            ImGui.SetItemTooltip(PickTip);
+            numbers.Remove(id);
         }
+    }
+
+    /// <summary>The button "Pick in Scene" of a position: the next click in the Scene sets the position, while the
+    /// Scene shows the system of the item (section 8.9 of the M6b design).</summary>
+    private void PickInScene(string id, PageField field, FieldEdit edit)
+    {
+        ImGui.SameLine();
+        var missions = window.Missions;
+        var waiting = missions.PendingPick is { } pending && pending.Key == id;
+        if (ImGui.Button(waiting ? "Picking...##pick" : "Pick in Scene##pick"))
+        {
+            if (waiting)
+            {
+                missions.CancelPick();
+            }
+            else if (window.Selection is { } owner)
+            {
+                missions.StartPick(new ScenePick(id, field.Label, edit.PickSystem, owner,
+                    point => Run(edit.Make?.Invoke(MissionValue.Of(point.X, point.Y, point.Z)))));
+            }
+        }
+
+        ImGui.SetItemTooltip(PickTip);
     }
 
     /// <summary>A text id: the number, and own text that the editor writes into the text of the mod.</summary>
@@ -447,7 +546,8 @@ internal sealed partial class MissionPage
         grid.FullRow(() =>
         {
             var changed = widget.Draw(key, list, null, readOnly, problems,
-                entries: id => Entries(new FieldEdit(EditWidget.Picker, "") { List = id, Scope = edit?.Scope }));
+                entries: id => Entries(new FieldEdit(EditWidget.Picker, "") { List = id, Scope = edit?.Scope }),
+                changed: field.Changed);
             if (changed != null && edit?.MakeList is { } make)
             {
                 Run(make(changed));
@@ -506,12 +606,19 @@ internal sealed partial class MissionPage
         ImGui.EndPopup();
     }
 
-    /// <summary>The page menu at the right of the header: "Rename" and the actions of the page.</summary>
+    /// <summary>The page menu at the right of the header: "Rename" and the actions of the page. F2 renames the item while
+    /// the Inspector has the focus, as in the graph and the Hierarchy.</summary>
     private void PageMenu(MissionPageModel model)
     {
         if (model.PageActions.Count == 0 && model.Rename == null || window.Missions.ReadOnlyNote != null)
         {
             return;
+        }
+
+        if (model.Rename != null && ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows) &&
+            !ImGui.GetIO().WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F2, false))
+        {
+            rename.Open(model.Title);
         }
 
         if (ImGui.SmallButton($"{EditorIcons.EllipsisV}##page-menu"))
@@ -525,8 +632,7 @@ internal sealed partial class MissionPage
             EditorTheme.PushMenuColors();
             if (model.Rename != null && ImGui.MenuItem("Rename", "F2"))
             {
-                renameText = model.Title;
-                renameOpen = true;
+                rename.Open(model.Title);
             }
 
             foreach (var action in model.PageActions)
@@ -541,27 +647,9 @@ internal sealed partial class MissionPage
             ImGui.EndPopup();
         }
 
-        if (renameOpen)
+        if (rename.Draw() is { } name)
         {
-            ImGui.OpenPopup("##rename");
-            renameOpen = false;
-        }
-
-        if (ImGui.BeginPopup("##rename"))
-        {
-            ImGui.Text("New name");
-            if (ImGui.IsWindowAppearing())
-            {
-                ImGui.SetKeyboardFocusHere();
-            }
-
-            if (ImGui.InputText("##rename-text", ref renameText, 128, ImGuiInputTextFlags.EnterReturnsTrue))
-            {
-                Run(model.Rename?.Invoke(renameText));
-                ImGui.CloseCurrentPopup();
-            }
-
-            ImGui.EndPopup();
+            Run(model.Rename?.Invoke(name));
         }
     }
 
@@ -580,7 +668,7 @@ internal sealed partial class MissionPage
         }
 
         ImGui.SetItemTooltip("Add an action at the end of the trigger.");
-        if (quickAdd.Draw(MissionLibrary.Sections(null)) is var (_, item))
+        if (quickAdd.Draw(MissionLibrary.Studio(window.Session?.Edits.HidesOpenLancer != true)) is var (_, item))
         {
             Run(GraphEditModel.AddTo(trigger, item));
         }

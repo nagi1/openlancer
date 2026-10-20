@@ -41,6 +41,7 @@ internal sealed partial class GraphView
     private bool openWatch;
     private GraphLink? menuLink;
     private double insertDelay = MissionLibrary.DefaultDelay;
+    private string commFilter = "";
 
     /// <summary>The library strip of the Mission tab. Quick add searches its items.</summary>
     public LibraryStrip? Library { get; set; }
@@ -76,8 +77,8 @@ internal sealed partial class GraphView
         selectedBlocks.Clear();
     }
 
-    /// <summary>Runs the batch of a gesture through the mission editor.</summary>
-    private void Run(MissionBatch? batch) => missions.Run(batch);
+    /// <summary>Runs the batch of a gesture through the mission editor. Returns true when the batch changed W.</summary>
+    private bool Run(MissionBatch? batch) => missions.Run(batch);
 
     // ---- In the canvas ----
 
@@ -127,7 +128,7 @@ internal sealed partial class GraphView
         if (enter)
         {
             renaming = null;
-            Run(edit?.Rename(trigger, text));
+            Run(GraphEditModel.Rename(trigger, text));
         }
         else if (!focus && (ImGui.IsKeyPressed(ImGuiKey.Escape) || !ImGui.IsItemActive()))
         {
@@ -300,6 +301,7 @@ internal sealed partial class GraphView
         var insertRefusal = GraphEditModel.InsertRefusal(link);
         if (ImGui.BeginMenu("Insert trigger", insertRefusal == null))
         {
+            var place = InsertPlace(link);
             if (ImGui.BeginMenu("After a delay"))
             {
                 ImGui.SetNextItemWidth(100 * ImGuiHelper.Scale);
@@ -307,7 +309,7 @@ internal sealed partial class GraphView
                 insertDelay = Math.Max(0, insertDelay);
                 if (ImGui.Button("Insert"))
                 {
-                    Run(edit.InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.Delay, insertDelay)));
+                    Run(edit.InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.Delay, insertDelay), place));
                     ImGui.CloseCurrentPopup();
                 }
 
@@ -316,14 +318,19 @@ internal sealed partial class GraphView
 
             if (ImGui.MenuItem("At once"))
             {
-                Run(edit.InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.AtOnce)));
+                Run(edit.InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.AtOnce), place));
             }
 
-            if (ImGui.MenuItem("After a comm line..."))
+            if (ImGui.BeginMenu("After a comm line..."))
             {
-                // The new trigger waits for a comm line that the user picks in the Inspector, where the field "Comm
-                // line" has the picker of the comm lines.
-                Run(edit.InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.CommLine)));
+                // The picker of the comm lines: the new trigger waits until the picked comm line ends.
+                if (CommLinePicker() is { } line)
+                {
+                    Run(edit.InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.CommLine, commLine: line), place));
+                    ImGui.CloseCurrentPopup();
+                }
+
+                ImGui.EndMenu();
             }
 
             ImGui.EndMenu();
@@ -347,6 +354,60 @@ internal sealed partial class GraphView
 
         EditorTheme.PopMenuColors();
         ImGui.EndPopup();
+    }
+
+    /// <summary>The search field and the list of the comm lines of the game data in a menu. Returns the comm line of a
+    /// click, or null.</summary>
+    private string? CommLinePicker()
+    {
+        if (ImGui.IsWindowAppearing())
+        {
+            commFilter = "";
+            ImGui.SetKeyboardFocusHere();
+        }
+
+        ImGui.SetNextItemWidth(240 * ImGuiHelper.Scale);
+        ImGui.InputTextWithHint("##comm-filter", "Search the comm lines", ref commFilter, 128);
+        var list = MissionSchema.ListOf(MissionValueKind.CommLine) ?? "comm_line";
+        var entries = window.Session?.Edits.Lists.List(list)?.Entries ?? [];
+        var shown = 0;
+        string? picked = null;
+        foreach (var entry in entries.Where(e => commFilter.Length == 0 ||
+                                                 e.Value.Contains(commFilter, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (++shown > 40)
+            {
+                ImGui.TextDisabled("Type more of the name to see the other comm lines.");
+                break;
+            }
+
+            if (ImGui.Selectable($"{entry.Value}##comm{shown}"))
+            {
+                picked = entry.Value;
+            }
+        }
+
+        if (shown == 0)
+        {
+            ImGui.TextDisabled("No comm line matches the search.");
+        }
+
+        return picked;
+    }
+
+    /// <summary>The place of a new trigger on a link: between the two nodes of the link (section 8.10 of the M6b
+    /// design), or null before the first layout.</summary>
+    private GraphPoint? InsertPlace(GraphLink link)
+    {
+        if (Layout == null)
+        {
+            return null;
+        }
+
+        var (fromMin, fromMax) = Layout.RectOf(link.From);
+        var (toMin, _) = Layout.RectOf(link.To);
+        return new GraphPoint(Math.Round((fromMax.X + toMin.X - MissionGraph.SummaryWidth) / 2),
+            Math.Round(Math.Max(fromMax.Y, toMin.Y) + GraphLayout.BlockGap));
     }
 
     private void BackgroundMenu(string script)
@@ -445,7 +506,7 @@ internal sealed partial class GraphView
 
         if (ImGui.MenuItem("Duplicate", "Ctrl+D"))
         {
-            Run(edit.Duplicate(trigger, BesidePlace(node)));
+            Run(edit.Duplicate(Copies(selectedBlocks.Contains(node) ? selectedBlocks : [node])));
         }
 
         if (ImGui.MenuItem("Delete", "Delete"))
@@ -517,7 +578,11 @@ internal sealed partial class GraphView
         MissionBatch? batch = null;
         string? refusal = null;
         var type = item != null ? MissionDrag.ItemType : MissionDrag.RowType;
-        if (node is { Kind: not GraphNodeKind.Trigger })
+        if (node is { Kind: GraphNodeKind.Missing })
+        {
+            refusal = GraphEditModel.MissingNode;
+        }
+        else if (node is { Kind: not GraphNodeKind.Trigger })
         {
             refusal = GraphEditModel.OpenFrame;
         }
@@ -556,19 +621,11 @@ internal sealed partial class GraphView
     /// for the end of the trigger.</summary>
     private (GraphNode? Node, int? Before) Under(Vector2 mouse)
     {
-        if (Graph == null || Layout == null)
+        if (Graph == null || Layout == null || CanvasOf(mouse) is not { } canvas)
         {
             return (null, null);
         }
 
-        var span = View.Max - View.Min;
-        var screen = Screen.Max - Screen.Min;
-        if (span.X <= 0 || span.Y <= 0 || screen.X <= 0 || screen.Y <= 0)
-        {
-            return (null, null);
-        }
-
-        var canvas = View.Min + (mouse - Screen.Min) * span / screen;
         // The last node of the list draws on top, so it takes the point first.
         foreach (var node in Graph.Nodes.Reverse())
         {
@@ -632,9 +689,10 @@ internal sealed partial class GraphView
             Paste();
         }
 
-        if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.D, false) && SelectedTrigger(script) is { } duplicated)
+        if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.D, false))
         {
-            Run(edit.Duplicate(duplicated, Graph?.TriggerNode(duplicated) is { } original ? BesidePlace(original) : null));
+            Run(edit.Duplicate(Copies(selectedBlocks.Count > 0 ? selectedBlocks
+                : SelectedNode(script) is { } one ? [one] : [])));
         }
 
         if (io.KeyCtrl || io.KeyAlt)
@@ -647,6 +705,12 @@ internal sealed partial class GraphView
             if (selectedLinks.Count > 0 && selectedBlocks.Count == 0)
             {
                 var commands = selectedLinks.Select(edit.Unlink).OfType<MissionBatch>().SelectMany(b => b.Commands).ToList();
+                // A watch link is the condition of its watcher, so Delete does not remove it. The Console tells why.
+                if (selectedLinks.Select(GraphEditModel.UnlinkRefusal).OfType<string>().FirstOrDefault() is { } reason)
+                {
+                    window.Log.Add(ConsoleSeverity.Info, MissionChecks.Source, reason);
+                }
+
                 Run(commands.Count == 0 ? null : new MissionBatch("Remove link", commands));
             }
             else
@@ -708,6 +772,10 @@ internal sealed partial class GraphView
             Act = ActAt(canvas)?.Act is { } act ? edit.ActRefOf(act) : null,
         };
     }
+
+    /// <summary>The triggers of nodes for Ctrl+D, each with the place of its copy beside its node.</summary>
+    private IEnumerable<(MissionTrigger Trigger, GraphPoint? Place)> Copies(IEnumerable<GraphBlock> nodes) =>
+        nodes.OfType<GraphNode>().Where(n => n.Trigger != null).Select(n => (n.Trigger!, BesidePlace(n)));
 
     /// <summary>The place of a copy beside its original node: below it, with the gap of the layout.</summary>
     private GraphPoint? BesidePlace(GraphNode node)

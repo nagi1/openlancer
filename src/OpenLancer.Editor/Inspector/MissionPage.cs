@@ -55,7 +55,7 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         }
 
         // A gesture whose widget is gone ends, so the history does not wait for it.
-        if (gesture != null && !ImGui.IsAnyItemActive() && !pickers.Values.Any(p => p.IsOpen))
+        if (gesture != null && !GestureShows())
         {
             EndGesture();
         }
@@ -91,6 +91,10 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
                 ImGui.TextDisabled(reason);
                 ImGui.PopTextWrapPos();
             }
+            else if (model.Base is { } change)
+            {
+                BaseBanner(change);
+            }
 
             foreach (var field in model.Lead)
             {
@@ -121,6 +125,74 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
     /// <summary>The key of a section of the page in the settings and in a section request.</summary>
     private static string SectionKey(string id) => $"Mission.{id}";
 
+    // True while the banner of a changed base shows the two sets of lines.
+    private bool compareBase;
+
+    /// <summary>
+    /// The banner of a section whose base changed after the edit of the active mod (sections 6.3 and 8.11 of the M6b
+    /// design). "Compare" shows the lines of the edit and of the new base side by side. "Keep my lines" accepts the new
+    /// base, and "Use the new base" removes the edit of the section. Each button is one undo entry.
+    /// </summary>
+    private void BaseBanner(BaseChange change)
+    {
+        ImGui.PushTextWrapPos(0);
+        ImGui.TextColored(EditorTheme.Warning, $"{EditorIcons.ExclamationTriangle} {BaseChange.Text}");
+        ImGui.PopTextWrapPos();
+        if (ImGui.SmallButton("Compare##base"))
+        {
+            compareBase = !compareBase;
+        }
+
+        ImGui.SetItemTooltip(BaseChange.CompareTip);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Keep my lines##base"))
+        {
+            Run(change.Keep);
+        }
+
+        ImGui.SetItemTooltip(BaseChange.KeepTip);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Use the new base##base"))
+        {
+            Run(change.Revert);
+        }
+
+        ImGui.SetItemTooltip(BaseChange.RevertTip);
+        if (!compareBase || !ImGui.BeginTable("##base-compare", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("Your lines");
+        ImGui.TableSetupColumn("The new base");
+        ImGui.TableHeadersRow();
+        for (var i = 0; i < Math.Max(change.Mine.Count, change.Base.Count); i++)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            CompareLine(change.Mine, change.Base, i);
+            ImGui.TableNextColumn();
+            CompareLine(change.Base, change.Mine, i);
+        }
+
+        ImGui.EndTable();
+    }
+
+    /// <summary>A line of the compare of a changed base. A line that differs from the line of the other side shows in
+    /// the accent color.</summary>
+    private static void CompareLine(IReadOnlyList<string> lines, IReadOnlyList<string> other, int index)
+    {
+        var text = index < lines.Count ? lines[index] : "";
+        if (index < other.Count && other[index] == text)
+        {
+            ImGui.TextDisabled(text);
+        }
+        else
+        {
+            ImGui.TextColored(EditorTheme.AccentText, text);
+        }
+    }
+
     /// <summary>The model of the page, made again only when the run, the selection or a toggle changes.</summary>
     /// <param name="changed">True when the page made a new model for another item.</param>
     private MissionPageModel Model(MissionRunResult result, MissionAnalysis analysis, MissionRef item, out bool changed)
@@ -147,12 +219,23 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             NameOf = NameOf,
             ReadOnlyOf = section => window.Missions.NoEditReason(section.Path) ?? session.Edits.Missions.ReadOnlyReason(section),
             Acts = window.Missions.ActsOf(analysis),
+            ChangedOf = session.Edits.Missions.ChangedLines,
+            BaseOf = session.Edits.Missions.ChangedBase,
+            SharedBuildFile = session.Edits.Missions.IsSharedBuildFile,
         };
         var model = MissionPageModel.For(context, item);
         page = (result, item, showBaseGame, hidesOpenLancer, noEdit, file, model);
         if (changed)
         {
+            // The widgets of another item start again, and an open gesture of the item before ends.
             lists.Clear();
+            ForgetWidgets();
+            compareBase = false;
+        }
+        else
+        {
+            // The new model has the values of the last edit.
+            ForgetNumbers();
         }
 
         return model;
@@ -250,6 +333,12 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
 
         var id = $"{section.Id}.{index}";
         var editable = window.Missions.ReadOnlyNote == null;
+        // The label of a value that the active mod sets gets the blue bar (section 8.1 of the M6b design, UI rule 7).
+        if (field.Changed)
+        {
+            grid.MarkNextChanged();
+        }
+
         // A field with an edit binding that the session can change draws its edit widget (section 8.4 of the M6b
         // design). Else it uses the read-only state of the widget.
         if (field is { Heading: false, List: null, Actions.Count: 0, Edit: not null } && EditField(id, field))
@@ -399,20 +488,9 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
 
             ImGui.SetItemTooltip("Open the mission at the line in the Mission tab.");
             // The fixes of the problem (section 8.7 of the M6b design). Each fix is one undo entry.
-            if (window.Missions.ReadOnlyNote == null)
+            if (window.Missions.ReadOnlyNote == null && field.Actions.Count > 0)
             {
-                for (var i = 0; i < field.Actions.Count; i++)
-                {
-                    ImGui.SameLine();
-                    if (ImGui.SmallButton(field.Actions.Count == 1 ? "Fix##fix" : $"{field.Actions[i].Label}##fix{i}"))
-                    {
-                        Run(field.Actions[i].Batch);
-                    }
-
-                    ImGui.SetItemTooltip(field.Actions.Count == 1
-                        ? $"{field.Actions[i].Label}. {CompletenessPanel.FixTip}"
-                        : CompletenessPanel.FixTip);
-                }
+                CompletenessPanel.FixButtons(field.Actions.Select(a => (a.Label, (Action)(() => Run(a.Batch)))).ToList());
             }
         });
     }
@@ -560,12 +638,11 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
     /// <summary>Forgets the model and the texts of the profile.</summary>
     public void Reset()
     {
-        EndGesture();
+        ForgetWidgets();
         page = default;
         block = (null, null, false, null, []);
         lists.Clear();
-        pickers.Clear();
-        texts.Clear();
+        compareBase = false;
     }
 
     public void Dispose() => ini.Dispose();

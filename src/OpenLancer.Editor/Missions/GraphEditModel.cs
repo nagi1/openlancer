@@ -7,6 +7,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -91,7 +92,10 @@ internal sealed class GraphEditModel
     public const string CheckpointToStart = "A checkpoint line links to a Start pin or a Load pin.";
     public const string WatchLink = "This link is the condition of the watcher. Change the condition to remove the link.";
     public const string StartLinkOnly = "Only a Start link can take a new trigger between its two triggers.";
+    public const string SeveralLinks = "This link stands for the links of several triggers to several triggers. Open the " +
+                                       "frame, then insert the trigger on one of the links.";
     public const string NoTriggers = "The clipboard holds no [Trigger] section.";
+    public const string MissingNode = "This trigger is missing. Drop the item on a trigger of the script.";
 
     /// <summary>The words of the watch menu and their texts (section 8.11 of the M6b design). The items write the words
     /// of retail.</summary>
@@ -134,17 +138,16 @@ internal sealed class GraphEditModel
 
     // ---- References ----
 
-    private TriggerRef RefOf(MissionTrigger trigger) => new(Script, trigger.Nickname);
-
-    private static ItemRef ItemOf(MissionSection section) => new(section.Ref.Path, section.Ref.Id);
-
-    private static RowRef RowOf(MissionLine line) => new(ItemOf(line.Section), line.Entry) { ExpectKey = line.Key };
+    private static TriggerRef RefOf(MissionTrigger trigger) => TriggerOf(trigger);
 
     private static MissionBatch Batch(string label, params MissionCommand[] commands) => new(label, commands);
 
     /// <summary>The trigger names of the script, without letter case.</summary>
-    private HashSet<string> TakenNames() =>
-        Index.Triggers.Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> TakenNames() => TakenNames(Index);
+
+    /// <summary>The trigger names of a script, without letter case.</summary>
+    private static HashSet<string> TakenNames(MissionIndex index) =>
+        index.Triggers.Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>A made name for a new trigger of the script.</summary>
     public string NewTriggerName() => MissionNaming.Free(Script, "Trigger", TakenNames());
@@ -273,7 +276,7 @@ internal sealed class GraphEditModel
 
     /// <summary>The condition of a new trigger of the link menu "Insert trigger".</summary>
     /// <param name="seconds">The delay of <see cref="InsertEvent.Delay"/>.</param>
-    /// <param name="commLine">The comm line of <see cref="InsertEvent.CommLine"/>.</param>
+    /// <param name="commLine">The comm line of <see cref="InsertEvent.CommLine"/> that the user picked.</param>
     public static LineSpec InsertCondition(InsertEvent kind, double seconds = MissionLibrary.DefaultDelay,
         string? commLine = null) => kind switch
     {
@@ -282,26 +285,50 @@ internal sealed class GraphEditModel
         _ => LineSpec.Of("Cnd_CommComplete", ("line", commLine ?? MissionLibrary.NoName)),
     };
 
-    /// <summary>Why a link cannot take a new trigger, or null. Only a Start link can.</summary>
-    public static string? InsertRefusal(GraphLink link) =>
-        link.Sources.All(s => s.Kind == MissionLinkKind.Start && MissionIndex.Is(s.Line.Key, "Act_ActTrig")) &&
-        link.Sources.Count > 0
-            ? null
-            : StartLinkOnly;
+    /// <summary>
+    /// Why a link cannot take a new trigger, or null. Only a Start link can. A link into or out of a collapsed frame can
+    /// stand for several lines. One new trigger keeps each start of such a link only when one trigger starts all the
+    /// targets, or when all the lines start one target. Else the user opens the frame first.
+    /// </summary>
+    public static string? InsertRefusal(GraphLink link)
+    {
+        if (link.Sources.Count == 0 ||
+            !link.Sources.All(s => s.Kind == MissionLinkKind.Start && MissionIndex.Is(s.Line.Key, "Act_ActTrig")))
+            return StartLinkOnly;
+        var sources = link.Sources.Select(s => s.Source).Distinct().Count();
+        return sources > 1 && Targets(link).Count > 1 ? SeveralLinks : null;
+    }
+
+    /// <summary>The names of the targets of the lines of a link, each one once, without letter case.</summary>
+    private static List<string> Targets(GraphLink link) =>
+        link.Sources.Select(s => s.TargetName.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>
     /// The gesture of the link menu "Insert trigger": <see cref="InsertTriggerOnLink"/> on the first line of the link,
-    /// and <see cref="RetargetLink"/> of the other lines of the link to the new trigger. So a link of a summary chip with
-    /// several lines gets one new trigger.
+    /// and <see cref="RetargetLink"/> of the first line of each other source to the new trigger. So a link of a summary
+    /// chip with several lines gets one new trigger. Each source starts the new trigger once: its other lines of the link
+    /// go. The new trigger starts each target of the lines, so no target loses its start (review finding 1 of M6b-2).
     /// </summary>
-    public MissionBatch? InsertOnLink(GraphLink link, LineSpec condition)
+    /// <param name="place">The place of the node of the new trigger, or null for the automatic layout.</param>
+    public MissionBatch? InsertOnLink(GraphLink link, LineSpec condition, GraphPoint? place = null)
     {
         if (InsertRefusal(link) != null)
             return null;
         var name = NewTriggerName();
-        var lines = link.Sources.Select(s => s.Line).OrderBy(l => l.Section.Index).ThenBy(l => l.Entry).ToList();
-        var commands = new List<MissionCommand> { new InsertTriggerOnLink(RowOf(lines[0]), condition) { Nickname = name } };
-        commands.AddRange(lines.Skip(1).Select(l => new RetargetLink(RowOf(l), name)));
+        var sources = link.Sources.Select(s => s.Line).GroupBy(l => l.Section).OrderBy(g => g.Key.Index)
+            .Select(g => g.OrderBy(l => l.Entry).ToList()).ToList();
+        var first = sources[0][0];
+        var commands = new List<MissionCommand>
+        {
+            new InsertTriggerOnLink(RowOf(first), condition) { Nickname = name, Place = place },
+        };
+        commands.AddRange(sources.Skip(1).Select(lines => new RetargetLink(RowOf(lines[0]), name)));
+        // The last lines of a section go first, so the rows of the other lines stay.
+        commands.AddRange(sources.SelectMany(lines => lines.Skip(1)).OrderByDescending(l => l.Entry)
+            .Select(l => new RemoveAction(RowOf(l))));
+        var target = first.Value(0)?.Trim() ?? "";
+        commands.AddRange(Targets(link).Where(t => !t.Equals(target, StringComparison.OrdinalIgnoreCase))
+            .Select(t => new LinkTriggers(new TriggerRef(Script, name), t, LinkKind.Start)));
         return new MissionBatch("Insert trigger", commands);
     }
 
@@ -309,20 +336,21 @@ internal sealed class GraphEditModel
 
     /// <summary>
     /// The gesture of Delete with nodes selected (section 8.2 of the M6b design): one batch with
-    /// <see cref="RemoveTrigger"/> for each trigger node, and <see cref="RemoveAct"/> for each act frame. The triggers of
+    /// <see cref="RemoveAct"/> for each act frame, then <see cref="RemoveTrigger"/> for each trigger node. The triggers of
     /// an act stay. Each line that names a removed trigger stays and shows "Missing" (decision D81). A duplicate trigger,
     /// which the game never runs (TR4), goes by its section. Prefab frames and missing nodes give nothing. Null when the
     /// selection has no trigger and no act.
     /// </summary>
+    /// <remarks>The acts go first. The first act edit writes the proposed acts of W, so the act numbers of the
+    /// selection are the numbers of these acts before the triggers go (review finding 5 of M6b-2).</remarks>
     public MissionBatch? Delete(IEnumerable<GraphBlock> selection)
     {
         var blocks = selection.ToList();
-        var commands = new List<MissionCommand>();
-        foreach (var trigger in blocks.OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>().Distinct())
-            commands.Add(trigger.IsDuplicate ? new RemoveSection(ItemOf(trigger.Section)) : new RemoveTrigger(RefOf(trigger)));
         var acts = blocks.Select(b => b as GraphFrame ?? (b as GraphNode)?.Frame).OfType<GraphFrame>()
             .Where(f => f is { Kind: GraphFrameKind.Act, Act: not null }).Distinct().ToList();
-        commands.AddRange(acts.Select(f => new RemoveAct(ActRefOf(f.Act!))));
+        var commands = acts.Select(f => (MissionCommand)new RemoveAct(ActRefOf(f.Act!))).ToList();
+        foreach (var trigger in blocks.OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>().Distinct())
+            commands.Add(trigger.IsDuplicate ? new RemoveSection(ItemOf(trigger.Section)) : new RemoveTrigger(RefOf(trigger)));
         return commands.Count switch
         {
             0 => null,
@@ -371,20 +399,38 @@ internal sealed class GraphEditModel
         return new MissionBatch(places.Count == 1 ? $"Move {places[0].Trigger}" : "Move nodes", commands);
     }
 
-    /// <summary>The gesture of Ctrl+D: <see cref="DuplicateTrigger"/> with a free name after the name of the
+    /// <summary>The gesture of Ctrl+D: <see cref="DuplicateTrigger"/> for each selected trigger, with a free name after
+    /// the name of the trigger, in one batch. Unity duplicates each selected object in the same way.</summary>
+    /// <param name="triggers">Each trigger, and the place of the node of its copy beside the original or null for the
+    /// automatic layout.</param>
+    public MissionBatch? Duplicate(IEnumerable<(MissionTrigger Trigger, GraphPoint? Place)> triggers) =>
+        Duplicate(Index, triggers);
+
+    /// <summary>The batch of a duplicate of triggers of a script. The graph and the Hierarchy use it. Null for no
     /// trigger.</summary>
-    /// <param name="place">The place of the node of the copy beside the original, or null for the automatic
-    /// layout.</param>
-    public MissionBatch? Duplicate(MissionTrigger trigger, GraphPoint? place = null) =>
-        Batch($"Duplicate trigger {trigger.Nickname}", new DuplicateTrigger(RefOf(trigger))
+    internal static MissionBatch? Duplicate(MissionIndex index,
+        IEnumerable<(MissionTrigger Trigger, GraphPoint? Place)> triggers)
+    {
+        var taken = TakenNames(index);
+        var commands = new List<MissionCommand>();
+        foreach (var (trigger, place) in triggers.DistinctBy(t => t.Trigger))
         {
-            NewName = MissionNaming.Free(Script, "Trigger", TakenNames(), trigger.Nickname),
-            Place = place,
-        });
+            var name = MissionNaming.Free(trigger.Section.Ref.Path, "Trigger", taken, trigger.Nickname);
+            taken.Add(name);
+            commands.Add(new DuplicateTrigger(RefOf(trigger)) { NewName = name, Place = place });
+        }
+
+        return commands.Count switch
+        {
+            0 => null,
+            1 => new MissionBatch($"Duplicate trigger {((DuplicateTrigger)commands[0]).Trigger.Name}", commands),
+            _ => new MissionBatch($"Duplicate {commands.Count.ToString(CultureInfo.InvariantCulture)} triggers", commands),
+        };
+    }
 
     /// <summary>The gesture of F2: <see cref="RenameTrigger"/>. The lines that name the trigger change too. Null when the
-    /// name is the same.</summary>
-    public MissionBatch? Rename(MissionTrigger trigger, string name) =>
+    /// name is the same. The graph and the Hierarchy use it.</summary>
+    public static MissionBatch? Rename(MissionTrigger trigger, string name) =>
         string.Equals(trigger.Nickname, name.Trim(), StringComparison.Ordinal) || name.Trim().Length == 0
             ? null
             : Batch($"Rename {trigger.Nickname} to {name.Trim()}", new RenameTrigger(RefOf(trigger), name.Trim()));
@@ -411,12 +457,19 @@ internal sealed class GraphEditModel
     /// <summary>
     /// The gesture of Ctrl+V: each <c>[Trigger]</c> section of an INI text becomes a new trigger of the script, with its
     /// lines in their order. A name that the script has, or a name that is not valid, gets a free name. Each start, stop,
-    /// checkpoint and watch value inside the pasted set follows the new names. Null with a problem when the text holds no
-    /// trigger.
+    /// checkpoint and watch value inside the pasted set follows the new names. A name that two pasted triggers have gives
+    /// each of them a free name, and a value inside the set names the first of them, as the game finds the first trigger
+    /// of a repeated name (TR4). Null with a problem when the text holds no trigger.
     /// </summary>
     public MissionBatch? Paste(string text, out string? problem)
     {
         problem = null;
+        if (RawMissionEdit.TextProblems(Script, text) is [var first, ..])
+        {
+            problem = $"The editor cannot read the text of the clipboard. {first}";
+            return null;
+        }
+
         var sections = RawMissionEdit.Sections(Script, text)
             .Where(s => MissionIndex.Is(s.Name, "Trigger") && TriggerRules.Nickname(s) != null).ToList();
         if (sections.Count == 0)
@@ -426,21 +479,23 @@ internal sealed class GraphEditModel
         }
 
         var taken = TakenNames();
+        // The name of each pasted trigger, and the first new name of each old name for the values inside the set.
+        var own = new List<string>();
         var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var section in sections)
         {
-            var old = TriggerRules.Nickname(section)!;
-            if (names.ContainsKey(old))
-                continue;
+            var old = TriggerRules.Nickname(section)!.Trim();
             var name = MissionNaming.Free(Script, "Trigger", taken, old);
             taken.Add(name);
-            names[old] = name;
+            own.Add(name);
+            names.TryAdd(old, name);
         }
 
         var schema = MissionSchema.Retail;
         var commands = new List<MissionCommand>();
-        foreach (var section in sections)
+        for (var s = 0; s < sections.Count; s++)
         {
+            var section = sections[s];
             var nicknameLine = TriggerRules.NicknameLine(section);
             var lines = new List<LineSpec>();
             for (var r = 0; r < section.Count; r++)
@@ -448,7 +503,7 @@ internal sealed class GraphEditModel
                 var entry = section[r];
                 var texts = entry.Select(MissionIndex.Text).ToList();
                 if (r == nicknameLine)
-                    texts[0] = names[texts[0].Trim()];
+                    texts[0] = own[s];
                 else if (schema.Name(entry.Name) is { } name)
                 {
                     foreach (var spec in name.Values.Where(v => v.Kind == MissionValueKind.Trigger))
@@ -567,7 +622,7 @@ internal sealed class GraphEditModel
     public static MissionBatch AddTo(MissionTrigger trigger, LibraryItem item)
     {
         var line = MissionLibrary.Line(item);
-        var reference = new TriggerRef(trigger.Section.Ref.Path, trigger.Nickname);
+        var reference = RefOf(trigger);
         return item.Kind == LibraryKind.Action
             ? Batch($"Add {item.Name} to {trigger.Nickname}", new AddAction(reference, line))
             : Batch($"Set the condition of {trigger.Nickname}", new SetCondition(reference, line));

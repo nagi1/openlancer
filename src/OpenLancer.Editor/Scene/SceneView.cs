@@ -752,13 +752,18 @@ internal sealed class SceneView : IDisposable
         }
 
         // "Pick in Scene" of a mission field (section 8.9 of the M6b design): the point is on an object, or on the
-        // plane of the camera pivot. The click selects nothing.
-        if (window.Missions.PendingPick != null)
+        // plane of the camera pivot. The click selects nothing. While the Scene shows another system than the system of
+        // the item, a click sets nothing, and the hint tells why.
+        if (window.Missions.PendingPick is { } pending)
         {
-            var point = ObjectAt(projection, mouse) is { } picked
-                ? picked.Position
-                : Assets.ScenePlacement.PivotPlanePoint(projection.Eye, projection.Ray(mouse).Direction, controller.Pivot);
-            window.Missions.Picked(point);
+            if (OtherSystem(pending) == null)
+            {
+                var point = ObjectAt(projection, mouse) is { } picked
+                    ? picked.Position
+                    : Assets.ScenePlacement.PivotPlanePoint(projection.Eye, projection.Ray(mouse).Direction, controller.Pivot);
+                window.Missions.Picked(point);
+            }
+
             return;
         }
 
@@ -794,7 +799,7 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
-        var text = pick.Hint;
+        var text = OtherSystem(pick) is { } shown ? pick.OtherSystemHint(shown) : pick.Hint;
         var textSize = ImGui.CalcTextSize(text);
         var at = origin + new Vector2((size.X - textSize.X) / 2, 8 * ImGuiHelper.Scale);
         var drawList = ImGui.GetWindowDrawList();
@@ -803,6 +808,14 @@ internal sealed class SceneView : IDisposable
             4 * ImGuiHelper.Scale);
         drawList.AddText(at, ImGui.GetColorU32(EditorTheme.AccentText), text);
     }
+
+    /// <summary>The nickname of the system that the Scene shows when it is not the system of the item of a pick, or
+    /// null.</summary>
+    private string? OtherSystem(Missions.ScenePick pick) =>
+        pick.System is { } system && System is { } shown &&
+        !system.Equals(shown.Nickname, StringComparison.OrdinalIgnoreCase)
+            ? shown.Nickname
+            : null;
 
     /// <summary>The first object of the pick stack under a screen point, for a dropped loadout or faction (decision D281
     /// of the M23 design), or null.</summary>

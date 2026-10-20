@@ -5,6 +5,7 @@ using System.Numerics;
 using ImGuiNET;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing.Fields;
+using OpenLancer.Data.Missions.Editing;
 
 namespace OpenLancer.Editor.Ui.Fields;
 
@@ -16,12 +17,10 @@ namespace OpenLancer.Editor.Ui.Fields;
 /// base-game steps count as done.</remarks>
 internal static class CompletenessPanel
 {
+    /// <summary>Draws the panel.</summary>
     /// <param name="id">The id of the panel. Two panels in one window need different ids.</param>
     /// <param name="showBaseGame">True while the base-game messages show. The hidden steps then show muted with the lock
     /// glyph.</param>
-    /// <summary>The tooltip of the button "Fix" (section 8.11 of the M6b design).</summary>
-    public const string FixTip = "Make the change that the step needs. Undo takes it back.";
-
     /// <param name="goTo">Selects the item of a step, or null when the page cannot go to items.</param>
     /// <param name="fixes">Gives the fixes of a step with a fix: the label and what a click does. Null when the page
     /// takes no edits.</param>
@@ -71,6 +70,26 @@ internal static class CompletenessPanel
         ImGui.PopID();
     }
 
+    /// <summary>
+    /// The Fix buttons of a step or a problem (section 8.7 of the M6b design), on the line of the item before them. One
+    /// fix gives the button "Fix" with the label of the fix in its tooltip. Two fixes give a button with the label of
+    /// each fix. Each click is one undo entry.
+    /// </summary>
+    /// <param name="fixes">The label of each fix and what a click does.</param>
+    public static void FixButtons(IReadOnlyList<(string Label, Action Run)> fixes)
+    {
+        for (var i = 0; i < fixes.Count; i++)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton(fixes.Count == 1 ? "Fix##fix" : $"{fixes[i].Label}##fix{i}"))
+            {
+                fixes[i].Run();
+            }
+
+            ImGui.SetItemTooltip(fixes.Count == 1 ? $"{fixes[i].Label}. {MissionFixes.ButtonTip}" : MissionFixes.ButtonTip);
+        }
+    }
+
     private static void Step(int index, CompletenessStep step, bool muted, Action<object>? goTo,
         Func<CompletenessStep, IReadOnlyList<(string Label, Action Run)>>? fixes)
     {
@@ -91,19 +110,10 @@ internal static class CompletenessPanel
             }
         }
 
-        // The Fix button of a step whose fix needs no choice. A step with two fixes has a button for each fix.
+        // The Fix button of a step whose fix needs no choice.
         if (step.Fix != null && fixes?.Invoke(step) is { Count: > 0 } list)
         {
-            for (var i = 0; i < list.Count; i++)
-            {
-                ImGui.SameLine();
-                if (ImGui.SmallButton(list.Count == 1 ? "Fix##fix" : $"{list[i].Label}##fix{i}"))
-                {
-                    list[i].Run();
-                }
-
-                ImGui.SetItemTooltip(list.Count == 1 ? $"{list[i].Label}. {FixTip}" : FixTip);
-            }
+            FixButtons(list);
         }
 
         ImGui.PushTextWrapPos(0);

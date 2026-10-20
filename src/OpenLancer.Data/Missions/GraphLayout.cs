@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
 
@@ -21,6 +22,9 @@ namespace OpenLancer.Data.Missions;
 /// a later layout keeps the drag.</item>
 /// <item>A node with a place in the graph file of the script (section 6.8 of the M6b design) stands at that place. Its
 /// frame keeps the size of the automatic layout.</item>
+/// <item>After an edit, each block that stays keeps its place (section 8.10 of the M6b design, see <see cref="Kept"/>). A
+/// frame with a place moves its blocks with it, so a new block of the frame takes its automatic place in the
+/// frame.</item>
 /// </list>
 /// The class makes no ImGui call. Positions and sizes are in canvas points.
 /// </summary>
@@ -73,6 +77,58 @@ public sealed class GraphLayout
     }
 
     private IReadOnlyDictionary<string, Vector2> places = new Dictionary<string, Vector2>();
+
+    /// <summary>
+    /// The places of the blocks of a graph after an edit (section 8.10 of the M6b design): each node and each frame that
+    /// the graph before the edit has too, in the same frame, keeps its place in the layout before the edit. A block
+    /// keeps its identity by its trigger, its act or its prefab instance, not by its key, because a key holds the index
+    /// of a section. A new block, and a block that moved to another frame, get no place.
+    /// </summary>
+    /// <param name="before">The graph before the edit.</param>
+    /// <param name="layout">The layout of <paramref name="before"/>.</param>
+    /// <param name="after">The graph after the edit.</param>
+    /// <returns>The places by the keys of <paramref name="after"/>.</returns>
+    public static IReadOnlyDictionary<string, Vector2> Kept(MissionGraph before, GraphLayout layout, MissionGraph after)
+    {
+        var old = Identities(before).ToDictionary(b => b.Identity, StringComparer.Ordinal);
+        var result = new Dictionary<string, Vector2>(StringComparer.Ordinal);
+        foreach (var (identity, parent, key) in Identities(after))
+        {
+            if (old.TryGetValue(identity, out var was) && was.Parent == parent &&
+                layout.positions.TryGetValue(was.Key, out var place))
+                result[key] = place;
+        }
+        return result;
+    }
+
+    /// <summary>The blocks of a graph with their identity, the identity of their frame and the key of their
+    /// place.</summary>
+    private static IEnumerable<(string Identity, string Parent, string Key)> Identities(MissionGraph graph)
+    {
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in graph.Nodes.Where(n => n.Frame == null))
+        {
+            var identity = "n|" + node.Key;
+            if (node.Trigger is { } trigger)
+            {
+                // A repeated nickname gets the number of its occurrence (TR4).
+                var count = seen.GetValueOrDefault(trigger.Nickname);
+                seen[trigger.Nickname] = count + 1;
+                identity = string.Create(CultureInfo.InvariantCulture, $"t|{trigger.Nickname.ToLowerInvariant()}|{count}");
+            }
+            yield return (identity, FrameIdentity(node.Parent), node.Key);
+        }
+        foreach (var frame in graph.Frames)
+            yield return (FrameIdentity(frame), FrameIdentity(frame.Parent), frame.Collapsed ? frame.Node.Key : frame.Key);
+    }
+
+    /// <summary>The identity of a frame: its act by nickname, its prefab instance, or its key. Empty for no frame.</summary>
+    private static string FrameIdentity(GraphFrame? frame) => frame switch
+    {
+        null => "",
+        { Act: { } act } => "a|" + MissionActs.NicknameOf(act).ToLowerInvariant(),
+        _ => "f|" + frame.Key,
+    };
 
     /// <summary>The places of the trigger nodes of a graph file, by node key (section 6.8 of the M6b design).</summary>
     public static IReadOnlyDictionary<string, Vector2> PlacesOf(MissionGraph graph, GraphFile file)
@@ -151,19 +207,23 @@ public sealed class GraphLayout
     {
         if (block is GraphFrame { Collapsed: true } collapsed)
         {
-            positions[collapsed.Node.Key] = at + offsets.GetValueOrDefault(collapsed.Node.Key);
-            sizes[collapsed.Node.Key] = collapsed.Node.Size;
+            var key = collapsed.Node.Key;
+            positions[key] = places.TryGetValue(key, out var kept) ? kept : at + offsets.GetValueOrDefault(key);
+            sizes[key] = collapsed.Node.Size;
             return;
         }
-        positions[block.Key] = places.TryGetValue(block.Key, out var place) ? place : at + offsets.GetValueOrDefault(block.Key);
+        var placed = places.TryGetValue(block.Key, out var place);
+        positions[block.Key] = placed ? place : at + offsets.GetValueOrDefault(block.Key);
         if (block is GraphNode node)
         {
             sizes[block.Key] = node.Size;
             return;
         }
+        // A frame with a place moves its blocks with it.
         var frame = (GraphFrame)block;
+        var origin = placed ? place : at;
         foreach (var child in frame.Blocks)
-            Absolute(child, at + relative[child.Key], offsets);
+            Absolute(child, origin + relative[child.Key], offsets);
     }
 
     /// <summary>Lays out the blocks of an open frame, relative to its top-left corner, and returns its size.</summary>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Missions.Editing;
@@ -110,6 +111,70 @@ public sealed partial class MissionEditor
         return why.Length == 0 ? why : char.ToUpperInvariant(why[0]) + why[1..];
     }
 
+    /// <summary>
+    /// True for a shared ship build file of the missions: a file of ship builds directly in <c>DATA\MISSIONS</c> that no
+    /// script names. Random encounters and bases can use its builds too, so a change of such a build needs a
+    /// confirmation (review finding RB2 of the M6b design).
+    /// </summary>
+    /// <param name="path">An install path, in any letter case.</param>
+    public bool IsSharedBuildFile(string path) =>
+        InstallPaths.TryParse(path) is { } normal &&
+        MissionDraft.IsSharedBuildPath(session, normal, session.IsGuardedMissionFile);
+
+    /// <summary>
+    /// The lines of a section of W that the active mod sets: each line that differs from the same line of B, by its key
+    /// and its place among the lines of that key. All lines of a section that B does not have, and all lines of a whole
+    /// file of the active mod, count. The pages show the blue bar at these lines (section 8.1 of the M6b design, UI rule
+    /// 7). Empty without an active mod or for a section that W does not have.
+    /// </summary>
+    /// <returns>The indexes of the lines in the section of W.</returns>
+    public IReadOnlySet<int> ChangedLines(SectionRef section)
+    {
+        if (session.ActiveMod == null || InstallPaths.TryParse(section.Path) is not { } normal ||
+            session.OpenDocument(normal) is not { } document || document.IndexOf(section.Id) is not (>= 0 and var index))
+            return new HashSet<int>();
+        var working = document.Working[index];
+        var id = document.IdentityAt(index);
+        if (document.IsWholeFile || document.BaseSection(id) is not { } lower)
+            return Enumerable.Range(0, working.Count).ToHashSet();
+        var before = SectionComparer.ByName(lower);
+        var changed = new HashSet<int>();
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var row = 0; row < working.Count; row++)
+        {
+            var entry = working[row];
+            var occurrence = seen.GetValueOrDefault(entry.Name);
+            seen[entry.Name] = occurrence + 1;
+            if (before.GetValueOrDefault(entry.Name) is not { } lines || occurrence >= lines.Count ||
+                !SectionComparer.SameLines([lines[occurrence]], [entry], document.IsBinary))
+                changed.Add(row);
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// The lines of B of a section whose base changed after the edit of the active mod (section 6.3 of the M6b design,
+    /// decision D429): the <c>ol.base</c> hash that the patch writes for the section differs from the hash of B now. Each
+    /// line is "key = values". Null when the base did not change, or for a section that B does not have. The page then
+    /// shows the banner with "Compare", "Keep my lines" and "Use the new base".
+    /// </summary>
+    public IReadOnlyList<string>? ChangedBase(SectionRef section)
+    {
+        if (session.ActiveMod == null || InstallPaths.TryParse(section.Path) is not { } normal ||
+            session.OpenDocument(normal) is not { IsWholeFile: false } document ||
+            document.IndexOf(section.Id) is not (>= 0 and var index))
+            return null;
+        var id = document.IdentityAt(index);
+        if (document.BaseSection(id) is not { } lower || document.WrittenBaseHash(id) is not { } written ||
+            SectionHash.Same(written, SectionHash.Of(lower)))
+            return null;
+        return lower.Select(LineText).ToList();
+    }
+
+    /// <summary>A line as "key = values", with the values as the game reads them.</summary>
+    public static string LineText(LibreLancer.Data.Ini.Entry entry) =>
+        entry.Count == 0 ? $"{entry.Name} =" : $"{entry.Name} = {string.Join(", ", MissionValues.TextsOf(entry))}";
+
     /// <summary>The model cache, for the tests.</summary>
     internal MissionModelCache Cache => cache;
 
@@ -159,22 +224,23 @@ public sealed partial class MissionEditor
         return new MissionModel(path, Version(path), analysis)
         {
             GraphFile = graphText,
-            Graph = GraphOf(graphText),
+            Graph = GraphOf(path, graphText),
             ReadOnlyReason = session.ReadOnlyReason ?? document.ReadOnlyReason,
         };
     }
 
-    // The last graph file that the editor read, by its text.
-    private (string? Text, GraphFile File)? lastGraph;
+    // The last graph file that the editor read for each script, by its text (review finding 8 of M6b-2).
+    private readonly Dictionary<string, (string? Text, GraphFile File)> graphs = new(VfsPath.Comparer);
 
-    /// <summary>The records of the text of a graph file. The same text gives the same record, so a view that keys on
-    /// the record builds again only after a change of the file.</summary>
-    private GraphFile GraphOf(string? text)
+    /// <summary>The records of the text of the graph file of a script. The same text gives the same record, so a view
+    /// that keys on the record builds again only after a change of the file. Each script has its own entry, so a read
+    /// of another script does not make a new record.</summary>
+    private GraphFile GraphOf(string path, string? text)
     {
-        if (lastGraph is var (known, file) && string.Equals(known, text, StringComparison.Ordinal))
-            return file;
-        file = GraphFile.Read(text, out _);
-        lastGraph = (text, file);
+        if (graphs.TryGetValue(path, out var known) && string.Equals(known.Text, text, StringComparison.Ordinal))
+            return known.File;
+        var file = GraphFile.Read(text, out _);
+        graphs[path] = (text, file);
         return file;
     }
 
@@ -184,7 +250,7 @@ public sealed partial class MissionEditor
     /// </summary>
     /// <param name="script">The install path of the script, in any letter case.</param>
     public GraphFile Graph(string script) =>
-        InstallPaths.TryParse(script) is { } path ? GraphOf(GraphFileText(path)) : GraphFile.Empty;
+        InstallPaths.TryParse(script) is { } path ? GraphOf(path, GraphFileText(path)) : GraphFile.Empty;
 
     /// <summary>The problems of the graph file of a script: the lines that the editor cannot read.</summary>
     public IReadOnlyList<string> GraphProblems(string script)

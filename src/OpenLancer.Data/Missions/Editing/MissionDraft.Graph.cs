@@ -28,9 +28,13 @@ internal sealed partial class MissionDraft
     /// Writes the graph file of a script. The nodes and the act members of triggers that the script does not have go
     /// (section 6.8 of the M6b design). A file without records goes, so a save deletes it.
     /// </summary>
-    /// <exception cref="EditException">The session has no active mod, or the file cannot be read.</exception>
+    /// <exception cref="EditException">The session has no active mod, the file cannot be read, or it has a format that
+    /// this editor does not read.</exception>
     public void SetGraph(EditDocument script, GraphFile file)
     {
+        if (file.Unreadable is { } reason)
+            throw Refuse(new EditError(EditErrorKind.Refused, EditPlan.PlanRefused,
+                $"{GraphFile.PathOf(script.Path)}: {reason}"));
         var names = TriggerNames(script).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var text = file.Pruned(names.Contains).Write(script.Path);
         try
@@ -45,7 +49,8 @@ internal sealed partial class MissionDraft
     }
 
     /// <summary>The acts of a graph file for an act edit. The first act edit writes all proposed acts into the file
-    /// (decision D679), so a file without acts gives the proposed acts of W now, with their made nicknames.</summary>
+    /// (decision D679), so a file without acts gives the proposed acts of W now, with their made nicknames. A proposed act
+    /// gets no name, so its title stays "Act {n}: {system name}" (review finding 13 of M6b-2).</summary>
     /// <param name="written">True when the acts are the proposed acts.</param>
     public List<GraphAct> ActsForEdit(EditDocument script, GraphFile file, out bool written)
     {
@@ -55,8 +60,8 @@ internal sealed partial class MissionDraft
         var inputs = Editor.WorldNow();
         var index = MissionIndex.Build(MissionDocument.Of(script.Path, script.Working, script.IsBinary), Schema, inputs.World,
             inputs.Coverage);
-        return MissionActs.Propose(index).Acts.Select(a => new GraphAct(MissionActs.NicknameOf(a),
-            MissionGraph.ActTitle(a, null), "", a.Triggers.Select(t => t.Nickname).ToList())).ToList();
+        return MissionActs.Propose(index).Acts.Select(a => new GraphAct(MissionActs.NicknameOf(a), "", "",
+            a.Triggers.Select(t => t.Nickname).ToList())).ToList();
     }
 
     /// <summary>The index of an act in a list, by its nickname without letter case.</summary>

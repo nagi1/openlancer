@@ -90,4 +90,29 @@ public sealed class MissionLibraryTests
                 string.Join(" ", result.Errors.Select(e => e.Message)));
         }
     }
+
+    [Fact]
+    public void ASearchFindsAnEventByItsId()
+    {
+        var found = MissionLibrary.Search(MissionLibrary.Sections(null), "afterdelay");
+
+        Assert.Equal("afterDelay", Assert.Single(found).Id);
+        Assert.Same(MissionLibrary.Studio(false), MissionLibrary.Studio(false));
+        Assert.NotSame(MissionLibrary.Studio(false), MissionLibrary.Studio(true));
+    }
+
+    [Fact]
+    public void TheStripClosesInANarrowTabAndTheToggleOpensItAgain()
+    {
+        Assert.True(LibraryStrip.Shows(setting: true, narrow: false, openedInNarrowTab: false));
+        Assert.False(LibraryStrip.Shows(setting: true, narrow: true, openedInNarrowTab: false));
+        Assert.True(LibraryStrip.Shows(setting: true, narrow: true, openedInNarrowTab: true));
+        Assert.False(LibraryStrip.Shows(setting: false, narrow: false, openedInNarrowTab: true));
+
+        // In a narrow tab, the toggle opens the strip and turns the setting on. A close keeps the setting.
+        Assert.Equal((true, true), LibraryStrip.Toggled(setting: false, narrow: true, shown: true));
+        Assert.Equal((true, false), LibraryStrip.Toggled(setting: true, narrow: true, shown: false));
+        // In a wide tab, the toggle sets the setting.
+        Assert.Equal((false, false), LibraryStrip.Toggled(setting: true, narrow: false, shown: false));
+    }
 }

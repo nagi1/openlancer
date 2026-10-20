@@ -4,6 +4,7 @@ using System.Linq;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Runtime.Missions;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -67,6 +68,18 @@ internal static class MissionLibrary
 
     private const string NoParams = "no_params";
 
+    // The library of the studio, with and without the OpenLancer marks. The schema and the coverage do not change while
+    // the editor runs, so each form is made once.
+    private static IReadOnlyList<LibrarySection>? marked;
+    private static IReadOnlyList<LibrarySection>? plain;
+
+    /// <summary>The library of the studio: the library strip, quick add of the graph and "Add action" of the Trigger page
+    /// use it. The editor makes each form once.</summary>
+    /// <param name="marks">True while the OpenLancer column shows: the items have the OpenLancer marks (UI rule
+    /// 4).</param>
+    public static IReadOnlyList<LibrarySection> Studio(bool marks) =>
+        marks ? marked ??= Sections(EngineCoverage.Instance) : plain ??= Sections(null);
+
     /// <summary>The library with the marks of a coverage.</summary>
     /// <param name="coverage">The OpenLancer marks, or null when the marks do not show (UI rule 4).</param>
     public static IReadOnlyList<LibrarySection> Sections(IEngineCoverage? coverage)
@@ -91,7 +104,8 @@ internal static class MissionLibrary
     }
 
     /// <summary>The items of the library that match a search: each word of the search is in the name, the key, the
-    /// group or the id of the item, without letter case. An empty search gives all items.</summary>
+    /// group or the id of the item, without letter case. An empty search gives all items. The id of an event is a word
+    /// such as "enterArea", so a search finds the event by it too.</summary>
     /// <param name="fits">Keeps only the items that fit the place of quick add, or null for all items.</param>
     public static IReadOnlyList<LibraryItem> Search(IReadOnlyList<LibrarySection> sections, string text,
         Func<LibraryItem, bool>? fits = null)
@@ -106,7 +120,8 @@ internal static class MissionLibrary
     private static bool Matches(LibraryItem item, string word) =>
         item.Name.Contains(word, StringComparison.OrdinalIgnoreCase) ||
         item.Key.Contains(word, StringComparison.OrdinalIgnoreCase) ||
-        item.Group.Contains(word, StringComparison.OrdinalIgnoreCase);
+        item.Group.Contains(word, StringComparison.OrdinalIgnoreCase) ||
+        item.Id.Contains(word, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>The item of an event: a new trigger with the first condition of the event.</summary>
     private static LibraryItem? Event(MissionSchema schema, MissionEventDefinition definition, IEngineCoverage? coverage)
@@ -190,17 +205,26 @@ internal static class MissionLibrary
             }
             if (spec.Optional || spec.Default != null || spec.NoneToken != null)
                 continue;
-            values[spec.Name] = First(name, spec);
+            values[spec.Name] = First(name.Name, spec);
         }
         foreach (var (key, value) in given ?? new Dictionary<string, MissionValue>())
             values.TryAdd(key, value);
         return new LineSpec(name.Name) { Values = values };
     }
 
-    /// <summary>The first value of a value spec.</summary>
-    private static MissionValue First(MissionName name, MissionValueSpec spec)
+    /// <summary>The first line of a key of a section with named values, by the rules of <see cref="Starter"/>. The page
+    /// of an item adds it for a key that the section does not have (section 8.4 of the M6b design).</summary>
+    public static LineSpec KeyStarter(MissionKeySpec key) =>
+        new(key.Key)
+        {
+            Values = key.Values.Where(s => !s.Optional && s.Default == null && s.NoneToken == null)
+                .ToDictionary(s => s.Name, s => First(key.Key, s), StringComparer.OrdinalIgnoreCase),
+        };
+
+    /// <summary>The first value of a value spec of a line of a key.</summary>
+    private static MissionValue First(string key, MissionValueSpec spec)
     {
-        if (MissionIndex.Is(name.Name, "Cnd_Timer") && spec.Name == "seconds")
+        if (MissionIndex.Is(key, "Cnd_Timer") && spec.Name == "seconds")
             return DefaultDelay;
         var value = spec.Kind switch
         {

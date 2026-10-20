@@ -121,10 +121,10 @@ public static class MissionErrors
                                                 "Pick another name.");
 
     /// <summary>A fix of section 8.7 of the M6b design that does not apply to W now.</summary>
-    internal static EditError FixNotFoundError(string fix, string script) =>
+    internal static EditError FixNotFoundError(string script) =>
         new(EditErrorKind.Refused, FixNotFound,
-            $"The fix '{fix}' does not apply to {script} now. The problem or the step changed. Read the problems again, then " +
-            "try again.");
+            $"This fix does not apply to {script} now. The problem or the step changed. Read the problems again, then try " +
+            "again.");
 
     internal static EditError NameIdTakenError(string name, string other) =>
         new(EditErrorKind.NameTaken, NameIdTaken,

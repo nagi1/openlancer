@@ -68,6 +68,10 @@ internal sealed partial class GraphView : IDisposable
     private (int Version, bool ShowLines, bool ShowBaseGame, bool HidesOpenLancer) built;
     private GraphFile file = GraphFile.Empty;
     private GraphFile? builtFile;
+
+    // The places that the blocks keep after an edit and after a drag, by block key (section 8.10 of the M6b design). A
+    // change of the view or of the mission lays out all blocks again.
+    private IReadOnlyDictionary<string, Vector2> kept = new Dictionary<string, Vector2>();
     private bool placeNodes;
     private object? syncedSelection;
 
@@ -239,6 +243,8 @@ internal sealed partial class GraphView : IDisposable
         Graph = null;
         Layout = null;
         builtAnalysis = null;
+        builtFile = null;
+        kept = new Dictionary<string, Vector2>();
         built = default;
         keys.Clear();
         blocks.Clear();
@@ -264,8 +270,15 @@ internal sealed partial class GraphView : IDisposable
         {
             Acts = missions.ActsOf(analysis),
         };
+        var (before, beforeLayout, beforeFile) = (Graph, Layout, builtFile);
+        var edited = before != null && beforeLayout != null && built == key &&
+                     string.Equals(builtAnalysis?.Script.Path, analysis.Script.Path, StringComparison.OrdinalIgnoreCase);
         Graph = MissionGraph.Build(analysis, options);
-        Layout = GraphLayout.Of(Graph, state.Offsets(analysis.Script.Path), GraphLayout.PlacesOf(Graph, file));
+        // After an edit, an Undo or a Redo, each node and frame that stays keeps its place, and a new node goes to its
+        // place in the graph file or takes the automatic layout (section 8.10 of the M6b design). A node whose place in
+        // the graph file went, for example at the Undo of a drag, takes the automatic layout again.
+        kept = edited ? Kept(before!, beforeLayout!, beforeFile) : new Dictionary<string, Vector2>();
+        Layout = NewLayout(analysis.Script.Path);
         // The path view and the neighbor view hold the triggers of one analysis, so a new analysis ends them. Another
         // mission shows the whole graph first, with all its systems.
         if (!ReferenceEquals(builtAnalysis, analysis))
@@ -304,6 +317,31 @@ internal sealed partial class GraphView : IDisposable
     {
         keys[block.Id] = block.Key;
         blocks[block.Id] = block;
+    }
+
+    /// <summary>The places that the blocks of the new graph keep from the graph before an edit, without the trigger nodes
+    /// whose place in the graph file went.</summary>
+    private Dictionary<string, Vector2> Kept(MissionGraph before, GraphLayout layout, GraphFile? beforeFile)
+    {
+        var gone = beforeFile?.Nodes.Select(n => n.Trigger).Where(t => file.Place(t) == null)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var nodes = Graph!.Nodes.ToDictionary(n => n.Key, StringComparer.Ordinal);
+        return GraphLayout.Kept(before, layout, Graph)
+            .Where(p => !(nodes.GetValueOrDefault(p.Key)?.Trigger is { } trigger && gone.Contains(trigger.Nickname)))
+            .ToDictionary(p => p.Key, p => p.Value, StringComparer.Ordinal);
+    }
+
+    /// <summary>The layout of the graph: the places of the graph file first, then the places that the blocks keep,
+    /// then the automatic layout with the drags of the session.</summary>
+    private GraphLayout NewLayout(string script)
+    {
+        var places = new Dictionary<string, Vector2>(kept, StringComparer.Ordinal);
+        foreach (var (key, place) in GraphLayout.PlacesOf(Graph!, file))
+        {
+            places[key] = place;
+        }
+
+        return GraphLayout.Of(Graph!, state.Offsets(script), places);
     }
 
     /// <summary>The name of a system of the game data, or null.</summary>
@@ -414,39 +452,72 @@ internal sealed partial class GraphView : IDisposable
         EditOverlays();
         if (drags.Count > 0)
         {
-            // While the session takes edits, the drag of trigger nodes writes their places into the graph file, one undo
-            // entry for each drag (section 8.2 of the M6b design). The node editor keeps the nodes where the drag left
-            // them, and the new graph puts them at their places.
-            var placed = editable && edit != null ? MovedNodes() : null;
-            foreach (var (key, delta) in drags)
-            {
-                if (placed == null || !moved.Any(m => m.Node.Key == key))
-                {
-                    state.Dragged(analysis.Script.Path, key, delta);
-                }
-            }
-
-            drags.Clear();
-            moved.Clear();
-            Run(placed);
-            // The node editor keeps the nodes where the drag left them, so the new layout only updates the places
-            // that the view reads.
-            Layout = GraphLayout.Of(graph, state.Offsets(analysis.Script.Path));
+            EndDrag(analysis.Script.Path, layout);
         }
     }
 
     // The trigger nodes of the drag that ended in this frame, with their new top-left corners.
     private readonly List<(GraphNode Node, Vector2 Position)> moved = [];
 
+    /// <summary>
+    /// The end of a drag of blocks. While the session takes edits, the drag of trigger nodes writes their places into
+    /// the graph file, one undo entry for each drag (section 8.2 of the M6b design). A drag of a frame moves the blocks
+    /// of the frame with it, and the node editor reports each of them. Such a drag stays a move of the session, as in
+    /// M6a: it writes no node place and moves no trigger to another act. Each other move is a move of the session too.
+    /// Each dragged block keeps the place where the drag left it, and the layout reads the new graph file.
+    /// </summary>
+    private void EndDrag(string script, GraphLayout layout)
+    {
+        var frames = drags.Select(d => d.Key).Where(k => blocks.Values.Any(b => b is GraphFrame && b.Key == k))
+            .ToHashSet(StringComparer.Ordinal);
+        moved.RemoveAll(m => InFrame(m.Node, frames));
+        var wrote = editable && edit != null && Run(MovedNodes());
+        var places = new Dictionary<string, Vector2>(kept, StringComparer.Ordinal);
+        foreach (var (key, delta) in drags)
+        {
+            if (!wrote || !moved.Any(m => m.Node.Key == key))
+            {
+                state.Dragged(script, key, delta);
+            }
+
+            if (layout.Positions.TryGetValue(key, out var at))
+            {
+                places[key] = at + delta;
+            }
+        }
+
+        drags.Clear();
+        moved.Clear();
+        kept = places;
+        // The node editor keeps the nodes where the drag left them, so the new layout only updates the places that the
+        // view reads: the drop target, the act frames, the minimap and the cross-links.
+        file = missions.GraphOf(script);
+        Layout = NewLayout(script);
+    }
+
+    /// <summary>True when a node is inside one of the frames of a set, by key.</summary>
+    private static bool InFrame(GraphNode node, IReadOnlySet<string> frames)
+    {
+        for (var parent = node.Parent; parent != null; parent = parent.Parent)
+        {
+            if (frames.Contains(parent.Key))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>The batch of the drag of trigger nodes that ended in this frame: their places, and the act frame under
     /// the center of each node.</summary>
     private MissionBatch? MovedNodes() =>
         moved.Count == 0 || edit == null
             ? null
-            : edit.Moved(moved.Select(m => (m.Node, m.Position, ActAt(m.Position + m.Node.Size / 2, m.Node))).ToList());
+            : edit.Moved(moved.Select(m => (m.Node, m.Position, ActAt(m.Position + m.Node.Size / 2))).ToList());
 
-    /// <summary>The open act frame that holds a canvas point, or null. A node in the frame of its own act stays in it.</summary>
-    private GraphFrame? ActAt(Vector2 point, GraphNode? node = null)
+    /// <summary>The open act frame that holds a canvas point, or null.</summary>
+    private GraphFrame? ActAt(Vector2 point)
     {
         if (Graph == null || Layout == null)
         {

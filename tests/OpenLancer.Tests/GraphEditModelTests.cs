@@ -190,8 +190,8 @@ public sealed class GraphEditModelTests
         var model = Model(m);
         var wave = model.Graph.Index.Trigger("ol_wave")!;
 
-        Run(m, model.Duplicate(wave));
-        Run(m, model.Rename(model.Graph.Index.Trigger("ol_end")!, "ol_finish"));
+        Run(m, model.Duplicate([(wave, null)]));
+        Run(m, GraphEditModel.Rename(model.Graph.Index.Trigger("ol_end")!, "ol_finish"));
         Run(m, model.SetStart(wave, true));
         Run(m, model.SetRepeats(wave, true));
 
@@ -199,7 +199,7 @@ public sealed class GraphEditModelTests
         Assert.Contains("Act_ActTrig = ol_finish", m.Lines("ol_start"));
         Assert.Equal(["system = ol_system", "nickname = ol_wave", "InitState = ACTIVE", "repeatable = true"],
             m.Lines("ol_wave").Take(4));
-        Assert.Null(model.Rename(wave, "ol_wave"));
+        Assert.Null(GraphEditModel.Rename(wave, "ol_wave"));
     }
 
     [Fact]
@@ -382,10 +382,167 @@ public sealed class GraphEditModelTests
         var item = MissionLibrary.Sections(null)[0].Items.Single(i => i.Id == "atOnce");
 
         Run(m, model.DropOnEmpty(item, new GraphPoint(400, 500), model.ActRefOf(model.Graph.ActsOf().Acts[0])));
-        Run(m, FileModel(m).Duplicate(FileModel(m).Graph.Index.Trigger("ol_end")!, new GraphPoint(10, 900)));
+        Run(m, FileModel(m).Duplicate([(FileModel(m).Graph.Index.Trigger("ol_end")!, new GraphPoint(10, 900))]));
 
         var graph = m.Missions.Graph(Script);
         Assert.Equal([new GraphNodePlace("ol_test_trigger_1", 400, 500), new GraphNodePlace("ol_end_2", 10, 900)], graph.Nodes);
         Assert.Contains("ol_test_trigger_1", graph.Act("act_1")!.Members);
+    }
+
+    /// <summary>Four triggers on a main path with three systems: act 1 has ol_a, act 2 has ol_b, act 3 has ol_c and
+    /// ol_d. Trigger ol_a starts ol_b, ol_c and ol_d.</summary>
+    private const string ThreeActs = """
+        [Mission]
+        npc_ship_file = missions\ol_test\npcships.ini
+
+        [Trigger]
+        nickname = ol_a
+        system = sys_a
+        InitState = ACTIVE
+        Cnd_True = no_params
+        Act_ActTrig = ol_b
+        Act_ActTrig = ol_c
+        Act_ActTrig = ol_d
+
+        [Trigger]
+        nickname = ol_b
+        system = sys_b
+        Cnd_True = no_params
+        Act_ActTrig = ol_c
+
+        [Trigger]
+        nickname = ol_c
+        system = sys_c
+        Cnd_True = no_params
+        Act_ActTrig = ol_d
+
+        [Trigger]
+        nickname = ol_d
+        system = sys_c
+        Cnd_True = no_params
+        Act_ChangeState = SUCCEED
+        """;
+
+    /// <summary>The graph of a script with the acts of its graph file, and the frames of some acts collapsed, by act
+    /// number.</summary>
+    private static MissionGraph Collapsed(MissionEdits m, params int[] acts)
+    {
+        var model = m.Missions.Model(Script);
+        var open = MissionGraph.Build(model.Analysis, new GraphOptions(GraphLens.Logic) { Acts = model.Acts });
+        var collapse = open.Acts.Where(f => f.Act != null && acts.Contains(f.Act.Number)).ToDictionary(f => f.Key, _ => true);
+        return MissionGraph.Build(model.Analysis, new GraphOptions(GraphLens.Logic, Collapse: collapse) { Acts = model.Acts });
+    }
+
+    [Fact]
+    public void InsertTriggerOnALinkIntoACollapsedFrameKeepsTheStartOfEachTarget()
+    {
+        using var m = Create(ThreeActs);
+        var graph = Collapsed(m, 3);
+        var link = graph.Links.Single(l => l.From.Trigger?.Nickname == "ol_a" && l.To.Kind == GraphNodeKind.Act);
+        Assert.Equal(["ol_c", "ol_d"], link.Sources.Select(s => s.TargetName).Order());
+
+        var batch = new GraphEditModel(graph).InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.Delay));
+        Run(m, batch);
+
+        // The source starts the new trigger once, and the new trigger starts both targets of the link.
+        Assert.Equal(["nickname = ol_a", "system = sys_a", "InitState = ACTIVE", "Cnd_True = no_params", "Act_ActTrig = ol_b",
+            "Act_ActTrig = ol_test_trigger_1"], m.Lines("ol_a"));
+        Assert.Equal(["nickname = ol_test_trigger_1", "Cnd_Timer = 3", "Act_ActTrig = ol_c", "Act_ActTrig = ol_d"],
+            m.Lines("ol_test_trigger_1"));
+    }
+
+    [Fact]
+    public void InsertTriggerRefusesALinkOfSeveralTriggersToSeveralTriggers()
+    {
+        // Act 4 has ol_b1 and ol_b2, and each of them starts its own trigger of act 5.
+        using var m = Create("[Mission]\n\n" +
+                             "[Trigger]\nnickname = ol_a\nsystem = sys_a\nInitState = ACTIVE\nCnd_True = no_params\n" +
+                             "Act_ActTrig = ol_b1\nAct_ActTrig = ol_b2\n\n" +
+                             "[Trigger]\nnickname = ol_b1\nsystem = sys_b\nCnd_True = no_params\nAct_ActTrig = ol_c1\n\n" +
+                             "[Trigger]\nnickname = ol_b2\nsystem = sys_b\nCnd_True = no_params\nAct_ActTrig = ol_c2\n\n" +
+                             "[Trigger]\nnickname = ol_c1\nsystem = sys_c\nCnd_True = no_params\n\n" +
+                             "[Trigger]\nnickname = ol_c2\nsystem = sys_c\nCnd_True = no_params\n");
+        m.Apply(new AddAct(TestScript) { Name = "B", Members = ["ol_b1", "ol_b2"] });
+        m.Apply(new AddAct(TestScript) { Name = "C", Members = ["ol_c1", "ol_c2"] });
+        var graph = Collapsed(m, 4, 5);
+        var link = graph.Links.First(l => l.Sources.Select(s => s.Source).Distinct().Count() > 1 &&
+                                          l.Sources.Select(s => s.TargetName).Distinct().Count() > 1);
+
+        Assert.Equal(GraphEditModel.SeveralLinks, GraphEditModel.InsertRefusal(link));
+        Assert.Null(new GraphEditModel(graph).InsertOnLink(link, GraphEditModel.InsertCondition(InsertEvent.AtOnce)));
+        Assert.Equal("Cnd_CommComplete", GraphEditModel.InsertCondition(InsertEvent.CommLine, commLine: "ol_line").Key);
+    }
+
+    [Fact]
+    public void DeleteOfAnActFrameAndItsTriggerRemovesThatActOnTheFirstActEdit()
+    {
+        using var m = Create(ThreeActs);
+        var graph = MissionGraph.Build(m.Missions.Model(Script).Analysis, new GraphOptions(GraphLens.Logic));
+        var second = graph.Acts.Single(f => f.Act?.Number == 2);
+
+        Run(m, new GraphEditModel(graph).Delete([graph.TriggerNode(graph.Index.Trigger("ol_b")!)!, second]));
+
+        // The acts stay proposed until the first act edit, so the act numbers of the selection are the numbers before
+        // the delete.
+        Assert.Equal(["act_1", "act_3"], m.Missions.Graph(Script).Acts.Select(a => a.Nickname));
+        Assert.Equal(["ol_c", "ol_d"], m.Missions.Graph(Script).Acts[1].Members);
+        Assert.False(m.Has("ol_b"));
+    }
+
+    [Fact]
+    public void CtrlDDuplicatesEachSelectedTriggerInOneBatch()
+    {
+        using var m = Create();
+        var model = Model(m);
+
+        var batch = model.Duplicate([(model.Graph.Index.Trigger("ol_wave")!, null), (model.Graph.Index.Trigger("ol_end")!, null)]);
+        Run(m, batch);
+
+        Assert.Equal("Duplicate 2 triggers", batch!.Label);
+        Assert.True(m.Has("ol_wave_2"));
+        Assert.True(m.Has("ol_end_2"));
+        Assert.Null(model.Duplicate([]));
+    }
+
+    [Fact]
+    public void APasteGivesEachTriggerOfARepeatedNameAFreeNameAndAReadProblemItsLine()
+    {
+        using var m = Create();
+        var model = Model(m);
+
+        Run(m, model.Paste("[Trigger]\nnickname = ol_x\nCnd_True = no_params\nAct_ActTrig = ol_x\n\n" +
+                           "[Trigger]\nnickname = ol_x\nCnd_True = no_params\n", out var problem));
+        var bad = model.Paste("[Trigger]\nnickname = ol_y\nno value here\n", out var badProblem);
+
+        Assert.Null(problem);
+        // A value inside the pasted set names the first trigger of the name, as the game finds the first trigger.
+        Assert.Equal(["nickname = ol_x", "Cnd_True = no_params", "Act_ActTrig = ol_x"], m.Lines("ol_x"));
+        Assert.Equal(["nickname = ol_x_2", "Cnd_True = no_params"], m.Lines("ol_x_2"));
+        Assert.Null(bad);
+        Assert.StartsWith("The editor cannot read the text of the clipboard.", badProblem);
+    }
+
+    [Fact]
+    public void AfterAnEditEachNodeThatStaysKeepsItsPlace()
+    {
+        using var m = Create();
+        var before = Model(m).Graph;
+        var layout = GraphLayout.Of(before);
+
+        // A new trigger between ol_end and ol_wave changes the layers of the automatic layout.
+        Run(m, new MissionBatch("Add", [
+            new AddTrigger(TestScript) { Nickname = "ol_new", Condition = LineSpec.Raw("Cnd_True", "no_params") },
+            new LinkTriggers(T("ol_end"), "ol_new", LinkKind.Start), new LinkTriggers(T("ol_new"), "ol_wave", LinkKind.Start)]));
+        var after = Model(m).Graph;
+        var kept = GraphLayout.Kept(before, layout, after);
+        var moved = GraphLayout.Of(after, null, kept);
+
+        foreach (var name in new[] { "ol_start", "ol_wave", "ol_end" })
+        {
+            Assert.Equal(layout.PositionOf(before.TriggerNode(before.Index.Trigger(name)!)!),
+                moved.PositionOf(after.TriggerNode(after.Index.Trigger(name)!)!));
+        }
+
+        Assert.False(kept.ContainsKey(after.TriggerNode(after.Index.Trigger("ol_new")!)!.Key));
     }
 }

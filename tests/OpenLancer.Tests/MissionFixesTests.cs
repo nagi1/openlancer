@@ -194,9 +194,29 @@ public sealed class MissionFixesTests
             Nickname = "ol_accept", Condition = LineSpec.Raw("Cnd_MsnResponse", "accept"),
             Actions = [LineSpec.Raw("Act_ActTrig", "ol_start")],
         });
+        m.Apply(new LinkTriggers(T("ol_start"), "ol_accept", LinkKind.Start));
 
         StepFix(m, "offer", "ol_accept", "decline", "Add a decline trigger");
         Assert.Equal(["nickname = ol_accept_decline", "Cnd_MsnResponse = reject"], m.Lines("ol_accept_decline"));
+        // The trigger that starts the accept trigger starts the decline trigger too, so the game runs it.
+        Assert.Equal("Act_ActTrig = ol_accept_decline", m.Lines("ol_start")[^1]);
+        Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule == "G05" &&
+                                                                     p.Message.Contains("ol_accept_decline", System.StringComparison.Ordinal));
+    }
+
+    /// <summary>A decline trigger starts with the mission when the accept trigger does.</summary>
+    [Fact]
+    public void ADeclineTriggerStartsWithTheMissionWhenTheAcceptTriggerDoes()
+    {
+        using var m = Create();
+        m.Apply(new AddTrigger(TestScript)
+        {
+            Nickname = "ol_accept", StartsWithMission = true, Condition = LineSpec.Raw("Cnd_MsnResponse", "accept"),
+        });
+
+        StepFix(m, "offer", "ol_accept", "decline", "Add a decline trigger");
+        Assert.Equal(["nickname = ol_accept_decline", "InitState = ACTIVE", "Cnd_MsnResponse = reject"],
+            m.Lines("ol_accept_decline"));
     }
 
     [Fact]
@@ -206,8 +226,8 @@ public sealed class MissionFixesTests
         var error = m.Refuse(new ApplyFix(TestScript, "M01|ol_none", "atOnce"), MissionErrors.FixNotFound);
 
         Assert.Equal(EditErrorKind.Refused, error.Kind);
-        Assert.Equal($"The fix 'atOnce' does not apply to {Script} now. The problem or the step changed. Read the problems " +
-                     "again, then try again.", error.Message);
+        Assert.Equal($"This fix does not apply to {Script} now. The problem or the step changed. Read the problems again, " +
+                     "then try again.", error.Message);
         Assert.False(MissionFixes.HasFix("M10"));
         Assert.False(MissionFixes.HasFix("G01"));
     }

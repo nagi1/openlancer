@@ -11,6 +11,10 @@ public sealed record NodePlace(string Trigger, double X, double Y)
 {
     /// <summary>True removes the place, so the node takes the automatic layout again.</summary>
     public bool Remove { get; init; }
+
+    /// <summary>The place of a new record in the list of the node records, or null for the end. The inverses use it, so
+    /// the order of the records comes back.</summary>
+    public int? Index { get; init; }
 }
 
 /// <summary>Sets the places of nodes in the graph file of a script (section 6.8 of the M6b design). One drag of nodes is
@@ -29,7 +33,9 @@ public sealed record MoveNodes(ScriptRef Script, IReadOnlyList<NodePlace> Places
         {
             var name = place.Remove ? place.Trigger.Trim() : d.TriggerNamesOf(document, [place.Trigger])[0];
             var at = nodes.FindIndex(n => n.Trigger.Equals(name, StringComparison.OrdinalIgnoreCase));
-            inverse.Add(at >= 0 ? new NodePlace(nodes[at].Trigger, nodes[at].X, nodes[at].Y) : new NodePlace(name, 0, 0) { Remove = true });
+            inverse.Add(at >= 0
+                ? new NodePlace(nodes[at].Trigger, nodes[at].X, nodes[at].Y) { Index = place.Remove ? at : null }
+                : new NodePlace(name, 0, 0) { Remove = true });
             if (place.Remove)
             {
                 if (at >= 0)
@@ -40,7 +46,7 @@ public sealed record MoveNodes(ScriptRef Script, IReadOnlyList<NodePlace> Places
             if (at >= 0)
                 nodes[at] = node;
             else
-                nodes.Add(node);
+                nodes.Insert(Math.Clamp(place.Index ?? nodes.Count, 0, nodes.Count), node);
         }
         d.SetGraph(document, graph with { Nodes = nodes });
         inverse.Reverse();

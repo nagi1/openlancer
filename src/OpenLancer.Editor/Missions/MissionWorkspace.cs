@@ -17,12 +17,20 @@ using OpenLancer.Runtime.Missions;
 namespace OpenLancer.Editor.Missions;
 
 /// <summary>A field that waits for "Pick in Scene": the next click in the Scene sets its position.</summary>
+/// <param name="Key">The key of the field on its page, so two fields with one label do not both wait.</param>
 /// <param name="Label">The label of the field.</param>
+/// <param name="System">The system of the item of the field, or null when the item names no system.</param>
+/// <param name="Owner">The selection of the page of the field. A pick ends when the selection changes.</param>
 /// <param name="Set">Sets the position.</param>
-internal sealed record ScenePick(string Label, Action<System.Numerics.Vector3> Set)
+internal sealed record ScenePick(string Key, string Label, string? System, object Owner,
+    Action<System.Numerics.Vector3> Set)
 {
     /// <summary>The hint in the Scene while the pick waits (section 8.11 of the M6b design).</summary>
     public string Hint => $"Click a point in the Scene to set {Label}. Esc cancels.";
+
+    /// <summary>The hint in the Scene while it shows another system than the system of the item.</summary>
+    public string OtherSystemHint(string shown) =>
+        $"{Label} is a position in {System}. The Scene shows {shown}. Open {System} to pick a point. Esc cancels.";
 }
 
 /// <summary>
@@ -107,8 +115,10 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// node.</summary>
     public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
 
-    // The acts of the graph file of the last analysis that asked, with the graph file that gave them.
-    private (MissionAnalysis Analysis, GraphFile File, MissionActs? Acts)? acts;
+    // The acts of the graph file of each script, with the analysis and the graph file that gave them. Each script has
+    // its own entry, so a read of another script does not make new acts (review finding 8 of M6b-2).
+    private readonly Dictionary<string, (MissionAnalysis Analysis, GraphFile File, MissionActs? Acts)> acts =
+        new(VfsPath.Comparer);
 
     /// <summary>The records of the graph file of a script in W (section 6.8 of the M6b design), or
     /// <see cref="GraphFile.Empty"/>. The same file gives the same record.</summary>
@@ -118,33 +128,47 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// (decision D679). The graph, the Hierarchy and the Act page use them.</summary>
     public MissionActs? ActsOf(MissionAnalysis analysis)
     {
-        var file = GraphOf(analysis.Script.Path);
-        if (acts is var (known, knownFile, made) && ReferenceEquals(known, analysis) && ReferenceEquals(knownFile, file))
+        var path = analysis.Script.Path;
+        var file = GraphOf(path);
+        if (acts.TryGetValue(path, out var known) && ReferenceEquals(known.Analysis, analysis) &&
+            ReferenceEquals(known.File, file))
         {
-            return made;
+            return known.Acts;
         }
 
-        made = file.Acts.Count > 0 ? MissionActs.FromFile(analysis.Index, file.Acts) : null;
-        acts = (analysis, file, made);
+        var made = file.Acts.Count > 0 ? MissionActs.FromFile(analysis.Index, file.Acts) : null;
+        acts[path] = (analysis, file, made);
         return made;
     }
 
-    /// <summary>The field that waits for "Pick in Scene", or null (section 8.9 of the M6b design).</summary>
-    public ScenePick? PendingPick { get; private set; }
+    private ScenePick? pendingPick;
+
+    /// <summary>The field that waits for "Pick in Scene", or null (section 8.9 of the M6b design). A pick ends when the
+    /// selection changes, for example to another item or another mission.</summary>
+    public ScenePick? PendingPick
+    {
+        get
+        {
+            if (pendingPick != null && !Equals(pendingPick.Owner, window.Selection))
+            {
+                pendingPick = null;
+            }
+
+            return pendingPick;
+        }
+    }
 
     /// <summary>Starts "Pick in Scene": the next click in the Scene sets the position of a field. Esc cancels.</summary>
-    /// <param name="label">The label of the field, for the hint in the Scene.</param>
-    /// <param name="set">Sets the position.</param>
-    public void StartPick(string label, Action<System.Numerics.Vector3> set) => PendingPick = new ScenePick(label, set);
+    public void StartPick(ScenePick pick) => pendingPick = pick;
 
     /// <summary>Ends "Pick in Scene" without a change.</summary>
-    public void CancelPick() => PendingPick = null;
+    public void CancelPick() => pendingPick = null;
 
     /// <summary>Ends "Pick in Scene" with a point: the field gets it.</summary>
     public void Picked(System.Numerics.Vector3 point)
     {
         var pick = PendingPick;
-        PendingPick = null;
+        pendingPick = null;
         pick?.Set(point);
     }
 
@@ -380,9 +404,26 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// and the row moves of the result (section 8.10 of the M6b design). A null batch does nothing.
     /// </summary>
     /// <returns>True when the batch changed W.</returns>
+    /// <remarks>A batch that needs a confirmation, for example a change of a ship build of a shared file, asks in a
+    /// dialog first (section 4.0.5 of the M6b design). "Confirm" runs it again with the confirmation.</remarks>
     public bool Run(MissionBatch? batch)
     {
-        if (batch == null || window.Edits.Apply(batch) is not { Status: EditStatus.Applied } result)
+        if (batch == null || window.Edits.Apply(batch) is not { } result)
+        {
+            return false;
+        }
+
+        if (result is { Status: EditStatus.Refused, NeedsConfirmation: true } && !batch.Confirm)
+        {
+            window.Choice.Show("Confirm the change", string.Join("\n\n", result.Errors.Select(e => e.Message)),
+            [
+                new Dialogs.Choice("Confirm", () => Run(batch with { Confirm = true })),
+                new Dialogs.Choice("Cancel", () => { }) { Default = true },
+            ]);
+            return false;
+        }
+
+        if (result.Status != EditStatus.Applied)
         {
             return false;
         }
@@ -553,7 +594,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
         PendingSection = null;
         PendingSceneFrame = null;
         PendingGraphFrame = false;
-        PendingPick = null;
+        pendingPick = null;
+        acts.Clear();
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();

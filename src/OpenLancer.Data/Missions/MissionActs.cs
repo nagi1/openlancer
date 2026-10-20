@@ -79,9 +79,6 @@ public sealed class MissionActs
     public static string NicknameOf(MissionAct act) =>
         act.Nickname ?? "act_" + act.Number.ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>True when the acts come from the graph file, not from the proposal rule.</summary>
-    public bool OfFile => Acts.Any(a => a.Nickname != null);
-
     /// <summary>
     /// The acts of the graph file of a mission (decision D679): each act of the file in file order, with its members
     /// that the script has. A trigger that no act of the file names and that a start trigger reaches takes the act with
@@ -106,7 +103,8 @@ public sealed class MissionActs
             members[i].Select(t => t.SystemHint).FirstOrDefault(h => h != null && !MissionIndex.Is(h, "ANY")),
             members[i].OrderBy(t => t.Section.Index).ToList())
         {
-            Nickname = a.Nickname, Name = a.Name, Text = a.Text,
+            // An act without a name shows the title of a proposed act, for example "Act 2: {system name}".
+            Nickname = a.Nickname, Name = a.Name.Length > 0 ? a.Name : null, Text = a.Text,
         }).ToList();
         var notStarted = index.Triggers.Where(t => !taken.Contains(t)).ToList();
         return new MissionActs(acts, proposed.MainPath, notStarted);

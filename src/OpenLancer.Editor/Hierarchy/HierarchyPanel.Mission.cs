@@ -22,9 +22,8 @@ internal sealed partial class HierarchyPanel
     /// <summary>The payload type of a row of the tree of a mission.</summary>
     private const string MissionRowType = "OL_MISSION_TREE_ROW";
 
-    private string missionRenameText = "";
+    private readonly RenamePopup missionRename = new("##mission-rename");
     private MissionRef? missionRenaming;
-    private bool missionRenameOpen;
 
     // A ship tile that dropped on the group "Cast", until the user picks the faction.
     private AssetRow? droppedShip;
@@ -85,8 +84,8 @@ internal sealed partial class HierarchyPanel
         var acts = window.Missions.ActsOf(analysis);
         var delete = MissionTreeEdits.Delete(analysis, item, acts);
         var duplicate = MissionTreeEdits.Duplicate(analysis, item);
-        var renames = item.Kind == MissionItemKind.Act ? delete != null : item.Section != null && delete != null;
-        if (delete == null && duplicate == null)
+        var renames = MissionTreeEdits.CanRename(analysis, item, acts);
+        if (delete == null && duplicate == null && !renames)
         {
             return;
         }
@@ -111,8 +110,7 @@ internal sealed partial class HierarchyPanel
     private void StartMissionRename(MissionRef item)
     {
         missionRenaming = item;
-        missionRenameText = missionModel?.NodeOf(item)?.Name ?? "";
-        missionRenameOpen = true;
+        missionRename.Open(missionModel?.NodeOf(item)?.Name ?? "");
     }
 
     /// <summary>The keys of the tree of a mission: F2 renames, Ctrl+D duplicates and Delete deletes the selected row,
@@ -140,7 +138,7 @@ internal sealed partial class HierarchyPanel
             RunMission(MissionTreeEdits.Delete(analysis, item, window.Missions.ActsOf(analysis)));
         }
 
-        if (ImGui.IsKeyPressed(ImGuiKey.F2, false))
+        if (ImGui.IsKeyPressed(ImGuiKey.F2, false) && MissionTreeEdits.CanRename(analysis, item, window.Missions.ActsOf(analysis)))
         {
             StartMissionRename(item);
         }
@@ -149,34 +147,10 @@ internal sealed partial class HierarchyPanel
     /// <summary>The popup of a rename of a row of a mission. Enter renames, and Esc closes it.</summary>
     private void MissionRenamePopup()
     {
-        if (missionRenameOpen)
+        if (missionRename.Draw() is { } name && missionRenaming is { } item && window.Missions.Open is { } analysis)
         {
-            ImGui.OpenPopup("##mission-rename");
-            missionRenameOpen = false;
+            RunMission(MissionTreeEdits.Rename(analysis, item, name, window.Missions.ActsOf(analysis)));
         }
-
-        if (!ImGui.BeginPopup("##mission-rename"))
-        {
-            return;
-        }
-
-        ImGui.Text("New name");
-        if (ImGui.IsWindowAppearing())
-        {
-            ImGui.SetKeyboardFocusHere();
-        }
-
-        if (ImGui.InputText("##text", ref missionRenameText, 128, ImGuiInputTextFlags.EnterReturnsTrue))
-        {
-            if (missionRenaming is { } item && window.Missions.Open is { } analysis)
-            {
-                RunMission(MissionTreeEdits.Rename(analysis, item, missionRenameText, window.Missions.ActsOf(analysis)));
-            }
-
-            ImGui.CloseCurrentPopup();
-        }
-
-        ImGui.EndPopup();
     }
 
     /// <summary>

@@ -205,10 +205,10 @@ public sealed class GraphNode : GraphBlock
     /// <summary>The nickname of a trigger, the name of a collapsed frame, or "Missing: {name}".</summary>
     public string Title { get; }
 
-    /// <summary>The trigger of a trigger node, or null.</summary>
     /// <summary>The trigger name of a missing node, as the first line that names it writes it, or null.</summary>
     public string? MissingName { get; internal init; }
 
+    /// <summary>The trigger of a trigger node, or null.</summary>
     public MissionTrigger? Trigger { get; internal init; }
 
     /// <summary>The frame that a collapsed node stands for, or null.</summary>
@@ -524,10 +524,10 @@ public sealed class MissionGraph
         _ => null,
     };
 
-    /// <summary>Builds the graph of an analysis.</summary>
     /// <summary>The acts of the graph: the acts of the options, of the analysis, or the proposed acts.</summary>
     public MissionActs ActsOf() => Options.Acts ?? Analysis.Acts ?? MissionActs.Propose(Index);
 
+    /// <summary>Builds the graph of an analysis.</summary>
     public static MissionGraph Build(MissionAnalysis analysis, GraphOptions? options = null)
     {
         var graph = new MissionGraph(analysis, options ?? new GraphOptions());

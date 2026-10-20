@@ -7,6 +7,7 @@ using ImGuiNET;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Editing.Lists;
+using OpenLancer.Editor.Inspector;
 
 namespace OpenLancer.Editor.Ui.Fields;
 
@@ -41,13 +42,23 @@ internal sealed class ListField
     /// <param name="entries">Gives the entries of the data lists of a reference column, with their display names. It
     /// takes the id of <see cref="ListColumn.List"/>. Null when the page has no lists. A reference cell then has a text
     /// field.</param>
+    /// <param name="changed">True when the active mod sets the list, also with an edit that is not saved. The label then
+    /// gets the blue bar.</param>
     public ListFieldModel? Draw(string id, ListFieldModel model, HelpText? help, string? readOnly,
         IReadOnlyList<ListCellProblem>? problems = null,
-        Func<string, IReadOnlyList<(ListEntry Entry, string Name)>>? entries = null)
+        Func<string, IReadOnlyList<(ListEntry Entry, string Name)>>? entries = null, bool changed = false)
     {
         ImGui.PushID(id);
         var spec = model.Spec;
+        // A list that the active mod sets has the label in the accent color and the blue bar (UI rule 7).
+        if (changed)
+        {
+            PropertyGrid.ChangedBar(ImGui.GetCursorScreenPos());
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Text, changed ? EditorTheme.AccentText : ImGui.GetStyle().Colors[(int)ImGuiCol.Text]);
         ImGui.Text(string.Create(CultureInfo.InvariantCulture, $"{spec.Label} ({model.Rows.Count})"));
+        ImGui.PopStyleColor();
         if (spec.Help != null)
         {
             ImGui.SetItemTooltip(spec.Help);
