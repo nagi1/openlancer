@@ -488,6 +488,9 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
                         continue;
                     d.ChangeValues(file, group.Key, group.Select(l => (l.Row, l.Value)).ToList(), name, inverse);
                 }
+                // The values of the linked prefab instances follow, so their members show no hand edit (rule P01).
+                if (file.HoldsScript)
+                    d.RenameInRecords(file, kinds, old, name);
             }
             else
                 d.MarkMissing(file, lines.Select(l => (l.Section, l.Row)).Distinct().ToList(), old,

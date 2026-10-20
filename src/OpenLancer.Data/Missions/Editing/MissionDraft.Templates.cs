@@ -16,9 +16,9 @@ namespace OpenLancer.Data.Missions.Editing;
 /// </summary>
 internal sealed partial class MissionDraft
 {
-    /// <summary>A template in the draft: its prefab, its role form, and the template and the state of its last
+    /// <summary>A template in the draft: its prefab, its role form, and the template, the text and the state of its last
     /// write.</summary>
-    private sealed class TemplateDraft(PrefabRef prefab, string name, EditDocument document, PrefabTemplate written)
+    private sealed class TemplateDraft(PrefabRef prefab, string name, EditDocument document, PrefabTemplate written, string text)
     {
         public PrefabRef Prefab { get; } = prefab;
 
@@ -27,6 +27,10 @@ internal sealed partial class MissionDraft
         public EditDocument Document { get; } = document;
 
         public PrefabTemplate Written { get; set; } = written;
+
+        /// <summary>The text of the asset that the role form shows: the text at the first read, or the text of the last
+        /// write.</summary>
+        public string Text { get; set; } = text;
 
         public object WrittenState { get; set; } = document.State;
 
@@ -39,13 +43,20 @@ internal sealed partial class MissionDraft
 
     /// <summary>The role form of the template of a script <c>prefab:mod:&lt;id&gt;</c>, to change it. A built-in prefab
     /// and a prefab of a lower mod refuse, because they cannot change (decision D672).</summary>
+    /// <remarks>Another command of the batch can write the asset, for example "Apply to prefab", a restore or a delete.
+    /// The role form then reads the asset again, so a later command does not write back an old template.</remarks>
     /// <exception cref="EditException"><c>PrefabNotFound</c>, <c>BuiltInPrefab</c>, <c>LowerModPrefab</c> or
     /// <c>PrefabProblems</c>.</exception>
     private EditDocument Template(string path)
     {
         var prefab = PrefabRef.TryParse(path) ?? throw Refuse(MissionErrors.PrefabNotFoundError(path));
         if (templates.TryGetValue(prefab.Script, out var known))
-            return known.Document;
+        {
+            if (!ReferenceEquals(known.Document.State, known.WrittenState) ||
+                string.Equals(Editor.Prefab(prefab)?.Text, known.Text, StringComparison.Ordinal))
+                return known.Document;
+            templates.Remove(prefab.Script);
+        }
         var asset = ActivePrefab(prefab);
         var template = TemplateOf(asset);
         var document = EditDocument.NewWhole(prefab.Script);
@@ -54,7 +65,7 @@ internal sealed partial class MissionDraft
             Working = ImmutableList.CreateRange(PrefabMode.RoleForm(template)),
             Exists = true,
         });
-        templates[prefab.Script] = new TemplateDraft(prefab, template.Name, document, template);
+        templates[prefab.Script] = new TemplateDraft(prefab, template.Name, document, template, asset.Text);
         return document;
     }
 
@@ -82,7 +93,8 @@ internal sealed partial class MissionDraft
             if (!template.Id.Equals(draft.Prefab.Id, StringComparison.Ordinal))
                 throw Refuse(new EditError(EditErrorKind.Refused, EditPlan.PlanRefused,
                     $"The id of prefab '{draft.Name}' is the name of its file. Use Rename to change it."));
-            SetPrefabText(draft.Prefab.Id, template.Write());
+            draft.Text = template.Write();
+            SetPrefabText(draft.Prefab.Id, draft.Text);
             var (instances, scripts) = Propagate(draft.Prefab, template, roles: draft.Renames);
             draft.Renames.Clear();
             PropagationNote(template.Name, instances, scripts);

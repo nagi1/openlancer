@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
@@ -32,6 +31,10 @@ public sealed record PlacePrefabInstance(ScriptRef Script, PrefabRef Prefab) : M
     /// <summary>The outside triggers that the ports start.</summary>
     public IReadOnlyList<InstancePort> Ports { get; init; } = [];
 
+    /// <summary>The roles of the removed-member overrides of the new instance (decision D676 c). A duplicate of an
+    /// instance keeps them, as Unity Duplicate keeps each override.</summary>
+    public IReadOnlyList<string> Removed { get; init; } = [];
+
     /// <summary>The place of the first member trigger in the graph, or null for the automatic layout.</summary>
     public GraphPoint? Place { get; init; }
 
@@ -55,6 +58,16 @@ public sealed record PlacePrefabInstance(ScriptRef Script, PrefabRef Prefab) : M
         if (graph.Instance(id) != null)
             throw d.Refuse(MissionErrors.NameTakenError(document.Path, "prefab instance", id));
         var record = d.RecordOf(new InstanceRecord(id, Prefab.RecordText), template, Values, Ports);
+        var removed = Removed.Select(r => r.Trim()).Distinct(StringComparer.Ordinal).ToList();
+        foreach (var role in removed.Where(r => template.Section(r) == null))
+            throw d.Refuse(MissionErrors.RoleNotFoundError(template.Name, role, template.Sections.Select(s => s.Role)));
+        if (removed.Count > 0)
+            record = record with
+            {
+                // A removed member keeps its made name, so Revert gives the section that name.
+                Members = removed.Select(r => new InstanceMember(r, PrefabCompiler.MadeName(template.Section(r)!, id))).ToList(),
+                Removed = removed,
+            };
         var reference = new InstanceRef(document.Path, id);
         d.InstanceOps++;
         try
@@ -67,7 +80,8 @@ public sealed record PlacePrefabInstance(ScriptRef Script, PrefabRef Prefab) : M
             d.InstanceOps--;
         }
         record = d.Graph(document).Instance(id)!;
-        var triggers = record.Members.Where(m => template.Section(m.Role)?.Type is "Trigger").Select(m => m.Nickname).ToList();
+        var present = record.Members.Where(m => !record.Removed.Contains(m.Role)).ToList();
+        var triggers = present.Where(m => template.Section(m.Role)?.Type is "Trigger").Select(m => m.Nickname).ToList();
         MissionCommand? acts = null;
         if (Place != null || Act != null)
         {
@@ -92,7 +106,7 @@ public sealed record PlacePrefabInstance(ScriptRef Script, PrefabRef Prefab) : M
             d.SetGraph(document, graph);
         }
         d.Adds.Add(reference.ToString());
-        d.Adds.AddRange(record.Members.Select(m => MissionDraft.MemberIndex(document, template.Section(m.Role)?.Type, m.Nickname))
+        d.Adds.AddRange(present.Select(m => MissionDraft.MemberIndex(document, template.Section(m.Role)?.Type, m.Nickname))
             .Where(i => i >= 0).Select(i => d.RefOf(document, i)));
         d.Select = reference.ToString();
         MissionCommand remove = new RemovePrefabInstance(reference);
@@ -121,7 +135,7 @@ public sealed record SetPrefabField(InstanceRef Instance, string Field, IReadOnl
         var updated = d.WithValue(record, field, rows);
         if (updated.Equals(record))
             return;
-        d.Compile(document, updated, template);
+        d.Recompile(document, record, updated, template);
     }
 }
 
@@ -144,7 +158,7 @@ public sealed record SetPrefabPort(InstanceRef Instance, string Port, IReadOnlyL
         var updated = record with { Ports = ports };
         if (updated.Equals(record))
             return;
-        d.Compile(document, updated, template);
+        d.Recompile(document, record, updated, template);
     }
 }
 
@@ -168,7 +182,7 @@ public sealed record RevertOverride(InstanceRef Instance) : MissionCommand
         var (document, record) = d.Linked(Instance);
         var template = d.TemplateOf(d.Prefab(d.PrefabOf(record)));
         var updated = d.WithoutOverrides(record, Field, Member);
-        d.Compile(document, updated, template);
+        d.Recompile(document, record, updated, template);
     }
 }
 
@@ -198,17 +212,16 @@ public sealed record ApplyOverrideToPrefab(InstanceRef Instance) : MissionComman
         var fields = LinkedInstance.FieldsOf(record, template)
             .Where(f => f.Override && (Field == null && Member == null || f.Field.Id == Field)).ToList();
         var roles = record.Removed.Where(r => Field == null && Member == null || r == Member).ToList();
-        var changed = template with
+        // A removed member goes from the prefab with the lines that name it, as the compile of the instance left them out.
+        var changed = (template with
         {
             Fields = template.Fields.Select(f => fields.FirstOrDefault(o => o.Field.Id == f.Id) is { } value
                 ? f with { Default = value.Rows }
                 : f).ToList(),
-            Sections = template.Sections.Where(s => !roles.Contains(s.Role)).ToList(),
-            Ports = template.Ports.Where(p => !roles.Contains(p.Role)).ToList(),
-        };
+        }).WithoutRoles(roles);
         d.SetPrefabText(prefab.Id, changed.Write());
         d.Inverse(new RestorePrefabAsset(prefab) { Text = asset.Text });
-        d.Compile(document, updated with { Removed = updated.Removed.Where(r => !roles.Contains(r)).ToList() }, changed);
+        d.Recompile(document, record, updated with { Removed = updated.Removed.Where(r => !roles.Contains(r)).ToList() }, changed);
         var (instances, _) = d.Propagate(prefab, changed, (document.Path, record.Id));
         d.PropagationNote(asset.Name, instances + 1,
             d.PropagatedScripts.Append(document.Path).Distinct(OpenLancer.Data.IO.VfsPath.Comparer).Count());
@@ -241,6 +254,12 @@ public sealed record UnpackPrefabInstance(InstanceRef Instance) : MissionCommand
         var at = d.Graph(document).Instances.ToList().IndexOf(record);
         d.SetRecord(document, record.Id, null);
         d.Deletes.Add(new ResultDelete(new InstanceRef(document.Path, record.Id).ToString(), DeleteReason.Target, null));
+        // The selection stays on the triggers: the first member, as Unity keeps the selection on an unpacked object.
+        var template = d.Editor.Prefab(record.Prefab)?.Template;
+        if (record.Members.Where(m => !record.Removed.Contains(m.Role))
+                .Select(m => MissionDraft.MemberIndex(document, template?.Section(m.Role)?.Type, m.Nickname))
+                .Where(i => i >= 0).Select(i => (int?)i).FirstOrDefault() is { } first)
+            d.Select = d.RefOf(document, first);
         d.Inverse(new RestoreInstanceRecord(new ScriptRef(document.Path), record) { Index = at });
     }
 }
@@ -314,15 +333,11 @@ public sealed record CreatePrefabAsset(string Id) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var id = Id.Trim();
-        if (!TemplateReader.IsId(id))
-            throw d.Refuse(MissionErrors.NameInvalidError(id, 47) with
-            {
-                Message = $"'{id}' is not a valid file name of a prefab. Use letters, digits, '_' and '-', with at most 47 " +
-                          "characters.",
-            });
-        if (d.Editor.Prefab(PrefabRef.ModOf(id)) is { Active: true })
-            throw d.Refuse(new EditError(EditErrorKind.NameTaken, MissionErrors.NameTaken,
-                $"The active mod already has a prefab '{id}'. Pick another file name."));
+        if (PrefabAsset.FileNameProblem(id) is { } problem)
+            throw d.Refuse(MissionErrors.PrefabFileNameError(problem));
+        // An asset of a lower mod with the id counts too: a new asset would hide it (review finding 6 of M6b-3).
+        if (d.Editor.Prefab(PrefabRef.ModOf(id)) is { } taken)
+            throw d.Refuse(MissionErrors.PrefabIdTakenError(id, taken.ModId, taken.Active));
         var prefab = PrefabRef.ModOf(id);
         if (Text != null)
         {
@@ -341,7 +356,7 @@ public sealed record CreatePrefabAsset(string Id) : MissionCommand
             var variant = template with
             {
                 Id = id,
-                Name = Name?.Trim() is { Length: > 0 } name ? name : $"{template.Name} variant",
+                Name = NameOf(d, template),
                 VariantOf = record.Prefab,
                 Fields = template.Fields.Select(f => baked.FirstOrDefault(b => b.Field.Id == f.Id) is { } value
                     ? f with { Default = value.Rows }
@@ -354,7 +369,9 @@ public sealed record CreatePrefabAsset(string Id) : MissionCommand
                 Prefab = prefab.RecordText,
                 Overrides = record.Overrides.Where(o => baked.All(b => b.Field.Id != o.Field)).ToList(),
             };
-            d.Compile(document, relinked, variant);
+            d.Recompile(document, record, relinked, variant);
+            // The selection stays on the instance, which now uses the variant.
+            d.Select = source.ToString();
         }
         else
         {
@@ -365,7 +382,7 @@ public sealed record CreatePrefabAsset(string Id) : MissionCommand
             d.SetPrefabText(id, (template with
             {
                 Id = id,
-                Name = Name?.Trim() is { Length: > 0 } name ? name : $"{template.Name} variant",
+                Name = NameOf(d, template),
                 VariantOf = from.RecordText,
             }).Write());
             d.Inverse(new RemovePrefabAsset(prefab));
@@ -373,6 +390,11 @@ public sealed record CreatePrefabAsset(string Id) : MissionCommand
         d.Adds.Add(prefab.ToString());
         d.Select ??= prefab.ToString();
     }
+
+    /// <summary>The name of a variant: the given name, or the name of the source with "variant" and a number when the
+    /// library has the name (UI rule 9).</summary>
+    private string NameOf(MissionDraft d, PrefabTemplate source) =>
+        Name?.Trim() is { Length: > 0 } name ? name : d.Editor.FreePrefabName($"{source.Name} variant");
 }
 
 /// <summary>Removes a prefab asset of the active mod (section 4.9 of the M6b design, decision D673). Each linked
@@ -390,49 +412,61 @@ public sealed record RemovePrefabAsset(PrefabRef Prefab) : MissionCommand
             d.Confirmations.Add(MissionErrors.PrefabInUseError(asset.Name, count));
         d.SetPrefabText(Prefab.Id, null);
         d.Deletes.Add(new ResultDelete(Prefab.ToString(), DeleteReason.Target, null));
-        d.Inverse(new CreatePrefabAsset(Prefab.Id) { Text = asset.Text });
+        // The inverse writes the old text back, also for an asset that hides an asset of a lower mod.
+        d.Inverse(new RestorePrefabAsset(Prefab) { Text = asset.Text });
     }
 }
 
 /// <summary>Gives a prefab asset of the active mod a new file name, id and name (section 8.3 of the M6b design). Each
 /// instance record of the active mod that names it follows. The hash of the prefab does not change, so no instance
-/// needs a compile.</summary>
+/// needs a compile. With the same id, only the name in the library changes.</summary>
 public sealed record RenamePrefabAsset(PrefabRef Prefab, string NewId) : MissionCommand
 {
     /// <summary>The new name in the library, or null to keep the name.</summary>
     public string? NewName { get; init; }
 
-    protected override string Describe() => $"Rename prefab {Prefab.Id} to {NewId}";
+    protected override string Describe() => NewId.Trim().Equals(Prefab.Id, StringComparison.Ordinal)
+        ? $"Rename prefab {Prefab.Id} to '{NewName}'"
+        : $"Rename prefab {Prefab.Id} to {NewId}";
 
     internal override void Run(MissionDraft d)
     {
         var asset = d.ActivePrefab(Prefab);
         var template = d.TemplateOf(asset);
         var id = NewId.Trim();
-        if (!TemplateReader.IsId(id))
-            throw d.Refuse(MissionErrors.NameInvalidError(id, 47));
-        var renamed = PrefabRef.ModOf(id);
-        if (!id.Equals(Prefab.Id, StringComparison.OrdinalIgnoreCase) && d.Editor.Prefab(renamed) is { Active: true })
-            throw d.Refuse(new EditError(EditErrorKind.NameTaken, MissionErrors.NameTaken,
-                $"The active mod already has a prefab '{id}'. Pick another file name."));
+        var sameFile = id.Equals(Prefab.Id, StringComparison.Ordinal);
         var name = NewName?.Trim() is { Length: > 0 } given ? given : template.Name;
-        if (id == Prefab.Id && name == template.Name)
+        if (sameFile && name == template.Name)
             return;
+        var renamed = PrefabRef.ModOf(id);
+        if (!sameFile)
+        {
+            // The file name is the id. A file system can ignore letter case, so a change of the letter case only would
+            // keep the old file name.
+            if (id.Equals(Prefab.Id, StringComparison.OrdinalIgnoreCase))
+                throw d.Refuse(MissionErrors.PrefabFileNameError(
+                    $"'{id}' differs from '{Prefab.Id}' only in letter case. Pick another file name."));
+            if (PrefabAsset.FileNameProblem(id) is { } problem)
+                throw d.Refuse(MissionErrors.PrefabFileNameError(problem));
+            if (d.Editor.Prefab(renamed) is { } taken)
+                throw d.Refuse(MissionErrors.PrefabIdTakenError(id, taken.ModId, taken.Active));
+        }
         var records = d.Editor.InstancesOf(Prefab).ToList();
-        if (!id.Equals(Prefab.Id, StringComparison.Ordinal))
+        if (!sameFile)
             d.SetPrefabText(Prefab.Id, null);
         d.SetPrefabText(id, (template with { Id = id, Name = name }).Write());
-        foreach (var (script, record) in records)
-            d.Capture(() => d.RunInner(new RestoreInstanceRecord(new ScriptRef(script), record with { Prefab = renamed.RecordText })));
-        if (!id.Equals(Prefab.Id, StringComparison.Ordinal))
+        // The inverse writes the old text back, then removes the new file, then gives each record its old prefab. So it
+        // does not check the rule of a new file name, and an old id with capitals comes back as it was.
+        var inverse = new List<MissionCommand> { new RestorePrefabAsset(Prefab) { Text = asset.Text } };
+        if (!sameFile)
+        {
+            inverse.Add(new RestorePrefabAsset(renamed) { Text = null });
+            foreach (var (script, record) in records)
+                inverse.AddRange(d.RunInner(new RestoreInstanceRecord(new ScriptRef(script), record with { Prefab = renamed.RecordText })));
             d.Renames.Add(new ResultRename(Prefab.ToString(), renamed.ToString()));
+        }
         d.Changes.Add(renamed.ToString());
-        // The rename back writes the canonical text, so the old text of the file comes back after it.
-        d.Inverse(new CommandGroup(
-        [
-            new RenamePrefabAsset(renamed, Prefab.Id) { NewName = template.Name },
-            new RestorePrefabAsset(Prefab) { Text = asset.Text },
-        ]));
+        d.Inverse(new CommandGroup(inverse));
     }
 }
 
@@ -636,9 +670,20 @@ internal sealed partial class MissionDraft
     }
 
     /// <summary>The Console note of a propagation (section 8.6 of the M6b design).</summary>
-    public void PropagationNote(string prefab, int instances, int scripts)
+    public void PropagationNote(string prefab, int instances, int scripts) =>
+        Notes.Add($"Prefab '{prefab}' changed {MissionChecks.Count(instances, "instance", "instances")} in " +
+                  $"{MissionChecks.Count(scripts, "mission", "missions")}.");
+
+    /// <summary>
+    /// Compiles a linked instance after a command changed its record: a field, a port, an override or its prefab. A hand
+    /// edit of its lines goes, and a note says so (rule P01). Propagation skips such an instance, but a change of the
+    /// instance itself compiles it.
+    /// </summary>
+    /// <param name="before">The record before the command.</param>
+    public InstanceRecord Recompile(EditDocument script, InstanceRecord before, InstanceRecord updated, PrefabTemplate template)
     {
-        string Count(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n.ToString(CultureInfo.InvariantCulture)} {many}";
-        Notes.Add($"Prefab '{prefab}' changed {Count(instances, "instance", "instances")} in {Count(scripts, "mission", "missions")}.");
+        if (HandEdited(script, before))
+            Notes.Add(PrefabLinks.ReplacedHandEditNote(before.Id, script.Path));
+        return Compile(script, updated, template);
     }
 }

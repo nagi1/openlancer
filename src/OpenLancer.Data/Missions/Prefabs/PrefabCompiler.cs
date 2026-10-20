@@ -74,6 +74,12 @@ public static class PrefabCompiler
             names[section.Role] = input.Members.GetValueOrDefault(section.Role) ?? pattern;
         }
 
+        // A line that names a removed member goes, as Unity sets a reference to a removed child to None (decision D676 c).
+        // Else the line names a trigger or an item that the script does not have, and the instance gets an error.
+        var removed = input.Removed.Where(names.ContainsKey).SelectMany(r => new[] { names[r], patterns[r] })
+            .Where(n => n.Length > 0).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool NamesRemoved(IEnumerable<string> texts) => removed.Count > 0 && texts.Any(removed.Contains);
+
         var result = new List<CompiledSection>();
         foreach (var section in template.Sections.Where(s => !input.Removed.Contains(s.Role)))
         {
@@ -92,7 +98,7 @@ public static class PrefabCompiler
             {
                 var line = section.Lines[at];
                 if (PrefabSlot.KeyField(line.Key) is { } keyField)
-                    entries.AddRange(values[keyField].Select(r => new RawEntry(r.Key!, r.Texts)));
+                    entries.AddRange(values[keyField].Where(r => !NamesRemoved(r.Texts)).Select(r => new RawEntry(r.Key!, r.Texts)));
                 else if (nickname && line.Key.Equals("nickname", StringComparison.OrdinalIgnoreCase))
                 {
                     nickname = false;
@@ -101,7 +107,11 @@ public static class PrefabCompiler
                 else
                 {
                     foreach (var texts in Expand(template, line, input, values))
-                        entries.Add(new RawEntry(line.Key, Remap(texts, patterns, names)));
+                    {
+                        var remapped = Remap(texts, patterns, names);
+                        if (!NamesRemoved(remapped))
+                            entries.Add(new RawEntry(line.Key, remapped));
+                    }
                 }
                 sources.AddRange(Enumerable.Repeat(at, entries.Count - sources.Count));
             }

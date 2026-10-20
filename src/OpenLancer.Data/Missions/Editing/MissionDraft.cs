@@ -360,17 +360,18 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         "of the file, so the editor put it there.";
 
     /// <summary>Removes the section at an index, and gives it. The delete of a member of a linked prefab instance
-    /// becomes a removed-member override of its record (decision D676 c).</summary>
+    /// becomes a removed-member override of its record (decision D676 c). The caller handles the lines that name the
+    /// section with <see cref="OutsideLines"/> first.</summary>
     public Section Remove(EditDocument document, int index)
     {
-        var member = InstanceOps == 0 ? MemberAt(document, index) : null;
+        var member = MemberDeleteAt(document, index);
         var old = document.Working[index];
         var reference = new SectionRef(document.Path, document.IdentityAt(index));
         document.Remove(index, 1);
         if (!IsTemplate(document))
             scope.Changed(reference, structural: true);
-        if (member is var (record, role))
-            MemberRemoved(document, record, role);
+        if (member != null)
+            MemberRemoved(document, member);
         return old;
     }
 

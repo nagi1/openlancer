@@ -1,7 +1,7 @@
 using System;
-using System.Linq;
 using ImGuiNET;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Dialogs;
 
 namespace OpenLancer.Editor.Missions;
@@ -13,9 +13,6 @@ namespace OpenLancer.Editor.Missions;
 /// </summary>
 internal sealed class SavePrefabDialog(Func<MissionBatch, bool> run) : ModalDialog
 {
-    /// <summary>The rule of the file name of a prefab.</summary>
-    public const string FileNameRule = "Use lowercase letters, digits, '_' and '-'.";
-
     private InstanceRef? instance;
     private string name = "";
     private string id = "";
@@ -30,13 +27,9 @@ internal sealed class SavePrefabDialog(Func<MissionBatch, bool> run) : ModalDial
         Open();
     }
 
-    /// <summary>Why a file name cannot be the file name of a prefab, or null. A prefab file name has letters, digits,
-    /// '_' and '-', with at most 47 characters.</summary>
-    internal static string? FileNameProblem(string text) =>
-        text.Trim().Length == 0 ? "Give a file name."
-        : text.Trim().Length > 47 ? "The file name has more than 47 characters."
-        : text.Trim().All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-') ? null
-        : $"'{text.Trim()}' is not a valid file name. {FileNameRule}";
+    /// <summary>Why a file name cannot be the file name of a new prefab, or null. The command checks the same rule
+    /// (see <see cref="PrefabAsset.FileNameProblem"/>).</summary>
+    internal static string? FileNameProblem(string text) => PrefabAsset.FileNameProblem(text);
 
     /// <summary>The batch of the dialog: the new asset from the instance.</summary>
     internal static MissionBatch Batch(InstanceRef source, string name, string id) =>
@@ -55,7 +48,7 @@ internal sealed class SavePrefabDialog(Func<MissionBatch, bool> run) : ModalDial
         ImGui.InputText("Name", ref name, 64);
         ImGui.SetItemTooltip("The name in the library.");
         ImGui.InputText("File name", ref id, 47);
-        ImGui.SetItemTooltip($"The name of the prefab file. {FileNameRule}");
+        ImGui.SetItemTooltip($"The name of the prefab file. {PrefabAsset.FileNameRule}");
         var problem = FileNameProblem(id);
         Problem(problem ?? error);
         ImGui.Spacing();

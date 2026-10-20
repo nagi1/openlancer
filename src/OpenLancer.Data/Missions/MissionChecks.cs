@@ -86,6 +86,10 @@ public static class MissionChecks
         _ => kind.ToString().ToLowerInvariant(),
     };
 
+    /// <summary>A count with the singular or the plural form of a noun, for example "1 instance" or "3 instances".</summary>
+    public static string Count(int n, string one, string many) =>
+        n == 1 ? $"1 {one}" : $"{n.ToString(CultureInfo.InvariantCulture)} {many}";
+
     /// <summary>A word with "a" or "an" before it, for example "an order list".</summary>
     internal static string WithArticle(string word) =>
         (word.Length > 0 && ("aeiou".Contains(char.ToLowerInvariant(word[0])) ||

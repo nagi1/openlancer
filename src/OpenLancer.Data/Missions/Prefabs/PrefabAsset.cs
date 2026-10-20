@@ -282,6 +282,30 @@ public sealed record PrefabTemplate(string Id, string Name, MissionPrefabKind Ki
     /// <summary>The port of an id, or null.</summary>
     public PrefabPort? Port(string id) => Ports.FirstOrDefault(p => p.Id == id);
 
+    /// <summary>
+    /// The template without the sections of some roles: the ports of these roles go too, and each line of the other
+    /// sections that names a member of these roles goes. The compile of an instance leaves out the same lines for a
+    /// removed member, so "Apply to prefab" of a removed member gives the prefab the lines of the instance (decision
+    /// D676 c).
+    /// </summary>
+    public PrefabTemplate WithoutRoles(IReadOnlyCollection<string> roles)
+    {
+        if (roles.Count == 0)
+            return this;
+        var names = Sections.Where(s => roles.Contains(s.Role)).Select(s => s.NicknamePattern).OfType<string>()
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return this with
+        {
+            Sections = Sections.Where(s => !roles.Contains(s.Role))
+                .Select(s => s with
+                {
+                    Lines = s.Lines.Where(l => l.Key.Equals("nickname", StringComparison.OrdinalIgnoreCase) ||
+                                               !PrefabRow.Split(l.Value).Any(names.Contains)).ToList(),
+                }).ToList(),
+            Ports = Ports.Where(p => !roles.Contains(p.Role)).ToList(),
+        };
+    }
+
     /// <summary>The info text of the prefab (UI rule 10). A template without its own texts gets plain texts.</summary>
     public HelpText HelpText => new(Name,
         Help.Length > 0 ? Help : $"A behavior prefab: a group of triggers with named fields that each instance uses.",
@@ -870,6 +894,26 @@ public sealed record PrefabAsset(Editing.PrefabRef Ref, string Text, string? Mod
 
     /// <summary>The path of an asset of a mod, relative to the mod folder (decision D673).</summary>
     public static string PathOf(string id) => $@"prefabs\missions\{id}.ini";
+
+    /// <summary>The rule of the file name of a new prefab (section 8.11 of the M6b design).</summary>
+    public const string FileNameRule = "Use lowercase letters, digits, '_' and '-'.";
+
+    /// <summary>
+    /// Why a text cannot be the file name of a new prefab, or null. The file name is the id of the prefab: lowercase
+    /// letters, digits, '_' and '-', with at most 47 characters. A file system can ignore letter case, so a capital letter
+    /// would give two ids for one file.
+    /// </summary>
+    public static string? FileNameProblem(string text)
+    {
+        var id = text.Trim();
+        if (id.Length == 0)
+            return "Give a file name.";
+        if (id.Length > 47)
+            return "The file name has more than 47 characters.";
+        return id.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-')
+            ? null
+            : $"'{id}' is not a valid file name. {FileNameRule}";
+    }
 
     /// <summary>The folder of the assets of a mod, relative to the mod folder.</summary>
     public const string Folder = @"prefabs\missions\";

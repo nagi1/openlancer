@@ -422,6 +422,8 @@ internal sealed partial class MissionDraft
                 var lines = MissionLinks.Naming(Schema, file.Working, kinds, name)
                     .Where(l => !(ReferenceEquals(file, document) && l.Section == index)).Select(l => (l.Section, l.Row))
                     .Distinct().ToList();
+                if (ReferenceEquals(file, document))
+                    lines = OutsideLines(document, index, lines);
                 if (lines.Count == 0)
                     continue;
                 if (references == ReferencesMode.Remove)

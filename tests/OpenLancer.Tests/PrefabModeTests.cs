@@ -96,6 +96,73 @@ public sealed class PrefabModeTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void ANewRoleWhoseMadeNameIsATriggerOfTheUserRefuses()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        m.Apply(new AddTrigger(TestScript)
+        {
+            Nickname = "ol_w1_alarm", Condition = LineSpec.Raw("Cnd_True", "no_params"), Actions = [LineSpec.Raw("Act_ChangeState", "SUCCEED")],
+        });
+
+        var error = m.Refuse(new AddTrigger(Gate) { Nickname = "alarm", Condition = LineSpec.Raw("Cnd_Timer", "9") }, MissionErrors.NameTaken);
+
+        Assert.Contains("'ol_w1_alarm'", error.Message);
+        Assert.Equal(["nickname = ol_w1_alarm", "Cnd_True = no_params", "Act_ChangeState = SUCCEED"], m.Lines("ol_w1_alarm"));
+        Assert.Null(Template(m).Section("alarm"));
+    }
+
+    [Fact]
+    public void ATemplateEditAfterApplyInOneBatchKeepsTheAppliedValue()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        m.Apply(new SetPrefabField(I("ol_w1"), "delay", ["8"]));
+
+        var result = m.Missions.Apply(new MissionBatch("Mixed",
+        [
+            new AddAction(Role("spawn"), LineSpec.Raw("Act_PlayMusic", "ol_music_a")),
+            new ApplyOverrideToPrefab(I("ol_w1")) { Field = "delay" },
+            new AddAction(Role("spawn"), LineSpec.Raw("Act_PlayMusic", "ol_music_b")),
+        ]));
+
+        Assert.Equal(EditStatus.Applied, result.Status);
+
+        Assert.Equal([PrefabRow.Of("8")], Template(m).Field("delay")!.Default);
+        Assert.Empty(m.Missions.Graph(Script).Instance("ol_w1")!.Overrides);
+        Assert.Contains("Cnd_Timer = 8", m.Lines("ol_w1_spawn"));
+        Assert.Contains("Act_PlayMusic = ol_music_b", m.Lines("ol_w1_spawn"));
+    }
+
+    [Fact]
+    public void ATemplateEditAfterTheDeleteOfThePrefabInOneBatchRefuses()
+    {
+        using var m = PrefabInstanceTests.Create();
+
+        var result = m.Missions.Apply(new MissionBatch("Mixed",
+        [
+            new AddAction(Role("spawn"), LineSpec.Raw("Act_PlayMusic", "ol_music_a")),
+            new RemovePrefabAsset(GateRef),
+            new AddAction(Role("spawn"), LineSpec.Raw("Act_PlayMusic", "ol_music_b")),
+        ]));
+
+        Assert.Equal(EditStatus.Refused, result.Status);
+        Assert.Equal(MissionErrors.PrefabNotFound, Assert.Single(result.Errors).Detail);
+        Assert.NotNull(m.Missions.Prefab(GateRef));
+    }
+
+    [Fact]
+    public void AnEditInPrefabModeKeepsAHeaderTextWithASemicolon()
+    {
+        var text = PrefabInstanceTests.Gate.Replace("unit = s", "unit = s\nhelp = Seconds; then the wave comes");
+        using var m = PrefabInstanceTests.Create(new Dictionary<string, string> { [@"prefabs\missions\ol_gate.ini"] = text });
+
+        m.Apply(new AddAction(Role("spawn"), LineSpec.Raw("Act_PlayMusic", "ol_music")));
+
+        Assert.Equal("Seconds; then the wave comes", Template(m).Field("delay")!.Help);
+    }
+
+    [Fact]
     public void ARenameOfARoleKeepsTheMembersAndThePorts()
     {
         using var m = PrefabInstanceTests.Create();

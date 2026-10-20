@@ -79,6 +79,7 @@ public static class MissionErrors
     public const string InstanceNotFound = "InstanceNotFound";
     public const string FieldNotFound = "FieldNotFound";
     public const string PortNotFound = "PortNotFound";
+    public const string RoleNotFound = "RoleNotFound";
     public const string PrefabInUse = "PrefabInUse";
     public const string FieldInUse = "FieldInUse";
     public const string NotATemplate = "NotATemplate";
@@ -242,6 +243,17 @@ public static class MissionErrors
         new(EditErrorKind.InvalidValue, TemplateLine,
             $"The prefab gives section '{role}' the line '{line}'. {problem} Change the field or the prefab.");
 
+    /// <summary>A new file name of a prefab that a prefab of the library has. A prefab of the active mod with the id of a
+    /// lower mod hides that prefab, and its instances then use the new prefab.</summary>
+    internal static EditError PrefabIdTakenError(string id, string? mod, bool active) =>
+        new(EditErrorKind.NameTaken, NameTaken, active || mod == null
+            ? $"The active mod already has a prefab '{id}'. Pick another file name."
+            : $"Mod '{mod}' already has a prefab '{id}'. A prefab of the active mod with this file name hides it, and its " +
+              "instances then use the new prefab. Pick another file name.");
+
+    /// <summary>A file name of a new prefab that is not valid (see <see cref="Prefabs.PrefabAsset.FileNameProblem"/>).</summary>
+    internal static EditError PrefabFileNameError(string problem) => new(EditErrorKind.InvalidValue, NameInvalid, problem);
+
     internal static EditError PrefabNotFoundError(string prefab, string hint = "") =>
         new(EditErrorKind.NotFound, PrefabNotFound,
             $"No mod has prefab '{prefab}'. Pick a prefab of the library.{hint}");
@@ -262,6 +274,10 @@ public static class MissionErrors
     internal static EditError PortNotFoundError(string prefab, string port, IEnumerable<string> ports) =>
         new(EditErrorKind.InvalidArgument, PortNotFound,
             $"Prefab '{prefab}' has no port '{port}'. Use one of these ports: {string.Join(", ", ports)}.");
+
+    internal static EditError RoleNotFoundError(string prefab, string role, IEnumerable<string> roles) =>
+        new(EditErrorKind.InvalidArgument, RoleNotFound,
+            $"Prefab '{prefab}' has no section with the role '{role}'. Use one of these roles: {string.Join(", ", roles)}.");
 
     internal static EditError PrefabInUseError(string prefab, int count) =>
         new(EditErrorKind.NeedsConfirmation, PrefabInUse, count == 1

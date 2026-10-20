@@ -4,6 +4,7 @@ using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Ini;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Prefabs;
@@ -584,6 +585,262 @@ public sealed class PrefabInstanceTests
         Assert.Equal(before, State(m));
         m.Session.Redo();
         Assert.Equal(after, State(m));
+    }
+
+    // ---- The names of the members (section 4.9 of the M6b design) ----
+
+    [Fact]
+    public void APlaceWhoseMadeNameIsASectionOfTheScriptRefusesAndTheSectionStays()
+    {
+        using var m = Create();
+
+        // The made name of the role "end" is ol_end, a trigger of the script that is not a part of the instance.
+        var error = m.Refuse(new PlacePrefabInstance(TestScript, GateRef)
+        {
+            Id = "ol", Values = [new PrefabFieldInput("formation", ["ol_form"])],
+        }, MissionErrors.NameTaken);
+
+        Assert.Contains("'ol_end'", error.Message);
+        Assert.Contains("Act_ChangeState = SUCCEED", m.Lines("ol_end"));
+    }
+
+    [Fact]
+    public void ARevertOfARemovedMemberWhoseNameATriggerOfTheUserTookRefuses()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        m.Apply(new RemoveTrigger(T("ol_w1_end")));
+        m.Apply(new AddTrigger(TestScript)
+        {
+            Nickname = "ol_w1_end", Condition = LineSpec.Raw("Cnd_True", "no_params"), Actions = [LineSpec.Raw("Act_ChangeState", "SUCCEED")],
+        });
+
+        m.Refuse(new RevertOverride(I("ol_w1")) { Member = "end" }, MissionErrors.NameTaken);
+
+        Assert.Equal(["nickname = ol_w1_end", "Cnd_True = no_params", "Act_ChangeState = SUCCEED"], m.Lines("ol_w1_end"));
+        Assert.Equal(["end"], Record(m, "ol_w1").Removed);
+    }
+
+    // ---- Removed members (decision D676 c) ----
+
+    [Fact]
+    public void ADeleteOfAMemberRemovesTheLinesOfTheInstanceThatNameItAndTheSaveWorks()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        var before = State(m);
+
+        var result = m.Apply(new RemoveTrigger(T("ol_w1_end")));
+
+        // Unity sets a reference to a removed child to None. The compile leaves out the line that started the member.
+        Assert.Equal(["nickname = ol_w1_spawn", "Cnd_Timer = 5", "Act_SpawnFormation = ol_form"], m.Lines("ol_w1_spawn"));
+        Assert.Empty(result.Missing);
+        Assert.Empty(Rule(m, "P01"));
+        Assert.Empty(Rule(m, "M05"));
+        Assert.True(m.Session.Save().Saved);
+
+        m.Session.Undo();
+
+        Assert.Equal(before, State(m));
+    }
+
+    [Fact]
+    public void ADeleteOfAMemberKeepsAnOutsideLineThatNamesItAndItsFixRemovesTheLine()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        m.Apply(new LinkTriggers(T("ol_start"), "ol_w1_end", LinkKind.Start));
+
+        var result = m.Apply(new RemoveTrigger(T("ol_w1_end")));
+
+        var missing = Assert.Single(result.Missing);
+        Assert.Equal("Act_ActTrig", missing.Key);
+        Assert.Contains("ol_start", missing.Ref);
+        var problem = Assert.Single(Rule(m, "M05"));
+        var fix = MissionFixes.Of(m.Missions.Model(Script).Analysis, problem).First();
+        m.Apply(new ApplyFix(TestScript, problem.Subject!, fix.Id));
+        Assert.Empty(Rule(m, "M05"));
+        Assert.DoesNotContain("Act_ActTrig = ol_w1_end", m.Lines("ol_start"));
+    }
+
+    [Fact]
+    public void ADeleteOfAMemberWithItsLinesGivesNoHandEdit()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        m.Apply(new LinkTriggers(T("ol_start"), "ol_w1_end", LinkKind.Start));
+
+        m.Apply(new RemoveTrigger(T("ol_w1_end")) { References = ReferencesMode.Remove });
+
+        Assert.DoesNotContain("Act_ActTrig = ol_w1_end", m.Lines("ol_start"));
+        Assert.DoesNotContain("Act_ActTrig = ol_w1_end", m.Lines("ol_w1_spawn"));
+        Assert.Equal(["end"], Record(m, "ol_w1").Removed);
+        Assert.Empty(Rule(m, "P01"));
+    }
+
+    [Fact]
+    public void ApplyOfARemovedMemberRemovesTheLinesThatNameItFromThePrefab()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        Place(m, "ol_w2");
+        m.Apply(new RemoveTrigger(T("ol_w1_end")));
+        var before = State(m);
+
+        m.Apply(new ApplyOverrideToPrefab(I("ol_w1")) { Member = "end" });
+
+        Assert.DoesNotContain(m.Missions.Prefab(GateRef)!.Template!.Section("spawn")!.Lines, l => l.Key == "Act_ActTrig");
+        Assert.Equal(["nickname = ol_w2_spawn", "Cnd_Timer = 5", "Act_SpawnFormation = ol_form"], m.Lines("ol_w2_spawn"));
+        Assert.Empty(Rule(m, "M05"));
+        Assert.Empty(Rule(m, "P01"));
+        Assert.True(m.Session.Save().Saved);
+
+        m.Session.Undo();
+
+        Assert.Equal(before, State(m));
+    }
+
+    [Fact]
+    public void ADuplicateKeepsTheRemovedMembersAndThePortLinks()
+    {
+        using var m = Create();
+
+        m.Apply(new PlacePrefabInstance(TestScript, GateRef)
+        {
+            Id = "ol_w1", Values = [new PrefabFieldInput("formation", ["ol_form"])], Ports = [new InstancePort("done", "ol_end")],
+            Removed = ["end"],
+        });
+
+        var record = Record(m, "ol_w1");
+        Assert.Equal(["end"], record.Removed);
+        Assert.Equal([new InstancePort("done", "ol_end")], record.Ports);
+        Assert.False(m.Has("ol_w1_end"));
+        Assert.DoesNotContain("Act_ActTrig = ol_w1_end", m.Lines("ol_w1_spawn"));
+        m.Refuse(new PlacePrefabInstance(TestScript, GateRef) { Id = "ol_w2", Removed = ["alarm"] }, MissionErrors.RoleNotFound);
+
+        m.Apply(new RevertOverride(I("ol_w1")) { Member = "end" });
+
+        Assert.Equal(["nickname = ol_w1_end", "Cnd_Destroyed = ol_form, -1", "Act_ActTrig = ol_end"], m.Lines("ol_w1_end"));
+    }
+
+    // ---- Renames (section 4.9 of the M6b design) ----
+
+    [Fact]
+    public void ARenameOfAnItemThatAFieldNamesChangesTheRecordAndGivesNoHandEdit()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+
+        m.Apply(new RenameItem(Item("MsnFormation", "ol_form"), "ol_form_x"));
+
+        Assert.Contains("Act_SpawnFormation = ol_form_x", m.Lines("ol_w1_spawn"));
+        Assert.Equal([new InstanceValue("formation", ["ol_form_x"])], Record(m, "ol_w1").Values);
+        Assert.Empty(Rule(m, "P01"));
+
+        m.Apply(new SetPrefabField(I("ol_w1"), "delay", ["7"]));
+
+        Assert.Contains("Act_SpawnFormation = ol_form_x", m.Lines("ol_w1_spawn"));
+        Assert.Empty(Rule(m, "M06"));
+    }
+
+    [Fact]
+    public void ARenameOfATriggerThatATriggersFieldNamesChangesTheRecord()
+    {
+        using var m = Create();
+        m.Apply(new PlacePrefabInstance(TestScript, PrefabRef.BuiltinOf("branch")) { Id = "ol_b", Values = [new PrefabFieldInput("tests", ["ol_wave"])] });
+
+        m.Apply(new RenameTrigger(T("ol_wave"), "ol_wave_x"));
+
+        Assert.Equal(["ol_wave_x"], Record(m, "ol_b").Values.Concat(Record(m, "ol_b").Overrides).Single(v => v.Field == "tests").Rows);
+        Assert.Empty(Rule(m, "P01"));
+    }
+
+    // ---- Prefab assets ----
+
+    [Fact]
+    public void ANewPrefabWithTheIdOfAPrefabOfALowerModRefuses()
+    {
+        using var m = MissionEdits.Create(lowerMod: new Dictionary<string, string>
+        {
+            [@"prefabs\missions\ol_low.ini"] = Gate.Replace("ol_gate", "ol_low"),
+        }, modFiles: new Dictionary<string, string> { [@"prefabs\missions\ol_gate.ini"] = Gate });
+
+        var error = m.Refuse(new CreatePrefabAsset("ol_low") { VariantOf = PrefabRef.BuiltinOf("spawnWave") }, MissionErrors.NameTaken);
+        m.Refuse(new RenamePrefabAsset(GateRef, "ol_low"), MissionErrors.NameTaken);
+
+        Assert.Equal("Mod 'low' already has a prefab 'ol_low'. A prefab of the active mod with this file name hides it, and " +
+                     "its instances then use the new prefab. Pick another file name.", error.Message);
+    }
+
+    [Theory]
+    [InlineData("OL_GATE", "'OL_GATE' differs from 'ol_gate' only in letter case. Pick another file name.")]
+    [InlineData("Ol_Gate_B", "'Ol_Gate_B' is not a valid file name. Use lowercase letters, digits, '_' and '-'.")]
+    public void ANewFileNameOfAPrefabHasOnlyLowercaseLetters(string id, string message)
+    {
+        using var m = Create();
+
+        var error = m.Refuse(new RenamePrefabAsset(GateRef, id), MissionErrors.NameInvalid);
+
+        Assert.Equal(message, error.Message);
+        Assert.Equal(MissionErrors.NameInvalid, m.Refuse(new CreatePrefabAsset("OL_COPY") { VariantOf = GateRef }, MissionErrors.NameInvalid).Detail);
+    }
+
+    [Fact]
+    public void ARenameOfTheNameOnlyKeepsTheFileAndTheRecords()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        var before = State(m);
+
+        m.Apply(new RenamePrefabAsset(GateRef, "ol_gate") { NewName = "Gate wave" });
+
+        Assert.Equal("Gate wave", m.Missions.Prefab(GateRef)!.Name);
+        Assert.Equal("mod:ol_gate", Record(m, "ol_w1").Prefab);
+        m.Session.Undo();
+        Assert.Equal(before, State(m));
+    }
+
+    [Fact]
+    public void TwoVariantsOfOnePrefabGetTwoNames()
+    {
+        using var m = Create();
+
+        m.Apply(new CreatePrefabAsset("ol_v1") { VariantOf = GateRef });
+        m.Apply(new CreatePrefabAsset("ol_v2") { VariantOf = GateRef });
+
+        Assert.Equal("Gate ambush variant", m.Missions.Prefab(PrefabRef.ModOf("ol_v1"))!.Name);
+        Assert.Equal("Gate ambush variant 2", m.Missions.Prefab(PrefabRef.ModOf("ol_v2"))!.Name);
+    }
+
+    // ---- Hand edits (rule P01) ----
+
+    [Fact]
+    public void AFieldEditOfAHandEditedInstanceSaysThatTheCompileReplacedTheHandEdit()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        m.Session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(T("ol_w1_spawn").Item.Ref, "Cnd_Timer", ["9"])));
+
+        var result = m.Apply(new SetPrefabField(I("ol_w1"), "formation", ["ol_ship_1"]));
+
+        Assert.Contains(PrefabLinks.ReplacedHandEditNote("ol_w1", Script), result.Notes);
+        Assert.Contains("Cnd_Timer = 5", m.Lines("ol_w1_spawn"));
+    }
+
+    [Fact]
+    public void ABodyGuardOfAnotherSectionDoesNotOpenTheMembers()
+    {
+        using var m = Create();
+        Place(m, "ol_w1");
+        var start = m.Session.OpenDocument(Script)!.Working.First(s => s.Name == "Trigger");
+
+        // The guard names ol_start, which is not a member. The line edit of the member still refuses.
+        var error = m.Refuse(new CommandGroup([new SetLine(new RowRef(T("ol_w1_spawn").Item, 1), LineSpec.Raw("Cnd_Timer", "9"))])
+        {
+            ExpectBodies = new Dictionary<string, string> { [T("ol_start").Item.ToString()] = SectionHash.Of(start) },
+        }, MissionErrors.PrefabMember);
+
+        Assert.Contains("ol_w1", error.Message);
     }
 
     [Fact]

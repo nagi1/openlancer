@@ -182,9 +182,12 @@ public static class PrefabMode
     }
 
     /// <summary>The value of a text as the text parser reads it, or a string value for a text that it does not read
-    /// as one value.</summary>
+    /// as one value. A text with ';' stays whole, because the parser reads ';' as the start of a comment, but a header
+    /// text such as a help text can have one.</summary>
     private static ValueBase ValueOf(string text)
     {
+        if (text.Contains(';'))
+            return new StringValue(text);
         var parsed = IniDocument.ParseTextLine("v = " + text);
         return parsed is { Count: 1 } ? parsed[0] : new StringValue(text);
     }

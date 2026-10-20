@@ -99,6 +99,11 @@ public static class PrefabLinks
         $"The lines of prefab instance '{instance}' differ from its prefab. A change of the prefab does not change this " +
         "instance. Unpack the instance, or compile it again.";
 
+    /// <summary>The note of a compile that replaced a hand edit of the lines of an instance (rule P01).</summary>
+    public static string ReplacedHandEditNote(string instance, string script) =>
+        $"The lines of prefab instance '{instance}' in {script} differed from its prefab. The compile replaced them with " +
+        "the lines of the prefab. Undo gives them back.";
+
     /// <summary>The text of P02.</summary>
     public static string MissingMessage(string instance, string prefab) =>
         $"Prefab instance '{instance}' names prefab '{prefab}', which no mod has. The triggers stay as they are. Unpack " +

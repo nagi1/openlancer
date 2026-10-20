@@ -82,13 +82,14 @@ public sealed partial class MissionEditor
     }
 
     /// <summary>
-    /// A free file name of a new prefab asset (section 5.9 of the M6b design): the wanted name with only letters, digits,
-    /// '_' and '-', and a number after it when a prefab of the library has the name. "Make variant" and "Save as
-    /// prefab" propose it.
+    /// A free file name of a new prefab asset (section 5.9 of the M6b design): the wanted name with only lowercase
+    /// letters, digits, '_' and '-', and a number after it when a prefab of the library has the name. "Make variant" and
+    /// "Save as prefab" propose it.
     /// </summary>
     public string FreePrefabId(string wanted)
     {
-        var stem = new string(wanted.Trim().Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
+        var stem = new string(wanted.Trim().ToLowerInvariant()
+            .Select(c => char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c is '_' or '-' ? c : '_').ToArray());
         if (stem.Length == 0)
             stem = "prefab";
         stem = stem.Length > 40 ? stem[..40] : stem;
@@ -98,6 +99,22 @@ public sealed partial class MissionEditor
         for (var n = 2;; n++)
         {
             var made = $"{stem}{n.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            if (!taken.Contains(made))
+                return made;
+        }
+    }
+
+    /// <summary>A free name of a new prefab in the library: the wanted name, and a number after it when a prefab of the
+    /// library has the name. So two variants of one prefab do not show the same name (UI rule 9).</summary>
+    public string FreePrefabName(string wanted)
+    {
+        var stem = wanted.Trim();
+        var taken = Prefabs().Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!taken.Contains(stem))
+            return stem;
+        for (var n = 2;; n++)
+        {
+            var made = $"{stem} {n.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
             if (!taken.Contains(made))
                 return made;
         }
@@ -279,8 +296,6 @@ public sealed record PrefabModeModel(PrefabAsset Asset, PrefabTemplate? Template
 
     /// <summary>The text of the bar of prefab mode.</summary>
     public string BarText(string? mod) =>
-        $"Changes here change {Count(Instances, "instance", "instances")} in {Count(Scripts, "mission", "missions")} of mod {mod}.";
-
-    private static string Count(int n, string one, string many) =>
-        n == 1 ? $"1 {one}" : $"{n.ToString(System.Globalization.CultureInfo.InvariantCulture)} {many}";
+        $"Changes here change {MissionChecks.Count(Instances, "instance", "instances")} in " +
+        $"{MissionChecks.Count(Scripts, "mission", "missions")} of mod {mod}.";
 }

@@ -227,17 +227,20 @@ internal sealed partial class MissionDraft
             if (Slot(instance, field, lines, names) is { } made)
                 fields.Add(made);
         }
+        var (ports, links) = Ports(members, roles, lines, names);
         // Each nickname and each value that names a member get the made nickname of the member.
         var patterns = members.ToDictionary(s => NicknameOf(s)!, s => $"{{{PrefabSlot.Instance}}}_{roles[s]}",
             StringComparer.OrdinalIgnoreCase);
         var sections = members.Select(s => new PrefabSectionDef(s.Type, roles[s], lines[s].Select(l => new PrefabLine(l.Key,
             string.Join(", ", l.Texts.Select(t => patterns.GetValueOrDefault(t) ?? t)))).ToList())).ToList();
-        var template = new PrefabTemplate(id, name?.Trim() is { Length: > 0 } given ? given : definition.Name, definition.Kind)
+        var template = new PrefabTemplate(id, name?.Trim() is { Length: > 0 } given ? given : Editor.FreePrefabName(definition.Name),
+            definition.Kind)
         {
             VariantOf = PrefabRef.BuiltinOf(definition.Id).RecordText,
             Help = definition.Help.WhatItIs,
             Writes = definition.Help.WhatItWrites,
             Fields = fields,
+            Ports = ports,
             Sections = sections,
         };
         var text = template.Write();
@@ -249,10 +252,57 @@ internal sealed partial class MissionDraft
         var record = new InstanceRecord(RecordId(document, instance), PrefabRef.ModOf(id).RecordText)
         {
             Members = members.Select(s => new InstanceMember(roles[s], NicknameOf(s)!)).ToList(),
+            Ports = links,
         };
-        Compile(document, record, read);
-        Changes.Add(new InstanceRef(document.Path, record.Id).ToString());
-        Select = PrefabRef.ModOf(id).ToString();
+        Compile(document, record, read, adopt: true);
+        // The selection stays on the instance, as Unity keeps the selection on an object that becomes a prefab.
+        var linked = new InstanceRef(document.Path, record.Id).ToString();
+        Changes.Add(linked);
+        Select = linked;
+    }
+
+    /// <summary>
+    /// The ports of "Save as prefab" (section 5.3 of the M6b design): each start, stop or checkpoint line of a member to a
+    /// trigger outside the instance becomes a port of its role, and the record links the port to that trigger. So the
+    /// new prefab names no trigger of this mission, as Unity keeps a reference to a scene object on the instance and not
+    /// in the new asset. The line gets the slot of the port.
+    /// </summary>
+    /// <param name="names">The nicknames of the members.</param>
+    private (List<PrefabPort> Ports, List<InstancePort> Links) Ports(IReadOnlyList<MissionSection> members,
+        IReadOnlyDictionary<MissionSection, string> roles, Dictionary<MissionSection, List<(string Key, List<string> Texts)>> lines,
+        IReadOnlySet<string> names)
+    {
+        var ports = new List<PrefabPort>();
+        var links = new List<InstancePort>();
+        foreach (var section in members.Where(s => s.Kind == MissionSectionKind.Trigger))
+        {
+            var role = roles[section];
+            foreach (var (key, texts) in lines[section])
+            {
+                if (!TriggerRules.IsAction(key) || Schema.Name(key) is not { } action)
+                    continue;
+                foreach (var spec in action.Values.Where(v => v is { Kind: MissionValueKind.Trigger, Width: 1, Rest: false }))
+                {
+                    if (spec.Index >= texts.Count || texts[spec.Index] is not { Length: > 0 } target || names.Contains(target) ||
+                        PrefabSlot.Of(target).Count > 0)
+                        continue;
+                    var word = action.Name switch
+                    {
+                        "Act_ActTrig" => "start",
+                        "Act_DeactTrig" => "stop",
+                        "Act_Save" => "restore",
+                        _ => "link",
+                    };
+                    var id = $"{role}_{word}";
+                    for (var n = 2; ports.Any(p => p.Id == id); n++)
+                        id = $"{role}_{word}_{n.ToString(CultureInfo.InvariantCulture)}";
+                    ports.Add(new PrefabPort(id, $"{action.Plain} after '{role}'", role));
+                    links.Add(new InstancePort(id, target));
+                    texts[spec.Index] = $"{{{PrefabSlot.PortPrefix}{id}}}";
+                }
+            }
+        }
+        return (ports, links);
     }
 
     /// <summary>The role of each member section: <c>core</c> for the core, the role of the matcher for a member, with a

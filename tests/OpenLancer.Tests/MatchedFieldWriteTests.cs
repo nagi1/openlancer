@@ -214,11 +214,18 @@ public sealed class MatchedFieldWriteTests
         Assert.Contains(template.Section("core")!.Lines, l => l.Key == "Act_ActTrig" && l.Value == "{instance}_end");
         var record = m.Missions.Graph(Script).Instance("ol_wave")!;
         Assert.Equal([new InstanceMember("core", "ol_wave"), new InstanceMember("end", "ol_wave_end")], record.Members);
+        // The start of the outside trigger ol_win is a port, so the prefab names no trigger of this mission. The record
+        // links the port to ol_win, as Unity keeps a reference to a scene object on the instance.
+        Assert.Equal([new PrefabPort("end_start", "Start trigger after 'end'", "end")], template.Ports);
+        Assert.Contains(template.Section("end")!.Lines, l => l.Key == "Act_ActTrig" && l.Value == "{port:end_start}");
+        Assert.DoesNotContain(template.Sections.SelectMany(s => s.Lines), l => l.Value.Contains("ol_win"));
+        Assert.Equal([new InstancePort("end_start", "ol_win")], record.Ports);
         Assert.Empty(record.Overrides);
         var linked = m.Missions.Model(Script).Prefabs!.Instances.Single(i => i.Linked?.Record.Id == "ol_wave");
         Assert.Equal(0, linked.Linked!.OverrideCount);
         Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule is "P01" or "P02" or "P03");
-        Assert.Equal("prefab:mod:ol_saved", result.Select);
+        // The selection stays on the instance (review finding 3 of the studio review of M6b-3).
+        Assert.Equal(new InstanceRef(Script, "ol_wave").ToString(), result.Select);
 
         m.Apply(new SetPrefabField(new InstanceRef(Script, "ol_wave"), "spawnWhen", ["Cnd_Timer = 9"]));
 

@@ -118,8 +118,9 @@ public sealed record RemoveTrigger(TriggerRef Trigger) : MissionCommand
         var name = TriggerRules.Nickname(document.Working[index])!;
         var reference = d.RefOf(document, index);
         var inverse = new List<MissionCommand>();
-        var lines = MissionLinks.Naming(d.Schema, document.Working, [MissionValueKind.Trigger], name)
-            .Where(l => l.Section != index).Select(l => (l.Section, l.Row)).Distinct().ToList();
+        // A member of a linked prefab instance: the compile of the instance handles the lines of its other members.
+        var lines = d.OutsideLines(document, index, MissionLinks.Naming(d.Schema, document.Working, [MissionValueKind.Trigger], name)
+            .Where(l => l.Section != index).Select(l => (l.Section, l.Row)).Distinct());
         if (References == ReferencesMode.Remove)
             d.RemoveLines(document, lines, inverse);
         else
@@ -218,7 +219,7 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
         }
 
         if (ChangeReferences)
-            d.RenameInRecords(document, old, name);
+            d.RenameInRecords(document, [MissionValueKind.Trigger], old, name);
         if (MissionDraft.IsTemplateDocument(document))
             d.RenameRole(document, old, name);
         var renamed = new TriggerRef(document.Path, name);

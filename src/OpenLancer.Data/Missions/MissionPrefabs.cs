@@ -200,11 +200,20 @@ public sealed class MissionPrefabInstance
     /// a matched instance.</summary>
     public Prefabs.LinkedInstance? Linked { get; internal init; }
 
-    /// <summary>The identity of the instance in its script: the prefab and the core trigger or section, or the record of
-    /// a linked instance. A base-game run of the script compares instances by it (decision D551).</summary>
+    /// <summary>The identity of the instance in its script: the prefab and the core trigger or section, or the id of the
+    /// record of a linked instance. A base-game run of the script compares instances by it (decision D551). The key of a
+    /// linked instance does not name its prefab, so the selection stays on the instance when it gets another prefab, as
+    /// Unity keeps the selection on the object.</summary>
     public string Key => Linked is { } linked
-        ? $"{Definition.Id}|@{linked.Record.Id}"
+        ? $"@{linked.Record.Id}"
         : $"{Definition.Id}|{Core?.Nickname ?? CoreSection?.Ref.Id.ToString()}";
+
+    /// <summary>The prefab of the instance as a record names it, for example <c>builtin:spawnWave</c> or
+    /// <c>mod:ol_gate</c>. A matched instance names the built-in prefab of its definition. The Hierarchy groups the
+    /// instances by it.</summary>
+    public string PrefabKey => Linked is { } linked
+        ? Editing.PrefabRef.TryParse(linked.Record.Prefab)?.RecordText ?? linked.Record.Prefab
+        : Editing.PrefabRef.BuiltinOf(Definition.Id).RecordText;
 
     /// <summary>The id of the instance in its <c>inst:</c> reference (section 4.0.7 of the M6b design): the id of the
     /// record of a linked instance, else the prefab id and the nickname of the core trigger or section.</summary>

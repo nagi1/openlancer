@@ -19,9 +19,10 @@ internal sealed partial class MissionDraft
     /// of a member is not a removed-member override.</summary>
     public int InstanceOps { get; set; }
 
-    /// <summary>The depth of the inverses that run with a body guard (section 4.8 of the M6b design). The guard proves
-    /// that each section is as the edit left it, so an inverse can change the lines of a member back.</summary>
-    public int GuardedReverts { get; set; }
+    /// <summary>The sections that the body guards of the running inverses name, by their canonical reference (section 4.8
+    /// of the M6b design). A guard proves that its section is as the edit left it, so an inverse can change the lines of
+    /// such a member back. A member without a guard stays guarded.</summary>
+    public HashSet<string> GuardedSections { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>An editor file of the active mod, to change it. The draft keeps its text before the batch.</summary>
     /// <exception cref="InvalidOperationException">The session is read-only, or it has no active mod.</exception>
@@ -170,12 +171,13 @@ internal sealed partial class MissionDraft
     }
 
     /// <summary>Refuses a change of the lines of a member of a linked instance (decision D676): the user changes a field
-    /// of the instance, opens the prefab, or unpacks the instance. The steps of a prefab command and an inverse with a
-    /// body guard pass.</summary>
+    /// of the instance, opens the prefab, or unpacks the instance. The steps of a prefab command pass, and so does an
+    /// inverse whose body guard names the section.</summary>
     /// <exception cref="EditException"><c>PrefabMember</c>.</exception>
     public void RefuseMember(EditDocument script, int index)
     {
-        if (InstanceOps > 0 || GuardedReverts > 0 || MemberAt(script, index) is not var (record, _))
+        if (InstanceOps > 0 || MemberAt(script, index) is not var (record, _) ||
+            GuardedSections.Count > 0 && GuardedSections.Contains(RefOf(script, index)))
             return;
         throw Refuse(MissionErrors.PrefabMemberError(Capital(Owner(script, index)), record.Id) with
         {
@@ -183,27 +185,64 @@ internal sealed partial class MissionDraft
         });
     }
 
+    /// <summary>The delete of a member of a linked instance: the record, the role, and the template when the delete
+    /// compiles the instance.</summary>
+    /// <param name="Template">The template of the instance, or null when the instance does not compile: its prefab is
+    /// missing (rule P02), it has a hand edit (rule P01), its prefab changed after its last compile (rule P03), or its
+    /// compile fails. A delete does not bring the changes of the prefab.</param>
+    internal sealed record MemberDelete(InstanceRecord Record, string Role, PrefabTemplate? Template);
+
+    /// <summary>The delete of the section at an index when the section is a member of a linked instance, or null. The
+    /// steps of a prefab command do not make a removed-member override.</summary>
+    internal MemberDelete? MemberDeleteAt(EditDocument script, int index)
+    {
+        if (InstanceOps > 0 || MemberAt(script, index) is not var (record, role))
+            return null;
+        var template = Editor.Prefab(record.Prefab)?.Template;
+        if (template == null || HandEdited(script, record) || record.PrefabHash != null && record.PrefabHash != template.ContentHash)
+            return new MemberDelete(record, role, null);
+        try
+        {
+            PrefabCompiler.Compile(template, LinkedInstance.InputOf(record with { Removed = [.. record.Removed, role] }, template));
+            return new MemberDelete(record, role, template);
+        }
+        catch (EditException)
+        {
+            return new MemberDelete(record, role, null);
+        }
+    }
+
+    /// <summary>
+    /// The lines that a delete of the section at an index handles itself: each line that names the section, except the
+    /// lines of the other members of its linked instance when the delete compiles the instance. The compile leaves out
+    /// such lines (decision D676 c), so they do not become "Missing" lines.
+    /// </summary>
+    public List<(int Section, int Row)> OutsideLines(EditDocument script, int index, IEnumerable<(int Section, int Row)> lines)
+    {
+        if (MemberDeleteAt(script, index) is not { Template: { } template } delete)
+            return lines.ToList();
+        var members = delete.Record.Members.Where(m => !delete.Record.Removed.Contains(m.Role))
+            .Select(m => MemberIndex(script, template.Section(m.Role)?.Type, m.Nickname)).ToHashSet();
+        return lines.Where(l => !members.Contains(l.Section)).ToList();
+    }
+
     /// <summary>
     /// Records the delete of a member of a linked instance as a removed-member override (decision D676 c, the rule of
-    /// Unity 2022.2 and later): the record gets the role, and the hash of the compiled lines without the member. The
-    /// prefab does not change. The inverse gives the record back.
+    /// Unity 2022.2 and later): the record gets the role. The instance compiles again, so each line of another member
+    /// that names the removed member goes, as Unity sets a reference to a removed child to None. The prefab does not
+    /// change. The inverse gives the record and the lines back.
     /// </summary>
-    private void MemberRemoved(EditDocument script, InstanceRecord record, string role)
+    private void MemberRemoved(EditDocument script, MemberDelete delete)
     {
-        var updated = record with { Removed = [.. record.Removed, role] };
-        if (Editor.Prefab(record.Prefab)?.Template is { } template)
+        var updated = delete.Record with { Removed = [.. delete.Record.Removed, delete.Role] };
+        if (delete.Template is { } template)
         {
-            try
-            {
-                updated = updated with { LinesHash = LinesHashOf(PrefabCompiler.Compile(template, LinkedInstance.InputOf(updated, template))) };
-            }
-            catch (EditException)
-            {
-                // A compile that fails keeps the old hash. The instance then shows P01, and a compile gives the reason.
-            }
+            Compile(script, updated, template);
+            return;
         }
+        // An instance that does not compile keeps its lines and its hash. It shows P01 or P02.
         Inverses.AddRange(RunInner(new RestoreInstanceRecord(new ScriptRef(script.Path), updated)));
-        Changes.Add(new InstanceRef(script.Path, record.Id).ToString());
+        Changes.Add(new InstanceRef(script.Path, delete.Record.Id).ToString());
     }
 
     /// <summary>The hash of the lines of a compile (<c>lines_hash</c>).</summary>
@@ -217,10 +256,15 @@ internal sealed partial class MissionDraft
     /// goes. Then the record gets the members, the hash of the lines and the hash of the prefab. The inverses of the
     /// steps go to the command that runs now.
     /// </summary>
+    /// <remarks>A compile changes only the sections of the instance: the present members of its record in W. A made name
+    /// that another section has refuses (section 4.9 of the M6b design). So does the name of a removed member when a
+    /// section of the user took it after the delete.</remarks>
+    /// <param name="adopt">True when the members of the record are sections that become the instance now ("Save as
+    /// prefab").</param>
     /// <returns>The new record.</returns>
     /// <exception cref="EditException">The compile refuses. The message names the instance, the field and the
     /// reason.</exception>
-    public InstanceRecord Compile(EditDocument script, InstanceRecord record, PrefabTemplate template)
+    public InstanceRecord Compile(EditDocument script, InstanceRecord record, PrefabTemplate template, bool adopt = false)
     {
         InstanceOps++;
         try
@@ -235,10 +279,13 @@ internal sealed partial class MissionDraft
                 throw Refuse(e.Error with { Message = $"Prefab instance '{record.Id}' in {script.Path}: {e.Error.Message}" });
             }
             var path = new ScriptRef(script.Path);
+            var owner = adopt ? record : Graph(script).Instance(record.Id);
+            var owned = owner?.Members.Where(m => !owner.Removed.Contains(m.Role)).Select(m => m.Nickname)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
             foreach (var section in compiled)
             {
                 var at = MemberIndex(script, section.Type, section.Nickname);
-                if (at >= 0)
+                if (at >= 0 && owned.Contains(section.Nickname))
                     Inverses.AddRange(RunInner(new ReplaceSectionBody(ItemOf(script, at), section.Entries)));
                 else
                 {
@@ -246,7 +293,8 @@ internal sealed partial class MissionDraft
                         throw Refuse(taken with
                         {
                             Message = $"Prefab instance '{record.Id}' gives section '{section.Role}' the name " +
-                                      $"'{section.Nickname}'. {taken.Message}",
+                                      $"'{section.Nickname}'. Script {script.Path} has a section with this name that is " +
+                                      "not a part of the instance. Rename or delete that section, then try again.",
                         });
                     Inverses.AddRange(RunInner(new RestoreSection(path, int.MaxValue, new RawSection(section.Type, section.Entries))));
                 }
@@ -269,6 +317,8 @@ internal sealed partial class MissionDraft
                                                             names.GetValueOrDefault(s.Role) ?? ""))
                     .Where(m => m.Nickname.Length > 0).ToList(),
                 Removed = record.Removed.Where(r => template.Section(r) != null).ToList(),
+                // A link of a port that the prefab does not have any more goes.
+                Ports = record.Ports.Where(p => template.Port(p.Port) != null).ToList(),
                 LinesHash = LinesHashOf(compiled),
                 PrefabHash = template.ContentHash,
             };
@@ -349,22 +399,34 @@ internal sealed partial class MissionDraft
     }
 
     /// <summary>
-    /// The records of the scripts of a rename of a trigger: a port that names the old name names the new name, and the
-    /// hash of the compiled lines follows. So the rename of a trigger that a port starts makes no hand edit (rule
-    /// P01).
+    /// The records of a script after a rename of a trigger or an item that the script names (section 4.9 of the M6b
+    /// design): each value, override and port of a record that names the old name names the new name, by the reference
+    /// kinds of the item. Then the hash of the compiled lines follows. So the rename changes the records as it changes
+    /// the lines of the members, and makes no hand edit (rule P01).
     /// </summary>
-    public void RenameInRecords(EditDocument script, string old, string name)
+    /// <param name="kinds">The value kinds of the references to the item (see <see cref="MissionLinks.KindsOf"/>).</param>
+    public void RenameInRecords(EditDocument script, IReadOnlyCollection<MissionValueKind> kinds, string old, string name)
     {
         foreach (var record in Graph(script).Instances.ToList())
         {
-            if (!record.Ports.Any(p => p.Trigger.Equals(old, StringComparison.OrdinalIgnoreCase)))
-                continue;
+            var template = Editor.Prefab(record.Prefab)?.Template;
+            IReadOnlyList<InstanceValue> Renamed(IReadOnlyList<InstanceValue> values) =>
+                template == null ? values
+                    : values.Select(v => template.Field(v.Field) is { } field
+                        ? v with { Rows = v.Rows.Select(r => RenameRow(field, r, kinds, old, name)).ToList() }
+                        : v).ToList();
             var updated = record with
             {
-                Ports = record.Ports.Select(p => p.Trigger.Equals(old, StringComparison.OrdinalIgnoreCase) ? p with { Trigger = name } : p)
-                    .ToList(),
+                Values = Renamed(record.Values),
+                Overrides = Renamed(record.Overrides),
+                Ports = kinds.Contains(MissionValueKind.Trigger)
+                    ? record.Ports.Select(p => p.Trigger.Equals(old, StringComparison.OrdinalIgnoreCase) ? p with { Trigger = name } : p)
+                        .ToList()
+                    : record.Ports,
             };
-            if (Editor.Prefab(record.Prefab)?.Template is { } template)
+            if (updated.Equals(record))
+                continue;
+            if (template != null)
             {
                 try
                 {
@@ -376,7 +438,56 @@ internal sealed partial class MissionDraft
                 }
             }
             Inverses.AddRange(RunInner(new RestoreInstanceRecord(new ScriptRef(script.Path), updated)));
+            Changes.Add(new InstanceRef(script.Path, record.Id).ToString());
         }
+    }
+
+    /// <summary>A row of a field in its text form, with each value of the reference kinds that names the old name in place
+    /// of the new name. A condition and a line find their values by the schema of their key.</summary>
+    private static string RenameRow(PrefabFieldDef field, string text, IReadOnlyCollection<MissionValueKind> kinds, string old,
+        string name)
+    {
+        var row = PrefabRow.Parse(field.Kind, text);
+        var texts = row.Texts.ToList();
+        var places = new List<int>();
+        switch (field.Kind)
+        {
+            case PrefabFieldKind.Value when kinds.Contains(field.ValueKind):
+                places.AddRange(Enumerable.Range(0, texts.Count));
+                break;
+            case PrefabFieldKind.Triggers when kinds.Contains(MissionValueKind.Trigger):
+                places.AddRange(Enumerable.Range(0, texts.Count));
+                break;
+            case PrefabFieldKind.List:
+                var at = 0;
+                foreach (var column in field.Columns)
+                {
+                    if (kinds.Contains(column.Kind))
+                        places.AddRange(Enumerable.Range(at, column.Width));
+                    at += column.Width;
+                }
+                break;
+            case PrefabFieldKind.Condition or PrefabFieldKind.Lines when row.Key is { Length: > 0 } key:
+                var section = new LibreLancer.Data.Ini.Section(MissionSchema.Retail.Directive(key) != null ? "ObjList" : "Trigger");
+                try
+                {
+                    section.Add(MissionValues.Entry(section, key, texts, null, binary: false));
+                }
+                catch (EditException)
+                {
+                    // A line that does not read keeps its text. The compile then refuses with the reason.
+                    break;
+                }
+                places.AddRange(MissionLinks.Naming(MissionSchema.Retail, [section], kinds, old).Select(p => p.Value));
+                break;
+        }
+        var changed = false;
+        foreach (var place in places.Where(p => p < texts.Count && texts[p].Equals(old, StringComparison.OrdinalIgnoreCase)))
+        {
+            texts[place] = name;
+            changed = true;
+        }
+        return changed ? (row with { Texts = texts }).Format() : text;
     }
 
     /// <summary>True for the template of a prefab in prefab mode, the script <c>prefab:mod:&lt;id&gt;</c>, and false for
