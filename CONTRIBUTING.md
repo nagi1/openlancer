@@ -61,6 +61,22 @@ The retail tests in the data tests need your own game data. CI has no game data,
 
 Without game data, the retail tests skip. A skipped test is not a passed test. Write the passed, failed and skipped counts of your retail run in the pull request.
 
+Some retail tests have a timing gate, for example "the run of the 14 story scripts takes less than 2 s". These tests have the trait `Category=Performance`. Each measure runs with a high priority. The gates are of two kinds:
+
+- A gate on a first run measures one run. Examples are the first run of the story scripts and the first build of an index. A second run is faster, because the runtime compiled the code and filled the caches. So the gate does not try again. A gate on a step that the test cannot run again, for example a delete, also measures one run.
+- A gate on a step that runs often takes the best of its tries. While the best try is over the limit, the gate tries again. All gates of one test try again for up to 60 s in total. So a short burst of other work, for example the unit tests or another build, does not fail these gates.
+
+A first run with cold code is slower than a first run with warm code, so the two runs have different limits. For example, the catch-up test of the retail systems (P06 in `SceneApplierRetailTests`) has two limits for the first catch-up of a system:
+
+- The cold first catch-up is the first catch-up of the test. No warm-up runs before it. The gate measures one run with no retry, and the limit is 250 ms.
+- The first catch-up of each other system runs with warm code. The limit is 100 ms, and the gate can try again.
+
+A burst of other work can fail a gate that measures one run. A long build can also slow the computer for longer than 60 s. When a gate fails on a busy computer, run the gates alone:
+
+```
+dotnet test tests/OpenLancer.DataTests --filter Category=Performance
+```
+
 When you change the engine fork, also run the fork tests:
 
 ```
@@ -73,6 +89,7 @@ dotnet test external\Librelancer\src\LibreLancer.Tests\LibreLancer.Tests.csproj
 - Name the milestone, for example `Milestone: M23`.
 - Write the title as a commit subject: imperative and in STE. Example: "Add prop groups to the asset browser (M23)". The owner squashes the pull request into one commit with this title.
 - Add a test for each change. A bug fix starts with a test that fails without the fix.
+- A raw string literal takes the line ends of its source file. When a test compares a literal with text that the code writes, call `.ReplaceLineEndings("\n")` on the literal. Then the test passes with LF and with CRLF line ends.
 - Update the docs that describe the changed behavior.
 - Write prose in Simplified Technical English (STE): short sentences, active voice, no semicolons and no contractions. This rule applies to docs, comments, UI text, error messages, commit messages and pull request text. The full checklist is in the section "Writing style" of AGENTS.md.
 - When Unity has an equivalent behavior, follow Unity.

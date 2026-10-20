@@ -373,20 +373,24 @@ internal sealed partial class EditorWindow : Game
         Cutscenes.Dispose();
         assets?.Dispose();
         Scene.Dispose();
-        Session?.Dispose();
+        // A close of the window waits for the running load (see ClosePrompt). A crash, or "Close now" in the dialog of
+        // that wait, can end the window while a load runs. The load fills the resources of the session, so the session
+        // is not disposed then. The end of the process frees it, and closes the lock of the active mod as after a
+        // crash.
+        if (Session is { IsBusy: false } idle)
+        {
+            idle.Dispose();
+        }
     }
 
     /// <summary>The user closes the window: the close button, Alt+F4 or the taskbar. With unsaved edits, the window
-    /// stays open and the close prompt asks first (OL-0027, see <see cref="ClosePrompt"/>).</summary>
-    /// <remarks>A running test server asks first, so that FLServer can save its characters (decision D336).</remarks>
+    /// stays open and the close prompt asks first (OL-0027). While the game data loads, the window closes when the load
+    /// ends (see <see cref="ClosePrompt"/>).</summary>
+    /// <remarks>A running test server asks first, so that FLServer can save its characters (decision D336). While the
+    /// close waits for the load, a second close changes nothing, because the dialog of the wait offers "Close
+    /// now".</remarks>
     protected override bool OnCloseRequested() =>
-        GamePlay.CloseRequested(() =>
-        {
-            if (closePrompt.Request())
-            {
-                Exit();
-            }
-        }) && closePrompt.Request();
+        !closePrompt.Waits && GamePlay.CloseRequested(() => closePrompt.Request()) && closePrompt.Request();
 
     /// <summary>Ends an open field edit or drag and keeps its change, before the window closes.</summary>
     private void EndOpenEdits()
@@ -1038,9 +1042,9 @@ internal sealed partial class EditorWindow : Game
         ImGui.Separator();
         SaveMenuItem();
         ImGui.Separator();
-        if (Theme.IconMenuItem(EditorIcons.DoorOpen, "Exit", true) && closePrompt.Request())
+        if (Theme.IconMenuItem(EditorIcons.DoorOpen, "Exit", true))
         {
-            Exit();
+            closePrompt.Request();
         }
     }
 

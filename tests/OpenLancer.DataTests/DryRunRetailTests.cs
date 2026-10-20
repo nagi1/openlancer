@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using LibreLancer.Data;
 using OpenLancer.Data.Missions;
@@ -246,49 +245,45 @@ public sealed class DryRunRetailTests(ITestOutputHelper output)
     /// <summary>
     /// The two performance gates of section 4.4 of the M6c design over M10, the script with the most triggers: a fold of
     /// 300 inputs with 18,000 heartbeats in all takes at most 16 ms, and Back after 1,000 inputs takes at most 5 ms.
-    /// Other builds can run on the machine at the same time, so the test measures 10 runs of each and takes the best.
-    /// Run the test again alone before you judge a failure.
+    /// The panel folds and steps back often, so the gates can try again (see <see cref="TimingGates"/>). Each gate takes
+    /// the best of 10 tries. Run the test again alone before you judge a failure.
     /// </summary>
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheFoldGatesOverM10()
     {
-        const int Runs = 10;
+        const int Tries = 10;
+        var foldLimit = TimeSpan.FromMilliseconds(16);
+        var backLimit = TimeSpan.FromMilliseconds(5);
         var index = RetailMissions.Slot("M10").Index;
         var fold = Inputs(index, 300, 120);
         Assert.Equal(300, fold.Count);
         Assert.Equal(18_000, fold.Sum(i => i.MostHeartbeats));
-        DryRun.Fold(index, fold);
-        var foldTimes = new List<double>();
-        for (var i = 0; i < Runs; i++)
-        {
-            var watch = Stopwatch.StartNew();
-            var state = DryRun.Fold(index, fold);
-            watch.Stop();
-            foldTimes.Add(watch.Elapsed.TotalMilliseconds);
-            Assert.Equal(300, state.Trace.Steps.Count);
-        }
 
         var run = new DryRun(index);
         foreach (var input in Inputs(index, 1000, 5))
             run.Add(input);
         var last = run.Inputs[^1];
-        var backTimes = new List<double>();
-        for (var i = 0; i < Runs; i++)
-        {
-            var watch = Stopwatch.StartNew();
-            run.Back();
-            watch.Stop();
-            backTimes.Add(watch.Elapsed.TotalMilliseconds);
-            run.Add(last);
-        }
 
-        // The best time of the runs is the cost of the fold. A slower run waited for other work of the machine.
-        var foldBest = foldTimes.Min();
-        var backBest = backTimes.Min();
-        output.WriteLine($"Fold of 300 inputs, 18,000 heartbeats: {string.Join(", ", foldTimes.Select(t => t.ToString("F2")))} ms");
-        output.WriteLine($"Back after 1,000 inputs: {string.Join(", ", backTimes.Select(t => t.ToString("F2")))} ms");
-        Assert.True(foldBest <= 16, $"The fold of M10 took {foldBest:F2} ms.");
-        Assert.True(backBest <= 5, $"Back after 1,000 inputs took {backBest:F2} ms.");
+        // The gates of one test share one patience. After each Back, the test adds the last input again, so that each
+        // try starts from the same state. The first Back warms the code and is not measured.
+        var gates = new TimingGates();
+        DryRunState? state = null;
+        var foldTime = gates.WarmGate(foldLimit, Tries, () => state = DryRun.Fold(index, fold));
+        run.Back();
+        run.Add(last);
+        var backTime = gates.Gate(backLimit, () =>
+        {
+            var time = Timing.Measure(() => run.Back());
+            run.Add(last);
+            return time;
+        }, Tries);
+
+        output.WriteLine($"Fold of 300 inputs, 18,000 heartbeats: {foldTime.TotalMilliseconds:F2} ms (the best try).");
+        output.WriteLine($"Back after 1,000 inputs: {backTime.TotalMilliseconds:F2} ms (the best try).");
+        Assert.Equal(300, state!.Trace.Steps.Count);
+        Assert.True(foldTime <= foldLimit, $"The fold of M10 took {foldTime.TotalMilliseconds:F2} ms.");
+        Assert.True(backTime <= backLimit, $"Back after 1,000 inputs took {backTime.TotalMilliseconds:F2} ms.");
     }
 
     /// <summary>Inputs of a run: Start mission, then in turn a fire of the first waiting event in key order and a number

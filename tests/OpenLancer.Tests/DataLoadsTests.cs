@@ -25,6 +25,9 @@ public sealed class DataLoadsTests
         /// <summary>The most loads that used the resources at the same time.</summary>
         public int Most => Volatile.Read(ref most);
 
+        /// <summary>True while a load uses the resources.</summary>
+        public bool InUse => Volatile.Read(ref users) > 0;
+
         /// <summary>Uses the resources until <paramref name="until"/> is set, or for a moment when it is null.</summary>
         public void Use(ManualResetEventSlim? until)
         {
@@ -187,6 +190,73 @@ public sealed class DataLoadsTests
         Assert.Null(EditController.RequestReload(loads, Start));
         Assert.True(loads.IsReloading);
         ui.RunUntil(() => !loads.IsBusy, "the reload of the last save");
+    }
+
+    /// <summary>
+    /// Finding 9 of the S1 review: the user closes the editor window while the first load runs. The close disposes the
+    /// session, so it must wait for the end of the load, as Unity ends a running import before it quits. The reload of a
+    /// save before the close does not start, and no load starts after the close. A second close changes nothing.
+    /// </summary>
+    [Fact]
+    public void ACloseDuringALoadWaitsForItsEndAndStartsNoReload()
+    {
+        var ui = new QueuedUIThread();
+        var loads = new DataLoads(ui);
+        var resources = new Resources();
+        var events = new List<string>();
+        using var running = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        loads.Load(() =>
+        {
+            running.Set();
+            resources.Use(release);
+            return () => events.Add("loaded");
+        });
+        Assert.True(running.Wait(Timeout, TestContext.Current.CancellationToken));
+        DataLoad StartReload()
+        {
+            events.Add("reload started");
+            return () => () => events.Add("reload loaded");
+        }
+
+        Assert.NotNull(EditController.RequestReload(loads, StartReload));
+        Assert.False(loads.Close(() => events.Add(resources.InUse ? "disposed during the load" : "disposed")));
+        Assert.False(loads.Close(() => events.Add("second close")));
+        var closing = (loads.IsBusy, loads.IsClosed, loads.CloseWaits, loads.ReloadWaits);
+        // A save while the close waits writes its files, but it gives no reload and no Console line.
+        Assert.Null(EditController.RequestReload(loads, StartReload));
+        Assert.False(loads.ReloadWaits);
+
+        release.Set();
+        ui.RunUntil(() => events.Count == 2, "the close after the load");
+        ui.RunQueued();
+
+        Assert.Equal((true, true, true, false), closing);
+        Assert.Equal(["loaded", "disposed"], events);
+        Assert.False(loads.IsBusy);
+        Assert.False(loads.CloseWaits);
+        Assert.False(loads.Reload(StartReload));
+        Assert.Throws<InvalidOperationException>(() => loads.Load(() => () => { }));
+        Assert.Equal(["loaded", "disposed"], events);
+    }
+
+    /// <summary>A close without a running load runs at once. Then no load starts.</summary>
+    [Fact]
+    public void ACloseWithoutALoadRunsAtOnce()
+    {
+        var ui = new QueuedUIThread();
+        var loads = new DataLoads(ui);
+        loads.Load(() => () => { });
+        ui.RunUntil(() => !loads.IsBusy, "the first load");
+        var closed = 0;
+
+        Assert.True(loads.Close(() => closed++));
+
+        Assert.Equal(1, closed);
+        Assert.True(loads.IsClosed);
+        Assert.False(loads.CloseWaits);
+        Assert.False(loads.Reload(() => () => () => { }));
+        Assert.False(loads.IsBusy);
     }
 
     /// <summary>The first load starts one time. A second start while it runs is a bug of the caller.</summary>

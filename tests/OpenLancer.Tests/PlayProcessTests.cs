@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
 using System.Numerics;
 using OpenLancer.Editor;
 using OpenLancer.Editor.Play;
@@ -48,7 +49,12 @@ public sealed class PlayProcessTests : IDisposable
         Assert.False(stub.Runs(0));
     }
 
-    /// <summary>(2) Review finding R6: a command to a game that ended gives false and never throws.</summary>
+    /// <summary>
+    /// (2) Review finding R6: a command to a game that ended gives false and never throws. The exit comes when Windows
+    /// gives the exit code of the stub. Windows can close the input pipe of the stub after that, so a write to the pipe
+    /// can still succeed. Send must ask the process, not the pipe (see
+    /// <see cref="SendToAGameThatEndedReturnsFalseAlsoWhenItsInputTakesTheWrite"/>).
+    /// </summary>
     [Fact]
     public void SendToAGameThatEndedReturnsFalse()
     {
@@ -62,6 +68,31 @@ public sealed class PlayProcessTests : IDisposable
         process.CloseInput();
         Assert.False(process.Send(new PlayCommand(PlayCommandKind.Stop)));
         process.Kill();
+        Assert.Equal(0, code);
+    }
+
+    /// <summary>
+    /// (2) The race of review finding R6 on each run: the read end of the input stays open after the stub ends, so each
+    /// write to the input succeeds. Windows can keep the input pipe of an ended game open in this way for a moment.
+    /// Send must still give false, because the game ended.
+    /// </summary>
+    [Fact]
+    public void SendToAGameThatEndedReturnsFalseAlsoWhenItsInputTakesTheWrite()
+    {
+        using var pipe = new AnonymousPipeServerStream(PipeDirection.Out);
+        using var readEnd = new AnonymousPipeClientStream(PipeDirection.In, pipe.ClientSafePipeHandle);
+        var input = new StreamWriter(pipe);
+        int? code = null;
+        using var process = PlayProcess.Start(stub.Command(new StubPlan([], Exit: 0)), input, ui, _ => { }, _ => { },
+            (c, _) => code = c);
+        ui.RunUntil(() => code != null, "the exit of the stub");
+
+        // The input still takes a write after the exit.
+        input.WriteLine("probe");
+        input.Flush();
+
+        Assert.False(process.Send(new PlayCommand(PlayCommandKind.Start)));
+        Assert.False(process.Send(new PlayCommand(PlayCommandKind.Stop)));
         Assert.Equal(0, code);
     }
 

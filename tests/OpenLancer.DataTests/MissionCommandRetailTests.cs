@@ -21,14 +21,17 @@ namespace OpenLancer.DataTests;
 public sealed class MissionCommandRetailTests(ITestOutputHelper output)
 {
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheCacheGivesTheResultsOfTheWorkerRunForTheRetailScripts()
     {
         using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m6bcache");
         var session = Open(workspace);
-        var watch = Stopwatch.StartNew();
-        var run = MissionRun.Execute(session.Missions.RunInputs());
-        watch.Stop();
-        output.WriteLine($"The worker run of {run.Analyses.Count} scripts: {watch.ElapsedMilliseconds} ms");
+        // The worker run is the first run of the session. A second run is faster, so the gate measures one run and
+        // does not try again (see Timing).
+        MissionRunResult? result = null;
+        var time = Timing.Measure(() => result = MissionRun.Execute(session.Missions.RunInputs()));
+        var run = result!;
+        output.WriteLine($"The worker run of {run.Analyses.Count} scripts: {time.TotalMilliseconds:F0} ms");
 
         foreach (var (path, analysis) in run.Analyses)
         {
@@ -38,10 +41,11 @@ public sealed class MissionCommandRetailTests(ITestOutputHelper output)
         }
         Assert.Equal(14, run.Scripts.Count(s => s.Slot != null && s.State != MissionScriptState.Missing));
         // The gate of M6a: the full worker run of the 14 retail scripts takes at most 2 s.
-        Assert.True(watch.ElapsedMilliseconds < 2000, $"The run took {watch.ElapsedMilliseconds} ms.");
+        Assert.True(time < TimeSpan.FromSeconds(2), $"The run took {time.TotalMilliseconds:F0} ms.");
     }
 
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheGatesOfOneCommandABatchAndAnUndoOnM10()
     {
         using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m6bgates");
@@ -53,42 +57,45 @@ public sealed class MissionCommandRetailTests(ITestOutputHelper output)
         // The first edit runs the base-game analysis of M10 once (section 7 of the M6b design).
         Apply(missions, new SetTriggerSystem(new TriggerRef(m10, triggers[0])) { System = "ol_first" });
 
-        // The gates take the median of five runs, so that one pause of a busy machine does not fail them.
-        var ones = new List<long>();
-        var undos = new List<long>();
+        // A try of the gates takes the median of five runs, so that one pause of a busy machine does not fail it. The
+        // median also keeps the first command, with the compile of its code, out of the result. Each undo brings back
+        // the state before the command, so the gate can try again (see TimingGates).
+        var tries = new List<(List<long> Ones, List<long> Undos)>();
         MissionEditResult? result = null;
         MissionModel? model = null;
-        for (var i = 0; i < 5; i++)
+        var commandGate = new TimingGates().Gate(TimeSpan.FromMilliseconds(50), () =>
         {
-            var one = Stopwatch.StartNew();
-            result = Apply(missions, new AddAction(new TriggerRef(m10, triggers[1 + i]),
-                LineSpec.Of("Act_ActTrig", ("trigger", triggers[2 + i]))));
-            one.Stop();
-            ones.Add(one.ElapsedMilliseconds);
-            var undo = Stopwatch.StartNew();
-            session.Undo();
-            model = missions.Model(m10);
-            undo.Stop();
-            undos.Add(undo.ElapsedMilliseconds);
-        }
-        var oneTime = Median(ones);
-        var undoTime = Median(undos);
+            var (ones, undos) = (new List<long>(), new List<long>());
+            for (var i = 0; i < 5; i++)
+            {
+                var command = new AddAction(new TriggerRef(m10, triggers[1 + i]),
+                    LineSpec.Of("Act_ActTrig", ("trigger", triggers[2 + i])));
+                ones.Add((long)Timing.Measure(() => result = Apply(missions, command)).TotalMilliseconds);
+                undos.Add((long)Timing.Measure(() =>
+                {
+                    session.Undo();
+                    model = missions.Model(m10);
+                }).TotalMilliseconds);
+            }
+            tries.Add((ones, undos));
+            return TimeSpan.FromMilliseconds(Math.Max(Median(ones), Median(undos)));
+        });
+        var runs = string.Join("; ", tries.Select(t => $"one command {string.Join(", ", t.Ones)} ms, undo " +
+                                                       $"{string.Join(", ", t.Undos)} ms"));
 
         var commands = Enumerable.Range(0, 500).Select(i => (MissionCommand)new AddAction(
             new TriggerRef(m10, triggers[i % triggers.Count]),
             LineSpec.Of("Act_ActTrig", ("trigger", triggers[(i * 7 + 3) % triggers.Count])))).ToList();
-        var batch = Stopwatch.StartNew();
-        var many = missions.Apply(new MissionBatch("500 actions", commands));
-        batch.Stop();
-        output.WriteLine($"One command: {string.Join(", ", ones)} ms. Undo: {string.Join(", ", undos)} ms. 500 commands: " +
-                         $"{batch.ElapsedMilliseconds} ms.");
+        MissionEditResult? many = null;
+        var batch = Timing.Measure(() => many = missions.Apply(new MissionBatch("500 actions", commands)));
+        output.WriteLine($"{runs}. 500 commands: {batch.TotalMilliseconds:F0} ms.");
 
         Assert.NotNull(result!.Inverse);
         Assert.NotNull(model!.Index);
-        Assert.Equal(EditStatus.Applied, many.Status);
-        Assert.True(oneTime < 50, $"One command took {oneTime} ms (median of {string.Join(", ", ones)}).");
-        Assert.True(undoTime < 50, $"The undo took {undoTime} ms (median of {string.Join(", ", undos)}).");
-        Assert.True(batch.ElapsedMilliseconds < 2000, $"The batch took {batch.ElapsedMilliseconds} ms.");
+        Assert.Equal(EditStatus.Applied, many!.Status);
+        Assert.True(commandGate < TimeSpan.FromMilliseconds(50),
+            $"The median of one command or of its undo took {commandGate.TotalMilliseconds} ms ({runs}).");
+        Assert.True(batch < TimeSpan.FromSeconds(2), $"The batch took {batch.TotalMilliseconds:F0} ms.");
 
         // A step of a drag runs no analysis on the thread of the session.
         var analyses = missions.Cache.Count;

@@ -22,7 +22,8 @@ internal sealed record Choice(string Label, Action Action)
 
 /// <summary>
 /// A message with buttons, for example Save, Discard and Cancel. The first button is the default button, unless a button
-/// says that it is the default button. Escape and the close button of the title bar run the cancel action.
+/// says that it is the default button. Escape and the close button of the title bar run the cancel action, except in a
+/// dialog that the user cannot cancel (see <see cref="ShowWithoutCancel"/>).
 /// </summary>
 internal sealed class ChoiceDialog : ModalDialog
 {
@@ -30,8 +31,11 @@ internal sealed class ChoiceDialog : ModalDialog
     private string message = "";
     private IReadOnlyList<Choice> choices = [];
     private Action? cancel;
+    private bool cancellable = true;
 
     protected override string Title => title;
+
+    protected override bool CanCancel => cancellable;
 
     /// <param name="title">The title. Two dialogs that can show at the same time need different titles.</param>
     /// <param name="cancel">What Escape and the close button of the title bar do, or null for nothing.</param>
@@ -41,7 +45,17 @@ internal sealed class ChoiceDialog : ModalDialog
         this.message = message;
         this.choices = choices;
         this.cancel = cancel;
+        cancellable = true;
         Open();
+    }
+
+    /// <summary>Shows a dialog that the user cannot cancel. It blocks the window until a button closes it or the window
+    /// closes. Escape does nothing, and the title bar has no close button.</summary>
+    /// <param name="title">The title. Two dialogs that can show at the same time need different titles.</param>
+    public void ShowWithoutCancel(string title, string message, IReadOnlyList<Choice> choices)
+    {
+        Show(title, message, choices);
+        cancellable = false;
     }
 
     protected override void Body()

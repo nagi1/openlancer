@@ -55,10 +55,15 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 
     void IClosePromptHost.DiscardRecovery() => Edits.DiscardRecovery();
 
-    void IClosePromptHost.Close() => Exit();
+    DataLoads? IClosePromptHost.Loads => Session?.Loads;
+
+    void IClosePromptHost.Exit() => Exit();
 
     void IClosePromptHost.Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel) =>
         closeDialog.Show(title, message, choices, cancel);
+
+    void IClosePromptHost.Wait(string title, string message, IReadOnlyList<Choice> choices) =>
+        closeDialog.ShowWithoutCancel(title, message, choices);
 
     bool ISaveCommandHost.DialogOpen => DialogOpen;
 
@@ -512,9 +517,10 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         agentMenu.Draw();
     }
 
-    /// <summary>True while a dialog of the editor is open.</summary>
+    /// <summary>True while a dialog of the editor is open. The close of the window that waits for the load of the game
+    /// data counts as a dialog, also when another popup hid its dialog.</summary>
     internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || Missions.DialogOpen ||
-                                templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen ||
+                                templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen || closePrompt.Waits ||
                                 exportDialog?.IsOpen == true || Mods.DialogOpen || agentMenu.DialogOpen;
 
     /// <summary>

@@ -102,6 +102,7 @@ public sealed class AgentRetailTests(ITestOutputHelper output)
     /// <c>check</c> with the scope all, without a gate.
     /// </summary>
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheSessionPartOfEachListAndGetToolFitsInOneFrame()
     {
         using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "mcp1bench");
@@ -116,24 +117,32 @@ public sealed class AgentRetailTests(ITestOutputHelper output)
             AgentTools.Run(host, tool, JsonNode.Parse(arguments)!.AsObject());
             output.WriteLine($"{Stopwatch.GetElapsedTime(start).TotalMilliseconds,8:0.00} ms  first call: {tool} {arguments}");
         }
+        // find_references and get_item with include_used_by read each line of the data and of the mission scripts that
+        // names the item. They give their time in the log, with no gate. The gate of each other call takes the median of
+        // five runs as one try. The first calls warmed up the code, so the gates can try again. All gates of the test
+        // share one patience (see TimingGates).
+        var gates = new TimingGates();
         var times = calls.Where(c => c.Tool.StartsWith("list_") || c.Tool.StartsWith("get_") || c.Tool.StartsWith("find_"))
             .Select(c =>
             {
                 var arguments = JsonNode.Parse(c.Arguments)!.AsObject();
-                var runs = Enumerable.Range(0, 5).Select(_ =>
+                TimeSpan Median()
                 {
-                    var start = Stopwatch.GetTimestamp();
-                    AgentTools.Run(host, c.Tool, (JsonObject)arguments.DeepClone());
-                    return Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                }).Order().ToList();
-                return (Call: $"{c.Tool} {c.Arguments}", Median: runs[2]);
+                    var runs = Enumerable.Range(0, 5).Select(_ =>
+                    {
+                        var call = (JsonObject)arguments.DeepClone();
+                        return Timing.Measure(() => AgentTools.Run(host, c.Tool, call));
+                    }).Order().ToList();
+                    return runs[2];
+                }
+                var gated = !c.Tool.StartsWith("find_") && !c.Arguments.Contains("include_used_by");
+                var median = gated ? gates.Gate(TimeSpan.FromMilliseconds(FrameMilliseconds), Median) : Median();
+                return (Call: $"{c.Tool} {c.Arguments}", Gated: gated, Median: median.TotalMilliseconds);
             }).ToList();
 
-        foreach (var (call, median) in times)
+        foreach (var (call, _, median) in times)
             output.WriteLine($"{median,8:0.00} ms  {call}");
-        // find_references and get_item with include_used_by read each line of the data and of the mission scripts that
-        // names the item. They give their time in the log, with no gate.
-        Assert.All(times.Where(t => !t.Call.StartsWith("find_") && !t.Call.Contains("include_used_by")),
+        Assert.All(times.Where(t => t.Gated),
             t => Assert.True(t.Median < FrameMilliseconds, $"{t.Call}: {t.Median:0.00} ms"));
     }
 

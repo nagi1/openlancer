@@ -562,12 +562,13 @@ internal sealed class EditController(EditorWindow window) : IDisposable
     /// <summary>
     /// Asks the loads for a reload after a save (see <see cref="DataLoads.Reload"/>). Returns the Console line when the
     /// reload waits for the running load, else null. More saves during one load give one line, because they give one
-    /// reload.
+    /// reload. A save while the window closes gives no reload and no line.
     /// </summary>
     internal static string? RequestReload(DataLoads loads, Func<DataLoad> start)
     {
         var waited = loads.ReloadWaits;
-        return loads.Reload(start) || waited ? null : ReloadWaitsText;
+        loads.Reload(start);
+        return loads.ReloadWaits && !waited ? ReloadWaitsText : null;
     }
 
     /// <summary>Starts a reload on the UI thread. It reads the saved files now, and gives the load that runs in the

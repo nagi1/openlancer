@@ -114,44 +114,4 @@ Open the Cutscenes tab of the editor to browse the retail cutscenes and the cuts
 
 ## Agents
 
-An agent program, for example Claude Code, can read the data of a profile through the agent server of OpenLancer (an MCP server). This version has the read tools: the systems and their items, the data lists, the assets, the missions, the cutscenes, the raw INI text and the checks. It also has the view tools of the editor. No tool changes a file.
-
-To connect an agent to the editor:
-
-1. Open a profile in the editor.
-2. Pick **Agent > Start agent server**. At the first start, a notice tells what the agent reads. The agent program can send that data to its model service.
-3. Pick **Agent > Connect an agent...** and click **Copy**.
-4. Paste the text into the file `.mcp.json` in the folder of your agent project.
-5. Start the agent program in that folder.
-
-The text names the server address `http://127.0.0.1:<port>/mcp` and the token helper `"<OpenLancer folder>\oltool.exe" mcp token`. The editor makes a new token at each start of the server, and the helper gives it only to the running server. The status bar shows the state of the server. **Agent > Show agent messages** shows the messages of the server in the Console. **Agent > Agent settings** has the port (47815 by default), the tool groups and the limits.
-
-The view tools work only in the editor:
-
-- `open_view` opens a system in the Scene, a mission in the Mission tab or a cutscene in the Cutscene tab.
-- `select_items` selects an item, as a click does. By default, it also opens the view of the item and moves the view to it.
-- `render_scene` gives an image of a system from a camera that the agent chooses. The camera of the Scene does not move, and the Scene keeps its system. The result also gives the place of each item in the image.
-- `render_cutscene` gives an image of a cutscene at a time. The preview in the Cutscene tab does not change. A space script shows without its system.
-- `capture_panel` gives an image of a panel as you see it, with its marks and labels.
-
-The agent program can send each image to its model service, and a capture of a panel can show the names of your folders. An image has at most 2048 pixels on each side, and a larger panel gives a smaller image. **Agent > Agent settings > Advanced** can set a smaller limit. The editor does not draw a frame while it renders an image. An image of a system that the Scene does not show also loads that system first.
-
-To measure the images, start the editor with `OpenLancer.Editor <profile.json> --bench-agent-render <system>`, with the nickname of a system of the profile. The bench opens the profile without an active mod and opens the system. It renders one image of 1024 by 640 to warm up, then one image from each of 10 directions, as `render_scene` does. For each image, it writes the time on the UI thread and the time until the PNG is ready to the engine log of the editor. The time on the UI thread includes the work of the GPU. Then the bench closes. The gate is a median under 100 ms. A median above the gate, or an image that fails, gives the exit code 1. The bench needs no agent server and does not change the editor settings.
-
-The server accepts connections from this computer only. It listens on 127.0.0.1, and each request needs the token. Use the address with `127.0.0.1`, not `localhost`. The helper gives no token for `localhost`, because another program can listen on the IPv6 address of `localhost`. Never put a proxy or a tunnel, for example a Tailscale Funnel, in front of the port of the agent server.
-
-To run the tools without the editor, add a server that starts oltool:
-
-```json
-{
-  "mcpServers": {
-    "openlancer-headless": {
-      "type": "stdio",
-      "command": "<OpenLancer folder>\\oltool.exe",
-      "args": ["mcp", "serve", "<workspace>\\profiles\\my-profile.json", "--mod", "my-mod", "--read-only"]
-    }
-  }
-}
-```
-
-`oltool mcp tools` lists the tools. The editor writes each call of an agent into an audit log in the log folder of OpenLancer, and `oltool mcp replay <profile.json> --mod <id> <log>` runs the calls of a log again and compares the results. The name of each read tool starts with `list_`, `get_`, `find_`, `search_`, `describe_` or `check`, or is `studio_status`. So a permission rule of the agent program, for example `mcp__openlancer__list_*`, can allow them. `render_scene`, `render_cutscene` and `capture_panel` also change nothing. The rules `mcp__openlancer__render_*` and `mcp__openlancer__capture_panel` allow them. `open_view` and `select_items` change what the editor shows.
+An agent program, for example Claude Code, can read the data of a profile through the agent server of OpenLancer (an MCP server). In the editor, the agent can also open views, select items and get images. No tool changes a file. To connect an agent, pick **Agent > Start agent server**, then **Agent > Connect an agent...**. See [docs/MCP.md](docs/MCP.md).
