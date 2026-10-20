@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Prefabs;
@@ -57,8 +58,8 @@ public sealed class PrefabModeTests(ITestOutputHelper output)
         Assert.Contains("Act_PlayMusic = ol_music", m.Lines(T("ol_w2_spawn", Two).Item));
         Assert.Contains(Template(m).Section("spawn")!.Lines, l => l.Key == "Act_PlayMusic" && l.Value == "ol_music");
         Assert.Contains("Prefab 'Gate ambush' changed 2 instances in 2 missions.", result.Notes);
-        Assert.Empty(m.Missions.Model(Script).Problems.Where(p => p.Rule is "P01" or "P03"));
-        Assert.Empty(m.Missions.Model(Two).Problems.Where(p => p.Rule is "P01" or "P03"));
+        Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule is "P01" or "P03");
+        Assert.DoesNotContain(m.Missions.Model(Two).Problems, p => p.Rule is "P01" or "P03");
 
         m.Session.Undo();
 
@@ -108,7 +109,7 @@ public sealed class PrefabModeTests(ITestOutputHelper output)
         Assert.Contains(new InstanceMember("finish", "ol_w1_end"), m.Missions.Graph(Script).Instance("ol_w1")!.Members);
         Assert.True(m.Has("ol_w1_end"));
         Assert.Contains("Act_ActTrig = ol_w1_end", m.Lines("ol_w1_spawn"));
-        Assert.Empty(m.Missions.Model(Script).Problems.Where(p => p.Rule is "P01" or "P03"));
+        Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule is "P01" or "P03");
     }
 
     [Fact]
@@ -186,6 +187,45 @@ public sealed class PrefabModeTests(ITestOutputHelper output)
         Assert.Equal(["spawn", "end"], model.Analysis!.Index.Triggers.Select(t => t.Nickname));
         Assert.Equal(GateRef.Script, model.Analysis.Script.Path);
         Assert.Same(model.Analysis, m.Missions.PrefabMode(GateRef)!.Analysis);
+    }
+
+    /// <summary>In the graph of prefab mode, a port is an output pin (section 8.6 of the M6b design): the line of the port
+    /// gives the Starts pin of its trigger, and no "Missing" node. A link between two roles shows as a link.</summary>
+    [Fact]
+    public void APortOfTheTemplateIsAnOutputPinWithoutAMissingNode()
+    {
+        using var m = PrefabInstanceTests.Create();
+
+        var graph = MissionGraph.Build(m.Missions.PrefabMode(GateRef)!.Analysis!, new GraphOptions(GraphLens.Logic));
+
+        Assert.DoesNotContain(graph.Nodes, n => n.Kind == GraphNodeKind.Missing);
+        var spawn = graph.TriggerNode(graph.Index.Trigger("spawn")!)!;
+        var end = graph.TriggerNode(graph.Index.Trigger("end")!)!;
+        Assert.NotNull(end.Pin(GraphPinKind.Starts));
+        Assert.DoesNotContain(graph.Links, l => l.From == end);
+        Assert.Contains(graph.Links, l => l.From == spawn && l.To == end);
+    }
+
+    /// <summary>The steps of a prefab in prefab mode (section 8.6 of the M6b design, UI rule 12): a field that no line
+    /// holds and a file with a problem are missing steps.</summary>
+    [Fact]
+    public void TheStepsOfAPrefabNameAnUnusedFieldAndAProblemOfTheFile()
+    {
+        using var m = PrefabInstanceTests.Create(new Dictionary<string, string>
+        {
+            [@"prefabs\missions\ol_bad.ini"] = PrefabInstanceTests.Gate.Replace("id = ol_gate", "id = ol_bad").Replace("kind = beat", "kind = wave"),
+        });
+        m.Apply(new AddPrefabField(GateRef, "music", "Music", "sound") { Default = ["ol_music"] });
+
+        var steps = MissionCompleteness.OfPrefab(m.Missions.PrefabMode(GateRef)!).Steps;
+        var bad = MissionCompleteness.OfPrefab(m.Missions.PrefabMode(PrefabRef.ModOf("ol_bad"))!).Steps;
+
+        Assert.Equal([CompletenessState.Done, CompletenessState.Done, CompletenessState.Missing], steps.Select(s => s.State));
+        Assert.Equal("Field 'Music' is in no line, so it changes nothing. Make it the value of a line, or remove it.", steps[2].Detail);
+        Assert.Equal(new MissionRef(GateRef.Script, MissionItemKind.Mission, Key: "field:music"), steps[2].GoTo);
+        var file = Assert.Single(bad);
+        Assert.Equal((CompletenessState.Missing, true), (file.State, file.IsError));
+        Assert.Equal("Line 5 of the prefab: 'wave' is not a prefab kind. Use 'beat' or 'order'.", file.Detail);
     }
 
     /// <summary>A command of each field kind of prefab mode on the asset ol_gate with the instance ol_w1.</summary>

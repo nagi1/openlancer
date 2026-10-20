@@ -977,10 +977,16 @@ public sealed class MissionGraph
         var merged = new Dictionary<(int From, int To), (GraphNode From, GraphPin FromPin, GraphNode To, GraphPin ToPin,
             MissionLinkKind Kind, List<MissionLink> Sources, string? State)>();
         var order = new List<(int, int)>();
+        // In prefab mode, a value of a template can be a slot, for example {port:done}. The compile gives it the triggers
+        // of the port or of the field, so the link ends at its output pin, with no "Missing" node (section 8.6 of the M6b
+        // design).
+        var template = Editing.MissionRefs.IsPrefab(Analysis.Script.Path);
         foreach (var link in Index.Links)
         {
             // A trigger that starts itself gives no link. Its row chip shows instead.
             if (link.Kind == MissionLinkKind.Start && link.Target == link.Source)
+                continue;
+            if (template && link.Target == null && Prefabs.PrefabSlot.Of(link.TargetName).Count > 0)
                 continue;
             GraphNode from, to;
             GraphPin? fromPin, toPin;

@@ -143,6 +143,42 @@ public static class MissionCompleteness
         _ => "pilot",
     };
 
+    /// <summary>
+    /// The completeness of a prefab in prefab mode (section 8.6 of the M6b design): the prefab file has no problem of the
+    /// format check, the lines of the template have no error, and each field is in a line. A missing step of a field
+    /// goes to the field on the Prefab page.
+    /// </summary>
+    public static CompletenessReport OfPrefab(Editing.PrefabModeModel prefab)
+    {
+        var steps = new List<CompletenessStep>
+        {
+            prefab.Asset.Problems is [var first, ..]
+                ? new CompletenessStep(PrefabFileStep, CompletenessState.Missing, PrefabFileReason, first.ToString(), IsError: true)
+                : new CompletenessStep(PrefabFileStep, CompletenessState.Done, PrefabFileReason),
+        };
+        if (prefab.Template is { } template)
+        {
+            steps.Add(RuleStep(TemplateLinesStep, TemplateLinesReason,
+                prefab.Analysis?.Problems.Where(p => p.Severity == DiagnosticSeverity.Error).ToList() ?? []));
+            var unused = template.Fields.FirstOrDefault(f => !template.Sections.Any(s => s.Lines.Any(l =>
+                Prefabs.PrefabSlot.KeyField(l.Key) == f.Id || Prefabs.PrefabSlot.Of(l.Value).Any(slot => slot.Field == f.Id))));
+            steps.Add(unused == null
+                ? new CompletenessStep(FieldsStep, CompletenessState.Done, FieldsReason)
+                : new CompletenessStep(FieldsStep, CompletenessState.Missing, FieldsReason,
+                    $"Field '{unused.Label}' is in no line, so it changes nothing. Make it the value of a line, or remove it.",
+                    new MissionRef(prefab.Asset.Ref.Script, MissionItemKind.Mission, Key: "field:" + unused.Id)));
+        }
+        return new CompletenessReport(prefab.Asset.Name, steps);
+    }
+
+    // The steps of a prefab in prefab mode.
+    private const string PrefabFileStep = "Prefab file";
+    private const string PrefabFileReason = "The editor places and compiles only a prefab whose file has no problem.";
+    private const string TemplateLinesStep = "Valid lines";
+    private const string TemplateLinesReason = "Each instance gets these lines, so an error of a line is an error of each instance.";
+    private const string FieldsStep = "Fields in lines";
+    private const string FieldsReason = "A field changes the instances only through the lines that hold its value.";
+
     /// <summary>The completeness of a prefab instance: the steps of its prefab.</summary>
     public static CompletenessReport OfInstance(MissionAnalysis analysis, MissionPrefabInstance instance)
     {

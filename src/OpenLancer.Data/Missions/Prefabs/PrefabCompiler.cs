@@ -34,7 +34,11 @@ public sealed record PrefabInput(string Id)
 }
 
 /// <summary>One section of the compile: its role, its type, its nickname and its lines as value texts.</summary>
-public sealed record CompiledSection(string Role, string Type, string Nickname, IReadOnlyList<RawEntry> Entries);
+public sealed record CompiledSection(string Role, string Type, string Nickname, IReadOnlyList<RawEntry> Entries)
+{
+    /// <summary>The index of the template line of each line, in the lines of the template section.</summary>
+    public IReadOnlyList<int> Sources { get; init; } = [];
+}
 
 /// <summary>
 /// The compile of a linked prefab instance (section 5.4 of the M6b design): a pure function of the template, the instance
@@ -82,27 +86,77 @@ public static class PrefabCompiler
                               "Give the instance a shorter id.",
                 });
             var entries = new List<RawEntry>();
+            var sources = new List<int>();
             var nickname = true;
-            foreach (var line in section.Lines)
+            for (var at = 0; at < section.Lines.Count; at++)
             {
+                var line = section.Lines[at];
                 if (PrefabSlot.KeyField(line.Key) is { } keyField)
-                {
                     entries.AddRange(values[keyField].Select(r => new RawEntry(r.Key!, r.Texts)));
-                    continue;
-                }
-                if (nickname && line.Key.Equals("nickname", StringComparison.OrdinalIgnoreCase))
+                else if (nickname && line.Key.Equals("nickname", StringComparison.OrdinalIgnoreCase))
                 {
                     nickname = false;
                     entries.Add(new RawEntry(line.Key, [name]));
-                    continue;
                 }
-                foreach (var texts in Expand(template, line, input, values))
-                    entries.Add(new RawEntry(line.Key, Remap(texts, patterns, names)));
+                else
+                {
+                    foreach (var texts in Expand(template, line, input, values))
+                        entries.Add(new RawEntry(line.Key, Remap(texts, patterns, names)));
+                }
+                sources.AddRange(Enumerable.Repeat(at, entries.Count - sources.Count));
             }
             CheckLines(section, entries);
-            result.Add(new CompiledSection(section.Role, section.Type, name, entries));
+            result.Add(new CompiledSection(section.Role, section.Type, name, entries) { Sources = sources });
         }
         return result;
+    }
+
+    /// <summary>
+    /// The role and the line of the first line of a compile that holds the value of a field, or null when no line holds
+    /// it, for example a list without rows. "Show in raw INI" of a field of a linked instance goes to that line (section
+    /// 8.6 of the M6b design).
+    /// </summary>
+    public static (string Role, int Entry)? FieldLine(PrefabTemplate template, IReadOnlyList<CompiledSection> compiled, string field)
+    {
+        foreach (var section in compiled)
+        {
+            if (template.Section(section.Role) is not { } source)
+                continue;
+            for (var entry = 0; entry < section.Sources.Count; entry++)
+            {
+                var line = source.Lines[section.Sources[entry]];
+                if (PrefabSlot.KeyField(line.Key) == field || PrefabSlot.Of(line.Value).Any(s => s.Field == field))
+                    return (section.Role, entry);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The nickname that the template gives the section of a role in a new instance with an id, for example
+    /// <c>ol_wave_1_spawn</c>.</summary>
+    public static string MadeName(PrefabSectionDef section, string id) =>
+        Fill(section.NicknamePattern ?? "", id, null, null, new Dictionary<string, IReadOnlyList<PrefabRow>>(),
+            new Dictionary<string, IReadOnlyList<string>>());
+
+    /// <summary>
+    /// A made id of a new instance (section 4.9 of the M6b design): the id of the prefab in lowercase and a number. No
+    /// record of the script has the id, and the script has no section with a name that the template gives a section of
+    /// the instance.
+    /// </summary>
+    /// <param name="idTaken">True for an id that a record of the script has.</param>
+    /// <param name="nameTaken">True for a name that the script has for a section type, or that is not valid.</param>
+    public static string NewInstanceId(PrefabTemplate template, Func<string, bool> idTaken, Func<string, string, bool> nameTaken)
+    {
+        var stem = new string(template.Id.ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_')
+            .ToArray());
+        if (stem.Length > 20)
+            stem = stem[..20];
+        for (var n = 1;; n++)
+        {
+            var id = $"{stem}_{n.ToString(CultureInfo.InvariantCulture)}";
+            if (!idTaken(id) && template.Sections.All(s => !nameTaken(s.Type, MadeName(s, id))))
+                return id;
+        }
     }
 
     /// <summary>The value texts of each copy of a template line: one copy, one for each row of its list or each link of

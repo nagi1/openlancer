@@ -82,11 +82,13 @@ internal static class MissionTreeEdits
             ? (acts ?? analysis.Acts)?.Act(item.Key ?? "") != null
             : SectionOf(analysis, item) is { Nickname: not null, Kind: not MissionSectionKind.Mission };
 
-    /// <summary>The batch of Ctrl+D on a row: a copy of a trigger or of an item of the script with a free name. The
-    /// graph and the Hierarchy give the same batch for a trigger. Null for another row or for a line of a
-    /// trigger.</summary>
+    /// <summary>The batch of Ctrl+D on a row: a copy of a trigger or of an item of the script with a free name, or a new
+    /// instance of a prefab instance. The graph and the Hierarchy give the same batch for a trigger and for a prefab
+    /// instance. Null for another row or for a line of a trigger.</summary>
     public static MissionBatch? Duplicate(MissionAnalysis analysis, MissionRef item)
     {
+        if (InstanceOf(analysis, item) is { } instance)
+            return GraphEditModel.DuplicateInstance(analysis.Index, analysis.Script.Path, instance, instance.Claimed);
         if (SectionOf(analysis, item) is not { Nickname: { } name } section)
             return null;
         if (section.Kind == MissionSectionKind.Trigger)
@@ -99,11 +101,14 @@ internal static class MissionTreeEdits
         analysis.Index.Triggers.FirstOrDefault(t => t.Section == section);
 
     /// <summary>The batch of Delete on a row: a trigger, a mission ship with its unused parts (decision D669), another
-    /// item of the script, or an act. Lines that name the item stay and show "Missing". Null for another row and for a
-    /// line of a trigger, so the key does not delete the whole trigger.</summary>
+    /// item of the script, an act, or a prefab instance as the graph deletes its frame. Lines that name the item stay and
+    /// show "Missing". Null for another row and for a line of a trigger, so the key does not delete the whole
+    /// trigger.</summary>
     public static MissionBatch? Delete(MissionAnalysis analysis, MissionRef item, MissionActs? acts)
     {
         var script = analysis.Script.Path;
+        if (InstanceOf(analysis, item) is { } instance)
+            return GraphEditModel.DeleteInstance(script, instance);
         if (item.Kind == MissionItemKind.Act && (acts ?? analysis.Acts)?.Act(item.Key ?? "") is { } act)
             return new MissionBatch("Delete act", [new RemoveAct(new ActRef(script, MissionActs.NicknameOf(act)))]);
         if (SectionOf(analysis, item) is not { } section || section.Kind is MissionSectionKind.Mission)
@@ -187,6 +192,12 @@ internal static class MissionTreeEdits
             Pilot = new PilotSpec { Faction = faction },
             NewBuild = new ShipBuildSpec(archetype, loadout ?? MissionLibrary.NoName) { Pilot = pilot },
         }]);
+
+    /// <summary>The prefab instance of a row of a prefab instance, or null.</summary>
+    private static MissionPrefabInstance? InstanceOf(MissionAnalysis analysis, MissionRef item) =>
+        item.Kind == MissionItemKind.PrefabInstance
+            ? analysis.Prefabs?.Instances.FirstOrDefault(i => i.Key == item.Key)
+            : null;
 
     /// <summary>The section of a row of the tree, or null. A line of a trigger, for example a row of the group "Links", is
     /// not its section (review finding 7 of M6b-2).</summary>

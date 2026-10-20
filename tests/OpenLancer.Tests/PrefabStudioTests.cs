@@ -82,8 +82,14 @@ public sealed class PrefabStudioTests
         page = InstancePage(m, "ol_w1");
         delay = Field(page, "fields", "Spawn after");
         Assert.Equal((true, true), (delay.Override, delay.Changed));
-        Assert.Equal(["Revert", "Apply to prefab 'Gate ambush'"], delay.Actions.Select(a => a.Label));
-        Assert.Equal([MissionPageModel.RevertTip, MissionPageModel.ApplyTip], delay.Actions.Select(a => a.Tooltip));
+        Assert.Equal(["Revert", "Apply to prefab 'Gate ambush'", "Show in raw INI"], delay.Actions.Select(a => a.Label));
+        Assert.Equal([MissionPageModel.RevertTip, MissionPageModel.ApplyTip, null], delay.Actions.Select(a => a.Tooltip));
+        // "Show in raw INI" goes to the line of the field in its member: Cnd_Timer of the spawn trigger.
+        var spawn = new SectionRef(Script, new SectionIdentity("Trigger", "ol_w1_spawn"));
+        Assert.Equal(new RawLineLink(spawn, 1), delay.Actions[2].Link);
+        var formationMenu = Field(page, "fields", "Enemy formation").Actions;
+        Assert.Equal(["Show in raw INI"], formationMenu.Select(a => a.Label));
+        Assert.Equal(new RawLineLink(spawn, 2), formationMenu[0].Link);
         // A per-instance field never shows as an override (decision D674).
         Assert.False(Field(page, "fields", "Enemy formation").Override);
         Assert.Equal(["Overrides (1)", "Revert Spawn after", "Apply Spawn after", "Revert all", "Apply all", "Unpack", "Delete instance"],
@@ -131,7 +137,7 @@ public sealed class PrefabStudioTests
         var page = InstancePage(m, "ol_b");
         spawnWhen = Field(page, "fields", "Spawn when");
         Assert.True(spawnWhen.Override);
-        Assert.Equal(["Revert", "Make a variant with this value"], spawnWhen.Actions.Select(a => a.Label));
+        Assert.Equal(["Revert", "Make a variant with this value", "Show in raw INI"], spawnWhen.Actions.Select(a => a.Label));
         Assert.DoesNotContain(page.PageActions, a => a.Label == "Apply all");
         One(new CreatePrefabAsset("spawnwave_variant")
         {
@@ -278,6 +284,9 @@ public sealed class PrefabStudioTests
         var page = MissionPageModel.For(Context(m, model.Analysis, model), MissionRef.Of(GateRef.Script));
 
         Assert.Equal(("Gate ambush", null), (page.Title, page.ReadOnly));
+        // The steps of the prefab (UI rule 12): the file, the lines and the fields.
+        Assert.Equal(["Prefab file", "Valid lines", "Fields in lines"], page.Completeness!.Steps.Select(s => s.Name));
+        Assert.Equal(3, page.Completeness.Done);
         var delay = Field(page, "fields", "Spawn after");
         Assert.Equal(["Remove field"], delay.Actions.Select(a => a.Label));
         Assert.Contains("Kind: Number.", delay.Help);
@@ -442,6 +451,32 @@ public sealed class PrefabStudioTests
         Assert.Single(m.Missions.Graph(Script).Instances);
     }
 
+    /// <summary>A drag from an output pin to an empty place offers the prefabs with a trigger in quick add (section 8.2 of
+    /// the M6b design). The pick is one batch: the new instance, and the link of the pin to its first trigger.</summary>
+    [Fact]
+    public void QuickAddFromAPinPlacesAPrefabAndLinksThePinToItsFirstTrigger()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_gate_1");
+        var model = new GraphEditModel(MissionGraph.Build(m.Missions.Model(Script).Analysis, new GraphOptions(GraphLens.Logic)));
+        var gate = MissionLibrary.Prefab(m.Missions.Prefab(GateRef)!);
+        var escort = MissionLibrary.Prefab(m.Missions.Prefab(PrefabRef.BuiltinOf("escort"))!);
+        var from = new GraphEnd(model.Graph.TriggerNode(model.Graph.Index.Trigger("ol_wave")!)!, null);
+        var place = new GraphPoint(300, 40);
+        var context = new QuickAddContext(from, null, QuickAddFilter.Triggers) { Place = place };
+
+        Assert.True(GraphEditModel.Fits(context, gate));
+        Assert.False(GraphEditModel.Fits(context, escort));
+        var batch = model.QuickAdd(context, gate)!;
+        Assert.Equal("Place prefab Gate ambush", batch.Label);
+        Assert.Equal(new PlacePrefabInstance(TestScript, GateRef) { Id = "ol_gate_2", Place = place }, batch.Commands[0]);
+        Assert.Equal(new LinkTriggers(T("ol_wave"), "ol_gate_2_spawn", LinkKind.Start), batch.Commands[1]);
+        Run(m, batch);
+        Assert.Equal("Act_ActTrig = ol_gate_2_spawn", m.Lines("ol_wave")[^1]);
+        Assert.Equal(2, m.Missions.Graph(Script).Instances.Count);
+        Assert.Equal("Place prefab Gate ambush", m.Session.UndoLabel);
+    }
+
     /// <summary>The prefab frame of an instance in the graph of the test script.</summary>
     private static (GraphEditModel Model, GraphFrame Frame) FrameOf(MissionEdits m, string id)
     {
@@ -482,6 +517,34 @@ public sealed class PrefabStudioTests
         var actions = model.FrameActions(frame.Instance!, m.Missions.FreePrefabId, editable: true);
         Assert.Equal(["Open prefab", "Save as prefab...", "Delete instance"], actions.Select(a => a.Label));
         Assert.Equal(new PrefabModeLink(PrefabRef.BuiltinOf("success")), actions[0].Link);
+    }
+
+    /// <summary>Delete and Ctrl+D on the row of a prefab instance in the Hierarchy give the batches of the graph (section
+    /// 8.9 of the M6b design).</summary>
+    [Fact]
+    public void DeleteAndDuplicateOfAnInstanceRowOfTheHierarchyGiveTheBatchesOfTheGraph()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        var analysis = m.Missions.Model(Script).Analysis;
+        var instance = analysis.Prefabs!.Instances.Single(i => i.Id == "ol_w1");
+        var row = new MissionRef(Script, MissionItemKind.PrefabInstance, Key: instance.Key);
+        var (model, frame) = FrameOf(m, "ol_w1");
+
+        var delete = MissionTreeEdits.Delete(analysis, row, null)!;
+        Assert.Equal(("Delete instance ol_w1", new RemovePrefabInstance(I("ol_w1"))), (delete.Label, Assert.Single(delete.Commands)));
+        Assert.Equal(MissionJson.Write(model.DuplicateInstance(frame)!.Commands[0]),
+            MissionJson.Write(Assert.Single(MissionTreeEdits.Duplicate(analysis, row)!.Commands)));
+        Run(m, MissionTreeEdits.Duplicate(analysis, row));
+        Assert.Equal(2, m.Missions.Graph(Script).Instances.Count);
+
+        using var matched = MissionEdits.Create(MatchedText);
+        var retail = matched.Missions.Model(Script).Analysis;
+        var win = new MissionRef(Script, MissionItemKind.PrefabInstance,
+            Key: retail.Prefabs!.Instances.Single(i => i.Id == "success/ol_win").Key);
+        Assert.Equal([new RemoveTrigger(T("ol_win"))], MissionTreeEdits.Delete(retail, win, null)!.Commands);
+        Run(matched, MissionTreeEdits.Duplicate(retail, win));
+        Assert.True(matched.Has("ol_win_2"));
     }
 
     // ---- Assets ----

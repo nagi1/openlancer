@@ -5,6 +5,7 @@ using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
@@ -124,20 +125,24 @@ internal sealed partial record MissionPageModel
         var canApply = linked.Asset is { Active: true };
         var unsaved = context.UnsavedOverrides(reference);
 
+        var compiled = Compiled(linked);
         var fields = new List<PageField>();
         foreach (var value in linked.Fields)
         {
             var field = value.Field;
             var view = PrefabValueField(context, field, value.Rows, readOnly,
                 rows => One($"Set {field.Label}", new SetPrefabField(reference, field.Id, rows)));
+            IReadOnlyList<PageAction> menu = value.Override && editable
+                ? OverrideMenu(context, reference, prefab, name, canApply, field.Id, field.Label)
+                : [];
+            if (RawLinkOf(linked, compiled, field.Id) is { } raw)
+                menu = [.. menu, new PageAction("Show in raw INI", null, raw)];
             fields.Add(view with
             {
                 Help = field.PerInstance ? Join(view.Help, PerInstanceTip) : view.Help,
                 Override = value.Override,
                 Changed = value.Override && unsaved.Fields.Contains(field.Id),
-                Actions = value.Override && editable
-                    ? OverrideMenu(context, reference, prefab, name, canApply, field.Id, field.Label)
-                    : [],
+                Actions = menu,
             });
         }
 
@@ -197,6 +202,29 @@ internal sealed partial record MissionPageModel
             PageActions = editable ? OverridesMenu(context, reference, prefab, name, canApply, linked) : [],
         };
     }
+
+    /// <summary>The compile of a linked instance now, or null when the prefab is missing or the compile refuses.</summary>
+    private static IReadOnlyList<CompiledSection>? Compiled(LinkedInstance linked)
+    {
+        if (linked.Template is not { } template)
+            return null;
+        try
+        {
+            return PrefabCompiler.Compile(template, LinkedInstance.InputOf(linked.Record, template));
+        }
+        catch (EditException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The link of "Show in raw INI" of a field of a linked instance (section 8.6 of the M6b design): the first
+    /// line of a member that holds the value of the field. Null when no line holds it.</summary>
+    private static RawLineLink? RawLinkOf(LinkedInstance linked, IReadOnlyList<CompiledSection>? compiled, string field) =>
+        compiled != null && PrefabCompiler.FieldLine(linked.Template!, compiled, field) is var (role, entry) &&
+        linked.Sections.GetValueOrDefault(role) is { } section && entry < section.Section.Count
+            ? new RawLineLink(section.Ref, entry)
+            : null;
 
     /// <summary>The kind of a prefab field in plain words, for example "Whole number" or "Condition".</summary>
     internal static string KindLabel(PrefabFieldDef field)
@@ -538,9 +566,9 @@ internal sealed partial record MissionPageModel
     // ---- Prefab mode (sections 5.7 and 8.6) ----
 
     /// <summary>
-    /// The Prefab page of prefab mode (section 8.6 of the M6b design): the name, the kind, the source of a variant, the
-    /// fields with their kind, default and "Per instance", the ports, the template sections and the problems. A built-in
-    /// prefab or a prefab of a lower mod is read-only, with its banner and "Make variant".
+    /// The Prefab page of prefab mode (section 8.6 of the M6b design): the steps, the name, the kind, the source of a
+    /// variant, the fields with their kind, default and "Per instance", the ports, the template sections and the
+    /// problems. A built-in prefab or a prefab of a lower mod is read-only, with its banner and "Make variant".
     /// </summary>
     /// <param name="key">The row of the Hierarchy, for example <c>field:delay</c>: the page opens its section.</param>
     internal static MissionPageModel PrefabPage(PageContext context, PrefabModeModel model, string? key = null)
@@ -564,7 +592,7 @@ internal sealed partial record MissionPageModel
             about.Insert(1, new PageField("Kind", template.Kind == MissionPrefabKind.Order ? "Order" : "Beat"));
             if (template.VariantOf is { } source)
                 about.Add(new PageField("Variant of", PrefabRef.TryParse(source)?.Id ?? source,
-                    "The prefab that this prefab copies. A change of that prefab does not change this one (decision D672).",
+                    "The prefab that this prefab copies. A change of that prefab does not change this one.",
                     PrefabRef.TryParse(source) is { } from ? new PrefabModeLink(from) : null));
         }
 
@@ -619,7 +647,8 @@ internal sealed partial record MissionPageModel
         var help = template is { Help.Length: > 0 }
             ? new HelpText(asset.Name, template.Help, template.Writes.Length > 0 ? template.Writes : AssetHelp.WhatItWrites)
             : AssetHelp with { Title = asset.Name };
-        return new MissionPageModel(asset.Name, "Behavior prefab", EditorIcons.Cubes, help, null, sections, null)
+        return new MissionPageModel(asset.Name, "Behavior prefab", EditorIcons.Cubes, help, MissionCompleteness.OfPrefab(model),
+            sections, null)
         {
             ReadOnly = model.ReadOnlyReason ?? (readOnly != FieldNote ? readOnly : null),
             PageActions = canVariant ? [makeVariant] : [],

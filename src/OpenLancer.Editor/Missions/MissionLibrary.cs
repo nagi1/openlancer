@@ -48,6 +48,9 @@ internal sealed record LibraryItem(LibraryKind Kind, string Id, string Name, str
     /// <summary>The prefab of a <see cref="LibraryKind.Prefab"/> item, or null.</summary>
     public PrefabRef? Prefab { get; init; }
 
+    /// <summary>The template of a <see cref="LibraryKind.Prefab"/> item, or null when its file has a problem.</summary>
+    public PrefabTemplate? Template { get; init; }
+
     /// <summary>The tooltip of the lock of a prefab of a lower mod, or null. Such a prefab can place, but it cannot
     /// change.</summary>
     public string? Lock { get; init; }
@@ -96,6 +99,7 @@ internal static class MissionLibrary
         return new LibraryItem(LibraryKind.Prefab, asset.Ref.ToString(), asset.Name, PrefabsTitle, glyph, help, asset.Ref.RecordText)
         {
             Prefab = asset.Ref,
+            Template = template,
             Lock = asset.Ref.Builtin || asset.Active ? null : LockTip(asset.ModId ?? ""),
             Problem = template == null
                 ? $"The prefab file has a problem, so the prefab cannot place. {asset.Problems.FirstOrDefault()}"

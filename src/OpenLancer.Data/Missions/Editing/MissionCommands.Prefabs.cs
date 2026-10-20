@@ -565,24 +565,9 @@ internal sealed partial class MissionDraft
     /// script, with free names for its members.</summary>
     public string NewInstanceId(EditDocument script, PrefabTemplate template)
     {
-        var stem = new string(template.Id.ToLowerInvariant().Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_')
-            .ToArray());
-        if (stem.Length > 20)
-            stem = stem[..20];
         var graph = Graph(script);
-        for (var n = 1;; n++)
-        {
-            var id = $"{stem}_{n.ToString(CultureInfo.InvariantCulture)}";
-            if (graph.Instance(id) != null)
-                continue;
-            var free = template.Sections.All(s =>
-            {
-                var name = (s.NicknamePattern ?? "").Replace("{instance}", id, StringComparison.Ordinal);
-                return NameProblem(script, -1, s.Type, name) == null;
-            });
-            if (free)
-                return id;
-        }
+        return PrefabCompiler.NewInstanceId(template, id => graph.Instance(id) != null,
+            (type, name) => NameProblem(script, -1, type, name) != null);
     }
 
     /// <summary>

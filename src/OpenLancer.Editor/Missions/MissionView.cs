@@ -197,13 +197,13 @@ internal sealed class MissionView : IDisposable
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Make variant"))
                 {
-                    missions.Run(new MissionBatch($"Make a variant of {model.Asset.Name}",
-                    [
-                        new CreatePrefabAsset(editor.FreePrefabId((model.Asset.Ref.Id + "_variant").ToLowerInvariant()))
-                        {
-                            VariantOf = model.Asset.Ref,
-                        },
-                    ]));
+                    // Prefab mode then shows the variant, which can change.
+                    var id = editor.FreePrefabId((model.Asset.Ref.Id + "_variant").ToLowerInvariant());
+                    if (missions.Run(new MissionBatch($"Make a variant of {model.Asset.Name}",
+                            [new CreatePrefabAsset(id) { VariantOf = model.Asset.Ref }])))
+                    {
+                        missions.OpenPrefabMode(PrefabRef.ModOf(id));
+                    }
                 }
 
                 ImGui.SetItemTooltip(MissionPageModel.MakeVariantTip);
