@@ -65,7 +65,7 @@ public sealed class MissionReferencesTests
         // The line that named ol_d before the rename still names ol_d.
         Assert.Equal(["nickname = ol_b", "Cnd_WatchTrigger = ol_c, ON", "Act_DeactTrig = ol_c", "Act_Save = ol_c, 1",
             "Act_ActTrig = ol_d"], m.Lines("ol_b"));
-        Assert.NotNull(m.Lines("ol_c"));
+        Assert.True(m.Has("ol_c"));
     }
 
     [Fact]
@@ -177,7 +177,8 @@ public sealed class MissionReferencesTests
         var use = Assert.Single(uses);
         Assert.Equal(("Act_LockDock", 2, 1), (use.Key, use.Row, use.Value));
         Assert.Empty(m.Missions.References.Uses(MissionReferences.ObjectKinds, "ol_ship_1"));
-        Assert.Single(m.Missions.References.Uses([MissionValueKind.ShipArch], "ol_arch").Where(u => u.Script.EndsWith(@"OL_TEST\npcships.ini", StringComparison.OrdinalIgnoreCase)));
+        Assert.Single(m.Missions.References.Uses([MissionValueKind.ShipArch], "ol_arch"),
+            u => u.Script.EndsWith(@"OL_TEST\npcships.ini", StringComparison.OrdinalIgnoreCase));
     }
 
     private const string StoryScript = @"DATA\MISSIONS\OL_REF\ol_ref.ini";

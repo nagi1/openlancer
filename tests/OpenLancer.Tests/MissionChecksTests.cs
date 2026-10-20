@@ -320,7 +320,9 @@ public sealed class MissionChecksTests
         Assert.Equal(DiagnosticSeverity.Error, MissionChecks.SeverityOf("M05"));
         Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("G05"));
         Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("M26"));
-        Assert.Equal(32, MissionChecks.Rules.Count);
+        Assert.Equal(DiagnosticSeverity.Error, MissionChecks.SeverityOf("M27"));
+        Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("M28"));
+        Assert.Equal(34, MissionChecks.Rules.Count);
     }
 
     [Fact]
@@ -346,6 +348,40 @@ public sealed class MissionChecksTests
             words[0].Message);
         Assert.All(words, w => Assert.Equal(DiagnosticSeverity.Warning, w.Severity));
         Assert.Empty(Rule(Check(With("[Trigger]\nnickname = t2\nCnd_True = no_params\nAct_NNIds = 5, OTHER\n")), "M26"));
+    }
+
+    /// <summary>The game finds a trigger by the FLHash id of its name. Two triggers with different names and one id
+    /// give M27 on the second trigger.</summary>
+    [Fact]
+    public void M27TwoTriggersWithOneGameIdAreAnError()
+    {
+        var (first, second) = DataListsTests.FlHashPair();
+        var problems = Check(With($"[Trigger]\nnickname = {first}\nCnd_True = no_params\n\n" +
+                                  $"[Trigger]\nnickname = {second}\nCnd_True = no_params\n"));
+
+        var problem = Assert.Single(Rule(problems, "M27"));
+        Assert.Equal(DiagnosticSeverity.Error, problem.Severity);
+        Assert.Equal($"Triggers '{first}' and '{second}' have the same game id. The game keeps only the first of the two. " +
+                     "Rename one of them.", problem.Message);
+        Assert.Equal(second, problem.Target!.Id.Key);
+        Assert.Equal($"M27|{first}|{second}", problem.Subject);
+        // Two triggers with one name give M02, not M27.
+        Assert.Empty(Rule(Check(With($"[Trigger]\nnickname = {first}\nCnd_True = no_params\n\n" +
+                                     $"[Trigger]\nnickname = {first.ToUpperInvariant()}\nCnd_True = no_params\n")), "M27"));
+    }
+
+    /// <summary>A name that no retail script uses gives M28 (decision D425).</summary>
+    [Fact]
+    public void M28ANameWithNoRetailExampleIsAWarning()
+    {
+        var problems = Check(With("[Trigger]\nnickname = t2\nCnd_RumorHeard = rumor_a, room_a, base_a\nAct_ActTrig = t_end\n"));
+
+        var problem = Assert.Single(Rule(problems, "M28"));
+        Assert.Equal(DiagnosticSeverity.Warning, problem.Severity);
+        Assert.Equal("The game data has no example of 'On rumor heard'. Its effect is not checked. Test the mission in the " +
+                     "game.", problem.Message);
+        Assert.Equal(1, problem.EntryIndex);
+        Assert.Empty(Rule(Check(Story), "M28"));
     }
 
     /// <summary>A name of the label rule that names no item of the script and no

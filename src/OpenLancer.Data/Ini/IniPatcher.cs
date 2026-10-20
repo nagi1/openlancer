@@ -301,7 +301,7 @@ internal static class IniPatcher
         }
         if (candidates.Count == 0)
         {
-            context.Error($"{label}: no section to patch in {target.Path}. Set {DirectiveNew} = true to add it.");
+            context.NoTarget(identity, $"{label}: no section to patch in {target.Path}. Set {DirectiveNew} = true to add it.");
             return null;
         }
         if (candidates.Count > 1)
@@ -388,11 +388,14 @@ internal static class IniPatcher
                         (p.IsReplace ? FirstKeyEquals(c.section, match.KeyEntry!, oldKey)
                             : KeyEquals(c.section, match.KeyEntry!, oldKey)))
             .ToList();
-        if (candidates.Count != 1)
+        if (candidates.Count == 0)
         {
-            context.Error(candidates.Count == 0
-                ? $"{label}: no section to rename in {target.Path}."
-                : $"{label}: matches {candidates.Count} sections in {target.Path}. {DirectiveRename} needs one.");
+            context.NoTarget(identity, $"{label}: no section to rename in {target.Path}.");
+            return;
+        }
+        if (candidates.Count > 1)
+        {
+            context.Error($"{label}: matches {candidates.Count} sections in {target.Path}. {DirectiveRename} needs one.");
             return;
         }
         if (target.Sections.Any(s => s.Name.Equals(patch.Name, StringComparison.OrdinalIgnoreCase) &&
@@ -472,11 +475,14 @@ internal static class IniPatcher
                         FirstKeyEquals(c.section, match.KeyEntry!, identity.Key!))
             .Select(c => c.index)
             .ToList();
-        if (positions.Count != 1)
+        if (positions.Count == 0)
         {
-            context.Error(positions.Count == 0
-                ? $"{identity}: no section to patch in {target.Path}. Set {DirectiveNew} = true to add it."
-                : $"{identity}: matches {positions.Count} sections in {target.Path}. Use a whole-file override.");
+            context.NoTarget(identity, $"{identity}: no section to patch in {target.Path}. Set {DirectiveNew} = true to add it.");
+            return;
+        }
+        if (positions.Count > 1)
+        {
+            context.Error($"{identity}: matches {positions.Count} sections in {target.Path}. Use a whole-file override.");
             return;
         }
         var original = target.Sections[positions[0]];
@@ -517,6 +523,7 @@ internal static class IniPatcher
     {
         if (p.BaseHash is not { } expected || SectionHash.Matches(original, expected))
             return;
+        context.ChangedBases.Add(identity);
         context.Warning($"Mod '{context.ModId}' replaces {identity} of {context.TargetPath}. The base of this section " +
                         "changed after the edit, and its changes go away. Compare the two, then keep your lines or use " +
                         "the new base.");
@@ -881,6 +888,22 @@ internal sealed class PatchContext(
     public string TargetPath => targetPath;
 
     public void Error(string message) => diagnostics.Add(Diagnostic.Error(sourceFile, message));
+
+    /// <summary>The patch sections that found no section to change, with their errors. The target check of the save
+    /// gate gives each one its own text (rule T01, section 6.12 of the M6b design).</summary>
+    public List<(SectionIdentity Section, Diagnostic Error)> NoTargets { get; } = [];
+
+    /// <summary>The sections whose <c>ol.base</c> differs from the hash of the section that the patch replaces or
+    /// deletes (rule T02, section 6.12 of the M6b design).</summary>
+    public List<SectionIdentity> ChangedBases { get; } = [];
+
+    /// <summary>Adds the error of a patch section that finds no section to change.</summary>
+    public void NoTarget(SectionIdentity section, string message)
+    {
+        var error = Diagnostic.Error(sourceFile, message);
+        diagnostics.Add(error);
+        NoTargets.Add((section, error));
+    }
 
     public void Warning(string message) => diagnostics.Add(Diagnostic.Warning(sourceFile, message));
 

@@ -208,6 +208,12 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         }
 
         var hadEdits = session.Edits.IsDirty;
+        // A retail target without a linked game gives one info line in a session (section 6.12 of the M6b design).
+        foreach (var note in session.Edits.TakeTargetNotes())
+        {
+            Log.Add(ConsoleSeverity.Info, SaveReport.Source, note);
+        }
+
         // The save gate runs first, so that a refused save does not stop the validation for nothing (review finding
         // R21 of the M21 design). EditSession.Save runs it again.
         if (Gate(session.Edits) is { } refused)

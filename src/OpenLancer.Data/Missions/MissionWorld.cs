@@ -46,6 +46,17 @@ public sealed class MissionWorld
         }
     }
 
+    private MissionWorld(MissionWorld world, Func<string, bool> fileExists)
+    {
+        names = world.names;
+        removed = world.removed;
+        this.fileExists = fileExists;
+    }
+
+    /// <summary>The world with another check of the files, for example a check that sees the files of W (section 7 of
+    /// the M6b design). A world that does not know the files stays as it is.</summary>
+    internal MissionWorld WithFiles(Func<string, bool> exists) => fileExists == null ? this : new MissionWorld(this, exists);
+
     /// <summary>A world with more names of some kinds, for example the names of a test that the data lists of its game
     /// data do not have.</summary>
     internal MissionWorld WithNames(IReadOnlyDictionary<MissionValueKind, IEnumerable<string>> more)
@@ -61,6 +72,10 @@ public sealed class MissionWorld
 
     /// <summary>True when the world holds names that a mod removes or renames (see <see cref="WithRemoved"/>).</summary>
     public bool HasRemovedNames => removed.Count > 0;
+
+    /// <summary>True when a mod removes or renames a name of this world (see <see cref="WithRemoved"/>).</summary>
+    public bool RemovesNamesOf(string mod) =>
+        removed.Values.Any(map => map.Values.Contains(mod, StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// The world of the base game for the base-game runs of the checks (decision D551 of the M6a design). It has the

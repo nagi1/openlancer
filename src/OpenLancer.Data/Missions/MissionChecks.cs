@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using LibreLancer.Data;
 using OpenLancer.Data.Editing;
 
 namespace OpenLancer.Data.Missions;
@@ -25,17 +26,21 @@ public static class MissionChecks
     public const string Source = "Mission";
 
     /// <summary>The ids of the rules, in the order of section 13.6 of the M6a design. M24, M25 and M26 are the lint rules
-    /// of section 11.5: unknown keys, unknown section types and words outside a closed set of words.</summary>
+    /// of section 11.5: unknown keys, unknown section types and words outside a closed set of words. M27 and M28 come
+    /// from section 6.10 of the M6b design: two triggers with the same game id, and a name with no retail
+    /// example.</summary>
     public static readonly IReadOnlyList<string> Rules =
     [
         "M01", "M02", "M03", "M04", "M05", "M06", "M07", "M08", "M09", "M10", "M11", "M12", "M13", "M14", "M15", "M16",
-        "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25", "M26", "G01", "G02", "G03", "G04", "G05", "G06",
+        "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25", "M26", "M27", "M28", "G01", "G02", "G03", "G04",
+        "G05", "G06",
     ];
 
     /// <summary>The rules whose problems are errors for a line of the active mod. The others are warnings.</summary>
     private static readonly HashSet<string> ErrorRules =
     [
         "M01", "M02", "M05", "M06", "M07", "M08", "M09", "M11", "M12", "M13", "M16", "M17", "M18", "M21", "M22", "M23",
+        "M27",
     ];
 
     /// <summary>The severity of a rule for a line of the active mod.</summary>
@@ -109,9 +114,11 @@ public static class MissionChecks
         /// <summary>The name of a section in a subject: the nickname, or the identity.</summary>
         private static string Id(MissionSection section) => section.Nickname ?? section.Ref.Id.ToString();
 
-        /// <summary>Rules M01 to M04 and M10.</summary>
+        /// <summary>Rules M01 to M04, M10 and M27.</summary>
         public void Triggers()
         {
+            // The game finds a trigger by the FLHash id of its name (risk R14 of the M6b design).
+            var ids = new Dictionary<uint, string>();
             foreach (var trigger in index.Triggers)
             {
                 var section = trigger.Section;
@@ -122,6 +129,13 @@ public static class MissionChecks
                         "second. Give each trigger its own name.", trigger.Nickname);
                     continue;
                 }
+                var id = FLHash.CreateID(trigger.Nickname);
+                if (ids.TryGetValue(id, out var first))
+                    Add("M27", section, trigger.NicknameLine,
+                        $"Triggers '{first}' and '{trigger.Nickname}' have the same game id. The game keeps only the first " +
+                        "of the two. Rename one of them.", $"{first}|{trigger.Nickname}");
+                else
+                    ids[id] = trigger.Nickname;
                 if (trigger.Condition == null)
                     Add("M01", section, -1, TriggerRules.NoConditionMessage(trigger.Nickname), trigger.Nickname);
                 if (trigger.Conditions.Count > 1)
@@ -409,6 +423,12 @@ public static class MissionChecks
                         $"Section type [{section.Type}] is not a known type of a mission script. The editor does not " +
                         "check this section. Make sure that the type name is correct.", section.Ref.Id.ToString());
                     continue;
+                }
+                foreach (var line in index.LinesOf(section).Where(l => l.Name is { NoRetailExample: true }))
+                {
+                    Add("M28", section, line.Entry,
+                        $"The game data has no example of '{line.Name!.Plain}'. Its effect is not checked. Test the mission " +
+                        "in the game.", $"{Id(section)}|{line.Key}");
                 }
                 if (spec.OpenKeys)
                     continue;

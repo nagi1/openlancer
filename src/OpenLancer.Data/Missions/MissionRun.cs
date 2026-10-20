@@ -78,6 +78,12 @@ public sealed record MissionInputs
         };
     }
 
+    /// <summary>The world of the checks of W: a file below the data folder that the overlay adds exists, and a file that
+    /// it deletes does not exist.</summary>
+    internal MissionWorld CheckWorld => Overlay.Count == 0
+        ? World
+        : World.WithFiles(relative => DataPath(relative) is { } path ? FileExists(path) : World.FileExists(relative));
+
     /// <summary>True when the edit view, or the overlay, has a file.</summary>
     internal bool FileExists(string path) =>
         Overlay.TryGetValue(VfsPath.Normalize(path) ?? path, out var file) ? file.Exists : EditView.FileExists(path);
@@ -383,7 +389,7 @@ public static class MissionRun
     private static MissionAnalysis Analyze(MissionInputs inputs, MissionScriptInfo script, MissionDocument document,
         byte[] bytes, Func<MissionScriptInfo, BaseRun?>? baseRun)
     {
-        var index = MissionIndex.Build(document, inputs.Schema, inputs.World, inputs.Coverage);
+        var index = MissionIndex.Build(document, inputs.Schema, inputs.CheckWorld, inputs.Coverage);
         var problems = MissionChecks.Run(index, inputs.Options);
         var run = baseRun != null ? baseRun(script) : ChangedBaseRun(inputs, script);
         if (run == null && script.State == MissionScriptState.BaseGame && inputs.BaseWorld is { } names &&

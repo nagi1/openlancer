@@ -61,7 +61,7 @@ public sealed class MissionNamesTests
         m.Apply(new RenameTrigger(T(longName), "ol_short"));
         m.Apply(new RenameTrigger(T("ol_short"), longName));
 
-        Assert.NotNull(m.Lines(longName));
+        Assert.True(m.Has(longName));
         Assert.Equal(EditStatus.NoChange, m.Missions.Apply(new SetTriggerStart(T(longName), false)).Status);
     }
 

@@ -25,7 +25,6 @@ public sealed class WholeFileScriptTests
     internal const string Script = """
         ; An OpenLancer test script.
         [Mission]
-        npc_ship_file = missions\ol_test\ol_npcships.ini
 
         ; The first wave.
         [Trigger]
@@ -38,6 +37,11 @@ public sealed class WholeFileScriptTests
         nickname = ol_next
         Cnd_Timer = 3
         Act_ChangeState = SUCCEED
+        """;
+
+    /// <summary>Two triggers with one name. The save gate blocks them (rule M02), so only the test of the edits has
+    /// them.</summary>
+    private const string Twins = """
 
         [Trigger]
         nickname = ol_twin
@@ -54,7 +58,7 @@ public sealed class WholeFileScriptTests
     [Fact]
     public void EachSectionOfAWholeMissionFileOfTheModIsEditable()
     {
-        using var ws = Workspace();
+        using var ws = Workspace(new() { [WholeFile] = Script + "\n" + Twins });
         var session = ws.Session("act");
         var secondTwin = new SectionRef(ScriptPath, new SectionIdentity("Trigger", "ol_twin", null, 1));
 

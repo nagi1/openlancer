@@ -63,13 +63,13 @@ public sealed class MissionShipTests
         var used = m.Apply(new RemoveMissionShip(Item("MsnShip", "ol_ship_1")));
 
         Assert.Equal(["Target", "Cascade", "Cascade"], alone.Deletes.Select(d => d.Why.ToString()));
-        Assert.Null(m.Lines(Item("NPCShipArch", "ol_test_build_1", Ships)));
+        Assert.False(m.Has(Item("NPCShipArch", "ol_test_build_1", Ships)));
         // The build of ol_ship_3 is in the shared file, so it stays.
         Assert.Equal(2, shared.Deletes.Count);
-        Assert.NotNull(m.Lines(Item("NPCShipArch", "ol_shared_build", SharedShips)));
+        Assert.True(m.Has(Item("NPCShipArch", "ol_shared_build", SharedShips)));
         // ol_ship_2 still uses ol_npc_1.
         Assert.Single(used.Deletes);
-        Assert.NotNull(m.Lines(Item("NPC", "ol_npc_1")));
+        Assert.True(m.Has(Item("NPC", "ol_npc_1")));
         Assert.Equal(["Act_SpawnShip", "Cnd_Destroyed"], used.Missing.Select(x => x.Key).Order());
     }
 

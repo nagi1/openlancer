@@ -471,6 +471,7 @@ internal sealed partial class EditorWindow : Game
             var profile = ModProfile.Load(full);
             var active = Settings.ActiveModOf(full, profile.Mods.Select(m => m.Id).ToList());
             edits = EditSession.Open(profile, active, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
+            edits.TargetGame = TargetGameOf;
             foreach (var d in edits.OpenProblems.Concat(edits.EditView.Diagnostics))
             {
                 Log.Add(d with { Origin = d.Origin ?? edits.MergeProblemOrigin(d) });

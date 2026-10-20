@@ -99,7 +99,7 @@ public sealed class MissionBatchTests
         Assert.Equal(Row("ol_wave", 6).Reference, problem.Ref);
         m.Session.Undo();
         var removed = m.Apply(new RemoveAction(Row("ol_wave", 3)));
-        Assert.Empty(removed.NewProblems.Where(p => p.Severity == DiagnosticSeverity.Error));
+        Assert.DoesNotContain(removed.NewProblems, p => p.Severity == DiagnosticSeverity.Error);
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public sealed class MissionBatchTests
     }
 
     [Fact]
-    public void ATransactionStepRunsNoAnalysisAndTheCommitIsOneEntry()
+    public async System.Threading.Tasks.Task ATransactionStepRunsNoAnalysisAndTheCommitIsOneEntry()
     {
         using var m = Create();
         m.Missions.Model(Script);
@@ -254,7 +254,7 @@ public sealed class MissionBatchTests
                 [new SetConditionValue(T("ol_wave"), "seconds", seconds)])).Status);
         Assert.Equal(analyses, m.Missions.Cache.Count);
         var work = transaction.AnalysisWork();
-        var analysis = Assert.Single(System.Threading.Tasks.Task.Run(work).Result);
+        var analysis = Assert.Single(await System.Threading.Tasks.Task.Run(work, TestContext.Current.CancellationToken));
         Assert.Equal("Cnd_Timer = 5", MissionEdits.Line(analysis.Index.Trigger("ol_wave")!.Condition!.Line));
         var result = transaction.Commit();
 

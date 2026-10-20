@@ -20,6 +20,9 @@ public sealed class PatchWriterMissionTests
 {
     private static readonly string WaveHash = SectionHash.Of(ScriptSections()[3]);
 
+    /// <summary>The ship build file that two tests name in the <c>[Mission]</c> section.</summary>
+    private const string OtherShips = @"DATA\MISSIONS\OL_TEST\ol_b.ini";
+
     [Fact]
     public void AChangeOfATriggerWithALineBeforeTheNicknameWritesAllLinesWithReplace()
     {
@@ -118,6 +121,8 @@ public sealed class PatchWriterMissionTests
     public void AnOldFormSectionOfTheLoadedPatchBecomesAReplaceWithOneNote()
     {
         using var ws = Workspace();
+        // The save gate blocks a line of the active mod that names a file that does not exist (rule M22).
+        ws.WriteBase(OtherShips, "[NPCShipArch]\nnickname = ol_b\n");
         ws.Mod("act", new Dictionary<string, string> { [@"patches\" + ScriptPath] = "[Trigger]\nnickname = ol_next\nCnd_Timer = 7\n" });
         ws.WriteProfile("act");
         var session = ws.Session("act");
@@ -193,6 +198,7 @@ public sealed class PatchWriterMissionTests
     public void ASaveOfAnotherSectionKeepsTheOldBaseSoTheWarningStays()
     {
         using var ws = Workspace();
+        ws.WriteBase(OtherShips, "[NPCShipArch]\nnickname = ol_b\n");
         var oldHash = SectionHash.Of(ScriptSections()[4]);
         ws.Mod("lower", new Dictionary<string, string>
         {

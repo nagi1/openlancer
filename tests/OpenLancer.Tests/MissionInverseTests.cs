@@ -181,7 +181,7 @@ public sealed class MissionInverseTests
         var saved = m.Session.Save();
         Assert.True(saved.Saved, string.Join("\n", saved.Problems));
         Assert.Empty(saved.Written);
-        Assert.Empty(TestWorkspace.Files(m.Ws.ModFolder("act")).Keys.Where(k => !k.EndsWith("mod.json", StringComparison.Ordinal)));
+        Assert.DoesNotContain(TestWorkspace.Files(m.Ws.ModFolder("act")).Keys, k => !k.EndsWith("mod.json", StringComparison.Ordinal));
     }
 
     private static MissionCommand RandomCommand(MissionEdits m, Random random, int step)

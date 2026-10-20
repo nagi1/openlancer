@@ -86,7 +86,7 @@ public sealed class MissionEditorTests
 
         var kept = m.Apply(new RemoveTrigger(T("ol_end")));
 
-        Assert.Null(m.Lines("ol_end"));
+        Assert.False(m.Has("ol_end"));
         Assert.Contains("Act_ActTrig = ol_end", m.Lines("ol_start")!);
         Assert.Equal([("Act_ActTrig", true), ("Act_DeactTrig", true), ("Act_ActTrig", true)],
             kept.Missing.Select(x => (x.Key, x.BlocksSave)));
@@ -336,7 +336,7 @@ public sealed class MissionEditorTests
 
         var added = m.Apply(new AddSection(TestScript, "MsnSolar", [LineSpec.Of("system", ("system", "ol_system"))]));
         var removed = m.Apply(new RemoveSection(form));
-        Assert.Null(m.Lines(form));
+        Assert.False(m.Has(form));
         var restore = Assert.IsType<RestoreSection>(Assert.Single(((CommandGroup)removed.Inverse!).Commands));
         m.Apply(restore);
         m.Apply(new ReplaceSectionBody(form, [new RawEntry("nickname", ["ol_form"]), new RawEntry("formation", ["ol_shape"])]));

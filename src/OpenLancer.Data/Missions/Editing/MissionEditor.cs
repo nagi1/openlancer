@@ -90,6 +90,23 @@ public sealed partial class MissionEditor
         return ModelOf(document, document.State);
     }
 
+    /// <summary>
+    /// The mission errors of the save gate (section 6.10 of the M6b design): the errors of each script that the active
+    /// mod changes. When the active mod removes or renames a name of the game data, also the errors of each other
+    /// script, so a line of any layer that names such a name blocks the save (decision D81). The origin rule of D551
+    /// makes each problem of a lower mod or of the base game a warning, so each error here is an error of the active
+    /// mod.
+    /// </summary>
+    internal IEnumerable<Diagnostic> SaveErrors(string activeMod)
+    {
+        var scripts = ScriptPaths();
+        if (scripts.Count == 0)
+            return [];
+        var removes = world.Inputs().BaseWorld is { } names && names.RemovesNamesOf(activeMod);
+        return scripts.Where(p => removes || session.OpenDocument(p) is { } document && document.ChangesBase(document.State))
+            .SelectMany(p => Model(p).Problems.Where(d => d.Severity == DiagnosticSeverity.Error)).ToList();
+    }
+
     /// <summary>The model of a state of a script, from the cache or a new analysis.</summary>
     internal MissionModel ModelOf(EditDocument document, DocumentState state)
     {

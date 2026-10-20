@@ -129,8 +129,9 @@ internal sealed class MissionEdits : IDisposable
     /// <param name="text">The text of the script, or null for <see cref="Text"/>.</param>
     /// <param name="binary">True writes the script as a binary INI file.</param>
     /// <param name="setup">More files before the session opens.</param>
+    /// <param name="modFiles">The files of the active mod, by their path in the mod folder, or null for none.</param>
     public static MissionEdits Create(string? text = null, bool binary = false, Action<TestWorkspace>? setup = null,
-        string? manifestExtra = null)
+        string? manifestExtra = null, Dictionary<string, string>? modFiles = null)
     {
         var ws = new TestWorkspace();
         if (binary)
@@ -140,7 +141,7 @@ internal sealed class MissionEdits : IDisposable
         ws.WriteBase(Ships, ShipsText);
         ws.WriteBase(SharedShips, SharedText);
         setup?.Invoke(ws);
-        ws.Mod("act", new(), manifestExtra);
+        ws.Mod("act", modFiles ?? new(), manifestExtra);
         ws.WriteProfile("act");
         var session = ws.Session("act");
         session.Missions.UseWorld(new TestMissionWorld(session, WorldNames));
@@ -157,17 +158,30 @@ internal sealed class MissionEdits : IDisposable
 
     public static ScriptRef TestScript => new(Script);
 
-    /// <summary>The lines of a section of W as "key = values", or null when W has no such section.</summary>
-    public string[]? Lines(ItemRef item)
+    /// <summary>The lines of a section of W as "key = values". The test fails when W has no such section.</summary>
+    public string[] Lines(ItemRef item)
+    {
+        var index = IndexOf(item);
+        if (index < 0)
+            Assert.Fail($"W has no section {item.Section} in {item.Script}.");
+        return Session.OpenDocument(item.Script)!.Working[index].Select(Line).ToArray();
+    }
+
+    public string[] Lines(string trigger) => Lines(T(trigger).Item);
+
+    /// <summary>True when W has the section.</summary>
+    public bool Has(ItemRef item) => IndexOf(item) >= 0;
+
+    public bool Has(string trigger) => Has(T(trigger).Item);
+
+    private int IndexOf(ItemRef item)
     {
         var document = Session.OpenDocument(item.Script)!;
         var index = document.IndexOf(item.Section);
         if (index < 0 && item.Section.Type == "Trigger")
             index = MissionDraftLines.TriggerIndex(document, item.Section.Key!);
-        return index < 0 ? null : document.Working[index].Select(Line).ToArray();
+        return index;
     }
-
-    public string[]? Lines(string trigger) => Lines(T(trigger).Item);
 
     /// <summary>A line as "key = values" with the values as the game reads them.</summary>
     public static string Line(Entry entry) =>

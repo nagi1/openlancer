@@ -212,7 +212,8 @@ public sealed partial class EditSession
     /// The names that the base folder without mods (B) has and the edit view does not have, by kind, each with the last
     /// mod that changes its file (decision D551 of the M6a design). A mod removes or renames such a name, so a mission
     /// line that names it has a problem only with the mods. Only the files that the mods change can lose a name, so a
-    /// profile without mods reads no file.
+    /// profile without mods reads no file. A file that the active mod changes, also with an edit that it did not save,
+    /// has the active mod as its last mod (section 6.10 of the M6b design).
     /// </summary>
     private Dictionary<MissionValueKind, IReadOnlyDictionary<string, string>> RemovedNames(FileSystem baseFiles,
         MissionWorld world)
@@ -221,7 +222,14 @@ public sealed partial class EditSession
         if (EditView.Mods.Count == 0)
             return result;
         var ledger = EditView.Ledger;
-        string? ModOf(string path) => ledger.ModsThatChangeFile(VfsPath.Normalize(path) ?? path) is [.., var last] ? last : null;
+        var active = ActiveChangedPaths().ToHashSet(VfsPath.Comparer);
+        string? ModOf(string path)
+        {
+            var normal = VfsPath.Normalize(path) ?? path;
+            if (active.Contains(normal))
+                return ActiveMod!.Id;
+            return ledger.ModsThatChangeFile(normal) is [.., var last] ? last : null;
+        }
         foreach (var (kind, list) in WorldLists)
         {
             if (Lists.NamesOnlyInBase(list, baseFiles, ModOf) is { Count: > 0 } only)

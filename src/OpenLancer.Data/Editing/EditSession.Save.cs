@@ -148,9 +148,15 @@ public sealed partial class EditSession
     /// D81), or that the active mod made unusable without a delete (decision D82, as the user decided it on
     /// 2026-10-18). For example, the active mod removes the points of a curve, and a retail light names the curve.
     /// See <see cref="DataLists.ReferrerErrors"/>.</item>
+    /// <item>The mission errors of the active mod (section 6.10 of the M6b design): the errors of each script that it
+    /// changes, and of each script that names a name that it removes or renames. A mission problem of a lower mod or of
+    /// the base game is a warning by the origin rule (decision D551), so it does not block. The Console shows the
+    /// warnings of the scripts.</item>
     /// <item>The errors of the format checks and of the content checks that the active mod adds (milestone M11, see
     /// <see cref="TargetProblems"/>). They run for a tier-1 mod that names a retail target. For example, a good with the
     /// price 0 crashes the retail game.</item>
+    /// <item>The checks of the mission patches on the linked game of each retail target: the errors of rule T01 and the
+    /// warnings of rule T02 (section 6.12 of the M6b design, see <see cref="TargetGame"/>).</item>
     /// <item>Each FLHash collision of a hash list that the active mod adds a name to.</item>
     /// <item>The errors of the component checks (layer 3, milestone M3): a zone of the active mod whose nickname another
     /// zone of any system has, also by FLHash. Retail drops one of the two zones.</item>
@@ -222,9 +228,23 @@ public sealed partial class EditSession
         foreach (var problem in Lists.ReferrerErrors())
             Add(problem.Diagnostic);
 
+        // The mission errors come before the target checks of M11. Rule M01 has the text and the place of the trigger
+        // check of M11, so the gate keeps the mission problem with its rule and its origin (decision D556).
+        foreach (var problem in Missions.SaveErrors(active.Id))
+            Add(problem);
+
         // The format checks and the content checks of the retail targets (milestone M11).
         foreach (var problem in TargetProblems())
             Add(problem);
+
+        // The mission patches on the game of each retail target (section 6.12 of the M6b design).
+        foreach (var problem in MissionTargetProblems(active))
+        {
+            if (problem.Severity == DiagnosticSeverity.Error)
+                Add(problem);
+            else if (seen.Add((problem.Target, problem.Key?.ToLowerInvariant(), problem.Message, null)))
+                problems.Add(problem);
+        }
 
         // Layer 3: a zone nickname that another zone of any system has, also by FLHash (milestone M3).
         foreach (var problem in Scene.ComponentChecks.SaveErrors(this))
