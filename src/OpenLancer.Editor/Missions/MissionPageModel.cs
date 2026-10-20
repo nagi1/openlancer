@@ -132,8 +132,13 @@ internal sealed record FieldEdit(EditWidget Widget, string Label)
     public string? ReadOnly { get; init; }
 }
 
-/// <summary>An item of a row menu or a page menu, for example "Move up". It runs a batch, or goes to a link.</summary>
-internal sealed record PageAction(string Label, MissionBatch? Batch, object? Link = null, string? Tooltip = null);
+/// <summary>An item of a row menu or a page menu, for example "Move up". It runs a batch, or goes to a link. An item
+/// without a batch and a link is a heading of the menu, for example "Overrides (2)".</summary>
+internal sealed record PageAction(string Label, MissionBatch? Batch, object? Link = null, string? Tooltip = null)
+{
+    /// <summary>True for a heading of the menu.</summary>
+    public bool IsHeading => Batch == null && Link == null;
+}
 
 /// <summary>One field of a page section: a plain name and a value, with an optional help text and an item to go
 /// to.</summary>
@@ -179,6 +184,11 @@ internal sealed record PageField(string Label, string Value, string? Help = null
     /// <summary>True when the active mod sets the value, also with an edit that is not saved. The label gets the blue bar
     /// (section 8.1 of the M6b design, UI rule 7).</summary>
     public bool Changed { get; init; }
+
+    /// <summary>True for a field of a linked prefab instance that overrides the prefab, or a removed member. The label is
+    /// bold and gets the violet bar. With <see cref="Changed"/>, the override is not saved, and the blue bar comes
+    /// beside the violet bar (section 8.6 of the M6b design, UI rule 7).</summary>
+    public bool Override { get; init; }
 
     /// <summary>The items of the row menu of the field, for example "Move up" of an action line.</summary>
     public IReadOnlyList<PageAction> Actions { get; init; } = [];
@@ -265,6 +275,10 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
 
     /// <summary>The items of the page menu, for example "Duplicate" and "Delete" of a mission ship.</summary>
     public IReadOnlyList<PageAction> PageActions { get; init; } = [];
+
+    /// <summary>The text of the prefab file of the Prefab page, read-only, with the marks of its problems, or null (UI
+    /// rule 11).</summary>
+    public PrefabFileView? PrefabFile { get; init; }
 
     /// <summary>Makes the batch of "Rename" of the page menu, or null for an item without a rename.</summary>
     public Func<string, MissionBatch?>? Rename { get; init; }

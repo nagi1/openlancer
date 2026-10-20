@@ -6,6 +6,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
 namespace OpenLancer.Editor.Missions;
@@ -180,11 +181,15 @@ internal sealed partial record MissionPageModel
 
     /// <summary>The row menu of an action line of the Trigger page (section 8.4 of the M6b design): "Move up", "Move
     /// down", "Duplicate", "Remove" and "Show in raw INI".</summary>
+    /// <remarks>In prefab mode, the raw view does not show a template, and the menu has the line choice of the lines
+    /// fields of the template (section 8.6 of the M6b design).</remarks>
     private static IReadOnlyList<PageAction> ActionMenu(PageContext context, MissionTrigger trigger, MissionLine action)
     {
-        var raw = new PageAction("Show in raw INI", null, new RawLineLink(trigger.Section.Ref, action.Entry));
+        IReadOnlyList<PageAction> raw = context.Prefab == null
+            ? [new PageAction("Show in raw INI", null, new RawLineLink(trigger.Section.Ref, action.Entry))]
+            : [];
         if (context.ReadOnlyOf(trigger.Section.Ref) != null)
-            return [raw];
+            return raw;
         var actions = trigger.Actions;
         var at = actions.ToList().IndexOf(action);
         var row = RowOf(action);
@@ -198,7 +203,9 @@ internal sealed partial record MissionPageModel
         result.Add(new PageAction("Duplicate", One($"Duplicate {action.Name?.Plain ?? action.Key}",
             new AddAction(TriggerOf(trigger), copy) { Before = at + 1 < actions.Count ? actions[at + 1].Entry : null })));
         result.Add(new PageAction("Remove", One($"Remove {action.Name?.Plain ?? action.Key}", new RemoveAction(row))));
-        result.Add(raw);
+        if (context.Prefab is { Template: { } template } prefab)
+            result.AddRange(LineChoices(prefab.Asset.Ref, template, action, PrefabFieldKind.Lines));
+        result.AddRange(raw);
         return result;
     }
 

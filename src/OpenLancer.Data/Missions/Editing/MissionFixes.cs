@@ -19,7 +19,8 @@ public sealed record MissionFix(string Id, string Label, IReadOnlyList<MissionCo
 public static class MissionFixes
 {
     /// <summary>The rules that have a fix.</summary>
-    private static readonly HashSet<string> Rules = ["M01", "M03", "M04", "M05", "M06", "M07", "M08", "M09", "M13", "M14", "M15", "M23"];
+    private static readonly HashSet<string> Rules =
+        ["M01", "M03", "M04", "M05", "M06", "M07", "M08", "M09", "M13", "M14", "M15", "M23", "P01", "P03"];
 
     /// <summary>The space between the node of a trigger and the node of a new trigger below it, in canvas points.</summary>
     private const float BesideGap = 200;
@@ -46,6 +47,17 @@ public static class MissionFixes
     /// <summary>The fixes of a problem of an analysis. None for a problem without a fix.</summary>
     public static IReadOnlyList<MissionFix> Of(MissionAnalysis analysis, Diagnostic problem)
     {
+        if (problem.Rule is "P01" or "P03" && problem.Subject is { } subject &&
+            analysis.Prefabs?.Instances.FirstOrDefault(i => i.Linked?.Record.Id == subject[(subject.IndexOf('|') + 1)..]) is
+                { } linked)
+        {
+            // The fixes of a linked prefab instance (section 8.7 of the M6b design).
+            var instance = new InstanceRef(analysis.Script.Path, linked.Id);
+            var compile = new MissionFix("compile", "Compile again", [new CompilePrefabInstance(instance)]);
+            return problem.Rule == "P01"
+                ? [compile, new MissionFix("unpack", "Unpack", [new UnpackPrefabInstance(instance)])]
+                : [compile];
+        }
         if (!HasFix(problem.Rule) || problem.Target is not { } target || analysis.Document.Find(target) is not { } section)
             return [];
         var index = analysis.Index;

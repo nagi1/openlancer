@@ -2061,7 +2061,7 @@
               },
               "prefab": {
                 "type": "string",
-                "description": "The id of the prefab."
+                "description": "The id of the prefab of a matched instance, or the prefab: reference of a linked instance."
               },
               "name": {
                 "type": "string",
@@ -2120,6 +2120,24 @@
                   "null"
                 ],
                 "description": "The trg: reference of the core trigger, or none."
+              },
+              "linked": {
+                "type": "boolean",
+                "description": "True for a linked instance with a record in the graph file. A matched instance has no overrides."
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The ids of the fields of a linked instance whose value differs from the prefab."
+              },
+              "removed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The roles of the members of a linked instance that the user deleted. Each one is an override."
               }
             },
             "required": [
@@ -2141,7 +2159,7 @@
             "properties": {
               "ref": {
                 "type": "string",
-                "description": "The prefab:builtin: reference."
+                "description": "The prefab:builtin: or prefab:mod: reference."
               },
               "name": {
                 "type": "string",
@@ -2178,6 +2196,21 @@
                     "list": {
                       "type": "boolean",
                       "description": "True for a list field."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "description": "The kind of the field: a value kind, list, triggers, condition or lines."
+                    },
+                    "per_instance": {
+                      "type": "boolean",
+                      "description": "True when each instance sets the value. Such a field is never an override."
+                    },
+                    "default": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The default rows of the field in their text form."
                     }
                   },
                   "required": [
@@ -2202,6 +2235,31 @@
                   "type": "string"
                 },
                 "description": "The names of the steps of the completeness panel."
+              },
+              "mod_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The mod of a prefab asset, or none for a built-in prefab."
+              },
+              "read_only": {
+                "type": "boolean",
+                "description": "True for a built-in prefab or a prefab of a lower mod. Such a prefab cannot change."
+              },
+              "ports": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The ids of the outputs of the prefab."
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The problems of the file of a prefab asset. A prefab with a problem does not place."
               }
             },
             "required": [
@@ -3018,7 +3076,8 @@
               "effect",
               "loadout",
               "faction",
-              "model"
+              "model",
+              "mission_prefab"
             ],
             "description": "Show only the assets of this kind."
           },

@@ -86,6 +86,9 @@ public sealed class RawText
     /// <summary>The line of an entry of a section.</summary>
     public int EntryLine(int section, int entry) => entries[section][entry];
 
+    /// <summary>The number of entries of a section.</summary>
+    public int EntryCount(int section) => entries[section].Length;
+
     /// <summary>The index of a section of the text, or -1.</summary>
     public int SectionOf(SectionIdentity id) => sectionIndex.GetValueOrDefault(id, -1);
 
@@ -119,6 +122,11 @@ public sealed class RawText
             raw.Sections.Select(s => s.Header).ToArray(), raw.Sections.Select(s => s.Entries.ToArray()).ToArray(),
             ReadOnly(path, sections));
     }
+
+    /// <summary>A text as it is, without a map of its lines to sections, for example an editor file that the game does not
+    /// read. A view shows it read-only.</summary>
+    public static RawText Plain(string text) =>
+        new(text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n'), true, null, [], [], [], new Dictionary<int, string>());
 
     /// <summary>The canonical text of sections.</summary>
     /// <param name="reason">Why the file text is not used, or null.</param>

@@ -50,7 +50,8 @@ public sealed class GraphFileTests
         Assert.Equal(("act_ambush", "The ambush", "The escort meets the player at the gate. Two waves attack."),
             (act.Nickname, act.Name, act.Text));
         Assert.Equal(["ol_start", "ol_wave"], act.Members);
-        Assert.Equal("Instance", Assert.Single(file.Others).Type);
+        Assert.Equal(new InstanceRecord("ol_wave_1", "mod:ol_gate_ambush"), Assert.Single(file.Instances));
+        Assert.Empty(file.Others);
         Assert.Equal(Text.Replace("\r\n", "\n").Trim(), file.Write(Script)!.Trim());
         Assert.Equal(file, GraphFile.Read(file.Write(Script), out _));
     }

@@ -5,6 +5,7 @@ using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Ini;
+using OpenLancer.Data.Missions.Prefabs;
 
 namespace OpenLancer.Data.Missions.Editing;
 
@@ -215,9 +216,13 @@ public static class RawMissionEdit
                 return Stop(endIndex.TryGetValue(id, out var line) ? end.Line(line, -1) : 0, ChangedWhileTyping);
         }
 
-        // Bodies first: they keep each identity.
+        // Bodies first: they keep each identity. A member of a linked prefab instance takes no line edit (section 8.8 of
+        // the M6b design). A delete of a member is a removed-member override (decision D676 c), so it passes.
         foreach (var id in common.Where(id => !Same(start.Sections[startIndex[id]], end.Sections[endIndex[id]])))
         {
+            if (session.Missions.LinkedInstanceOf(new SectionRef(document.Path, fileIdOf[id])) is { } linked)
+                return Stop(end.Line(endIndex[id], FirstChange(start.Sections[startIndex[id]], end.Sections[endIndex[id]])),
+                    PrefabLinks.LineEditMessage(PrefabLinks.PrefabNameOf(linked)));
             commands.Add(new ReplaceSectionBody(new ItemRef(document.Path, fileIdOf[id]),
                 MissionDraft.RawOf(end.Sections[endIndex[id]])));
             if (end.HasComment[endIndex[id]])
@@ -339,9 +344,25 @@ public static class RawMissionEdit
     /// <summary>True when two sections have the same type and the same lines, by the text of their values in the raw
     /// text.</summary>
     private static bool Same(Section a, Section b) =>
-        a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase) && a.Count == b.Count &&
-        a.Zip(b).All(p => p.First.Name.Equals(p.Second.Name, StringComparison.OrdinalIgnoreCase) &&
-                          p.First.Select(RetailText.Of).SequenceEqual(p.Second.Select(RetailText.Of), StringComparer.Ordinal));
+        a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase) && a.Count == b.Count && a.Zip(b).All(p => Same(p.First, p.Second));
+
+    /// <summary>True when two lines have the same key and the same values, by the text of their values.</summary>
+    private static bool Same(Entry a, Entry b) =>
+        a.Name.Equals(b.Name, StringComparison.OrdinalIgnoreCase) &&
+        a.Select(RetailText.Of).SequenceEqual(b.Select(RetailText.Of), StringComparer.Ordinal);
+
+    /// <summary>The first line of the end section that differs from the start section, or -1 for its header when the end
+    /// section only lost lines at its end.</summary>
+    private static int FirstChange(Section start, Section end)
+    {
+        var count = Math.Min(start.Count, end.Count);
+        for (var i = 0; i < count; i++)
+        {
+            if (!Same(start[i], end[i]))
+                return i;
+        }
+        return count < end.Count ? count : -1;
+    }
 
     private static SectionIdentity[] Identify(IReadOnlyList<Section> sections) => SectionIdentity.Identify(sections);
 

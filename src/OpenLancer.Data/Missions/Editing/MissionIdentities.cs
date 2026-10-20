@@ -18,14 +18,19 @@ public sealed record ScriptRef(string Path) : IMissionRef
 
     public override int GetHashCode() => VfsPath.Comparer.GetHashCode(Path);
 
-    public override string ToString() => ItemRefs.Format(new ItemReference(ItemRefKind.Script, "") { Path = Path });
+    public override string ToString() => MissionRefs.IsPrefab(Path)
+        ? Path
+        : ItemRefs.Format(new ItemReference(ItemRefKind.Script, "") { Path = Path });
 
     /// <summary>The reference of a text, for example <c>msn:DATA\MISSIONS\M02\m02.ini</c>.</summary>
     /// <exception cref="EditException">The text is not a script reference.</exception>
-    public static ScriptRef Parse(string text) =>
-        ItemRefs.Parse(text) is { Kind: ItemRefKind.Script, Path: { } path }
-            ? new ScriptRef(path)
-            : throw MissionRefs.Bad(text, "a mission script, for example msn:DATA\\MISSIONS\\M02\\m02.ini");
+    public static ScriptRef Parse(string text) => ItemRefs.Parse(text) switch
+    {
+        { Kind: ItemRefKind.Script, Path: { } path } => new ScriptRef(path),
+        // In prefab mode, the script of a command is the template of a prefab (section 4.0.7 of the M6b design).
+        { Kind: ItemRefKind.Prefab, Scope: { } scope } prefab => new ScriptRef($"{PrefabRef.Prefix}{scope}:{prefab.Name}"),
+        _ => throw MissionRefs.Bad(text, "a mission script, for example msn:DATA\\MISSIONS\\M02\\m02.ini"),
+    };
 
     /// <summary>The reference of an install path.</summary>
     /// <exception cref="EditException">The path is not an install path.</exception>
@@ -48,7 +53,7 @@ public sealed record TriggerRef(string Script, string Name) : IMissionRef
 
     /// <exception cref="EditException">The text is not a trigger reference.</exception>
     public static TriggerRef Parse(string text) =>
-        ItemRefs.Parse(text) is { Kind: ItemRefKind.Trigger, Path: { } path } reference && !MissionRefs.IsPrefab(path)
+        ItemRefs.Parse(text) is { Kind: ItemRefKind.Trigger, Path: { } path } reference
             ? new TriggerRef(path, reference.Name)
             : throw MissionRefs.Bad(text, "a trigger, for example trg:DATA\\MISSIONS\\M02\\m02.ini#ol_trigger");
 
@@ -83,8 +88,7 @@ public sealed record ItemRef(string Script, SectionIdentity Section) : IMissionR
     public static ItemRef Parse(string text) => ItemRefs.Parse(text) switch
     {
         { Kind: ItemRefKind.Section, Path: { } path, Section: { } section } => new ItemRef(path, section),
-        { Kind: ItemRefKind.Trigger, Path: { } path } trigger when !MissionRefs.IsPrefab(path) =>
-            new ItemRef(path, new SectionIdentity("Trigger", trigger.Name)),
+        { Kind: ItemRefKind.Trigger, Path: { } path } trigger => new ItemRef(path, new SectionIdentity("Trigger", trigger.Name)),
         _ => throw MissionRefs.Bad(text, "a section, for example sec:DATA\\MISSIONS\\M02\\m02.ini#MsnShip/ol_ship"),
     };
 }
@@ -118,8 +122,7 @@ public sealed record RowRef(ItemRef Item, int Row)
 
     /// <exception cref="EditException">The text is not a line reference.</exception>
     public static RowRef Parse(string text) =>
-        ItemRefs.Parse(text) is { Kind: ItemRefKind.Line, Path: { } path, Section: { } section, Row: { } row } &&
-        !MissionRefs.IsPrefab(path)
+        ItemRefs.Parse(text) is { Kind: ItemRefKind.Line, Path: { } path, Section: { } section, Row: { } row }
             ? new RowRef(new ItemRef(path, section), row)
             : throw MissionRefs.Bad(text, "a line, for example line:DATA\\MISSIONS\\M02\\m02.ini#Trigger/ol_trigger/2");
 }
@@ -166,6 +169,94 @@ public sealed record ActRef(string Script, string Name) : IMissionRef
             : throw MissionRefs.Bad(text, "an act, for example act:DATA\\MISSIONS\\M02\\m02.ini#act_1");
 }
 
+/// <summary>
+/// A linked or a matched prefab instance of a script (section 4.2 of the M6b design). A linked instance uses the id of
+/// its record. A matched instance uses the prefab id and the nickname of its core trigger or section, for example
+/// <c>spawnWave/ol_wave</c>. JSON writes it as <c>inst:&lt;install path&gt;#&lt;id&gt;</c>.
+/// </summary>
+[JsonConverter(typeof(MissionRefConverter<InstanceRef>))]
+public sealed record InstanceRef(string Script, string Id) : IMissionRef
+{
+    /// <summary>True for the id of a matched instance: the prefab id, a slash and the core.</summary>
+    public bool IsMatched => Id.Contains('/');
+
+    public bool Equals(InstanceRef? other) =>
+        other is not null && VfsPath.Comparer.Equals(Script, other.Script) &&
+        string.Equals(Id, other.Id, StringComparison.OrdinalIgnoreCase);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(VfsPath.Comparer.GetHashCode(Script), StringComparer.OrdinalIgnoreCase.GetHashCode(Id));
+
+    public override string ToString() => ItemRefs.Format(new ItemReference(ItemRefKind.Instance, Id) { Path = Script });
+
+    /// <exception cref="EditException">The text is not an instance reference.</exception>
+    public static InstanceRef Parse(string text) =>
+        ItemRefs.Parse(text) is { Kind: ItemRefKind.Instance, Path: { } path } reference
+            ? new InstanceRef(path, reference.Name)
+            : throw MissionRefs.Bad(text, @"a prefab instance, for example inst:DATA\MISSIONS\M02\m02.ini#ol_wave_1");
+}
+
+/// <summary>
+/// A behavior prefab (section 5.2 of the M6b design): a built-in prefab of the editor or a prefab asset of a mod. JSON
+/// writes it as <c>prefab:builtin:&lt;id&gt;</c> or <c>prefab:mod:&lt;id&gt;</c>. An instance record writes it without
+/// <c>prefab:</c>.
+/// </summary>
+[JsonConverter(typeof(MissionRefConverter<PrefabRef>))]
+public sealed record PrefabRef(bool Builtin, string Id) : IMissionRef
+{
+    /// <summary>The start of the script of a template in prefab mode.</summary>
+    public const string Prefix = "prefab:";
+
+    /// <summary>The form of an instance record: <c>builtin:&lt;id&gt;</c> or <c>mod:&lt;id&gt;</c>.</summary>
+    public string RecordText => $"{(Builtin ? "builtin" : "mod")}:{Id}";
+
+    /// <summary>The script of the template in prefab mode: the reference text, for example
+    /// <c>prefab:mod:ol_gate_ambush</c>.</summary>
+    public string Script => ToString();
+
+    public bool Equals(PrefabRef? other) =>
+        other is not null && Builtin == other.Builtin && string.Equals(Id, other.Id, StringComparison.OrdinalIgnoreCase);
+
+    public override int GetHashCode() => HashCode.Combine(Builtin, StringComparer.OrdinalIgnoreCase.GetHashCode(Id));
+
+    public override string ToString() => Prefix + RecordText;
+
+    /// <summary>A built-in prefab.</summary>
+    public static PrefabRef BuiltinOf(string id) => new(true, id);
+
+    /// <summary>A prefab asset of a mod.</summary>
+    public static PrefabRef ModOf(string id) => new(false, id);
+
+    /// <summary>The prefab of the script of a template in prefab mode, for example <c>prefab:mod:ol_gate</c>, or null
+    /// for the path of a mission script.</summary>
+    public static PrefabRef? OfScript(string path) =>
+        path.StartsWith(Prefix, StringComparison.Ordinal) ? TryParse(path) : null;
+
+    /// <summary>The prefab of a reference text or of the text of an instance record, or null.</summary>
+    public static PrefabRef? TryParse(string text)
+    {
+        var rest = text.Trim();
+        if (rest.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+            rest = rest[Prefix.Length..];
+        var colon = rest.IndexOf(':');
+        if (colon <= 0 || colon == rest.Length - 1)
+            return null;
+        var id = rest[(colon + 1)..].Trim();
+        return rest[..colon] switch
+        {
+            "builtin" => new PrefabRef(true, id),
+            "mod" => new PrefabRef(false, id),
+            _ => null,
+        };
+    }
+
+    /// <exception cref="EditException">The text is not a prefab reference.</exception>
+    public static PrefabRef Parse(string text) =>
+        text.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase) && TryParse(text) is { } prefab
+            ? prefab
+            : throw MissionRefs.Bad(text, "a prefab, for example prefab:builtin:spawnWave or prefab:mod:ol_gate_ambush");
+}
+
 /// <summary>A reference of the mission commands that JSON writes as one string.</summary>
 public interface IMissionRef;
 
@@ -184,6 +275,8 @@ internal static class MissionRefs
         : type == typeof(TriggerRef) ? @"trg:DATA\MISSIONS\M02\m02.ini#ol_trigger"
         : type == typeof(LabelRef) ? @"label:DATA\MISSIONS\M02\m02.ini#ol_wing"
         : type == typeof(ActRef) ? @"act:DATA\MISSIONS\M02\m02.ini#act_1"
+        : type == typeof(InstanceRef) ? @"inst:DATA\MISSIONS\M02\m02.ini#ol_wave_1"
+        : type == typeof(PrefabRef) ? "prefab:builtin:spawnWave"
         : @"sec:DATA\MISSIONS\M02\m02.ini#MsnShip/ol_ship";
 
     /// <summary>The reference of a text as a type of the mission commands.</summary>
@@ -193,6 +286,8 @@ internal static class MissionRefs
         : type == typeof(ItemRef) ? ItemRef.Parse(text)
         : type == typeof(LabelRef) ? LabelRef.Parse(text)
         : type == typeof(ActRef) ? ActRef.Parse(text)
+        : type == typeof(InstanceRef) ? InstanceRef.Parse(text)
+        : type == typeof(PrefabRef) ? PrefabRef.Parse(text)
         : throw new NotSupportedException(type.Name);
 }
 

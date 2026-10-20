@@ -178,6 +178,13 @@ internal static class MissionValues
         string result;
         switch (spec.Kind)
         {
+            // An attitude is a number from -1 to 1, or a REP_ word of the game (the word set 'attitude').
+            case MissionValueKind.Attitude when value.Type == MissionValueType.Text &&
+                                                schema.Tokens.GetValueOrDefault("attitude")?.Find(text) is { } word:
+                if (!string.Equals(word, text, StringComparison.Ordinal))
+                    notes.Add($"'{text}' became '{word}', the letter case that the game reads.");
+                result = word;
+                break;
             case MissionValueKind.Number or MissionValueKind.Attitude:
                 result = Number(spec, value, whole: spec.Whole);
                 break;
@@ -353,7 +360,10 @@ public static class MissionNaming
         bool Ok(string name) => MissionNames.FormOk(name, max) && !taken.Contains(name);
         if (wanted == null)
         {
-            var stem = System.IO.Path.GetFileNameWithoutExtension(script.Replace('\\', '/')).ToLowerInvariant();
+            // A template in prefab mode has roles, without the name of a file (section 5.7 of the M6b design).
+            var stem = MissionRefs.IsPrefab(script)
+                ? "role"
+                : System.IO.Path.GetFileNameWithoutExtension(script.Replace('\\', '/')).ToLowerInvariant();
             var word = MissionNames.MadeWord(sectionType);
             for (var n = 1;; n++)
             {

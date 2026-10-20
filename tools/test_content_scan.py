@@ -144,7 +144,8 @@ class ContentRuleTests(unittest.TestCase):
         for name in ("SUMMARY.md", "docs/NEW.md"):
             with self.subTest(name=name):
                 self.assertRegex(self.problem(name, b"# Notes\n") or "", f"^Markdown file not in the list: {name} ")
-        for name in ("docs/PLAY.md", "docs/GAME_LINK.md", "docs/MCP.md", "data-manifest/README.md"):
+        for name in ("docs/PLAY.md", "docs/GAME_LINK.md", "docs/MCP.md", "docs/MISSIONS.md",
+                     "data-manifest/README.md"):
             with self.subTest(name=name):
                 self.assertIsNone(self.problem(name, b"# Title\n\nText.\n"))
 

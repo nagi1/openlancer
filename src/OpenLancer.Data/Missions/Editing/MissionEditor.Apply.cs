@@ -5,6 +5,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
+using OpenLancer.Data.Missions.Prefabs;
 
 namespace OpenLancer.Data.Missions.Editing;
 
@@ -88,7 +89,7 @@ public sealed partial class MissionEditor
             }]);
         }
         var draft = plan.Draft!;
-        check.Add(draft);
+        check.Add(draft, draft.ModTextBefore);
         var confirmations = Confirmations(draft, editBatch.Origin);
         if (confirmations.Count > 0 && !batch.Confirm && !preview)
         {
@@ -316,15 +317,35 @@ public sealed partial class MissionEditor
         public void Join(MissionEditOptions joined) => options = new MissionEditOptions(
             options.RejectNewErrors || joined.RejectNewErrors, options.RejectNewWarnings || joined.RejectNewWarnings);
 
-        public void Add(MissionDraft draft)
+        /// <param name="modText">Gives the text of each editor file of the active mod before the batch, so the problems
+        /// before the batch have the prefab records and the prefabs before it.</param>
+        public void Add(MissionDraft draft, Func<string, string?> modText)
         {
             foreach (var (path, state) in draft.Before)
             {
                 var document = draft.Touched[path];
                 if (!editor.IsScript(document) || scripts.ContainsKey(path))
                     continue;
-                var old = state.Exists ? editor.ModelOf(document, state, before).Problems : [];
+                var old = state.Exists ? editor.ModelOf(document, state, before, modText).Problems : [];
                 scripts[path] = (document, state, old);
+            }
+            // A change of a graph file or of a prefab asset changes the prefab instances of a script without a change of
+            // its lines, for example an unpack or a delete of a prefab (rules P01 to P03).
+            foreach (var file in draft.ModBefore.Keys)
+            {
+                IEnumerable<string> touched = file.StartsWith(@"graphs\", StringComparison.OrdinalIgnoreCase)
+                    ? [file[@"graphs\".Length..]]
+                    : file.StartsWith(PrefabAsset.Folder, StringComparison.OrdinalIgnoreCase)
+                        ? editor.InstancesOf(PrefabRef.ModOf(System.IO.Path.GetFileNameWithoutExtension(file))).Select(i => i.Script)
+                        : [];
+                foreach (var path in touched)
+                {
+                    if (editor.session.OpenDocument(path) is not { } document || !editor.IsScript(document) ||
+                        scripts.ContainsKey(document.Path) || !document.State.Exists)
+                        continue;
+                    scripts[document.Path] = (document, document.State,
+                        editor.ModelOf(document, document.State, before, modText).Problems);
+                }
             }
             gone.UnionWith(draft.GoneNames);
         }

@@ -587,8 +587,10 @@ public sealed class MissionGraph
                 continue;
             var anchor = instance.Core is { } core && instance.Claimed.Contains(core) ? core : instance.Claimed[0];
             var key = "p:" + instance.Key;
+            // An instance of a prefab that no mod has shows "Missing prefab", as Unity does (decision D673).
+            var title = instance.Linked is { Asset: null } ? $"{MissingPrefab}: {instance.Definition.Name}" : instance.Definition.Name;
             var frame = new GraphFrame(key, Id(key), instance.Claimed.Min(t => t.Section.Index), GraphFrameKind.Prefab,
-                instance.Definition.Name, instance.Name) { Instance = instance };
+                title, instance.Name) { Instance = instance };
             prefabFrames.Add((Home(anchor), frame));
             foreach (var trigger in instance.Claimed)
                 claimedBy.TryAdd(trigger, frame);
@@ -652,6 +654,10 @@ public sealed class MissionGraph
             return $"Act {number}";
         return $"Act {number}: {(systemName?.Invoke(system) is { Length: > 0 } name ? name : system)}";
     }
+
+    /// <summary>The label of an instance of a prefab that no mod has (decision D673): the frame, the Hierarchy row and
+    /// the page show it.</summary>
+    public const string MissingPrefab = "Missing prefab";
 
     /// <summary>The title of the frame "Not started by the mission" with its count of triggers.</summary>
     public static string NotStartedTitle(int count) =>
@@ -977,10 +983,16 @@ public sealed class MissionGraph
         var merged = new Dictionary<(int From, int To), (GraphNode From, GraphPin FromPin, GraphNode To, GraphPin ToPin,
             MissionLinkKind Kind, List<MissionLink> Sources, string? State)>();
         var order = new List<(int, int)>();
+        // In prefab mode, a value of a template can be a slot, for example {port:done}. The compile gives it the triggers
+        // of the port or of the field, so the link ends at its output pin, with no "Missing" node (section 8.6 of the M6b
+        // design).
+        var template = Editing.MissionRefs.IsPrefab(Analysis.Script.Path);
         foreach (var link in Index.Links)
         {
             // A trigger that starts itself gives no link. Its row chip shows instead.
             if (link.Kind == MissionLinkKind.Start && link.Target == link.Source)
+                continue;
+            if (template && link.Target == null && Prefabs.PrefabSlot.Of(link.TargetName).Count > 0)
                 continue;
             GraphNode from, to;
             GraphPin? fromPin, toPin;

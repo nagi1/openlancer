@@ -124,22 +124,45 @@ public sealed record MissionValueView(string Name, string Label, MissionValueKin
 public sealed record MissionPaletteName(string Name, string Plain, MissionNameKind Kind, string Group,
     IReadOnlyList<MissionValueView> Values, EngineMark Mark, bool NoRetailExample, int BaseCount, bool Checked);
 
-/// <summary>A field of a prefab.</summary>
+/// <summary>A field of a prefab: what <c>PlacePrefabInstance</c> and <c>SetPrefabField</c> take.</summary>
 /// <param name="List">True for a list field.</param>
-public sealed record MissionPrefabFieldView(string Id, string Label, string Help, bool List);
+public sealed record MissionPrefabFieldView(string Id, string Label, string Help, bool List)
+{
+    /// <summary>The kind of the field in the template file, for example <c>condition</c> or <c>formation</c>.</summary>
+    public string Kind { get; init; } = "";
 
-/// <summary>A built-in prefab (query <c>ListPrefabs</c>). The prefab assets of the mods come with milestone
-/// M6b-3.</summary>
-/// <param name="Ref">The <c>prefab:builtin:</c> reference.</param>
-/// <param name="Roles">The roles of the member triggers.</param>
+    /// <summary>True when each instance sets the value itself. It is never an override.</summary>
+    public bool PerInstance { get; init; }
+
+    /// <summary>The default rows in their text form.</summary>
+    public IReadOnlyList<string> Default { get; init; } = [];
+}
+
+/// <summary>A prefab of the library (query <c>ListPrefabs</c>): a built-in prefab or an asset of a mod (section 5.2 of
+/// the M6b design).</summary>
+/// <param name="Ref">The <c>prefab:builtin:</c> or <c>prefab:mod:</c> reference.</param>
+/// <param name="Roles">The roles of the template sections.</param>
 public sealed record MissionPrefabView(string Ref, string Name, MissionPrefabKind Kind, string Help,
-    IReadOnlyList<MissionPrefabFieldView> Fields, IReadOnlyList<string> Roles, IReadOnlyList<string> Steps);
+    IReadOnlyList<MissionPrefabFieldView> Fields, IReadOnlyList<string> Roles, IReadOnlyList<string> Steps)
+{
+    /// <summary>The mod of an asset, or null for a built-in prefab.</summary>
+    public string? ModId { get; init; }
+
+    /// <summary>True for a prefab that cannot change: a built-in prefab or an asset of a lower mod.</summary>
+    public bool ReadOnly { get; init; }
+
+    /// <summary>The ids of the ports.</summary>
+    public IReadOnlyList<string> Ports { get; init; } = [];
+
+    /// <summary>The problems of the file of an asset. An asset with a problem does not place.</summary>
+    public IReadOnlyList<string> Problems { get; init; } = [];
+}
 
 /// <summary>A step of the completeness panel of an instance.</summary>
 public sealed record MissionStepView(string Name, CompletenessState State, string Reason);
 
 /// <summary>A prefab instance with its fields, its members and its steps (query <c>GetPrefabInstance</c>). A matched
-/// instance has no overrides. Linked instances come with milestone M6b-3.</summary>
+/// instance has no overrides.</summary>
 /// <param name="Fields">The value texts of each field.</param>
 /// <param name="Members">The trigger references of each role.</param>
 public sealed record MissionInstanceView(string Ref, long Version, string Prefab, string Name,
@@ -147,6 +170,15 @@ public sealed record MissionInstanceView(string Ref, long Version, string Prefab
     IReadOnlyList<MissionStepView> Steps)
 {
     public string? Core { get; init; }
+
+    /// <summary>True for a linked instance with a record (section 5.1 of the M6b design).</summary>
+    public bool Linked { get; init; }
+
+    /// <summary>The fields of a linked instance that override the prefab.</summary>
+    public IReadOnlyList<string> Overrides { get; init; } = [];
+
+    /// <summary>The roles of the removed members of a linked instance (decision D676 c).</summary>
+    public IReadOnlyList<string> Removed { get; init; } = [];
 }
 
 /// <summary>
@@ -332,12 +364,28 @@ public sealed class MissionQueries
         ];
     }
 
-    /// <summary>The built-in prefabs with their fields, roles and steps.</summary>
+    /// <summary>The prefabs of the library: the built-in prefabs, then the assets of the active mod and of the lower
+    /// mods, with their fields, roles, ports and steps (section 5.2 of the M6b design).</summary>
     public IReadOnlyList<MissionPrefabView> ListPrefabs() =>
     [
-        .. MissionPrefabs.Retail.Definitions.Select(d => new MissionPrefabView($"prefab:builtin:{d.Id}", d.Name, d.Kind,
-            d.Help.WhatItIs, [.. d.Fields.Select(f => new MissionPrefabFieldView(f.Id, f.Label, f.Help, f.List != null))],
-            [.. d.Members.Select(m => m.Role)], [.. d.Steps.Select(s => s.Name)])),
+        .. editor.Prefabs().Select(asset =>
+        {
+            var template = asset.Template;
+            var definition = asset.Ref.Builtin ? MissionPrefabs.Retail.Definition(asset.Ref.Id) : null;
+            return new MissionPrefabView(asset.Ref.ToString(), asset.Name, template?.Kind ?? MissionPrefabKind.Beat,
+                template?.HelpText.WhatItIs ?? "",
+                [.. (template?.Fields ?? []).Select(f => new MissionPrefabFieldView(f.Id, f.Label, f.Help, f.IsList)
+                {
+                    Kind = f.KindText, PerInstance = f.PerInstance, Default = [.. f.Default.Select(r => r.Format())],
+                })],
+                [.. (template?.Sections ?? []).Select(s => s.Role)], [.. (definition?.Steps ?? []).Select(s => s.Name)])
+            {
+                ModId = asset.ModId,
+                ReadOnly = !asset.Active,
+                Ports = [.. (template?.Ports ?? []).Select(p => p.Id)],
+                Problems = [.. asset.Problems.Select(p => p.ToString())],
+            };
+        }),
     ];
 
     /// <summary>A prefab instance: the values of its fields, its members and its completeness steps.</summary>
@@ -353,12 +401,26 @@ public sealed class MissionQueries
                 @"inst:DATA\MISSIONS\M02\m02.ini#spawnWave/ol_wave."));
         var model = editor.Model(path);
         var instance = model.Prefabs?.Instances.FirstOrDefault(i =>
-                           string.Equals(InstanceId(i), parsed.Name, StringComparison.OrdinalIgnoreCase)) ??
+                           string.Equals(i.Id, parsed.Name, StringComparison.OrdinalIgnoreCase)) ??
                        throw new EditException(new EditError(EditErrorKind.NotFound, MissionErrors.ItemNotFound,
                            $"Script {model.Script} has no prefab instance '{parsed.Name}'. Read the script, then pick an " +
                            "instance."));
         var steps = MissionCompleteness.OfInstance(model.Analysis, instance).Steps
             .Select(s => new MissionStepView(s.Name, s.State, s.Reason)).ToList();
+        if (instance.Linked is { } linked)
+        {
+            return new MissionInstanceView(InstanceRef(model.Script, instance), model.Version, "prefab:" + linked.Record.Prefab,
+                instance.Name,
+                linked.Fields.ToDictionary(f => f.Field.Id, f => (IReadOnlyList<string>)[.. f.Rows.Select(r => r.Format())]),
+                linked.Sections.ToDictionary(m => m.Key, m => (IReadOnlyList<string>)[Ref(m.Value.Ref)]),
+                steps)
+            {
+                Core = instance.Core == null ? null : Ref(instance.Core),
+                Linked = true,
+                Overrides = [.. linked.Fields.Where(f => f.Override).Select(f => f.Field.Id)],
+                Removed = linked.Record.Removed,
+            };
+        }
         return new MissionInstanceView(InstanceRef(model.Script, instance), model.Version, instance.Definition.Id, instance.Name,
             instance.Definition.Fields.ToDictionary(f => f.Id, f => (IReadOnlyList<string>)[.. instance.Values(f).Select(v => v.Text)]),
             instance.Members.ToDictionary(m => m.Key, m => (IReadOnlyList<string>)[.. m.Value.Select(Ref)]),
@@ -482,10 +544,6 @@ public sealed class MissionQueries
     private static string LineRef(MissionLine line) =>
         new RowRef(new ItemRef(line.Section.Ref.Path, line.Section.Ref.Id), line.Entry).Reference;
 
-    /// <summary>The id of a matched instance in its <c>inst:</c> reference: the prefab id and the core trigger.</summary>
-    private static string InstanceId(MissionPrefabInstance instance) =>
-        $"{instance.Definition.Id}/{instance.Core?.Nickname ?? instance.CoreSection?.Nickname ?? instance.Name}";
-
     private static string InstanceRef(string script, MissionPrefabInstance instance) =>
-        ItemRefs.Format(new ItemReference(ItemRefKind.Instance, InstanceId(instance)) { Path = script });
+        new Editing.InstanceRef(script, instance.Id).ToString();
 }

@@ -290,6 +290,10 @@ internal static class ObjectKinds
         public static readonly ObjectKind Model = new("Model", EditorIcons.CubeSolid, EditorTheme.Text);
         public static readonly ObjectKind Asteroid = new("Asteroid", EditorIcons.Meteor, EditorTheme.Rgb(0xE0905A));
 
+        /// <summary>A mission prefab asset (section 8.3 of the M6b design). It has the text color, as the rows of a
+        /// mission in the Hierarchy have.</summary>
+        public static readonly ObjectKind MissionPrefab = new("Mission prefab", EditorIcons.Cubes, EditorTheme.Text);
+
         /// <summary>The kind of an asset. A list entry gets the kind of its list.</summary>
         public static ObjectKind Of(AssetKind kind) => kind switch
         {
@@ -301,6 +305,7 @@ internal static class ObjectKinds
             AssetKind.Effect => Equip.Effect,
             AssetKind.Loadout => Lists.Loadout,
             AssetKind.Faction => Lists.Faction,
+            AssetKind.MissionPrefab => MissionPrefab,
             _ => Model,
         };
 
@@ -324,6 +329,7 @@ internal static class ObjectKinds
             "solars/connections" => JumpGate,
             "solars/solar" => OtherObject,
             "groups" => PropGroup,
+            "prefabs" => MissionPrefab,
             "solars" => Lists.SolarArchetype,
             "ships" => Ship,
             "asteroids" => Asteroid,

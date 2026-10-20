@@ -194,7 +194,7 @@ public sealed record RemoveSection(ItemRef Section) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Item(Section);
-        d.Editable(document, index);
+        d.Editable(document, index, members: true);
         d.RemoveSection(document, index, ReferencesMode.Keep, OpenLancer.Data.Editing.Scene.DeleteReason.Target, null);
     }
 }
@@ -339,6 +339,10 @@ public sealed record CommandGroup(IReadOnlyList<MissionCommand> Commands) : Miss
 
     internal override void Run(MissionDraft d)
     {
+        // An inverse with body guards changes back the sections that its edit left as they are now. So it can change
+        // the lines of a member of a linked prefab instance, but only of a member that a guard names (section 4.8 of the
+        // M6b design).
+        var guarded = new List<string>();
         foreach (var (reference, hash) in ExpectBodies)
         {
             var item = ItemRef.Parse(reference);
@@ -349,10 +353,19 @@ public sealed record CommandGroup(IReadOnlyList<MissionCommand> Commands) : Miss
             if (document == null || index < 0 || !string.Equals(SectionHash.Of(document.Working[index]), hash,
                     StringComparison.OrdinalIgnoreCase))
                 throw d.Refuse(MissionErrors.SectionChangedError(item.Section.ToString()) with { Target = reference });
+            if (d.GuardedSections.Add(d.RefOf(document, index)))
+                guarded.Add(d.RefOf(document, index));
         }
         var inverses = new List<MissionCommand>();
-        foreach (var command in Commands)
-            inverses.AddRange(d.RunInner(command));
+        try
+        {
+            foreach (var command in Commands)
+                inverses.AddRange(d.RunInner(command));
+        }
+        finally
+        {
+            d.GuardedSections.ExceptWith(guarded);
+        }
         inverses.Reverse();
         if (inverses.Count > 0)
             d.Inverse(inverses.Count == 1 ? inverses[0] : new CommandGroup(inverses));

@@ -12,6 +12,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;
@@ -124,6 +125,13 @@ internal sealed class InspectorPanel : IDisposable
         if (item is MissionRef mission)
         {
             missionPage.Draw(mission);
+            return;
+        }
+
+        // A mission prefab of the Assets panel shows its Prefab page (section 8.6 of the M6b design).
+        if (item is AssetRef { Kind: AssetKind.MissionPrefab } prefab)
+        {
+            missionPage.Draw(MissionRef.Of(PrefabRef.ModOf(prefab.Id).Script));
             return;
         }
 

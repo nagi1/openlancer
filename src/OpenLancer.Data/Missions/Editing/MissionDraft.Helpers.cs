@@ -121,7 +121,8 @@ internal sealed partial class MissionDraft
     {
         if (requested == null)
         {
-            stem ??= System.IO.Path.GetFileNameWithoutExtension(document.Path).ToLowerInvariant();
+            // In prefab mode, a made name is a role, without the name of a file.
+            stem ??= IsTemplate(document) ? "role" : System.IO.Path.GetFileNameWithoutExtension(document.Path).ToLowerInvariant();
             var word = MissionNames.MadeWord(type);
             for (var n = 1;; n++)
             {
@@ -391,7 +392,8 @@ internal sealed partial class MissionDraft
     {
         at = PlaceOfNew(document, at, section);
         document.InsertRestored(at, section);
-        Scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
+        if (!IsTemplate(document))
+            Scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
         return at;
     }
 
@@ -420,6 +422,8 @@ internal sealed partial class MissionDraft
                 var lines = MissionLinks.Naming(Schema, file.Working, kinds, name)
                     .Where(l => !(ReferenceEquals(file, document) && l.Section == index)).Select(l => (l.Section, l.Row))
                     .Distinct().ToList();
+                if (ReferenceEquals(file, document))
+                    lines = OutsideLines(document, index, lines);
                 if (lines.Count == 0)
                     continue;
                 if (references == ReferencesMode.Remove)

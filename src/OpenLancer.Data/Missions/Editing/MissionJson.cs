@@ -277,6 +277,10 @@ public static class MissionJson
             return Text("sec|trg", @"sec:DATA\MISSIONS\M02\m02.ini#MsnShip/ol_ship");
         if (type == typeof(LabelRef))
             return Text("label", @"label:DATA\MISSIONS\M02\m02.ini#ol_wing");
+        if (type == typeof(InstanceRef))
+            return Text("inst", @"inst:DATA\MISSIONS\M02\m02.ini#ol_wave_1");
+        if (type == typeof(PrefabRef))
+            return Text("prefab", "prefab:builtin:spawnWave");
         if (type == typeof(RowRef))
             return new JsonObject
             {

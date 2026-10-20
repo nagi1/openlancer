@@ -7,6 +7,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Ui;
 using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
@@ -57,6 +58,28 @@ internal sealed record PageContext(MissionRunResult Result, MissionAnalysis Anal
     /// <summary>True for a shared ship build file of the missions. Random encounters can use its builds too.</summary>
     public Func<string, bool> SharedBuildFile { get; init; } = _ => false;
 
+    /// <summary>Gives why the user cannot change the prefab instances of a script, or null. Without a function, no
+    /// instance can change, as in a view without an edit session.</summary>
+    public Func<string, string?> ScriptReadOnly { get; init; } = _ => MissionPageModel.FieldNote;
+
+    /// <summary>Gives the overrides of a linked instance that the last save does not have: the fields, and the roles of
+    /// the removed members (section 5.6 of the M6b design). Without a function, each override is saved.</summary>
+    public Func<InstanceRef, (IReadOnlySet<string> Fields, IReadOnlySet<string> Members)> UnsavedOverrides { get; init; } =
+        _ => (new HashSet<string>(), new HashSet<string>());
+
+    /// <summary>Gives a free file name of a new prefab asset for a wanted name. Without a function, the name
+    /// stays.</summary>
+    public Func<string, string> FreePrefabId { get; init; } = id => id;
+
+    /// <summary>The prefab of the template that the analysis holds in prefab mode, or null for a mission script (section
+    /// 8.6 of the M6b design).</summary>
+    public PrefabModeModel? Prefab { get; init; }
+
+    /// <summary>Why the session takes no edits, or null. A built-in prefab and a prefab of a lower mod cannot change, but
+    /// the session can still make a variant of them in the active mod. Without a value, the session takes no edits, as
+    /// in a view without an edit session.</summary>
+    public string? SessionReadOnly { get; init; } = MissionPageModel.FieldNote;
+
     /// <summary>True when the active mod sets a line.</summary>
     public bool Changed(MissionLine line) => ChangedOf(line.Section.Ref).Contains(line.Entry);
 
@@ -81,6 +104,8 @@ internal sealed partial record MissionPageModel
             : null;
         switch (item.Kind)
         {
+            case MissionItemKind.Mission when context.Prefab is { } prefab:
+                return PrefabPage(context, prefab, item.Key);
             case MissionItemKind.Mission:
                 return Mission(context.Result, analysis, context.Text, context.CommFile, context.ShowBaseGame,
                     context.HidesOpenLancer, context.SystemName, context.ReadOnlyOf);
@@ -118,8 +143,8 @@ internal sealed partial record MissionPageModel
             case MissionItemKind.PrefabInstance when analysis.Prefabs?.Instances.FirstOrDefault(i => i.Key == item.Key) is
                 { } instance:
                 return PrefabInstance(context, instance);
-            case MissionItemKind.PrefabKind when MissionPrefabs.Retail.Definition(item.Key ?? "") is { } definition:
-                return PrefabKind(context, definition);
+            case MissionItemKind.PrefabKind when KindOfKey(analysis, item.Key) is { } definition:
+                return PrefabKind(context, definition, item.Key!);
             default:
                 return Item(analysis, item, context.ShowBaseGame);
         }
@@ -161,13 +186,22 @@ internal sealed partial record MissionPageModel
         // Starts when: the event sentence, then the named fields of the condition. A condition before the last one is
         // struck through (TR1).
         var startsWhen = new List<PageField>();
+        var template = context.Prefab?.Template;
         if (trigger.Condition is { } condition)
         {
             startsWhen.Add(new PageField("Event", condition.Sentence(), EventTip)
             {
                 Edit = EventEdit(context, trigger), Changed = context.Changed(condition),
+                Actions = template != null && editable
+                    ? LineChoices(context.Prefab!.Asset.Ref, template, condition, PrefabFieldKind.Condition).ToList()
+                    : [],
             });
             startsWhen.AddRange(ValueFields(context, condition, (spec, value) => new SetConditionValue(tref, spec.Name, value)));
+        }
+        else if (template != null && SlotLines(template, index, trigger, PrefabFieldKind.Condition).FirstOrDefault() is { } slot)
+        {
+            // In prefab mode, the condition can be the line of a condition field (section 8.6 of the M6b design).
+            startsWhen.Add(SlotLineField(template, slot, "Event", editable));
         }
         else
         {
@@ -213,6 +247,13 @@ internal sealed partial record MissionPageModel
             {
                 AddGroup = editable && info != null ? group.Key : null,
             });
+        }
+
+        // In prefab mode, the lines of a lines field show with their field (section 8.6 of the M6b design).
+        if (template != null && SlotLines(template, index, trigger, PrefabFieldKind.Lines).ToList() is { Count: > 0 } slotLines)
+        {
+            sections.Add(new PageSection("fieldLines", "Lines of fields", EditorIcons.List, null,
+                slotLines.Select(l => SlotLineField(template, l, $"Line {LineNumber(l)}", editable)).ToList(), []));
         }
 
         // Started by, Stopped by, Watched by and Loaded by.
@@ -445,11 +486,16 @@ internal sealed partial record MissionPageModel
     /// each number. A text id shows its text. Another value shows as text.
     /// </summary>
     /// <param name="make">Makes the command of a new value, or null for a read-only field.</param>
+    /// <remarks>In prefab mode, a value of a line of a template also has the value choice "Fixed value" or "Field:
+    /// {label}" (section 8.6 of the M6b design).</remarks>
     private static PageField ValueField(PageContext context, MissionLine line, MissionValueSpec spec, string label,
         Func<MissionValue, MissionCommand>? make = null)
     {
         var field = ShownValue(context, line, spec, label) with { Changed = context.Changed(line) };
-        return make == null ? field : field with { Edit = ValueEdit(context, line, spec, label, make) };
+        field = make == null ? field : field with { Edit = ValueEdit(context, line, spec, label, make) };
+        return make != null && context.Prefab?.Template is { } template
+            ? ValueChoice(context, template, line, spec, label, field)
+            : field;
     }
 
     /// <summary>The field of one value spec of a line as it shows.</summary>
@@ -1404,83 +1450,27 @@ internal sealed partial record MissionPageModel
 
     // ---- The prefab pages (sections 10.4 and 10.5).
 
-    /// <summary>The page of a prefab instance (section 10.4 of the M6a design): its completeness, its named fields and
-    /// its triggers with their roles. It also has the INI of all its sections.</summary>
-    private static MissionPageModel PrefabInstance(PageContext context, MissionPrefabInstance instance)
+    /// <summary>The definition of the row of a prefab in the Hierarchy: the key is the prefab as a record names it, for
+    /// example <c>builtin:spawnWave</c> or <c>mod:ol_gate</c>. An id without a prefix is a built-in prefab.</summary>
+    private static MissionPrefabDefinition? KindOfKey(MissionAnalysis analysis, string? key)
     {
-        var analysis = context.Analysis;
-        var script = analysis.Script.Path;
-        var definition = instance.Definition;
-        var fields = new List<PageField>();
-        foreach (var field in definition.Fields)
-        {
-            var values = instance.Values(field);
-            if (field.Spec(MissionSchema.Retail) is { } spec)
-            {
-                var model = ListFieldModel.Read(spec, values.Where(v => v.Line != null).Select(v => ListFieldLine.Of(v.Line!.Line))
-                    .Distinct().ToList());
-                fields.Add(new PageField(field.Label, model.Rows.Count.ToString(CultureInfo.InvariantCulture), field.Help)
-                {
-                    List = model,
-                });
-            }
-            else if (field.List != null)
-            {
-                fields.Add(new PageField(field.Label, values.Count.ToString(CultureInfo.InvariantCulture), field.Help)
-                {
-                    Heading = true,
-                });
-                fields.AddRange(values.Select(v => new PageField(v.Trigger?.Nickname ?? "", v.Text, null, v.Trigger != null
-                    ? new MissionRef(script, MissionItemKind.Trigger, v.Trigger.Section.Ref)
-                    : null)));
-            }
-            else
-            {
-                var value = values.FirstOrDefault();
-                fields.Add(new PageField(field.Label, value?.Text ?? "None", field.Help, value?.Trigger != null
-                    ? new MissionRef(script, MissionItemKind.Trigger, value.Trigger.Section.Ref)
-                    : null));
-            }
-        }
-
-        var members = new List<PageField>();
-        if (instance.Core is { } core)
-            members.Add(new PageField(definition.CoreLabel, core.Nickname, null,
-                new MissionRef(script, MissionItemKind.Trigger, core.Section.Ref)));
-        foreach (var rule in definition.Members)
-        {
-            foreach (var trigger in instance.Role(rule.Role))
-                members.Add(new PageField(rule.Label, trigger.Nickname, instance.Claimed.Contains(trigger) ? null
-                        : MissionSchema.Retail.Notes["sharedMember"],
-                    new MissionRef(script, MissionItemKind.Trigger, trigger.Section.Ref)));
-        }
-
-        var sections = new List<PageSection>
-        {
-            new("fields", "Fields", MissionGlyphs.OfPrefab(definition.Id), definition.Help, fields, []),
-            new("members", "Triggers in this prefab", EditorIcons.Bolt, MissionSchema.Retail.Help["prefabMembers"], members,
-                []),
-            Problems(analysis, SectionProblems(analysis, instance.Triggers.Select(t => t.Section)
-                .Append(instance.CoreSection).OfType<MissionSection>().Distinct().ToArray()), context.ShowBaseGame),
-        };
-        var ini = instance.Triggers.Select(t => t.Section.Ref).Prepend(instance.CoreSection?.Ref).OfType<SectionRef>().Distinct().ToList();
-        // An order prefab and an ambush have a core section that is not a trigger.
-        var onlyTriggers = instance.CoreSection is null or { Kind: MissionSectionKind.Trigger };
-        return new MissionPageModel($"{definition.Name} {instance.Name}", "Behavior prefab", MissionGlyphs.OfPrefab(definition.Id),
-            definition.Help, MissionCompleteness.OfInstance(analysis, instance), sections, null)
-        {
-            IniSections = ini,
-            IniTitle = onlyTriggers ? "INI (all triggers)" : "INI (all sections)",
-        };
+        if (key == null)
+            return null;
+        if (analysis.Prefabs?.Instances.FirstOrDefault(i => i.PrefabKey.Equals(key, StringComparison.OrdinalIgnoreCase)) is { } instance)
+            return instance.Definition;
+        return MissionPrefabs.Retail.Definition(PrefabRef.TryParse(key) is { Builtin: true } builtin ? builtin.Id : key);
     }
 
     /// <summary>The page of a prefab kind (section 10.5 of the M6a design): what it is, what it writes, its fields, its
-    /// steps and its uses.</summary>
-    private static MissionPageModel PrefabKind(PageContext context, MissionPrefabDefinition definition)
+    /// steps and its uses. A prefab of a mod has the same page.</summary>
+    /// <param name="key">The prefab as a record names it (see <see cref="MissionPrefabInstance.PrefabKey"/>).</param>
+    private static MissionPageModel PrefabKind(PageContext context, MissionPrefabDefinition definition, string key)
     {
         var script = context.Analysis.Script.Path;
-        var uses = context.Analysis.Prefabs?.OfPrefab(definition.Id).ToList() ?? [];
-        var total = context.Result.Analyses.Values.Sum(a => a.Prefabs?.OfPrefab(definition.Id).Count() ?? 0);
+        var prefabKey = PrefabRef.TryParse(key)?.RecordText ?? PrefabRef.BuiltinOf(key).RecordText;
+        bool Of(MissionPrefabInstance i) => i.PrefabKey.Equals(prefabKey, StringComparison.OrdinalIgnoreCase);
+        var uses = context.Analysis.Prefabs?.Instances.Where(Of).ToList() ?? [];
+        var total = context.Result.Analyses.Values.Sum(a => a.Prefabs?.Instances.Count(Of) ?? 0);
         var sections = new List<PageSection>
         {
             new("whatItIs", "What it is", EditorIcons.InfoCircle, null, [], [definition.Help.WhatItIs]),

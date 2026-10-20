@@ -143,6 +143,44 @@ public static class MissionCompleteness
         _ => "pilot",
     };
 
+    /// <summary>
+    /// The completeness of a prefab in prefab mode (section 8.6 of the M6b design): the prefab file has no problem of the
+    /// format check, the lines of the template have no error, and each field is in a line. A missing step of a field
+    /// goes to the field on the Prefab page, and a missing step of the file goes to the text of the file.
+    /// </summary>
+    public static CompletenessReport OfPrefab(Editing.PrefabModeModel prefab)
+    {
+        var steps = new List<CompletenessStep>
+        {
+            // A missing step goes to the text of the file on the Prefab page, with a mark on the line of each problem.
+            prefab.Asset.Problems is [var first, ..]
+                ? new CompletenessStep(PrefabFileStep, CompletenessState.Missing, PrefabFileReason, first.ToString(),
+                    new MissionRef(prefab.Asset.Ref.Script, MissionItemKind.Mission, Key: "file"), IsError: true)
+                : new CompletenessStep(PrefabFileStep, CompletenessState.Done, PrefabFileReason),
+        };
+        if (prefab.Template is { } template)
+        {
+            steps.Add(RuleStep(TemplateLinesStep, TemplateLinesReason,
+                prefab.Analysis?.Problems.Where(p => p.Severity == DiagnosticSeverity.Error).ToList() ?? []));
+            var unused = template.Fields.FirstOrDefault(f => !template.Sections.Any(s => s.Lines.Any(l =>
+                Prefabs.PrefabSlot.KeyField(l.Key) == f.Id || Prefabs.PrefabSlot.Of(l.Value).Any(slot => slot.Field == f.Id))));
+            steps.Add(unused == null
+                ? new CompletenessStep(FieldsStep, CompletenessState.Done, FieldsReason)
+                : new CompletenessStep(FieldsStep, CompletenessState.Missing, FieldsReason,
+                    $"Field '{unused.Label}' is in no line, so it changes nothing. Make it the value of a line, or remove it.",
+                    new MissionRef(prefab.Asset.Ref.Script, MissionItemKind.Mission, Key: "field:" + unused.Id)));
+        }
+        return new CompletenessReport(prefab.Asset.Name, steps);
+    }
+
+    // The steps of a prefab in prefab mode.
+    private const string PrefabFileStep = "Prefab file";
+    private const string PrefabFileReason = "The editor places and compiles only a prefab whose file has no problem.";
+    private const string TemplateLinesStep = "Valid lines";
+    private const string TemplateLinesReason = "Each instance gets these lines, so an error of a line is an error of each instance.";
+    private const string FieldsStep = "Fields in lines";
+    private const string FieldsReason = "A field changes the instances only through the lines that hold its value.";
+
     /// <summary>The completeness of a prefab instance: the steps of its prefab.</summary>
     public static CompletenessReport OfInstance(MissionAnalysis analysis, MissionPrefabInstance instance)
     {
@@ -173,6 +211,13 @@ public static class MissionCompleteness
                 Fix: state == CompletenessState.Missing && Editing.MissionFixes.HasStepFix(instance.Definition.Id, step.Id)
                     ? Editing.MissionFixes.StepSubject(instance, step.Id)
                     : null));
+        }
+        if (instance.Linked is { } linked)
+        {
+            // A linked instance also needs the lines of its prefab (rules P01 to P03, section 6.10 of the M6b design).
+            var problems = analysis.Problems.Where(p => p.Rule is "P01" or "P02" or "P03" &&
+                                                        p.Subject == $"{p.Rule}|{linked.Record.Id}").ToList();
+            steps.Add(RuleStep(Prefabs.PrefabLinks.StepName, Prefabs.PrefabLinks.StepReason, problems));
         }
         return new CompletenessReport(instance.Definition.Name, steps)
         {

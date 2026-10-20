@@ -114,12 +114,13 @@ public sealed record RemoveTrigger(TriggerRef Trigger) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Trigger(Trigger);
-        d.Editable(document, index);
+        d.Editable(document, index, members: true);
         var name = TriggerRules.Nickname(document.Working[index])!;
         var reference = d.RefOf(document, index);
         var inverse = new List<MissionCommand>();
-        var lines = MissionLinks.Naming(d.Schema, document.Working, [MissionValueKind.Trigger], name)
-            .Where(l => l.Section != index).Select(l => (l.Section, l.Row)).Distinct().ToList();
+        // A member of a linked prefab instance: the compile of the instance handles the lines of its other members.
+        var lines = d.OutsideLines(document, index, MissionLinks.Naming(d.Schema, document.Working, [MissionValueKind.Trigger], name)
+            .Where(l => l.Section != index).Select(l => (l.Section, l.Row)).Distinct());
         if (References == ReferencesMode.Remove)
             d.RemoveLines(document, lines, inverse);
         else
@@ -217,6 +218,10 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
             });
         }
 
+        if (ChangeReferences)
+            d.RenameInRecords(document, [MissionValueKind.Trigger], old, name);
+        if (MissionDraft.IsTemplateDocument(document))
+            d.RenameRole(document, old, name);
         var renamed = new TriggerRef(document.Path, name);
         // The inverse gives the own lines that named the trigger their old text first, then the lines of the other
         // sections in reverse order, then the old nickname. So the rename back finds no line that names the new name
@@ -250,6 +255,8 @@ public sealed record DuplicateTrigger(TriggerRef Trigger) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Trigger(Trigger);
+        // A copy of a member of a linked prefab instance refuses: duplicate the instance (section 4.9 of the M6b design).
+        d.RefuseMember(document, index);
         var section = document.Working[index];
         var name = d.NewName(document, "Trigger", NewName);
         var nickname = TriggerRules.NicknameLine(section);

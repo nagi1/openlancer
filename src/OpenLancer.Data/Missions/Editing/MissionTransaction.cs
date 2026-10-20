@@ -181,7 +181,7 @@ public sealed partial class MissionEditor
     {
         var check = new BatchCheck(this, names);
         check.Join(options);
-        check.Add(draft);
+        check.Add(draft, draft.ModTextBefore);
         return check.Check();
     }
 

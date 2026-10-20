@@ -8,7 +8,9 @@ using LibreLancer;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Assets;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Games;
+using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Assets;
@@ -53,6 +55,9 @@ internal sealed class AssetsPanel : IDisposable
     private bool dragStarted;
     private int columns = 1;
     private IReadOnlyList<AssetRow> shown = [];
+    private readonly RenamePopup prefabRename = new("##prefab-rename");
+    // The prefab of the open rename popup, and true for a rename of the file name, false for the name.
+    private (string Id, bool File)? renamingPrefab;
 
     /// <param name="thumbnailFolder">The folder of the cache of the thumbnails.</param>
     public AssetsPanel(EditorWindow window, string thumbnailFolder)
@@ -85,6 +90,13 @@ internal sealed class AssetsPanel : IDisposable
     public void Show(AssetKind kind, string id)
     {
         if (window.Session?.Edits.Assets.Find(kind, id) is { } row)
+            Show(row);
+    }
+
+    /// <summary>Shows the tile of a mission prefab asset: "Select prefab asset" (section 8.11 of the M6b design).</summary>
+    public void ShowPrefab(PrefabRef prefab)
+    {
+        if (window.Session?.Edits.Assets.Find(AssetKind.MissionPrefab, prefab.Id) is { } row)
             Show(row);
     }
 
@@ -138,6 +150,7 @@ internal sealed class AssetsPanel : IDisposable
         name = row.Asset.Kind switch
         {
             AssetKind.PropGroup => Group(session, row.Asset)?.Name ?? row.Nickname,
+            AssetKind.MissionPrefab => session.Edits.Missions.Prefab(PrefabRef.ModOf(row.Asset.Id))?.Name ?? row.Nickname,
             _ when row.Asset.Section != null && session.SectionName(row.Asset.Section) is { Length: > 0 } text => text,
             _ => row.Nickname,
         };
@@ -241,6 +254,11 @@ internal sealed class AssetsPanel : IDisposable
         ImGui.TextDisabled(TextFit.CutRight(Footer(session), right.X - 2 * ImGui.GetStyle().FramePadding.X));
 
         thumbnails.Frame(CanRender(session));
+        if (prefabRename.Draw() is { } text && renamingPrefab is var (old, file))
+        {
+            renamingPrefab = null;
+            window.Missions.Run(RenameBatch(old, text, file));
+        }
     }
 
     /// <summary>True when a thumbnail can render in this frame (section 7.2 of the M23 design): the game data is loaded,
@@ -394,6 +412,60 @@ internal sealed class AssetsPanel : IDisposable
         ImGui.PopID();
     }
 
+    /// <summary>The prefab of a row of a mission prefab asset.</summary>
+    private static PrefabRef PrefabOf(AssetRow row) => PrefabRef.ModOf(row.Asset.Id);
+
+    /// <summary>Why a mission prefab asset cannot change, or null: a prefab of a lower mod, or a session without
+    /// edits.</summary>
+    private static string? PrefabLock(EditorSession session, AssetRow row) =>
+        row.Origin != ValueOrigin.ActiveMod ? MissionLibrary.LockTip(row.ModId ?? "") : session.NoEditReason;
+
+    /// <summary>F2 and "Rename" of a mission prefab asset: the popup with the name that the tile shows. "Rename file..."
+    /// opens it with the file name.</summary>
+    private void RenamePrefab(AssetRow row, bool file = false)
+    {
+        renamingPrefab = (row.Asset.Id, file);
+        prefabRename.Open(file ? row.Asset.Id : NameOf(row));
+    }
+
+    /// <summary>The batch of a rename of a prefab asset: a new name in the library, or a new file name. Null for the same
+    /// text.</summary>
+    internal static MissionBatch? RenameBatch(string id, string text, bool file)
+    {
+        text = text.Trim();
+        if (text.Length == 0 || file && string.Equals(text, id, StringComparison.Ordinal))
+            return null;
+        return file
+            ? new MissionBatch($"Rename prefab file {id} to {text}", [new RenamePrefabAsset(PrefabRef.ModOf(id), text)])
+            : new MissionBatch($"Rename prefab {id} to '{text}'", [new RenamePrefabAsset(PrefabRef.ModOf(id), id) { NewName = text }]);
+    }
+
+    /// <summary>Delete and "Delete" of a mission prefab asset (decision D673): its instances keep their lines and get
+    /// P02. The mission editor asks first when instances use the asset. Undo brings the asset back.</summary>
+    private void DeletePrefab(AssetRow row) =>
+        window.Missions.Run(new MissionBatch($"Delete prefab {row.Asset.Id}", [new RemovePrefabAsset(PrefabOf(row))]));
+
+    /// <summary>The menu of a tile of a mission prefab asset (section 8.3 of the M6b design).</summary>
+    private void PrefabMenu(EditorSession session, AssetRow row)
+    {
+        if (Theme.IconMenuItem(EditorIcons.Cubes, "Open prefab", !row.HasProblem))
+            window.Missions.OpenPrefabMode(PrefabOf(row));
+        ImGui.SetItemTooltip(MissionPageModel.OpenPrefabTip);
+        var reason = PrefabLock(session, row);
+        if (ImGui.MenuItem($"{EditorIcons.Pen}   Rename", "F2", false, reason == null))
+            RenamePrefab(row);
+        ImGui.SetItemTooltip(reason ?? "Change the name of the prefab in the library.");
+        if (ImGui.MenuItem($"{EditorIcons.Pen}   Rename file...", "", false, reason == null))
+            RenamePrefab(row, file: true);
+        ImGui.SetItemTooltip(reason ?? $"Change the file name of the prefab. {Data.Missions.Prefabs.PrefabAsset.FileNameRule}");
+        if (ImGui.MenuItem($"{EditorIcons.TrashAlt}   Delete", "Del", false, reason == null))
+            DeletePrefab(row);
+        ImGui.SetItemTooltip(reason ?? "Delete the prefab file. Its instances keep their lines and show the warning P02.");
+        ImGui.Separator();
+        if (Theme.IconMenuItem(EditorIcons.Copy, "Copy file name", true))
+            ImGui.SetClipboardText(row.Asset.Id);
+    }
+
     /// <summary>The marks of a tile: the blue bar and the "+" of the active mod (decision D245), the lock of an asset that
     /// cannot spawn, the error of a group with a problem, and the "prop" badge of a model with a solar archetype.</summary>
     private static void Marks(ImDrawListPtr drawList, AssetRow row, Vector2 min, float size)
@@ -406,8 +478,15 @@ internal sealed class AssetsPanel : IDisposable
                 ImGui.GetColorU32(EditorTheme.Accent));
         if ((row.Mark & AssetMark.Added) != 0)
             drawList.AddText(ImGui.GetFont(), badge, min + new Vector2(4 * scale, 0), ImGui.GetColorU32(EditorTheme.Accent), "+");
-        if (row.Asset.Kind == AssetKind.PropGroup && row.NotPlaceable != null)
+        if (row.Asset.Kind == AssetKind.PropGroup && row.NotPlaceable != null ||
+            row.Asset.Kind == AssetKind.MissionPrefab && row.HasProblem)
             Glyphs.Draw(drawList, EditorIcons.ExclamationTriangle, badge, corner, EditorTheme.ToAbgr(EditorTheme.Error));
+        else if (row.Asset.Kind == AssetKind.MissionPrefab)
+        {
+            // A prefab of a lower mod has the lock: it can place, but it cannot change.
+            if (row.Origin != ValueOrigin.ActiveMod)
+                Glyphs.Draw(drawList, EditorIcons.Lock, badge, corner, EditorTheme.ToAbgr(EditorTheme.TextDim));
+        }
         else if (row.NotPlaceable != null && row.Asset.Kind is not (AssetKind.Loadout or AssetKind.Faction))
             Glyphs.Draw(drawList, EditorIcons.Lock, badge, corner, EditorTheme.ToAbgr(EditorTheme.TextDim));
         if (row.HasProp)
@@ -477,7 +556,15 @@ internal sealed class AssetsPanel : IDisposable
         if (ImGui.BeginDragDropSource())
         {
             dragStarted = true;
-            window.AssetDrag.SourceOf(row, NameOf(row), ObjectKinds.Assets.Of(row));
+            // A mission prefab goes into the graph of a mission, as an item of the library does (section 8.3 of the M6b
+            // design).
+            if (row.Asset.Kind == AssetKind.MissionPrefab)
+            {
+                if (session.Edits.Missions.Prefab(PrefabOf(row)) is { } asset)
+                    MissionDrag.Source(MissionDrag.ItemType, MissionLibrary.Prefab(asset), $"{EditorIcons.Cubes}  {NameOf(row)}");
+            }
+            else
+                window.AssetDrag.SourceOf(row, NameOf(row), ObjectKinds.Assets.Of(row));
             ImGui.EndDragDropSource();
         }
 
@@ -490,7 +577,10 @@ internal sealed class AssetsPanel : IDisposable
         if (ImGui.BeginPopupContextItem("##asset-menu"))
         {
             EditorTheme.PushMenuColors();
-            Menu(session, row);
+            if (row.Asset.Kind == AssetKind.MissionPrefab)
+                PrefabMenu(session, row);
+            else
+                Menu(session, row);
             EditorTheme.PopMenuColors();
             ImGui.EndPopup();
         }
@@ -602,6 +692,13 @@ internal sealed class AssetsPanel : IDisposable
         var row = shown[at];
         if (ImGui.IsKeyPressed(ImGuiKey.Enter, false) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter, false))
             Open(row);
+        else if (row.Asset.Kind == AssetKind.MissionPrefab && PrefabLock(session, row) == null)
+        {
+            if (ImGui.IsKeyPressed(ImGuiKey.F2, false))
+                RenamePrefab(row);
+            else if (ImGui.IsKeyPressed(ImGuiKey.Delete, false))
+                DeletePrefab(row);
+        }
         else if (row.Asset.Kind == AssetKind.PropGroup && Group(session, row.Asset) is { Editable: true } group &&
                  session.CanEdit)
         {
@@ -621,10 +718,17 @@ internal sealed class AssetsPanel : IDisposable
         window.Selection = selectedItem;
     }
 
-    /// <summary>Opens the asset of a row (decision D276): it selects the asset and shows the Inspector panel.</summary>
+    /// <summary>Opens the asset of a row (decision D276): it selects the asset and shows the Inspector panel. A mission
+    /// prefab opens in prefab mode (section 8.6 of the M6b design).</summary>
     private void Open(AssetRow row)
     {
         Select(row);
+        if (row.Asset.Kind == AssetKind.MissionPrefab)
+        {
+            window.Missions.OpenPrefabMode(PrefabOf(row));
+            return;
+        }
+
         window.ShowPanel(Inspector.InspectorPanel.PanelId);
     }
 
@@ -643,7 +747,7 @@ internal sealed class AssetsPanel : IDisposable
         {
             AssetKind.Ship when !added && data?.Items.Ships.Get(row.Asset.Id) is { } ship => ship,
             AssetKind.Equipment when !added && data?.Items.Equipment.Get(row.Asset.Id) is { } equipment => equipment,
-            AssetKind.Model or AssetKind.PropGroup => row.Asset,
+            AssetKind.Model or AssetKind.PropGroup or AssetKind.MissionPrefab => row.Asset,
             _ => (object?)row.Asset.Section ?? row.Asset,
         };
     }
@@ -666,7 +770,7 @@ internal sealed class AssetsPanel : IDisposable
             return "";
         var file = selected.Kind switch
         {
-            AssetKind.PropGroup => selected.File ?? "",
+            AssetKind.PropGroup or AssetKind.MissionPrefab => selected.File ?? "",
             AssetKind.Model => $@"DATA\{selected.Id}",
             _ => selected.Section?.Path ?? "",
         };

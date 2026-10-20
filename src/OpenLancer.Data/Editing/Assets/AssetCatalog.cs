@@ -20,6 +20,10 @@ public enum AssetKind
     Loadout,
     Faction,
     Model,
+
+    /// <summary>A mission prefab asset of a mod, <c>prefabs\missions\&lt;id&gt;.ini</c> (section 8.3 of the M6b
+    /// design). The id is the file name of the prefab.</summary>
+    MissionPrefab,
 }
 
 /// <summary>An asset: a list entry, a model file or a prop group.</summary>
@@ -78,6 +82,10 @@ public sealed record AssetRow(AssetRef Asset, string Nickname, string Detail, st
     /// <summary>True for a ship, an asteroid or a model when W has a solar archetype with its model: the "prop"
     /// badge.</summary>
     public bool HasProp { get; init; }
+
+    /// <summary>True for an asset whose file has a problem, for example a mission prefab: the error mark. It cannot place,
+    /// and it does not open.</summary>
+    public bool HasProblem { get; init; }
 }
 
 /// <summary>
@@ -212,12 +220,14 @@ public sealed class AssetCatalog
         return known;
     }
 
-    /// <summary>What the rows of a top category read: its list, the model users for the prop badge and the models, and
-    /// the version of the prop groups.</summary>
+    /// <summary>What the rows of a top category read: its list, the model users for the prop badge and the models, the
+    /// version of the prop groups, and the revision of the session for the mission prefabs.</summary>
     private object?[] KeyOf(AssetCategoryDefinition definition)
     {
         if (definition.Kind == AssetCategoryDefinition.PropGroupsKind)
             return [PropGroups.Version(session)];
+        if (definition.Kind == AssetCategoryDefinition.MissionPrefabsKind)
+            return [session.Revision, session.IsDirty, session.ActiveMod];
         var list = session.Lists.List(definition.List!);
         return KindOf(definition) is AssetKind.Ship or AssetKind.Asteroid or AssetKind.Model
             ? [list, Users.State]
@@ -231,6 +241,8 @@ public sealed class AssetCatalog
         var rows = new List<AssetRow>();
         if (kind == AssetKind.PropGroup)
             rows.AddRange(PropGroups.Of(session).Select(g => GroupRow(definition, g)));
+        else if (kind == AssetKind.MissionPrefab)
+            rows.AddRange(session.Missions.Prefabs().Where(p => !p.Ref.Builtin).Select(p => PrefabRow(definition, p)));
         else if (kind != null && session.Lists.List(definition.List!) is { } list)
         {
             if (definition.Split == AssetCategoryDefinition.SplitTemplates)
@@ -369,6 +381,49 @@ public sealed class AssetCatalog
             AssetMark.None, problem == null ? null : $"The prop group file has a problem: {problem}");
     }
 
+    /// <summary>
+    /// The row of a mission prefab asset (section 8.3 of the M6b design): its file name, the number of its fields or the
+    /// prefab that it copies, and the marks of a new or changed file of the active mod. The Scene does not place a
+    /// prefab: a drag into the graph of a mission does.
+    /// </summary>
+    private AssetRow PrefabRow(AssetCategoryDefinition definition, Missions.Prefabs.PrefabAsset asset)
+    {
+        var template = asset.Template;
+        var fields = template?.Fields.Count ?? 0;
+        var detail = template == null ? "The file has a problem"
+            : template.VariantOf is { } source ? $"Variant of {Missions.Editing.PrefabRef.TryParse(source)?.Id ?? source}"
+            : fields == 1 ? "1 field"
+            : $"{fields.ToString(System.Globalization.CultureInfo.InvariantCulture)} fields";
+        var mark = AssetMark.None;
+        if (asset.Active)
+        {
+            var path = Missions.Prefabs.PrefabAsset.PathOf(asset.Ref.Id);
+            string? saved;
+            try
+            {
+                saved = session.ModFileSavedText(path);
+            }
+            catch (Exception e) when (e is ArgumentException or System.IO.IOException or UnauthorizedAccessException)
+            {
+                saved = null;
+            }
+
+            mark = saved == null ? AssetMark.Added | AssetMark.Unsaved
+                : !string.Equals(saved, asset.Text, StringComparison.Ordinal) ? AssetMark.Changed | AssetMark.Unsaved
+                : AssetMark.None;
+        }
+
+        var problem = asset.Problems.FirstOrDefault()?.ToString();
+        return new AssetRow(new AssetRef(AssetKind.MissionPrefab, asset.Ref.Id, null, Missions.Prefabs.PrefabAsset.PathOf(asset.Ref.Id)),
+            asset.Ref.Id, detail, definition.Id, asset.Active ? ValueOrigin.ActiveMod : ValueOrigin.LowerMod, asset.ModId, mark,
+            problem == null
+                ? "Drag the prefab into the graph of a mission. The Scene does not place it."
+                : $"The prefab file has a problem: {problem}")
+        {
+            HasProblem = problem != null,
+        };
+    }
+
     /// <summary>The marks of an entry whose section the active mod adds or changes (decision D245). An entry of a
     /// whole file of the active mod has no section in W, so it gets the mark of a change.</summary>
     private AssetMark MarkOf(ListEntry entry)
@@ -397,9 +452,9 @@ public sealed class AssetCatalog
             : null;
 
     private static AssetKind? KindOf(AssetCategoryDefinition definition) =>
-        definition.Kind == AssetCategoryDefinition.PropGroupsKind
-            ? AssetKind.PropGroup
-            : definition.List?.ToLowerInvariant() switch
+        definition.Kind == AssetCategoryDefinition.PropGroupsKind ? AssetKind.PropGroup
+        : definition.Kind == AssetCategoryDefinition.MissionPrefabsKind ? AssetKind.MissionPrefab
+        : definition.List?.ToLowerInvariant() switch
             {
                 "solar_archetype" => AssetKind.SolarArchetype,
                 "ship" => AssetKind.Ship,

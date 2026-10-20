@@ -130,8 +130,10 @@ internal sealed class MissionEdits : IDisposable
     /// <param name="binary">True writes the script as a binary INI file.</param>
     /// <param name="setup">More files before the session opens.</param>
     /// <param name="modFiles">The files of the active mod, by their path in the mod folder, or null for none.</param>
+    /// <param name="lowerMod">The files of the mod <c>low</c> that loads before the active mod, or null for no lower
+    /// mod.</param>
     public static MissionEdits Create(string? text = null, bool binary = false, Action<TestWorkspace>? setup = null,
-        string? manifestExtra = null, Dictionary<string, string>? modFiles = null)
+        string? manifestExtra = null, Dictionary<string, string>? modFiles = null, Dictionary<string, string>? lowerMod = null)
     {
         var ws = new TestWorkspace();
         if (binary)
@@ -142,7 +144,13 @@ internal sealed class MissionEdits : IDisposable
         ws.WriteBase(SharedShips, SharedText);
         setup?.Invoke(ws);
         ws.Mod("act", modFiles ?? new(), manifestExtra);
-        ws.WriteProfile("act");
+        if (lowerMod != null)
+        {
+            ws.Mod("low", lowerMod);
+            ws.WriteProfile("low", "act");
+        }
+        else
+            ws.WriteProfile("act");
         var session = ws.Session("act");
         session.Missions.UseWorld(new TestMissionWorld(session, WorldNames));
         return new MissionEdits(ws, session);

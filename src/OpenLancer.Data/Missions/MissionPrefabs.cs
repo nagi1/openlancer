@@ -88,6 +88,29 @@ public enum PrefabListCodec
     Triggers,
 }
 
+/// <summary>
+/// The write rule of a field of a matched instance (section 5.8 of the M6b design): the lines that the field writes. A
+/// field without a rule shows structure, for example the triggers of a role, and is read-only.
+/// </summary>
+public enum PrefabWrite
+{
+    /// <summary>The field is read-only.</summary>
+    None,
+
+    /// <summary>A value of an action of the role: <c>SetActionValue</c>, or the lines of the action keys for a list
+    /// field.</summary>
+    Value,
+
+    /// <summary>The condition of the role trigger: <c>SetCondition</c>, one for each trigger of a list field.</summary>
+    Condition,
+
+    /// <summary>A value of a key of the core section: <c>SetLineValue</c>, or <c>SetItemKey</c> for a new line.</summary>
+    Key,
+
+    /// <summary>The lines of an action group, of each action, or of keys of the core section.</summary>
+    Lines,
+}
+
 /// <summary>The list data of a list field of a prefab.</summary>
 /// <param name="Items">The plural word of the rows, for example "ships".</param>
 public sealed record PrefabList(PrefabListCodec Codec, string Items);
@@ -97,6 +120,10 @@ public sealed record PrefabList(PrefabListCodec Codec, string Items);
 /// <param name="Help">What the field holds, in one or two sentences, for its tooltip (AGENTS.md UI rule 9).</param>
 public sealed record PrefabField(string Id, string Label, PrefabSource From, PrefabList? List, string Help)
 {
+    /// <summary>The write rule of the field for a matched instance, or <see cref="PrefabWrite.None"/> for a read-only
+    /// field (section 5.8 of the M6b design).</summary>
+    public PrefabWrite Write { get; init; }
+
     /// <summary>
     /// The keys of the lines of a <see cref="PrefabListCodec.Lines"/> list field. They are its action keys, the actions of
     /// its group, each action, or its keys of the core section.
@@ -169,12 +196,32 @@ public sealed class MissionPrefabInstance
     /// <summary>The triggers that this instance claims: its frame holds them.</summary>
     public IReadOnlyList<MissionTrigger> Claimed { get; }
 
-    /// <summary>The identity of the instance in its script: the prefab and the core trigger or section. A base-game run
-    /// of the script compares instances by it (decision D551).</summary>
-    public string Key => $"{Definition.Id}|{Core?.Nickname ?? CoreSection?.Ref.Id.ToString()}";
+    /// <summary>The record, the prefab and the fields of a linked instance (section 5.1 of the M6b design), or null for
+    /// a matched instance.</summary>
+    public Prefabs.LinkedInstance? Linked { get; internal init; }
 
-    /// <summary>The name of the instance: the nickname of the core trigger or section.</summary>
-    public string Name => Core?.Nickname ?? CoreSection?.Nickname ?? Definition.Name;
+    /// <summary>The identity of the instance in its script: the prefab and the core trigger or section, or the id of the
+    /// record of a linked instance. A base-game run of the script compares instances by it (decision D551). The key of a
+    /// linked instance does not name its prefab, so the selection stays on the instance when it gets another prefab, as
+    /// Unity keeps the selection on the object.</summary>
+    public string Key => Linked is { } linked
+        ? $"@{linked.Record.Id}"
+        : $"{Definition.Id}|{Core?.Nickname ?? CoreSection?.Ref.Id.ToString()}";
+
+    /// <summary>The prefab of the instance as a record names it, for example <c>builtin:spawnWave</c> or
+    /// <c>mod:ol_gate</c>. A matched instance names the built-in prefab of its definition. The Hierarchy groups the
+    /// instances by it.</summary>
+    public string PrefabKey => Linked is { } linked
+        ? Editing.PrefabRef.TryParse(linked.Record.Prefab)?.RecordText ?? linked.Record.Prefab
+        : Editing.PrefabRef.BuiltinOf(Definition.Id).RecordText;
+
+    /// <summary>The id of the instance in its <c>inst:</c> reference (section 4.0.7 of the M6b design): the id of the
+    /// record of a linked instance, else the prefab id and the nickname of the core trigger or section.</summary>
+    public string Id => Linked is { } linked ? linked.Record.Id : $"{Definition.Id}/{Core?.Nickname ?? CoreSection?.Nickname ?? Name}";
+
+    /// <summary>The name of the instance: the id of a linked instance, or the nickname of the core trigger or
+    /// section.</summary>
+    public string Name => Linked?.Record.Id ?? Core?.Nickname ?? CoreSection?.Nickname ?? Definition.Name;
 
     /// <summary>The triggers of a role: <c>core</c>, a member role or <c>all</c>.</summary>
     public IReadOnlyList<MissionTrigger> Role(string role) => role switch
@@ -337,6 +384,8 @@ public sealed class MissionPrefabs
                     throw new FormatException($"A field of the prefab {definition.Id} reads the unknown role '{field.From.Role}'.");
                 foreach (var step in definition.Steps.Where(s => s.Requires != null && !roles.Contains(s.Requires)))
                     throw new FormatException($"A step of the prefab {definition.Id} requires the unknown role '{step.Requires}'.");
+                foreach (var field in definition.Fields.Where(f => !WriteFits(f)))
+                    throw new FormatException($"The write rule of field {field.Id} of the prefab {definition.Id} does not fit its source.");
             }
             var ordered = definitions.Where(d => d.Kind == MissionPrefabKind.Beat).OrderBy(d => d.Order)
                 .Concat(definitions.Where(d => d.Kind == MissionPrefabKind.Order)).ToList();
@@ -349,6 +398,16 @@ public sealed class MissionPrefabs
         }
     }
 
+    /// <summary>True when the write rule of a field fits the lines that the field reads.</summary>
+    private static bool WriteFits(PrefabField field) => field.Write switch
+    {
+        PrefabWrite.Value => field.From.Actions.Count > 0 && !field.From.Trigger,
+        PrefabWrite.Condition => field.From.Condition,
+        PrefabWrite.Key => field.From.Key != null,
+        PrefabWrite.Lines => field.From.Group != null || field.From.AllActions || field.From.Keys.Count > 0,
+        _ => true,
+    };
+
     /// <summary>The member rules that the matcher knows.</summary>
     private static readonly HashSet<string> KnownRules =
     [
@@ -358,18 +417,22 @@ public sealed class MissionPrefabs
     ];
 
     /// <summary>Finds the instances of the prefabs in the index of a script.</summary>
-    public MissionPrefabResult Match(MissionIndex index)
+    /// <param name="linked">The sections of the linked instances of the script (section 5.1 of the M6b design). The
+    /// matcher leaves them out: no matched instance has them as its core or as a member.</param>
+    public MissionPrefabResult Match(MissionIndex index, IReadOnlySet<MissionSection>? linked = null)
     {
         var claims = new Dictionary<MissionTrigger, MissionPrefabInstance>();
         var instances = new List<MissionPrefabInstance>();
-        var triggers = index.Triggers.Where(t => !t.IsDuplicate).ToList();
+        var blocked = linked ?? new HashSet<MissionSection>();
+        var triggers = index.Triggers.Where(t => !t.IsDuplicate && !blocked.Contains(t.Section)).ToList();
         foreach (var definition in Definitions)
         {
             if (definition.Core.Section is { } type)
             {
-                foreach (var section in index.Document.Sections.Where(s => MissionIndex.Is(s.Type, type) && SectionMatches(definition.Core, s)))
+                foreach (var section in index.Document.Sections.Where(s => MissionIndex.Is(s.Type, type) && !blocked.Contains(s) &&
+                                                                           SectionMatches(definition.Core, s)))
                 {
-                    var members = Members(index, definition, null, section, claims);
+                    var members = Members(index, definition, null, section, claims, blocked);
                     var instance = new MissionPrefabInstance(definition, null, section, members,
                         definition.Kind == MissionPrefabKind.Order ? [] : Claim(definition, null, members, claims));
                     Register(instance, claims);
@@ -383,7 +446,7 @@ public sealed class MissionPrefabs
                     continue;
                 if (definition.Core.Chain is { } chain && !IsChainHead(index, trigger, chain))
                     continue;
-                var members = Members(index, definition, trigger, null, claims);
+                var members = Members(index, definition, trigger, null, claims, blocked);
                 if (definition.Core.WatchedTarget &&
                     (members.GetValueOrDefault("on") is not { Count: > 0 } || members.GetValueOrDefault("off") is not { Count: > 0 }))
                     continue;
@@ -488,7 +551,7 @@ public sealed class MissionPrefabs
     /// <summary>The triggers of each member role of a new instance.</summary>
     private static Dictionary<string, IReadOnlyList<MissionTrigger>> Members(MissionIndex index,
         MissionPrefabDefinition definition, MissionTrigger? core, MissionSection? section,
-        Dictionary<MissionTrigger, MissionPrefabInstance> claims)
+        Dictionary<MissionTrigger, MissionPrefabInstance> claims, IReadOnlySet<MissionSection> blocked)
     {
         var result = new Dictionary<string, IReadOnlyList<MissionTrigger>>();
         var taken = new HashSet<MissionTrigger>();
@@ -497,7 +560,7 @@ public sealed class MissionPrefabs
         foreach (var member in definition.Members)
         {
             var found = Rule(index, member, core, section)
-                .Where(t => member.Shared || !claims.ContainsKey(t) && !taken.Contains(t))
+                .Where(t => !blocked.Contains(t.Section) && (member.Shared || !claims.ContainsKey(t) && !taken.Contains(t)))
                 .Distinct()
                 .ToList();
             if (!member.Shared)
@@ -675,7 +738,18 @@ public sealed class MissionPrefabs
         return new PrefabField(Text(e, "id"), Text(e, "label"), new PrefabSource(Text(from, "role"), Bool(from, "trigger"),
             Bool(from, "condition"), Strings(from, "actions"), from.TryGetProperty("value", out var v) ? v.GetInt32() : 0,
             Optional(from, "key"), Optional(from, "group"), Bool(from, "allActions"), Strings(from, "keys")),
-            e.TryGetProperty("list", out var list) ? ReadList(list) : null, Text(e, "help"));
+            e.TryGetProperty("list", out var list) ? ReadList(list) : null, Text(e, "help"))
+        {
+            Write = Optional(e, "write") switch
+            {
+                null => PrefabWrite.None,
+                "value" => PrefabWrite.Value,
+                "condition" => PrefabWrite.Condition,
+                "key" => PrefabWrite.Key,
+                "lines" => PrefabWrite.Lines,
+                var other => throw new FormatException($"The write rule '{other}' is not known."),
+            },
+        };
     }
 
     private static PrefabList ReadList(JsonElement e) => new(Text(e, "codec") switch

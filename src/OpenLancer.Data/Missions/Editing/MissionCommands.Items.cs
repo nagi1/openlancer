@@ -193,7 +193,8 @@ public sealed record RemoveMissionShip(ItemRef Ship) : MissionCommand
         var ship = script.Working[index];
         if (!MissionIndex.Is(ship.Name, "MsnShip"))
             throw d.Refuse(MissionErrors.NotAnItemError(Ship.ToString(), "a mission ship"));
-        d.Editable(script, index);
+        // A delete of a member of a linked prefab instance is a removed-member override (decision D676 c).
+        d.Editable(script, index, members: true);
         var inverses = new List<MissionCommand>();
         var npcName = ItemFirst(ship, "npc");
         d.RemoveSection(script, index, ReferencesMode.Keep, DeleteReason.Target, null);
@@ -383,7 +384,7 @@ public sealed record RemoveItem(ItemRef Item) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Item(Item);
-        d.Editable(document, index);
+        d.Editable(document, index, members: true);
         var section = document.Working[index];
         var name = SectionIdentity.KeyOf(section);
         if (name != null && MissionIndex.Is(section.Name, "NPC"))
@@ -414,6 +415,8 @@ public sealed record DuplicateItem(ItemRef Item) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Item(Item);
+        // A copy of a member of a linked prefab instance refuses: duplicate the instance (section 4.9 of the M6b design).
+        d.RefuseMember(document, index);
         var section = document.Working[index];
         var keyEntry = d.KeyEntryOf(section.Name) ??
                        throw d.Refuse(MissionErrors.NotAnItemError(Item.ToString(), "an item with a nickname"));
@@ -485,6 +488,9 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
                         continue;
                     d.ChangeValues(file, group.Key, group.Select(l => (l.Row, l.Value)).ToList(), name, inverse);
                 }
+                // The values of the linked prefab instances follow, so their members show no hand edit (rule P01).
+                if (file.HoldsScript)
+                    d.RenameInRecords(file, kinds, old, name);
             }
             else
                 d.MarkMissing(file, lines.Select(l => (l.Section, l.Row)).Distinct().ToList(), old,

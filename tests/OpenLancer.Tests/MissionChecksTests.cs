@@ -322,7 +322,7 @@ public sealed class MissionChecksTests
         Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("M26"));
         Assert.Equal(DiagnosticSeverity.Error, MissionChecks.SeverityOf("M27"));
         Assert.Equal(DiagnosticSeverity.Warning, MissionChecks.SeverityOf("M28"));
-        Assert.Equal(34, MissionChecks.Rules.Count);
+        Assert.Equal(37, MissionChecks.Rules.Count);
     }
 
     [Fact]

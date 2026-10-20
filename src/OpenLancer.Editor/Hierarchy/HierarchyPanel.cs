@@ -138,15 +138,23 @@ internal sealed partial class HierarchyPanel(EditorWindow window)
         }
         else if (window.CenterMode == CenterMode.Mission)
         {
-            // In Mission mode, the tree shows the open mission (section 9 of the M6a design).
-            if (window.Missions.Open is not { } analysis)
+            // In Mission mode, the tree shows the open mission (section 9 of the M6a design). In prefab mode, it shows the
+            // fields, the ports and the sections of the template (section 8.6 of the M6b design).
+            if (window.Missions.PrefabMode is { Analysis: not null } prefab)
+            {
+                tree = HierarchyModel.ForPrefab(prefab, window.Missions.ShowBaseGame, missionModel);
+            }
+            else if (window.Missions.Open is not { } analysis)
             {
                 PanelStates.Message("No mission is open.", "Double-click a mission in the Missions tab.");
                 return;
             }
+            else
+            {
+                tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel,
+                    session.SystemName, window.Missions.ActsOf(analysis));
+            }
 
-            tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel,
-                session.SystemName, window.Missions.ActsOf(analysis));
             Show(tree, missionModel);
             missionModel = tree;
             tree.SetSearch(missionSearch);

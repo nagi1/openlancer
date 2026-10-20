@@ -17,15 +17,21 @@ public sealed class MissionJsonTests
 {
     public static IEnumerable<object[]> Kinds() => Samples().Keys.Select(k => new object[] { k });
 
-    /// <summary>One sample of each command kind: the samples of the inverse tests and the three kinds that need an edit
-    /// before them.</summary>
-    private static Dictionary<string, Func<MissionCommand>> Samples() => new(MissionInverseTests.Commands)
+    /// <summary>One sample of each command kind: the samples of the inverse tests, the four kinds that need an edit
+    /// before them, and the prefab commands.</summary>
+    private static Dictionary<string, Func<MissionCommand>> Samples()
     {
-        ["delete_script"] = () => new DeleteScript(TestScript),
-        ["revert_section"] = () => new RevertSection(T("ol_end").Item) { Name = "Cnd_Destroyed" },
-        ["accept_base"] = () => new AcceptBase(Item("MsnShip", "ol_ship_1")),
-        ["remove_act"] = () => new RemoveAct(new ActRef(Script, "act_1")),
-    };
+        var samples = new Dictionary<string, Func<MissionCommand>>(MissionInverseTests.Commands)
+        {
+            ["delete_script"] = () => new DeleteScript(TestScript),
+            ["revert_section"] = () => new RevertSection(T("ol_end").Item) { Name = "Cnd_Destroyed" },
+            ["accept_base"] = () => new AcceptBase(Item("MsnShip", "ol_ship_1")),
+            ["remove_act"] = () => new RemoveAct(new ActRef(Script, "act_1")),
+        };
+        foreach (var (kind, make) in PrefabInstanceTests.Commands.Concat(PrefabModeTests.Commands))
+            samples["prefab:" + kind] = make;
+        return samples;
+    }
 
     [Theory]
     [MemberData(nameof(Kinds))]
@@ -49,7 +55,9 @@ public sealed class MissionJsonTests
     [MemberData(nameof(Kinds))]
     public void EachInverseRoundTrips(string kind)
     {
-        if (kind is "delete_script" or "revert_section" or "accept_base" or "remove_act")
+        // These kinds need an edit before them. The prefab commands have their inverse tests in PrefabInstanceTests and
+        // PrefabModeTests, with a JSON round trip of each inverse.
+        if (kind is "delete_script" or "revert_section" or "accept_base" or "remove_act" || kind.StartsWith("prefab:"))
             return;
         using var m = Create();
         var inverse = m.Apply(Samples()[kind]()).Inverse!;

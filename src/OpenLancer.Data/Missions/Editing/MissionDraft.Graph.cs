@@ -11,18 +11,9 @@ namespace OpenLancer.Data.Missions.Editing;
 /// graph file is an editor file of the session, so the edit history, the save and the recovery cover it.</summary>
 internal sealed partial class MissionDraft
 {
-    /// <summary>The records of the graph file of a script now. A read does not touch the file.</summary>
-    public GraphFile Graph(EditDocument script)
-    {
-        try
-        {
-            return GraphFile.Read(Session.ModFileText(GraphFile.PathOf(script.Path)), out _);
-        }
-        catch (Exception e) when (e is ArgumentException or System.IO.IOException or UnauthorizedAccessException)
-        {
-            return GraphFile.Empty;
-        }
-    }
+    /// <summary>The records of the graph file of a script now. A read does not touch the file. The editor keeps the
+    /// records of each text, so a command reads a file once while it does not change.</summary>
+    public GraphFile Graph(EditDocument script) => IsTemplate(script) ? GraphFile.Empty : Editor.Graph(script.Path);
 
     /// <summary>
     /// Writes the graph file of a script. The nodes and the act members of triggers that the script does not have go
@@ -32,6 +23,9 @@ internal sealed partial class MissionDraft
     /// this editor does not read.</exception>
     public void SetGraph(EditDocument script, GraphFile file)
     {
+        // A template in prefab mode has no graph file. The graph of prefab mode places its nodes.
+        if (IsTemplate(script))
+            return;
         if (file.Unreadable is { } reason)
             throw Refuse(new EditError(EditErrorKind.Refused, EditPlan.PlanRefused,
                 $"{GraphFile.PathOf(script.Path)}: {reason}"));
@@ -39,7 +33,7 @@ internal sealed partial class MissionDraft
         var text = file.Pruned(names.Contains).Write(script.Path);
         try
         {
-            Scope.ModFile(GraphFile.PathOf(script.Path)).SetText(text);
+            ModFile(GraphFile.PathOf(script.Path)).SetText(text);
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException or System.IO.IOException or
                                       UnauthorizedAccessException)

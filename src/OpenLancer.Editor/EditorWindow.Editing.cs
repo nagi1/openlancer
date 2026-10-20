@@ -510,6 +510,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         exportDialog?.Draw();
         newModDialog.Draw();
         newProfileDialog.Draw();
+        Missions.DrawDialogs();
         templateDialog.Draw();
         SceneEdits.Draw();
         closeDialog.Draw();
@@ -518,7 +519,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 
     /// <summary>True while a dialog of the editor is open. The close of the window that waits for the load of the game
     /// data counts as a dialog, also when another popup hid its dialog.</summary>
-    internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen ||
+    internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || Missions.DialogOpen ||
                                 templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen || closePrompt.Waits ||
                                 exportDialog?.IsOpen == true || Mods.DialogOpen || agentMenu.DialogOpen;
 

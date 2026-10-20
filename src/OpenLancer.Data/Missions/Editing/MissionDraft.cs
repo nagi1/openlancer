@@ -69,8 +69,12 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     public EditDocument Script(ScriptRef script) => Script(script.Path);
 
     /// <inheritdoc cref="Script(ScriptRef)"/>
+    /// <remarks>In prefab mode, the script <c>prefab:mod:&lt;id&gt;</c> is the template of the asset in the role form
+    /// (section 5.7 of the M6b design).</remarks>
     public EditDocument Script(string path)
     {
+        if (MissionRefs.IsPrefab(path))
+            return Template(path);
         var document = Session.OpenDocument(path);
         if (document is not { HoldsScript: true, State.Exists: true })
             throw new EditException(MissionErrors.ScriptNotFoundError(path) with { Index = Index });
@@ -86,6 +90,8 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     /// read-only.</exception>
     public EditDocument File(string path)
     {
+        if (MissionRefs.IsPrefab(path))
+            return Template(path);
         if (Session.OpenDocument(path) is not { State.Exists: true } document || !SectionKeys.IsMissionFile(document.Path))
             throw new EditException(MissionErrors.ScriptNotFoundError(path) with { Index = Index });
         if (!IsMissionFile(document.Path))
@@ -249,10 +255,15 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         return r;
     }
 
-    /// <summary>Refuses a section that a patch cannot change (section 4.6 of the M6b design).</summary>
-    /// <exception cref="EditException"><c>RepeatedNickname</c> or <c>ReadOnlySection</c>.</exception>
-    public void Editable(EditDocument document, int index)
+    /// <summary>Refuses a section that a patch cannot change (section 4.6 of the M6b design), and a member of a linked
+    /// prefab instance (decision D676).</summary>
+    /// <param name="members">True for a delete: a delete of a member is a removed-member override (decision D676 c), so
+    /// it passes.</param>
+    /// <exception cref="EditException"><c>RepeatedNickname</c>, <c>ReadOnlySection</c> or <c>PrefabMember</c>.</exception>
+    public void Editable(EditDocument document, int index, bool members = false)
     {
+        if (!members)
+            RefuseMember(document, index);
         if (document.ReadOnlyReasonAt(index) is not { } reason)
             return;
         var id = document.IdentityAt(index);
@@ -279,6 +290,9 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         var before = new SectionRef(document.Path, document.IdentityAt(index));
         document.Replace(index, section, names.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
         var after = new SectionRef(document.Path, document.IdentityAt(index));
+        // The role form of a template is not a file of the session. The write of the asset records the change.
+        if (IsTemplate(document))
+            return;
         if (before.Equals(after) && string.Equals(before.Id.Key, after.Id.Key, StringComparison.Ordinal))
         {
             scope.Changed(before, structural: false);
@@ -305,7 +319,8 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     {
         at = PlaceOfNew(document, at, section);
         document.Insert(at, section);
-        scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
+        if (!IsTemplate(document))
+            scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
         return at;
     }
 
@@ -344,13 +359,19 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         $"The place of a [{type}] section in the file has no effect in the game. A patch adds a new section at the end " +
         "of the file, so the editor put it there.";
 
-    /// <summary>Removes the section at an index, and gives it.</summary>
+    /// <summary>Removes the section at an index, and gives it. The delete of a member of a linked prefab instance
+    /// becomes a removed-member override of its record (decision D676 c). The caller handles the lines that name the
+    /// section with <see cref="OutsideLines"/> first.</summary>
     public Section Remove(EditDocument document, int index)
     {
+        var member = MemberDeleteAt(document, index);
         var old = document.Working[index];
         var reference = new SectionRef(document.Path, document.IdentityAt(index));
         document.Remove(index, 1);
-        scope.Changed(reference, structural: true);
+        if (!IsTemplate(document))
+            scope.Changed(reference, structural: true);
+        if (member != null)
+            MemberRemoved(document, member);
         return old;
     }
 

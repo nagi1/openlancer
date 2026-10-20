@@ -42,6 +42,9 @@ internal sealed class MissionPlanCommand : EditCommand
                 try
                 {
                     commands[i].Run(draft);
+                    // A command in prefab mode changes the template. The draft writes it and compiles its instances
+                    // (section 5.7 of the M6b design).
+                    draft.FinishTemplates();
                 }
                 catch (EditException e)
                 {

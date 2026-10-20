@@ -41,6 +41,11 @@ public static class MissionErrors
     public const string KeyLine = "KeyLine";
     public const string SharedBuildRename = "SharedBuildRename";
     public const string SharedBuildChange = "SharedBuildChange";
+    public const string PrefabMember = "PrefabMember";
+    public const string BuiltInPrefab = "BuiltInPrefab";
+    public const string LowerModPrefab = "LowerModPrefab";
+    public const string NoOverride = "NoOverride";
+    public const string FieldNotWritable = "FieldNotWritable";
     public const string UnknownCommand = "UnknownCommand";
 
     // Codes that the table of the design does not have.
@@ -65,6 +70,19 @@ public static class MissionErrors
     public const string WorldFile = "WorldFile";
     public const string BadPath = "BadPath";
     public const string FixNotFound = "FixNotFound";
+
+    // Codes of the behavior prefabs that the table of the design does not have (milestone M6b-3).
+    public const string FieldValue = "FieldValue";
+    public const string TemplateLine = "TemplateLine";
+    public const string PrefabNotFound = "PrefabNotFound";
+    public const string PrefabProblems = "PrefabProblems";
+    public const string InstanceNotFound = "InstanceNotFound";
+    public const string FieldNotFound = "FieldNotFound";
+    public const string PortNotFound = "PortNotFound";
+    public const string RoleNotFound = "RoleNotFound";
+    public const string PrefabInUse = "PrefabInUse";
+    public const string FieldInUse = "FieldInUse";
+    public const string NotATemplate = "NotATemplate";
 
     internal static EditError NotEditableError(string reason) => new(EditErrorKind.ReadOnly, NotEditable, NotEditableMessage(reason));
 
@@ -197,6 +215,84 @@ public static class MissionErrors
         new(EditErrorKind.NeedsConfirmation, SharedBuildChange,
             $"Ship build '{name}' is in a shared file. Random encounters can use it, so this change can change them too. " +
             "Use \"This ship only\", or confirm the change.");
+
+    internal static EditError PrefabMemberError(string owner, string instance) =>
+        new(EditErrorKind.Refused, PrefabMember,
+            $"{owner} is a part of prefab instance '{instance}'. Change a field of the instance, open the prefab, or " +
+            "unpack the instance first.");
+
+    internal static EditError BuiltInPrefabError(string prefab) =>
+        new(EditErrorKind.Refused, BuiltInPrefab,
+            $"'{prefab}' is a built-in prefab, so it cannot change. Make a variant of it in the mod, then apply to the " +
+            "variant.");
+
+    internal static EditError LowerModPrefabError(string prefab, string mod) =>
+        new(EditErrorKind.Refused, LowerModPrefab,
+            $"Prefab '{prefab}' belongs to mod '{mod}'. Only a prefab of the active mod can change.");
+
+    internal static EditError NoOverrideError(string field, string instance) =>
+        new(EditErrorKind.InvalidArgument, NoOverride, $"Field {field} of '{instance}' has no override.");
+
+    internal static EditError FieldNotWritableError(string field) =>
+        new(EditErrorKind.Refused, FieldNotWritable, $"{field} shows the triggers of the prefab. Change it in the graph.");
+
+    internal static EditError FieldValueError(string label, string problem) =>
+        new(EditErrorKind.InvalidValue, FieldValue, $"The value of field '{label}' is not valid. {problem}");
+
+    internal static EditError TemplateLineError(string role, string line, string problem) =>
+        new(EditErrorKind.InvalidValue, TemplateLine,
+            $"The prefab gives section '{role}' the line '{line}'. {problem} Change the field or the prefab.");
+
+    /// <summary>A new file name of a prefab that a prefab of the library has. A prefab of the active mod with the id of a
+    /// lower mod hides that prefab, and its instances then use the new prefab.</summary>
+    internal static EditError PrefabIdTakenError(string id, string? mod, bool active) =>
+        new(EditErrorKind.NameTaken, NameTaken, active || mod == null
+            ? $"The active mod already has a prefab '{id}'. Pick another file name."
+            : $"Mod '{mod}' already has a prefab '{id}'. A prefab of the active mod with this file name hides it, and its " +
+              "instances then use the new prefab. Pick another file name.");
+
+    /// <summary>A file name of a new prefab that is not valid (see <see cref="Prefabs.PrefabAsset.FileNameProblem"/>).</summary>
+    internal static EditError PrefabFileNameError(string problem) => new(EditErrorKind.InvalidValue, NameInvalid, problem);
+
+    internal static EditError PrefabNotFoundError(string prefab, string hint = "") =>
+        new(EditErrorKind.NotFound, PrefabNotFound,
+            $"No mod has prefab '{prefab}'. Pick a prefab of the library.{hint}");
+
+    internal static EditError PrefabProblemsError(string prefab, int count, string first) =>
+        new(EditErrorKind.Refused, PrefabProblems, count == 1
+            ? $"Prefab '{prefab}' has 1 problem in its file, so the editor cannot use it. {first}"
+            : $"Prefab '{prefab}' has {Number(count)} problems in its file, so the editor cannot use it. {first}");
+
+    internal static EditError InstanceNotFoundError(string script, string id, string hint = "") =>
+        new(EditErrorKind.NotFound, InstanceNotFound,
+            $"Script {script} has no prefab instance '{id}'. Read the script, then pick an instance.{hint}");
+
+    internal static EditError FieldNotFoundError(string prefab, string field, IEnumerable<string> fields) =>
+        new(EditErrorKind.InvalidArgument, FieldNotFound,
+            $"Prefab '{prefab}' has no field '{field}'. Use one of these fields: {string.Join(", ", fields)}.");
+
+    internal static EditError PortNotFoundError(string prefab, string port, IEnumerable<string> ports) =>
+        new(EditErrorKind.InvalidArgument, PortNotFound,
+            $"Prefab '{prefab}' has no port '{port}'. Use one of these ports: {string.Join(", ", ports)}.");
+
+    internal static EditError RoleNotFoundError(string prefab, string role, IEnumerable<string> roles) =>
+        new(EditErrorKind.InvalidArgument, RoleNotFound,
+            $"Prefab '{prefab}' has no section with the role '{role}'. Use one of these roles: {string.Join(", ", roles)}.");
+
+    internal static EditError PrefabInUseError(string prefab, int count) =>
+        new(EditErrorKind.NeedsConfirmation, PrefabInUse, count == 1
+            ? $"Prefab '{prefab}' has 1 instance in the active mod. The instance keeps its lines and shows \"Missing " +
+              "prefab\". Confirm the delete, or keep the prefab."
+            : $"Prefab '{prefab}' has {Number(count)} instances in the active mod. The instances keep their lines and " +
+              "show \"Missing prefab\". Confirm the delete, or keep the prefab.");
+
+    internal static EditError FieldInUseError(string label, int count) =>
+        new(EditErrorKind.Refused, FieldInUse, count == 1
+            ? $"Field '{label}' is in 1 line of the prefab. Make the line a fixed value first."
+            : $"Field '{label}' is in {Number(count)} lines of the prefab. Make each line a fixed value first.");
+
+    internal static EditError NotATemplateError(string what) =>
+        new(EditErrorKind.InvalidArgument, NotATemplate, $"{what} Open the prefab, then try again.");
 
     internal static EditError UnknownCommandError(string kind) =>
         new(EditErrorKind.InvalidArgument, UnknownCommand, $"'{kind}' is not a mission command.");

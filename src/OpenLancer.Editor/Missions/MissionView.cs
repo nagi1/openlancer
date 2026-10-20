@@ -5,6 +5,7 @@ using ImGuiNET;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
 
@@ -87,6 +88,12 @@ internal sealed class MissionView : IDisposable
         var result = missions.Result;
         var open = missions.OpenPath;
         var scale = ImGuiHelper.Scale;
+        if (missions.OpenPrefab != null)
+        {
+            PrefabToolbar(result, scale);
+            return;
+        }
+
         ImGui.SetNextItemWidth(220 * scale);
         if (ImGui.BeginCombo("##mission", open != null ? Label(result, open) : "Mission"))
         {
@@ -149,6 +156,63 @@ internal sealed class MissionView : IDisposable
         InfoIcon.Draw("help", MissionSchema.Retail.Help[missions.ShowRaw ? "rawIni" : "missionGraph"]);
     }
 
+    /// <summary>
+    /// The toolbar of prefab mode (section 8.6 of the M6b design): the back arrow, the path "{mission} > {prefab name}",
+    /// and the items of the graph. The Scene toggle and the raw view do not show, because a template has no world and its
+    /// file is an editor file.
+    /// </summary>
+    private void PrefabToolbar(MissionRunResult? result, float scale)
+    {
+        var model = missions.PrefabMode;
+        if (ToolbarItems.Button("back", EditorIcons.ArrowLeft, "Back: leave prefab mode. Shortcut: Esc."))
+        {
+            missions.LeavePrefabMode();
+            return;
+        }
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        var mission = missions.OpenPath is { } path ? Label(result, path) : "No mission";
+        ImGui.Text(PrefabBarTitle(mission, model?.Asset.Name ?? missions.OpenPrefab!.Id));
+        GraphToolbar(scale);
+        EditToolbar();
+        ImGui.SameLine();
+        InfoIcon.Draw("help", MissionPageModel.PrefabModeHelp);
+    }
+
+    /// <summary>The path of the bar of prefab mode: "{mission} > {prefab name}" (section 8.11 of the M6b design).</summary>
+    internal static string PrefabBarTitle(string mission, string prefab) => $"{mission} > {prefab}";
+
+    /// <summary>The bar of prefab mode at the top of the Mission tab: what a change does, or the banner of a prefab that
+    /// cannot change with the button "Make variant" (section 8.6 of the M6b design).</summary>
+    private void PrefabBar(PrefabModeModel model)
+    {
+        var mod = window.Session?.Edits.ActiveMod?.Id;
+        ImGui.PushTextWrapPos(0);
+        if (model.ReadOnlyReason is { } reason)
+        {
+            ImGui.TextColored(EditorTheme.Warning, $"{EditorIcons.Lock}  {reason}");
+            if (missions.ReadOnlyNote == null && model.Template != null && window.Session?.Edits.Missions is { } editor)
+            {
+                ImGui.SameLine();
+                // The run opens the variant in prefab mode, and the variant can change.
+                if (ImGui.SmallButton("Make variant"))
+                {
+                    missions.Run(MissionPageModel.VariantBatch(editor.FreePrefabId, model.Asset.Ref, model.Asset.Name));
+                }
+
+                ImGui.SetItemTooltip(MissionPageModel.MakeVariantTip);
+            }
+        }
+        else
+        {
+            // The text uses the text color. The violet is only for the marks of the overrides.
+            ImGui.Text($"{EditorIcons.Cubes}  {model.BarText(mod)}");
+        }
+
+        ImGui.PopTextWrapPos();
+    }
+
     /// <summary>The edit items of the graph toolbar (section 8.11 of the M6b design): the toggle "Library" and the button
     /// "Add...".</summary>
     private void EditToolbar()
@@ -172,7 +236,7 @@ internal sealed class MissionView : IDisposable
             }
         }
 
-        if (missions.OpenPath is { } path && missions.NoEditReason(path) == null)
+        if (missions.ShownPath is { } path && missions.NoEditReason(path) == null)
         {
             ImGui.SameLine();
             if (ToolbarItems.Button("add", EditorIcons.Plus, "Add...: add a trigger, a prefab, an action or a condition. Shortcut: Space."))
@@ -276,7 +340,7 @@ internal sealed class MissionView : IDisposable
             Graph.SystemFilter = null;
         }
 
-        foreach (var (system, triggers) in missions.Open is { } open ? MissionSummary.TriggerSystems(open.Index) : [])
+        foreach (var (system, triggers) in missions.Shown is { } open ? MissionSummary.TriggerSystems(open.Index) : [])
         {
             if (ImGui.MenuItem(SystemItem(window.Session, system, triggers), "", string.Equals(Graph.SystemFilter, system,
                     StringComparison.OrdinalIgnoreCase)))
@@ -315,6 +379,12 @@ internal sealed class MissionView : IDisposable
         if (missions.Result == null)
         {
             PanelStates.Loading("Checking the mission scripts");
+            return;
+        }
+
+        if (missions.OpenPrefab != null)
+        {
+            PrefabPart();
             return;
         }
 
@@ -391,6 +461,31 @@ internal sealed class MissionView : IDisposable
         }
     }
 
+    /// <summary>
+    /// Prefab mode (section 8.6 of the M6b design): the bar, then the graph of the template sections with the library
+    /// strip. The Scene part closes, because a template has no world (UI rule 4). A prefab that no mod has now, or whose
+    /// file has a problem, leaves prefab mode.
+    /// </summary>
+    private void PrefabPart()
+    {
+        if (missions.PrefabMode is not { Analysis: { } analysis } model)
+        {
+            missions.LeavePrefabMode();
+            return;
+        }
+
+        // A request of the Scene ends, because prefab mode has no Scene part.
+        missions.PendingSceneFrame = null;
+        PrefabBar(model);
+        if (ImGui.BeginChild("##prefab-part", ImGui.GetContentRegionAvail(), ImGuiChildFlags.None,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+        {
+            GraphPart(analysis, ImGui.GetContentRegionAvail().X / ImGuiHelper.Scale);
+        }
+
+        ImGui.EndChild();
+    }
+
     /// <summary>The graph part: the library strip, the graph of the mission, and the keys of the graph while it has the
     /// focus. The strip closes in a Mission tab that is narrower than <see cref="LibraryStrip.MinTabWidth"/>, and the
     /// toggle opens it again (section 8.3 of the M6b design).</summary>
@@ -404,7 +499,12 @@ internal sealed class MissionView : IDisposable
             Graph.FrameSelection();
         }
 
-        links.UsesBar();
+        // The uses bar names the items of the open mission, so it does not show in prefab mode.
+        if (missions.OpenPrefab == null)
+        {
+            links.UsesBar();
+        }
+
         var path = analysis.Script.Path;
         narrowTab = tabWidth < LibraryStrip.MinTabWidth;
         if (!narrowTab)
@@ -417,7 +517,7 @@ internal sealed class MissionView : IDisposable
         {
             var avail = ImGui.GetContentRegionAvail();
             var width = MathF.Truncate(LibraryStrip.Width * ImGuiHelper.Scale);
-            if (library.Draw(new Vector2(width, avail.Y), missions.NoEditReason(path)) is { } item)
+            if (library.Draw(new Vector2(width, avail.Y), missions.NoEditReason(path), prefabs: missions.OpenPrefab == null) is { } item)
             {
                 Graph.AddFromLibrary(path, item);
             }
@@ -455,9 +555,19 @@ internal sealed class MissionView : IDisposable
             return;
         }
 
-        if (ImGui.IsKeyPressed(ImGuiKey.Escape, false) && Graph.HasFocus)
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape, false))
         {
-            Graph.EndFocus();
+            // Esc ends the path view or the neighbor view first, then it leaves prefab mode (section 8.6 of the M6b
+            // design).
+            if (Graph.HasFocus)
+            {
+                Graph.EndFocus();
+            }
+            else if (missions.OpenPrefab != null && !Graph.IsEditingText)
+            {
+                missions.LeavePrefabMode();
+                return;
+            }
         }
 
         if (ImGui.IsKeyPressed(ImGuiKey.F3, false))

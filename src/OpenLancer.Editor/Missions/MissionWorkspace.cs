@@ -9,6 +9,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -49,10 +50,19 @@ internal sealed record ScenePick(string Key, string Label, string? System, objec
 /// <para>The raw text of a script needs a parse of each section for the round trip check. A worker task makes it at the
 /// first use. So the open of a mission does not stop the UI thread.</para>
 /// </remarks>
-internal sealed class MissionWorkspace(EditorWindow window)
+internal sealed class MissionWorkspace
 {
     /// <summary>The id of the Mission tab.</summary>
     public const string PanelId = "mission";
+
+    private readonly EditorWindow window;
+    private readonly SavePrefabDialog savePrefab;
+
+    public MissionWorkspace(EditorWindow window)
+    {
+        this.window = window;
+        savePrefab = new SavePrefabDialog(Run);
+    }
 
     /// <summary>The id of the Missions tab.</summary>
     public const string BrowserId = "missions";
@@ -88,8 +98,123 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <summary>The analysis of the open mission, or null.</summary>
     public MissionAnalysis? Open => OpenPath != null ? Result?.Of(OpenPath) : null;
 
-    /// <summary>The selection of the open mission when nothing in it is selected, or null.</summary>
-    public MissionRef? Root => OpenPath != null ? MissionRef.Of(OpenPath) : null;
+    /// <summary>The selection of the open mission when nothing in it is selected, or null. In prefab mode, it is the
+    /// Prefab page of the open prefab.</summary>
+    public MissionRef? Root => OpenPrefab != null ? MissionRef.Of(OpenPrefab.Script)
+        : OpenPath != null ? MissionRef.Of(OpenPath)
+        : null;
+
+    // ---- Prefab mode (section 8.6 of the M6b design) ----
+
+    // The selection of the Mission tab before prefab mode opened. It comes back when prefab mode closes.
+    private object? selectionBeforePrefab;
+
+    /// <summary>The prefab that prefab mode shows, or null while the Mission tab shows the open mission.</summary>
+    public PrefabRef? OpenPrefab { get; private set; }
+
+    /// <summary>The prefab of prefab mode now: its asset, its template and the analysis of its template sections. Null
+    /// outside prefab mode, and when no mod has the prefab now.</summary>
+    public PrefabModeModel? PrefabMode =>
+        OpenPrefab is { } prefab ? window.Session?.Edits.Missions.PrefabMode(prefab) : null;
+
+    /// <summary>The analysis that the Mission tab, the Hierarchy and the graph show: the template of prefab mode, or the
+    /// open mission.</summary>
+    public MissionAnalysis? Shown => OpenPrefab != null ? PrefabMode?.Analysis : Open;
+
+    /// <summary>The script that the Mission tab shows: the template of prefab mode, or the open mission.</summary>
+    public string? ShownPath => OpenPrefab?.Script ?? OpenPath;
+
+    /// <summary>
+    /// Opens a prefab in prefab mode (section 8.6 of the M6b design): the graph shows its template sections, the Scene
+    /// part closes, and the Inspector shows its Prefab page. Esc or the back arrow leaves prefab mode, and the selection
+    /// of the mission comes back. A built-in prefab and a prefab of a lower mod open read-only.
+    /// </summary>
+    public void OpenPrefabMode(PrefabRef prefab)
+    {
+        if (window.Session?.Edits.Missions.PrefabMode(prefab) is not { } model)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, MissionChecks.Source, $"No mod has the prefab '{prefab.Id}'.");
+            return;
+        }
+
+        if (model.Analysis == null)
+        {
+            window.Log.Add(ConsoleSeverity.Warning, MissionChecks.Source,
+                $"The file of prefab '{model.Asset.Name}' has a problem, so prefab mode cannot open it. " +
+                string.Join(" ", model.Asset.Problems.Select(p => p.ToString())));
+            return;
+        }
+
+        if (OpenPrefab == null)
+        {
+            selectionBeforePrefab = window.Selection;
+        }
+
+        OpenPrefab = prefab;
+        ShowRaw = false;
+        window.SelectInTab(CenterMode.Mission, Root!);
+        window.ShowPanel(PanelId);
+    }
+
+    /// <summary>Leaves prefab mode. The selection of the mission before prefab mode comes back.</summary>
+    public void LeavePrefabMode()
+    {
+        if (OpenPrefab == null)
+        {
+            return;
+        }
+
+        OpenPrefab = null;
+        var back = Valid(selectionBeforePrefab) ?? Root;
+        selectionBeforePrefab = null;
+        if (back != null)
+        {
+            window.SelectInTab(CenterMode.Mission, back);
+        }
+    }
+
+    /// <summary>Goes to a link of the prefab pages and of the frame menu of the graph (section 8.11 of the M6b design):
+    /// prefab mode, the asset in the Assets panel, or the dialog "Save as prefab". Returns false for another
+    /// link.</summary>
+    public bool Follow(object link)
+    {
+        switch (link)
+        {
+            case PrefabModeLink prefab:
+                OpenPrefabMode(prefab.Prefab);
+                return true;
+            case PrefabAssetLink asset:
+                window.Assets.ShowPrefab(asset.Prefab);
+                return true;
+            case SavePrefabLink save:
+                AskSaveAsPrefab(save.Instance, save.Name, save.Id);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Runs the batch of an action of a menu of the studio, or goes to its link (see <see cref="Follow"/>).</summary>
+    public void Do(PageAction action)
+    {
+        if (action.Batch != null)
+        {
+            Run(action.Batch);
+        }
+        else if (action.Link != null)
+        {
+            Follow(action.Link);
+        }
+    }
+
+    /// <summary>Opens the dialog "Save as prefab" of a matched instance (section 5.9 of the M6b design).</summary>
+    public void AskSaveAsPrefab(InstanceRef instance, string name, string id) => savePrefab.Show(instance, name, id);
+
+    /// <summary>True while the dialog "Save as prefab" is open.</summary>
+    public bool DialogOpen => savePrefab.IsOpen;
+
+    /// <summary>Draws the dialogs of the mission studio. The window calls it in each frame.</summary>
+    public void DrawDialogs() => savePrefab.Draw();
 
     /// <summary>A line of a script that the raw view goes to when its text shows, or null. It is a section and the index
     /// of a line, or -1 for the header.</summary>
@@ -264,7 +389,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
         }
 
         changedDuringRun.Clear();
-        Result = newer;
+        Result = Linked(newer, missions);
         rawTexts.Clear();
         marks.Clear();
         window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
@@ -356,14 +481,35 @@ internal sealed class MissionWorkspace(EditorWindow window)
     }
 
     /// <summary>Starts a run after a change of a ship build file, because the run reads the ship builds of all
-    /// scripts.</summary>
+    /// scripts. A change of a graph file or of a prefab asset links the prefab instances of each script again, and the
+    /// Console gets the warnings P01 to P03 again (section 5 of the M6b design).</summary>
     private void FilesChanged(EditChange change)
     {
-        if (followed is { } edits && change.Files.Any(f => !IsScript(f) && edits.Missions.IsMissionFile(f)))
+        if (followed is not { } edits)
+        {
+            return;
+        }
+
+        if (change.Files.Any(f => !IsScript(f) && edits.Missions.IsMissionFile(f)))
         {
             Run();
+            return;
+        }
+
+        if (change.ModFiles.Count > 0 && Result is { } result)
+        {
+            Result = Linked(result, edits.Missions);
+            window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
         }
     }
+
+    /// <summary>A run result with the linked prefab instances of the graph files of the active mod in each analysis
+    /// (section 5.1 of the M6b design).</summary>
+    internal static MissionRunResult Linked(MissionRunResult result, MissionEditor missions) =>
+        result with
+        {
+            Analyses = result.Analyses.ToDictionary(p => p.Key, p => missions.Linked(p.Value), VfsPath.Comparer),
+        };
 
     /// <summary>
     /// Runs a raw edit of the whole text of a mission file, or of the INI block of a page (section 8.8 of the M6b
@@ -428,9 +574,24 @@ internal sealed class MissionWorkspace(EditorWindow window)
             return false;
         }
 
+        // "Make variant" opens the new variant in prefab mode (section 8.6 of the M6b design). A rename of the prefab of
+        // prefab mode keeps prefab mode on it.
+        if (NewPrefabOf(result) is { } made)
+        {
+            OpenPrefabMode(made);
+            return true;
+        }
+
+        if (OpenPrefab != null && RenamedPrefab(OpenPrefab, result.Renames) is { } renamed)
+        {
+            OpenPrefab = renamed;
+            window.SelectInTab(CenterMode.Mission, Root!);
+            return true;
+        }
+
         var selection = window.Selection;
-        var next = result.Select is { } select && Result?.Of(ScriptOf(select) ?? "") is { } analysis
-            ? SelectionOf(analysis, select, ActsOf(analysis))
+        var next = result.Select is { } select && Analysis(ScriptOf(select) ?? "") is { } analysis
+            ? SelectionOf(analysis, select, PrefabRef.OfScript(analysis.Script.Path) == null ? ActsOf(analysis) : null)
             : null;
         next ??= Followed(selection, result.Renames.Select(r => (r.From, r.To)).ToList(), result.RowMoves);
         if (next != null && !Equals(next, selection))
@@ -440,6 +601,18 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
         return true;
     }
+
+    /// <summary>The prefab of the active mod that a result adds and selects, or null: the result of "Make variant". A
+    /// variant of an instance selects the instance, so it stays in its mission.</summary>
+    internal static PrefabRef? NewPrefabOf(MissionEditResult result) =>
+        result.Select is { } select && PrefabRef.OfScript(select) is { Builtin: false } prefab &&
+        result.Adds.Contains(select, StringComparer.OrdinalIgnoreCase)
+            ? prefab
+            : null;
+
+    /// <summary>The new reference of a prefab that a rename of a result renamed, or null.</summary>
+    internal static PrefabRef? RenamedPrefab(PrefabRef prefab, IEnumerable<ResultRename> renames) =>
+        renames.Where(r => PrefabRef.OfScript(r.From)?.Equals(prefab) == true).Select(r => PrefabRef.OfScript(r.To)).FirstOrDefault();
 
     /// <summary>The install path of a reference of a mission item, or null.</summary>
     private static string? ScriptOf(string reference)
@@ -490,6 +663,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
                 return new MissionRef(script, MissionItemKind.Label, Key: parsed.Name);
             case ItemRefKind.Act when acts?.Acts.FirstOrDefault(a => MissionIndex.Is(a.Nickname, parsed.Name)) is { } act:
                 return new MissionRef(script, MissionItemKind.Act, Key: MissionActs.KeyOf(act));
+            case ItemRefKind.Instance when analysis.Prefabs?.Instances.FirstOrDefault(i =>
+                                                  i.Id.Equals(parsed.Name, StringComparison.OrdinalIgnoreCase)) is { } instance:
+                return new MissionRef(script, MissionItemKind.PrefabInstance, Key: instance.Key);
             default:
                 return null;
         }
@@ -572,10 +748,14 @@ internal sealed class MissionWorkspace(EditorWindow window)
         return draft;
     }
 
-    /// <summary>Why the user cannot edit a mission file, or null.</summary>
+    /// <summary>Why the user cannot edit a mission file, or the template of a prefab in prefab mode, or null.</summary>
     public string? NoEditReason(string path) =>
         window.Session is not { } session ? "No profile is open."
-        : session.NoEditReason ?? session.Edits.Missions.ReadOnlyReason(path);
+        : session.NoEditReason ?? (PrefabRef.OfScript(path) is { } prefab
+            ? session.Edits.ReadOnlyReason ?? (session.Edits.Missions.PrefabMode(prefab) is { } model
+                ? model.ReadOnlyReason ?? (model.Template == null ? "The file of the prefab has a problem." : null)
+                : $"No mod has the prefab '{prefab.Id}'.")
+            : session.Edits.Missions.ReadOnlyReason(path));
 
     /// <summary>The note of the Mission tab and the mission pages while the session takes no edits, or null (section
     /// 8.1 of the M6b design).</summary>
@@ -590,6 +770,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
         Unfollow();
         Result = null;
         OpenPath = null;
+        OpenPrefab = null;
+        selectionBeforePrefab = null;
         PendingLine = null;
         PendingSection = null;
         PendingSceneFrame = null;
@@ -606,8 +788,13 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <summary>True when the path is a mission script of the last run (section 12.4 of the M6a design).</summary>
     public bool IsScript(string path) => Result?.IsScript(path) == true;
 
-    /// <summary>The analysis of a script, or null.</summary>
-    public MissionAnalysis? Analysis(string path) => Result?.Of(path);
+    /// <summary>The analysis of a script, or null. The script of a template in prefab mode gives the analysis of its
+    /// template sections (section 8.6 of the M6b design). A prefab whose file has a problem gives an analysis without
+    /// sections, so its Prefab page shows the problems.</summary>
+    public MissionAnalysis? Analysis(string path) =>
+        PrefabRef.OfScript(path) is { } prefab
+            ? window.Session?.Edits.Missions.PrefabMode(prefab)?.PageAnalysis
+            : Result?.Of(path);
 
     /// <summary>
     /// Opens a mission: the Mission tab shows it, and its root becomes the selection of the Mission tab. When no system
@@ -617,6 +804,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <param name="show">True to show the Mission tab.</param>
     public void OpenMission(string path, bool show)
     {
+        // A mission opens outside prefab mode.
+        OpenPrefab = null;
+        selectionBeforePrefab = null;
         var opened = !string.Equals(OpenPath, VfsPath.Normalize(path) ?? path, StringComparison.OrdinalIgnoreCase);
         OpenPath = VfsPath.Normalize(path) ?? path;
         if (opened)
@@ -701,9 +891,25 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
     /// <summary>
     /// A selection of the Mission tab when the last run has its script and its section, else null. Before the first
-    /// run, each mission selection stays.
+    /// run, each mission selection stays. An item of the template of prefab mode stays while prefab mode shows its
+    /// prefab and the template has its section.
     /// </summary>
-    public object? Valid(object? item) => Valid(Result, item);
+    public object? Valid(object? item)
+    {
+        if (item is not MissionRef { Script: var script } selection || PrefabRef.OfScript(script) is not { } prefab)
+        {
+            return Valid(Result, item);
+        }
+
+        if (!prefab.Equals(OpenPrefab) || PrefabMode?.Analysis is not { } analysis)
+        {
+            return null;
+        }
+
+        return selection.Section is not { } section || analysis.Document.Find(section) != null
+            ? selection
+            : MissionRef.Of(script);
+    }
 
     /// <summary>
     /// A kept selection of the Mission tab for a run (section 4.2 rule 3 of the M6a design). The selection stays when the
@@ -795,9 +1001,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
         return task;
     }
 
-    /// <summary>The marks of the raw text of a script: the problems that show, and the reasons of the read-only sections.
-    /// The marks stay until the run, the text or the toggle changes, because the raw view reads them in each
-    /// frame.</summary>
+    /// <summary>The marks of the raw text of a script: the problems that show, the reasons of the read-only sections, and
+    /// the notes of the lines of prefab members. The marks stay until the run, the text or the toggle changes, because
+    /// the raw view reads them in each frame.</summary>
     public IReadOnlyList<RawMark> MarksOf(string path)
     {
         if (Result?.Of(path) is not { } analysis || RawTextOf(path) is not { } raw)
@@ -813,7 +1019,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
         if (!marks.TryGetValue(analysis.Script.Path, out var known) || !ReferenceEquals(known.Text, raw))
         {
-            known = (raw, IniLint.Marks(raw, analysis.Problems, ShowBaseGame));
+            // The lines of the members of the linked prefab instances show dim, with their prefab (section 8.8 of the M6b
+            // design).
+            known = (raw, IniLint.WithNotes(IniLint.Marks(raw, analysis.Problems, ShowBaseGame), PrefabLinks.MemberLines(raw, analysis)));
             marks[analysis.Script.Path] = known;
         }
 

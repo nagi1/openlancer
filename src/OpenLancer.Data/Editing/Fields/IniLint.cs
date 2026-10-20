@@ -46,6 +46,26 @@ public static class IniLint
         return marks.Values.OrderBy(m => m.Line).ToList();
     }
 
+    /// <summary>
+    /// The marks with notes of lines, one mark for each line, in line order. A line with a mark gets the note after its
+    /// messages. Another line gets a note mark, which the editor shows muted. The raw views of a mission give the lines
+    /// of the members of prefab instances in this way (section 8.8 of the M6b design).
+    /// </summary>
+    /// <param name="notes">The notes with their lines from 0.</param>
+    public static IReadOnlyList<RawMark> WithNotes(IReadOnlyList<RawMark> marks, IEnumerable<(int Line, string Note)> notes)
+    {
+        Dictionary<int, RawMark>? byLine = null;
+        foreach (var (line, note) in notes)
+        {
+            byLine ??= marks.ToDictionary(m => m.Line);
+            byLine[line] = !byLine.TryGetValue(line, out var mark)
+                ? new RawMark(line, DiagnosticSeverity.Warning, note, BaseGame: false, Note: true)
+                : mark.Message.Split('\n').Contains(note) ? mark
+                : mark with { Message = mark.Message + "\n" + note };
+        }
+        return byLine == null ? marks : byLine.Values.OrderBy(m => m.Line).ToList();
+    }
+
     /// <summary>The marks of problems with their lines from 0, one mark for each line, in line order. The raw editor of
     /// a mission file gives the problems of a draft text in this way while the user types (section 8.8 of the M6b
     /// design).</summary>
