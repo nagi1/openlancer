@@ -413,25 +413,25 @@ A graph file also holds an `[Instance]` record for each linked prefab instance o
 [Instance]
 id = ol_w1
 prefab = mod:ol_gate
-prefab_hash = 6d2a91c0
+prefab_hash = 6d2a91c03b8e4f17
 member = spawn, ol_w1_spawn
 member = end, ol_w1_end
 value = formation, ol_form
 override = delay, 7
-lines_hash = 0b47e3f5
+lines_hash = 0b47e3f5a1c96d28
 ```
 
 | Key | Meaning |
 |---|---|
 | `id` | The id of the instance. The nicknames of its sections start with it. |
 | `prefab` | The prefab: `builtin:<id>` for a prefab of the editor, or `mod:<id>` for a prefab file of a mod. |
-| `prefab_hash` | The hash of the prefab at the last compile. When the prefab changes, the instance gets the warning P03. |
+| `prefab_hash` | The hash of the prefab at the last compile, 16 hex digits. When the prefab changes, the instance gets the warning P03. |
 | `member = <role>, <nickname>` | The section of each role of the prefab. |
 | `value = <field>, <row>` | The value of a field that each instance sets. A field with several rows has one line for each row. |
 | `override = <field>, <row>` | The value of a field that differs from the prefab. |
 | `removed = <role>` | A member that the user deleted. The prefab keeps it until the user applies the delete. |
 | `port = <port>, <trigger>` | A trigger of the mission that a port of the prefab starts. |
-| `lines_hash` | The hash of the compiled lines. Other lines of the members are a hand edit, and the instance gets the warning P01. |
+| `lines_hash` | The hash of the compiled lines, 16 hex digits. Other lines of the members are a hand edit, and the instance gets the warning P01. |
 
 A prefab file is plain INI with the comment of the editor at the top. The editor reads format 1. This example is the prefab of the record above:
 
