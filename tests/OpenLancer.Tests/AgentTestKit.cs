@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
+using System.Threading.Tasks;
 using OpenLancer.Data.Editing;
 using OpenLancer.Studio.Agent;
 using Xunit;
@@ -46,18 +47,18 @@ internal sealed class TestAgentHost(EditSession? session, AgentHostKind kind = A
         }
     }
 
-    /// <summary>The result of <see cref="CheckTarget"/>, or null for a host without target checks.</summary>
-    public Func<string, ToolStep>? Target { get; set; }
+    /// <summary>The tail of <see cref="CheckTarget"/>, or null for a host without target checks.</summary>
+    public Func<string, Func<CancellationToken, Task<TargetCheckResult>>>? Target { get; set; }
 
     public override string NameText(int ids) => Names.GetValueOrDefault(ids, "");
 
     public override string InfoText(int ids) => "";
 
     public override IReadOnlyList<AgentConsoleEntry>? Console(ConsoleFilter filter) =>
-        Kind == AgentHostKind.Editor ? ConsoleEntries.Where(e => filter.Since == null || e.Sequence > filter.Since)
-            .TakeLast(filter.Limit).ToList() : null;
+        Kind == AgentHostKind.Editor ? ConsoleEntries.Where(e => filter.Since == null || e.Sequence > filter.Since).ToList()
+            : null;
 
-    public override ToolStep CheckTarget(string target) => Target?.Invoke(target) ??
+    public override Func<CancellationToken, Task<TargetCheckResult>> CheckTarget(string target) => Target?.Invoke(target) ??
         throw new InvalidOperationException("The test host has no target checks.");
 }
 
@@ -80,13 +81,19 @@ internal static class AgentCalls
         return result.Content;
     }
 
-    /// <summary>Runs a call that must give a tool error, and gives its code and its detail.</summary>
+    /// <summary>Runs a call that must give a tool error, and gives its code and its detail. The structured content of
+    /// a tool error also fits the output schema of the tool (section 5.7 of the MCP1 design).</summary>
     public static (string? Code, string? Detail, string? Message) Error(AgentHost host, string tool, string arguments = "{}")
     {
         var result = Call(host, tool, arguments);
         Assert.True(result.IsError, result.Text);
+        Assert.Empty(SchemaCheck.Problems(AgentTools.Find(tool)!.OutputSchema, result.Content));
         return ((string?)result.Content["code"], (string?)result.Content["detail"], (string?)result.Content["message"]);
     }
+
+    /// <summary>A target check that gives no problems and one note.</summary>
+    public static Func<CancellationToken, Task<TargetCheckResult>> TargetNote(string note) =>
+        _ => Task.FromResult(new TargetCheckResult([], [note]));
 
     /// <summary>A text as a JSON string, for the arguments of a call.</summary>
     public static string Json(string text) => JsonSerializer.Serialize(text);

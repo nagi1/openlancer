@@ -45,22 +45,28 @@ internal sealed class ToolCall(AgentHost host, ToolArgs args)
     /// <see cref="EditErrorKind.InvalidArgument"/> for a cursor that this server did not give.</exception>
     public Page<TRow> Paged<TItem, TRow>(IReadOnlyList<TItem> rows, Func<TItem, TRow> make)
     {
+        var limit = RowLimit();
+        var start = 0;
+        if (Args.Text("cursor") is { } cursor &&
+            (!int.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out start) || start > rows.Count))
+            throw ToolInput.Bad("cursor", AgentTexts.Error("cursor_bad"));
+        var end = Math.Min(rows.Count, start + limit);
+        return new Page<TRow>(rows.Skip(start).Take(end - start).Select(make).ToList(), rows.Count,
+            end < rows.Count ? end.ToString(CultureInfo.InvariantCulture) : null);
+    }
+
+    /// <summary>The most rows of a list result: the <c>limit</c> argument, or the default rows of the limits.</summary>
+    /// <exception cref="EditException"><see cref="EditErrorKind.Limit"/> for a <c>limit</c> above the most rows of the
+    /// limits (section 8.4 of the MCP1 design).</exception>
+    public int RowLimit()
+    {
         var limit = Args.Whole("limit") ?? Limits.ListRows;
         if (limit > Limits.MaxListRows)
         {
             throw new EditException(new EditError(EditErrorKind.Limit, "ListRows",
                 AgentTexts.Error("limit_rows", ("max", Limits.MaxListRows))) { Field = "limit" });
         }
-        var start = 0;
-        if (Args.Text("cursor") is { } cursor &&
-            (!int.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out start) || start > rows.Count))
-        {
-            throw new EditException(new EditError(EditErrorKind.InvalidArgument, ToolInput.BadArgument,
-                AgentTexts.Error("cursor_bad")) { Field = "cursor" });
-        }
-        var end = (int)Math.Min(rows.Count, start + limit);
-        return new Page<TRow>(rows.Skip(start).Take(end - start).Select(make).ToList(), rows.Count,
-            end < rows.Count ? end.ToString(CultureInfo.InvariantCulture) : null);
+        return (int)limit;
     }
 
     /// <summary>True when a text filter matches one of the texts, without letter case. A null filter matches each

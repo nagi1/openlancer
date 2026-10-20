@@ -36,7 +36,8 @@ public static class AgentResources
     public static AgentResource? Find(string uri) => All.FirstOrDefault(r => r.Uri == uri);
 
     /// <summary>The data lists of the rule data: the id, the label, the section types that give the values, and if
-    /// the list holds the items of one system.</summary>
+    /// the list holds the items of one system or of one mission script. <c>list_values</c> then needs the argument
+    /// <c>system</c> or <c>script</c>.</summary>
     private static string ListCatalog()
     {
         var lists = new JsonArray();
@@ -48,6 +49,7 @@ public static class AgentResources
                 ["label"] = list.Label,
                 ["sections"] = new JsonArray((list.Source?.Sections ?? []).Select(s => (JsonNode)s).ToArray()),
                 ["one_system"] = list.Source is { Scoped: true, Role: null },
+                ["one_script"] = list.Source is { Scoped: true, Role: not null },
                 ["fixed_values"] = list.Enum != null,
             });
         }

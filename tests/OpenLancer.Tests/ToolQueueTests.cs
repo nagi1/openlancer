@@ -175,11 +175,11 @@ public sealed class ToolQueueTests
         var release = new TaskCompletionSource();
         var host = new TestAgentHost(ws.Session("act"))
         {
-            Target = _ => ToolStep.Then(async token =>
+            Target = _ => async token =>
             {
                 await release.Task.WaitAsync(token);
-                return ToolResult.Of(CheckQueries.Of("target", [], "done"));
-            }),
+                return new TargetCheckResult([], ["done"]);
+            },
         };
         using var queue = new ToolQueue(host, new FakeClock());
 
@@ -191,7 +191,7 @@ public sealed class ToolQueueTests
         Assert.False((await Done(status)).IsError);
         Assert.False(check.IsCompleted);
         release.SetResult();
-        Assert.Equal("done", (string?)(await Done(check)).Content["note"]);
+        Assert.EndsWith(" done", (string?)(await Done(check)).Content["note"]);
     }
 
     [Fact]
@@ -201,11 +201,11 @@ public sealed class ToolQueueTests
         using var ws = SceneWorkspace.Create();
         var host = new TestAgentHost(ws.Session("act"))
         {
-            Target = _ => ToolStep.Then(async token =>
+            Target = _ => async token =>
             {
                 await Task.Delay(Timeout.Infinite, token);
-                return ToolResult.Of(CheckQueries.Of("target", [], null));
-            }),
+                return new TargetCheckResult([], []);
+            },
         };
         using var queue = new ToolQueue(host, clock);
 
@@ -277,6 +277,94 @@ public sealed class ToolQueueTests
             Assert.Equal(new ToolOutcome("error", "invalid_argument", "BadArgument"), entries[1].Expected);
             Assert.Equal(2, (int)entries[1].Arguments!["limit"]!);
             Assert.DoesNotContain("token", File.ReadAllText(file), StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, true);
+        }
+    }
+
+    /// <summary>A client can send large arguments and many calls. The log leaves out large arguments and the
+    /// arguments of a call that the rate limit refused, and it stops at its size limit (section 8.4 of the MCP1
+    /// design).</summary>
+    [Fact]
+    public async Task TheAuditLogHasASizeLimitAndLeavesOutLargeArguments()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(folder, "agent.jsonl");
+        try
+        {
+            var full = 0;
+            var clock = new FakeClock();
+            var host = new TestAgentHost(null) { TestLimits = new AgentLimits { CallsPerSecond = 2 } };
+            var large = new JsonObject { ["x"] = new string('a', AuditLog.MaxArgumentBytes) };
+            using (var log = new AuditLog(file, 1000, () => full++))
+            using (var queue = new ToolQueue(host, clock, log))
+            {
+                var calls = new[]
+                {
+                    queue.CallAsync("studio_status", null, null, Token),
+                    queue.CallAsync("studio_status", large, null, Token),
+                    queue.CallAsync("studio_status", JsonNode.Parse("""{ "y": 1 }""")!.AsObject(), null, Token),
+                };
+                queue.RunNext();
+                queue.RunNext();
+                await Task.WhenAll(calls.Select(Done));
+                for (var i = 0; i < 20; i++)
+                {
+                    clock.Advance(TimeSpan.FromSeconds(1));
+                    var more = queue.CallAsync("studio_status", null, null, Token);
+                    queue.RunNext();
+                    await Done(more);
+                }
+            }
+
+            using var reader = new StreamReader(file);
+            var entries = AuditLog.Read(reader).ToList();
+            Assert.Equal(1, full);
+            Assert.True(new FileInfo(file).Length <= 1000);
+            // The rate limit refuses the third call at once, so its line comes first.
+            Assert.Equal(new ToolOutcome("error", "limit", "CallRate"), entries[0].Expected);
+            Assert.True(entries[0].ArgumentsOmitted);
+            Assert.Null(entries[0].Arguments);
+            Assert.Equal(new JsonObject().ToJsonString(), entries[1].Arguments!.ToJsonString());
+            Assert.False(entries[1].ArgumentsOmitted);
+            Assert.True(entries[2].ArgumentsOmitted);
+            Assert.Equal(new ToolOutcome("error", "invalid_argument", "BadArgument"), entries[2].Expected);
+            Assert.InRange(entries.Count, 4, 19);
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, true);
+        }
+    }
+
+    /// <summary>A fault of a tool ends the call with a result and writes its line of the audit log (decision D728:
+    /// each call).</summary>
+    [Fact]
+    public async Task AFaultOfAToolEndsTheCallAndWritesItsLine()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(folder, "agent.jsonl");
+        try
+        {
+            using var ws = SceneWorkspace.Create();
+            var host = new TestAgentHost(ws.Session("act")) { Target = _ => _ => throw new InvalidOperationException("A fault.") };
+            ToolResult result;
+            using (var log = new AuditLog(file))
+            using (var queue = new ToolQueue(host, new FakeClock(), log))
+            {
+                var call = queue.CallAsync("check", JsonNode.Parse("""{ "target": "vanilla-1.1" }""")!.AsObject(), null,
+                    Token);
+                queue.RunNext();
+                result = await Done(call);
+            }
+
+            using var reader = new StreamReader(file);
+            Assert.Equal(("step_failed", "ToolFailed"), Code(result));
+            Assert.Equal(new ToolOutcome("error", "step_failed", "ToolFailed"), AuditLog.Read(reader).Single().Expected);
         }
         finally
         {

@@ -34,6 +34,18 @@ public sealed class InstallPathsTests
     [InlineData(@" \x.ini")]
     [InlineData(@"DATA\ x.ini")]
     [InlineData(@"DATA\.x\y.ini")]
+    // Windows opens a device for these names, also with an extension, so a write would write to the device.
+    [InlineData("NUL")]
+    [InlineData(@"DATA\con.ini")]
+    [InlineData(@"DATA\Aux\x.ini")]
+    [InlineData(@"DATA\prn.txt.ini")]
+    [InlineData(@"DATA\COM1.ini")]
+    [InlineData(@"DATA\lpt9")]
+    [InlineData(@"DATA\LPT0.thn")]
+    [InlineData("DATA\\com\u00b9.ini")]
+    [InlineData(@"DATA\CONIN$")]
+    [InlineData(@"DATA\conout$.ini")]
+    [InlineData(@"DATA\nul .ini")]
     public void TheParserRefusesEachPathThatIsNotAnInstallPath(string path)
     {
         var error = Assert.Throws<EditException>(() => InstallPaths.Parse(path)).Error;
@@ -47,6 +59,10 @@ public sealed class InstallPathsTests
     [InlineData(@"DATA\SHIPS\loadouts.ini", @"DATA\SHIPS\loadouts.ini")]
     [InlineData("data/ships/./loadouts.ini", @"data\ships\loadouts.ini")]
     [InlineData(@"EXE\..\DATA\SHIPS\loadouts.ini", @"DATA\SHIPS\loadouts.ini")]
+    [InlineData(@"DATA\console.ini", @"DATA\console.ini")]
+    [InlineData(@"DATA\com10.ini", @"DATA\com10.ini")]
+    [InlineData(@"DATA\nulls\auxiliary.ini", @"DATA\nulls\auxiliary.ini")]
+    [InlineData(@"DATA\lpt.ini", @"DATA\lpt.ini")]
     public void TheParserGivesTheNormalForm(string path, string normal)
     {
         Assert.Equal(normal, InstallPaths.Parse(path));
@@ -61,6 +77,13 @@ public sealed class InstallPathsTests
         Assert.Equal(@"The path 'graphs\DATA.\x.ini' is not an install path. The part 'DATA.' starts or ends with a " +
                      @"space or a dot. Use a path such as DATA\SHIPS\loadouts.ini.",
             InstallPaths.Problem(@"graphs\DATA.\x.ini"));
+    }
+
+    [Fact]
+    public void TheMessageNamesTheDevice()
+    {
+        Assert.Equal(@"The path 'DATA\nul.ini' is not an install path. The part 'nul.ini' is the name of a Windows device. " +
+                     @"Use a path such as DATA\SHIPS\loadouts.ini.", InstallPaths.Problem(@"DATA\nul.ini"));
     }
 
     [Fact]

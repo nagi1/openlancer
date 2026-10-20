@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Studio.Agent;
@@ -34,33 +37,73 @@ public sealed record AgentLimits
     /// <summary>The largest body of an HTTP request, in megabytes. A larger body gets 413.</summary>
     public int RequestMegabytes { get; init; } = 4;
 
-    /// <summary>The limits with each value in its allowed range: from 1 to the largest value that keeps the editor
-    /// responsive and the result small enough for a model.</summary>
-    public AgentLimits Clamped() => new()
+    /// <summary>The allowed range of <see cref="MaxListRows"/>. <see cref="ListRows"/> goes from 1 to
+    /// <see cref="MaxListRows"/>.</summary>
+    public static readonly (int Min, int Max) MaxListRowsRange = (1, 1000);
+
+    /// <summary>The allowed range of <see cref="ResultKilobytes"/>.</summary>
+    public static readonly (int Min, int Max) ResultKilobytesRange = (16, 4096);
+
+    /// <summary>The allowed range of <see cref="CallsPerSecond"/>.</summary>
+    public static readonly (int Min, int Max) CallsPerSecondRange = (1, 100);
+
+    /// <summary>The allowed range of <see cref="WaitSeconds"/>.</summary>
+    public static readonly (int Min, int Max) WaitSecondsRange = (1, 600);
+
+    /// <summary>The allowed range of <see cref="TailSeconds"/>.</summary>
+    public static readonly (int Min, int Max) TailSecondsRange = (1, 3600);
+
+    /// <summary>The allowed range of <see cref="RequestMegabytes"/>.</summary>
+    public static readonly (int Min, int Max) RequestMegabytesRange = (1, 64);
+
+    /// <summary>The limits with each value in its allowed range: from the smallest useful value to the largest value
+    /// that keeps the editor responsive and the result small enough for a model. The settings file can hold any
+    /// value.</summary>
+    public AgentLimits Clamped()
     {
-        ListRows = Math.Clamp(ListRows, 1, Math.Clamp(MaxListRows, 1, 1000)),
-        MaxListRows = Math.Clamp(MaxListRows, 1, 1000),
-        ResultKilobytes = Math.Clamp(ResultKilobytes, 16, 4096),
-        CallsPerSecond = Math.Clamp(CallsPerSecond, 1, 100),
-        WaitSeconds = Math.Clamp(WaitSeconds, 1, 600),
-        TailSeconds = Math.Clamp(TailSeconds, 1, 3600),
-        RequestMegabytes = Math.Clamp(RequestMegabytes, 1, 64),
-    };
+        var maxRows = Clamp(MaxListRows, MaxListRowsRange);
+        return new AgentLimits
+        {
+            ListRows = Math.Clamp(ListRows, 1, maxRows),
+            MaxListRows = maxRows,
+            ResultKilobytes = Clamp(ResultKilobytes, ResultKilobytesRange),
+            CallsPerSecond = Clamp(CallsPerSecond, CallsPerSecondRange),
+            WaitSeconds = Clamp(WaitSeconds, WaitSecondsRange),
+            TailSeconds = Clamp(TailSeconds, TailSecondsRange),
+            RequestMegabytes = Clamp(RequestMegabytes, RequestMegabytesRange),
+        };
+    }
+
+    private static int Clamp(int value, (int Min, int Max) range) => Math.Clamp(value, range.Min, range.Max);
 }
 
 /// <summary>What the editor shows now: the open system, mission and cutscene, as item references.</summary>
 public sealed record AgentView(string? System, string? Mission, string? Cutscene);
 
+/// <summary>The severity of an entry of the Console (tool <c>get_console</c>).</summary>
+public enum AgentSeverity
+{
+    Info,
+    Warning,
+    Error,
+}
+
 /// <summary>One entry of the Console of the editor, for the tool <c>get_console</c>.</summary>
 /// <param name="Sequence">The number of the entry in the order of arrival. <c>since</c> takes it.</param>
 /// <param name="Ref">The item reference of the target of the entry, or null.</param>
-public sealed record AgentConsoleEntry(long Sequence, DateTime Time, string Severity, string Source, string Message,
+public sealed record AgentConsoleEntry(long Sequence, DateTime Time, AgentSeverity Severity, string Source, string Message,
     string? Ref, OpenLancer.Data.OriginKind Origin);
 
 /// <summary>The filter of <see cref="AgentHost.Console"/>.</summary>
-/// <param name="Severity">The lowest severity: <c>info</c>, <c>warning</c> or <c>error</c>.</param>
+/// <param name="Source">Only the entries of this source, without letter case, or null.</param>
+/// <param name="Severity">The lowest severity.</param>
+/// <param name="BaseGame">True to give the entries of the base game too (decision D519).</param>
 /// <param name="Since">Only entries after this sequence number, or null.</param>
-public sealed record ConsoleFilter(string? Source, string Severity, bool BaseGame, long? Since, int Limit);
+public sealed record ConsoleFilter(string? Source, AgentSeverity Severity, bool BaseGame, long? Since);
+
+/// <summary>The problems of the target checks of a profile (see <see cref="AgentHost.CheckTarget"/>).</summary>
+/// <param name="Notes">Notes of the check, for example a target game that the profile does not link.</param>
+public sealed record TargetCheckResult(IReadOnlyList<Problem> Problems, IReadOnlyList<string> Notes);
 
 /// <summary>
 /// The program that serves the tools: the editor or <c>oltool mcp serve</c> (section 5.4 of the MCP1 design). The tool
@@ -97,16 +140,19 @@ public abstract class AgentHost
     /// <summary>What the editor shows now, or null in a host without a window.</summary>
     public virtual AgentView? View => null;
 
-    /// <summary>The entries of the Console, newest last, or null in a host without a Console.</summary>
+    /// <summary>The entries of the Console that match the filter, oldest first, or null in a host without a
+    /// Console.</summary>
     public virtual IReadOnlyList<AgentConsoleEntry>? Console(ConsoleFilter filter) => null;
 
     /// <summary>
     /// The target checks of <c>oltool validate --target</c>: all mods of the profile merged on the files of the target
     /// game, as the saved files give them. The headless host runs them in its process, and the editor host runs them
-    /// in an oltool process as the tail of the call (section 7.1 of the MCP1 design).
+    /// in an oltool process as the tail of the call (section 7.1 of the MCP1 design). The returned function is the tail.
+    /// It does not touch the session.
     /// </summary>
     /// <param name="target">The id of a retail target, for example <c>vanilla-1.1</c>.</param>
-    public abstract ToolStep CheckTarget(string target);
+    /// <exception cref="EditException">The check cannot run. The tail can throw it too.</exception>
+    public abstract Func<CancellationToken, Task<TargetCheckResult>> CheckTarget(string target);
 
     /// <summary>The groups that the tool table has and the user does not hide, in table order.</summary>
     public IReadOnlyList<ToolGroup> ShownGroups =>

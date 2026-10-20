@@ -1,3 +1,4 @@
+using System;
 using OpenLancer.Data.IO;
 
 namespace OpenLancer.Data.Editing.Commands;
@@ -17,7 +18,7 @@ public static class InstallPaths
     /// <c>/</c>.</summary>
     /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/>: the path is empty, holds a control
     /// character or a <c>:</c> (a drive or a stream name), starts with <c>\</c> or <c>/</c>, goes above the game
-    /// folder, or has a part that starts or ends with a space or a dot.</exception>
+    /// folder, or has a part that starts or ends with a space or a dot or names a Windows device.</exception>
     public static string Parse(string? path) =>
         Problem(path) is { } problem
             ? throw new EditException(new EditError(EditErrorKind.InvalidArgument, NotInstallPath, problem))
@@ -55,7 +56,24 @@ public static class InstallPaths
         {
             if (part[0] is ' ' or '.' || part[^1] is ' ' or '.')
                 return Refuse($"The part '{part}' starts or ends with a space or a dot.");
+            if (IsDeviceName(part))
+                return Refuse($"The part '{part}' is the name of a Windows device.");
         }
         return null;
+    }
+
+    /// <summary>
+    /// True for a part that Windows opens as a device, not as a file: <c>CON</c>, <c>PRN</c>, <c>AUX</c>, <c>NUL</c>,
+    /// <c>COM0</c> to <c>COM9</c>, <c>LPT0</c> to <c>LPT9</c>, <c>CONIN$</c> and <c>CONOUT$</c>, in any letter case and
+    /// also with an extension, for example <c>nul.ini</c>. A write to such a path writes to the device. No file of the
+    /// game data can have such a name.
+    /// </summary>
+    private static bool IsDeviceName(string part)
+    {
+        var stem = part.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+        return stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$" ||
+               stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) ||
+                                    stem.StartsWith("LPT", StringComparison.Ordinal)) &&
+               (char.IsAsciiDigit(stem[3]) || stem[3] is '¹' or '²' or '³');
     }
 }

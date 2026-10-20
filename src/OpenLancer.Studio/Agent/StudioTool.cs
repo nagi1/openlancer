@@ -100,9 +100,9 @@ public sealed class StudioTool
     /// <summary>The JSON Schema of the arguments.</summary>
     public JsonObject InputSchema => (JsonObject)(inputSchema ??= Input.Schema(Name)).DeepClone();
 
-    /// <summary>The JSON Schema of the structured result. A tool error has its own form (see
-    /// <see cref="ToolResult.Failure"/>), and the client does not check it against this schema.</summary>
-    public JsonObject OutputSchema => (JsonObject)(outputSchema ??= SchemaOf(Output)).DeepClone();
+    /// <summary>The JSON Schema of the structured content: the result of the tool, or a tool error (see
+    /// <see cref="ResultSchema"/>).</summary>
+    public JsonObject OutputSchema => (JsonObject)(outputSchema ??= ResultSchema(Output)).DeepClone();
 
     internal ToolInput Input { get; }
 
@@ -111,19 +111,75 @@ public sealed class StudioTool
     internal Func<ToolCall, ToolStep> Run { get; }
 
     /// <summary>
+    /// The output schema of a tool (section 5.7 of the MCP1 design). The structured content of each call fits it: the
+    /// result of the tool, or a tool error. The specification says that structured content must fit the output schema,
+    /// and some clients check it also for a tool error. So the schema has the properties of both objects, and its
+    /// <c>anyOf</c> asks for the necessary properties of one of them. The properties stay at the root, so each
+    /// <c>$ref</c> of the result schema stays valid. A result also gives <c>rev</c> (section 8.6, item 3).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The result type has a property of the error object.</exception>
+    internal static JsonObject ResultSchema(Type output)
+    {
+        var schema = SchemaOf(output);
+        var properties = (JsonObject)schema["properties"]!;
+        properties[RevisionName] ??= Described(new JsonObject { ["type"] = "string" }, null, RevisionName);
+        var result = schema["required"] is JsonArray required ? new JsonObject { ["required"] = required.DeepClone() } : new JsonObject();
+        schema.Remove("required");
+        var error = SchemaOf(typeof(EditError));
+        foreach (var (name, property) in (JsonObject)error["properties"]!)
+        {
+            if (properties.ContainsKey(name))
+                throw new InvalidOperationException($"The result {output.Name} has the property {name} of a tool error.");
+            properties[name] = property!.DeepClone();
+        }
+        result["description"] = AgentTexts.Result(null, "result");
+        schema["anyOf"] = new JsonArray(result, new JsonObject
+        {
+            ["description"] = AgentTexts.Result(null, "error"),
+            ["required"] = error["required"]!.DeepClone(),
+        });
+        return schema;
+    }
+
+    /// <summary>The name of the revision in a result.</summary>
+    internal const string RevisionName = "rev";
+
+    /// <summary>
     /// The JSON Schema of a result type, in the JSON form of the command layer (snake case, enums as text). The
     /// serializer and the schema use the same options, so the schema fits each result. The command layer leaves out a
     /// null value (<see cref="EditJson.Options"/>), so a property that can be null is not required. The schema has no
     /// <c>format</c>, because a client can refuse a format that its validator does not know. A time is text in the ISO
-    /// 8601 form.
+    /// 8601 form. Each property gets its help from <c>agent-tools.json</c> (decision D726). A whole number that the
+    /// command layer writes as text, for example the revision, is a text in the schema too.
     /// </summary>
     internal static JsonObject SchemaOf(Type type)
     {
         var options = new JsonSerializerOptions(EditJson.Options) { TypeInfoResolver = new DefaultJsonTypeInfoResolver() };
         options.MakeReadOnly();
-        var schema = (JsonObject)JsonSchemaExporter.GetJsonSchemaAsNode(options, type,
-            new JsonSchemaExporterOptions { TreatNullObliviousAsNonNullable = true });
+        var schema = (JsonObject)JsonSchemaExporter.GetJsonSchemaAsNode(options, type, new JsonSchemaExporterOptions
+        {
+            TreatNullObliviousAsNonNullable = true,
+            TransformSchemaNode = (context, node) =>
+            {
+                if (context.PropertyInfo is not { } property)
+                    return node;
+                if (property.CustomConverter is EditJson.LongAsText)
+                    node = new JsonObject { ["type"] = "string" };
+                return node is JsonObject obj && !obj.ContainsKey("$ref")
+                    ? Described(obj, property.DeclaringType, property.Name)
+                    : node;
+            },
+        });
         OptionalNulls(schema);
+        return schema;
+    }
+
+    /// <summary>A schema with the help of a property of <c>agent-tools.json</c>, when the file has it. A unit test
+    /// checks that each property of each output schema has a help.</summary>
+    private static JsonObject Described(JsonObject schema, Type? owner, string name)
+    {
+        if (AgentTexts.Result(owner, name) is { } help)
+            schema["description"] = help;
         return schema;
     }
 

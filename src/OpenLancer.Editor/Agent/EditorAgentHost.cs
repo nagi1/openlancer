@@ -17,8 +17,18 @@ namespace OpenLancer.Editor.Agent;
 /// fake.</summary>
 internal interface IAgentEditor
 {
-    /// <summary>The open profile, or null.</summary>
-    EditorSession? Session { get; }
+    /// <summary>The edit session of the open profile, or null while no profile is open.</summary>
+    EditSession? Edits { get; }
+
+    /// <summary>Why the open profile takes no edits now, or null when it takes them or no profile is open: the reason
+    /// of the session, or a mod in the OpenLancer repo whose edits the user did not allow (decision D738).</summary>
+    string? EditReason { get; }
+
+    /// <summary>The text of a string id of the game data of the open profile, or an empty text.</summary>
+    string Name(int ids);
+
+    /// <summary>The plain text of an infocard id of the game data of the open profile, or an empty text.</summary>
+    string InfoText(int ids);
 
     /// <summary>The agent settings of the editor.</summary>
     AgentSettings Settings { get; }
@@ -39,11 +49,11 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
 {
     public override AgentHostKind Kind => AgentHostKind.Editor;
 
-    public override EditSession? Session => editor.Session?.Edits;
+    public override EditSession? Session => editor.Edits;
 
-    /// <summary>The reason of the session and the rule of the mods in the OpenLancer repo: the edits of such a mod
-    /// wait for the allowance of the user (decision D738).</summary>
-    public override string? NoEditReason => editor.Session?.NoEditReason ?? AgentTexts.Error("no_profile");
+    /// <summary>The reason of the open profile, or the reason that no profile is open. The edits of a mod in the
+    /// OpenLancer repo wait for the allowance of the user (decision D738).</summary>
+    public override string? NoEditReason => editor.Edits == null ? AgentTexts.Error("no_profile") : editor.EditReason;
 
     public override AgentLimits Limits => editor.Settings.Limits;
 
@@ -51,18 +61,18 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
 
     public override AgentView? View => editor.View;
 
-    public override string NameText(int ids) => editor.Session?.Name(ids) ?? "";
+    public override string NameText(int ids) => editor.Name(ids);
 
-    public override string InfoText(int ids) => editor.Session?.InfoText(ids) ?? "";
+    public override string InfoText(int ids) => editor.InfoText(ids);
 
-    /// <summary>The entries of the Console, newest last. The base-game entries show only on request, as in the Console
+    /// <summary>The entries of the Console, oldest first. The base-game entries show only on request, as in the Console
     /// (decision D519). An engine line that waits for its origin does not show yet.</summary>
     public override IReadOnlyList<AgentConsoleEntry> Console(ConsoleFilter filter)
     {
         var lowest = filter.Severity switch
         {
-            "error" => ConsoleSeverity.Error,
-            "warning" => ConsoleSeverity.Warning,
+            AgentSeverity.Error => ConsoleSeverity.Error,
+            AgentSeverity.Warning => ConsoleSeverity.Warning,
             _ => ConsoleSeverity.Info,
         };
         var session = Session;
@@ -70,10 +80,8 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
             .Where(e => e.Severity >= lowest && (filter.Since == null || e.Sequence > filter.Since))
             .Where(e => filter.Source == null || e.Source.Equals(filter.Source, StringComparison.OrdinalIgnoreCase))
             .Where(e => e.Origin.Kind != OriginKind.Pending && (filter.BaseGame || !e.Origin.IsBaseGame))
-            .TakeLast(filter.Limit)
-            .Select(e => new AgentConsoleEntry(e.Sequence, e.Time.ToUniversalTime(), e.Severity.ToString().ToLowerInvariant(),
-                e.Source, e.Message, e.Target is { } target && session != null ? ItemRefs.Canonical(session, target) : null,
-                e.Origin.Kind))
+            .Select(e => new AgentConsoleEntry(e.Sequence, e.Time.ToUniversalTime(), Severity(e.Severity), e.Source, e.Message,
+                e.Target is { } target && session != null ? ItemRefs.Canonical(session, target) : null, e.Origin.Kind))
             .ToList();
     }
 
@@ -82,7 +90,7 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
     /// files of the game, which takes seconds, and the engine log of a data load is process-wide (see
     /// <see cref="Editing.ToolProcess"/>). The game folder is the linked game of the target.
     /// </summary>
-    public override ToolStep CheckTarget(string target)
+    public override Func<CancellationToken, Task<TargetCheckResult>> CheckTarget(string target)
     {
         var session = Session!;
         var arguments = new List<string> { "validate", session.Profile.FilePath, "--target", target, "--json" };
@@ -91,12 +99,14 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
             arguments.Add("--game");
             arguments.Add(game.Root);
         }
-        return ToolStep.Then(token => RunCheck(ProgramPaths.Oltool, arguments, token));
+        return token => RunCheck(ProgramPaths.Oltool, arguments, token);
     }
 
     /// <summary>Runs <c>oltool validate --target</c> and gives its problems. A cancel of the call stops the
     /// process.</summary>
-    internal static async Task<ToolResult> RunCheck(string tool, IReadOnlyList<string> arguments, CancellationToken cancel)
+    /// <exception cref="EditException"><see cref="EditErrorKind.NotAvailable"/>: the check could not run (exit code
+    /// 2).</exception>
+    internal static async Task<TargetCheckResult> RunCheck(string tool, IReadOnlyList<string> arguments, CancellationToken cancel)
     {
         var info = new ProcessStartInfo(tool)
         {
@@ -114,13 +124,9 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
             var errors = process.StandardError.ReadToEndAsync(cancel);
             await process.WaitForExitAsync(cancel).ConfigureAwait(false);
             if (process.ExitCode == 2)
-            {
-                return ToolResult.Failure(new EditError(EditErrorKind.Refused, "TargetCheckFailed",
-                    AgentTexts.Error("check_target_failed", ("reason", (await errors.ConfigureAwait(false)).Trim()))));
-            }
+                throw new EditException(CheckQueries.TargetCheckError((await errors.ConfigureAwait(false)).Trim()));
             var problems = ValidationJson.Read(await output.ConfigureAwait(false));
-            return ToolResult.Of(CheckQueries.Of("target", problems.Select(p => Problem.From(p, null)).ToList(),
-                AgentTexts.Error("check_target_note")));
+            return new TargetCheckResult(problems.Select(p => Problem.From(p, null)).ToList(), []);
         }
         finally
         {
@@ -128,4 +134,11 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
                 process.Kill(entireProcessTree: true);
         }
     }
+
+    private static AgentSeverity Severity(ConsoleSeverity severity) => severity switch
+    {
+        ConsoleSeverity.Error => AgentSeverity.Error,
+        ConsoleSeverity.Warning => AgentSeverity.Warning,
+        _ => AgentSeverity.Info,
+    };
 }

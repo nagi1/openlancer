@@ -11,21 +11,34 @@ using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Studio.Agent;
 
+/// <summary>The layer that gives a cutscene script (tool <c>list_cutscenes</c>).</summary>
+internal enum CutsceneLayer
+{
+    /// <summary>The base data gives the script, and no mod changes it.</summary>
+    Base,
+
+    /// <summary>A lower mod changes the script.</summary>
+    LowerMod,
+
+    /// <summary>The active mod changes the script.</summary>
+    ActiveMod,
+
+    /// <summary>The active mod adds the script.</summary>
+    New,
+}
+
 /// <summary>A cutscene script of the edit view (tool <c>list_cutscenes</c>).</summary>
 /// <param name="Ref">The <c>thn:</c> reference.</param>
 /// <param name="Category">The folder group of the Cutscenes tab, for example <c>bases</c> or <c>mods</c>.</param>
-/// <param name="Kind"><c>base</c>, <c>lower_mod</c> (a lower mod changes it), <c>active_mod</c> (the active mod changes
-/// it) or <c>new</c> (the active mod adds it).</param>
 /// <param name="Duration">The duration in seconds, or null when the editor cannot read the script.</param>
 /// <param name="Unsaved">True when the session has an edit of the script that it did not save.</param>
-internal sealed record CutsceneRow(string Ref, string Path, CutsceneFolder Category, string Kind, float? Duration,
+internal sealed record CutsceneRow(string Ref, string Path, CutsceneFolder Category, CutsceneLayer Kind, float? Duration,
     bool Unsaved);
 
 /// <summary>An entity or an event of a cutscene.</summary>
 /// <param name="Ref">The <c>thn:</c> reference: <c>#entity/&lt;name&gt;</c>, or <c>#event/&lt;index&gt;</c>.</param>
-/// <param name="Element"><c>entity</c> or <c>event</c>.</param>
 /// <param name="Type">The THN name of the type, for example <c>CAMERA</c> or <c>START_SOUND</c>, or null.</param>
-internal sealed record CutsceneElementView(string Ref, string Element, string? Type)
+internal sealed record CutsceneElementView(string Ref, ThnElementKind Element, string? Type)
 {
     /// <summary>The name of an entity, else null.</summary>
     public string? Name { get; init; }
@@ -58,10 +71,6 @@ internal static class CutsceneQueries
     /// <summary>The install paths of the cutscene scripts of each edit view. The edit view changes only with a save, so
     /// the scan of the files runs once for each one.</summary>
     private static readonly ConditionalWeakTable<ModOverlay, IReadOnlyList<string>> Paths = new();
-
-    /// <summary>The words of the argument <c>category</c>.</summary>
-    public static readonly IReadOnlyList<string> Categories =
-        Enum.GetValues<CutsceneFolder>().Select(f => AgentTools.Snake(f.ToString())).ToList();
 
     public static ToolStep ListCutscenes(ToolCall call)
     {
@@ -100,7 +109,7 @@ internal static class CutsceneQueries
         var reference = ItemRefs.Of(session, element);
         if (element.Kind == ThnElementKind.Entity)
         {
-            return new CutsceneElementView(reference, "entity", type)
+            return new CutsceneElementView(reference, ThnElementKind.Entity, type)
             {
                 Name = ThnScriptModel.NameOf(table),
                 Template = (table["template_name"] as ThnText)?.Value,
@@ -108,7 +117,7 @@ internal static class CutsceneQueries
             };
         }
         var props = table.List.Length > 3 ? table.List[3] as ThnTable : null;
-        return new CutsceneElementView(reference, "event", type)
+        return new CutsceneElementView(reference, ThnElementKind.Event, type)
         {
             Time = table.List.Length > 0 && table.List[0] is ThnNumber time ? time.Value : null,
             Length = props?["duration"] is ThnNumber length ? length.Value : null,
@@ -117,7 +126,8 @@ internal static class CutsceneQueries
         };
     }
 
-    private static string Ref(string path) => ItemRefs.Format(new ItemReference(ItemRefKind.Cutscene, "") { Path = path });
+    /// <summary>The <c>thn:</c> reference of a cutscene script.</summary>
+    internal static string Ref(string path) => ItemRefs.Format(new ItemReference(ItemRefKind.Cutscene, "") { Path = path });
 
     private static IReadOnlyList<string> Targets(ThnValue value) => value switch
     {
@@ -126,10 +136,10 @@ internal static class CutsceneQueries
         _ => [],
     };
 
-    private static string Kind(ThnFileSource source) => source.Kind switch
+    private static CutsceneLayer Kind(ThnFileSource source) => source.Kind switch
     {
-        ThnFileKind.NewHere => "new",
-        ThnFileKind.PatchedHere or ThnFileKind.WholeFileHere => "active_mod",
-        _ => source.ChangedByLowerMod ? "lower_mod" : "base",
+        ThnFileKind.NewHere => CutsceneLayer.New,
+        ThnFileKind.PatchedHere or ThnFileKind.WholeFileHere => CutsceneLayer.ActiveMod,
+        _ => source.ChangedByLowerMod ? CutsceneLayer.LowerMod : CutsceneLayer.Base,
     };
 }

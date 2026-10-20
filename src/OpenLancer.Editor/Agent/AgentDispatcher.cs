@@ -40,12 +40,12 @@ internal sealed class AgentDispatcher : IDisposable
     public bool Frame() => Queue.RunNext(WaitReason(activity()));
 
     /// <summary>Why a call waits now, in strict STE, or null when the call can run. The reason is the start of the error
-    /// <c>busy</c> after the wait limit.</summary>
+    /// <c>busy</c> after the wait limit. The texts are in <c>agent-tools.json</c> (decision D726).</summary>
     internal static string? WaitReason(EditorActivity now) =>
-        now.Editing ? "The user edits a field or drags an item now."
-        : now.Dialog ? "A dialog of the editor is open."
-        : now.Loading ? "The editor loads the game data now."
-        : now.UserEdit ? "An edit of the user runs now."
+        now.Editing ? AgentTexts.Error("wait_editing")
+        : now.Dialog ? AgentTexts.Error("wait_dialog")
+        : now.Loading ? AgentTexts.Error("wait_loading")
+        : now.UserEdit ? AgentTexts.Error("wait_user_edit")
         : null;
 
     public void Dispose() => Queue.Dispose();

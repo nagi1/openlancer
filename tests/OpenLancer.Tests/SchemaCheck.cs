@@ -18,7 +18,7 @@ internal static class SchemaCheck
     private static readonly HashSet<string> Known =
     [
         "type", "properties", "additionalProperties", "required", "items", "enum", "minimum", "maximum", "minLength",
-        "minItems", "maxItems", "uniqueItems", "default", "description", "$ref", "anyOf", "pattern", "$schema",
+        "maxLength", "minItems", "maxItems", "uniqueItems", "default", "description", "$ref", "anyOf", "pattern", "$schema",
     ];
 
     private static readonly HashSet<string> Types = ["object", "array", "string", "integer", "number", "boolean", "null"];
@@ -81,12 +81,9 @@ internal static class SchemaCheck
             Check(root, Resolve(root, (string)reference!), value, path, problems);
             return;
         }
-        if (obj["anyOf"] is JsonArray anyOf)
-        {
-            if (!anyOf.Any(option => Fits(root, option!, value)))
-                problems.Add($"{path}: the value fits no schema of anyOf.");
-            return;
-        }
+        // anyOf applies together with the other keywords of the schema.
+        if (obj["anyOf"] is JsonArray anyOf && !anyOf.Any(option => Fits(root, option!, value)))
+            problems.Add($"{path}: the value fits no schema of anyOf.");
         if (obj["type"] is { } type)
         {
             var types = type is JsonArray a ? a.Select(t => (string)t!).ToList() : [(string)type!];
@@ -98,6 +95,14 @@ internal static class SchemaCheck
         }
         if (obj["enum"] is JsonArray values && !values.Any(e => JsonNode.DeepEquals(e, value)))
             problems.Add($"{path}: the value is not in the enum.");
+        if (value?.GetValueKind() == JsonValueKind.String)
+        {
+            var length = value.GetValue<string>().Length;
+            if (obj["minLength"] is { } min && length < (int)min)
+                problems.Add($"{path}: the text is shorter than {(int)min} characters.");
+            if (obj["maxLength"] is { } max && length > (int)max)
+                problems.Add($"{path}: the text is longer than {(int)max} characters.");
+        }
         if (value is JsonObject o)
         {
             var properties = obj["properties"]?.AsObject();

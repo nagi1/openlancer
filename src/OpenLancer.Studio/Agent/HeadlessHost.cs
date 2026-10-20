@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using LibreLancer.Data;
 using LibreLancer.Data.Schema;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Export;
 using OpenLancer.Data.Mods;
 using OpenLancer.Runtime.Missions;
@@ -67,8 +69,10 @@ public sealed class HeadlessHost : AgentHost, IDisposable
         ids > 0 && texts.Value?.GetXmlResource(ids) is { } xml ? Commands.ItemTexts.PlainText(xml) : "";
 
     /// <summary>The target checks in the process of the host, on the session thread: the host has no frame that a
-    /// long check could stop.</summary>
-    public override ToolStep CheckTarget(string target)
+    /// long check could stop. The tail gives the result.</summary>
+    /// <exception cref="EditException"><see cref="EditErrorKind.NotAvailable"/> with the detail
+    /// <see cref="CheckQueries.TargetCheckFailed"/>: the profile or the files of the target do not load.</exception>
+    public override Func<CancellationToken, Task<TargetCheckResult>> CheckTarget(string target)
     {
         var found = ExportTarget.Find(target)!;
         IReadOnlyList<OpenLancer.Data.Diagnostic> problems;
@@ -79,13 +83,10 @@ public sealed class HeadlessHost : AgentHost, IDisposable
         }
         catch (Exception e) when (e is ModLoadException or IOException or UnauthorizedAccessException)
         {
-            return ToolResult.Failure(new OpenLancer.Data.Editing.Commands.EditError(
-                OpenLancer.Data.Editing.Commands.EditErrorKind.Refused, "TargetCheckFailed",
-                AgentTexts.Error("check_target_failed", ("reason", e.Message))));
+            throw new EditException(CheckQueries.TargetCheckError(e.Message));
         }
-        return ToolResult.Of(CheckQueries.Of("target",
-            problems.Select(p => OpenLancer.Data.Editing.Commands.Problem.From(p, null)).ToList(),
-            string.Join(" ", new[] { AgentTexts.Error("check_target_note") }.Concat(notes))));
+        var result = new TargetCheckResult(problems.Select(p => Problem.From(p, null)).ToList(), notes);
+        return _ => Task.FromResult(result);
     }
 
     public void Dispose() => Session.Dispose();

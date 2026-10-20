@@ -64,6 +64,32 @@ public sealed class ToolResult
     /// <summary>A tool error of the host, with a text of <c>agent-tools.json</c>.</summary>
     internal static ToolResult Failure(EditErrorKind kind, string detail, string message) =>
         Failure(new EditError(kind, detail, message));
+
+    /// <summary>
+    /// The result with the revision of the session part as <c>rev</c> (section 8.6, item 3 of the MCP1 design). An agent
+    /// reads, then edits with <c>if_revision</c>, so each result tells the revision of the data that it read. A tool
+    /// error and a result that has <c>rev</c> already stay as they are.
+    /// </summary>
+    internal ToolResult WithRevision(long? revision)
+    {
+        if (IsError || revision is not { } value || Content.ContainsKey(StudioTool.RevisionName))
+            return this;
+        var content = (JsonObject)Content.DeepClone();
+        content[StudioTool.RevisionName] = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return new ToolResult(content, false);
+    }
+
+    /// <summary>The result, or the error <c>limit</c> when its text is larger than the limit of a result (section 8.4
+    /// of the MCP1 design). Both hosts and <c>oltool mcp replay</c> apply it.</summary>
+    internal ToolResult Limited(AgentLimits limits)
+    {
+        var kilobytes = limits.ResultKilobytes;
+        var bytes = Bytes;
+        return bytes <= kilobytes * 1024
+            ? this
+            : Failure(EditErrorKind.Limit, "ResultSize",
+                AgentTexts.Error("limit_result", ("size", (bytes + 1023) / 1024), ("max", kilobytes)));
+    }
 }
 
 /// <summary>

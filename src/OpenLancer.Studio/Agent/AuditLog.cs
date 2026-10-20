@@ -10,8 +10,12 @@ namespace OpenLancer.Studio.Agent;
 
 /// <summary>One line of an audit log, or of a file of calls for <c>oltool mcp replay</c>.</summary>
 /// <param name="Line">The line number in the file, from 1.</param>
+/// <param name="Arguments">The arguments, or null when the line has none.</param>
 /// <param name="Expected">The recorded result, or null when the line has none.</param>
-public sealed record AuditEntry(int Line, string Tool, JsonObject? Arguments, ToolOutcome? Expected);
+/// <param name="ArgumentsOmitted">True when the log left out the arguments of the call (see
+/// <see cref="AuditLog.Write"/>). A replay cannot run such a call.</param>
+public sealed record AuditEntry(int Line, string Tool, JsonObject? Arguments, ToolOutcome? Expected,
+    bool ArgumentsOmitted = false);
 
 /// <summary>
 /// The audit log of the agent calls (decision D728 of the MCP1 design): one JSON line for each call, with the tool, the
@@ -19,22 +23,44 @@ public sealed record AuditEntry(int Line, string Tool, JsonObject? Arguments, To
 /// holds no token, because the token is a header of the request and never an argument. <c>oltool mcp replay</c> reads
 /// the same format, so a user can replay an agent run on a copy of the profile.
 /// </summary>
-/// <remarks>The format of a line: <c>{"time": "...", "tool": "list_items", "arguments": {...}, "result": {"status":
-/// "ok"}}</c>. A tool error has <c>"status": "error"</c> with <c>code</c> and <c>detail</c>.</remarks>
+/// <remarks>
+/// <para>The format of a line: <c>{"time": "...", "tool": "list_items", "arguments": {...}, "result": {"status":
+/// "ok"}}</c>. A tool error has <c>"status": "error"</c> with <c>code</c> and <c>detail</c>.</para>
+/// <para>A client can send large arguments and many calls. So the log leaves out arguments above
+/// <see cref="MaxArgumentBytes"/> and the arguments of a call that does not run, and writes
+/// <c>"arguments_omitted": true</c> instead. The file stops at a size limit. Then the log tells its owner once and
+/// writes no more lines.</para>
+/// </remarks>
 public sealed class AuditLog : IDisposable
 {
+    /// <summary>The largest arguments of one line, as JSON text in bytes of UTF-8. The arguments of a valid call are much
+    /// smaller, because a text argument has at most <see cref="TextParam.MaxLength"/> characters.</summary>
+    public const int MaxArgumentBytes = 16 * 1024;
+
+    /// <summary>The default size limit of one file in bytes.</summary>
+    public const long DefaultMaxBytes = 64L * 1024 * 1024;
+
     private readonly object gate = new();
     private readonly StreamWriter writer;
+    private readonly long maxBytes;
+    private readonly Action? full;
+    private long size;
+    private bool stopped;
 
     /// <summary>Opens a log file for append.</summary>
+    /// <param name="maxBytes">The size limit of the file in bytes.</param>
+    /// <param name="full">Runs once, on the thread of the call, when the file reaches its size limit, or null.</param>
     /// <exception cref="IOException">The file does not open.</exception>
     /// <exception cref="UnauthorizedAccessException">The file does not open.</exception>
-    public AuditLog(string path)
+    public AuditLog(string path, long maxBytes = DefaultMaxBytes, Action? full = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         FilePath = path;
-        writer = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read),
-            new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
+        this.maxBytes = maxBytes;
+        this.full = full;
+        var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+        size = stream.Length;
+        writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
     }
 
     /// <summary>The path of the file.</summary>
@@ -45,26 +71,50 @@ public sealed class AuditLog : IDisposable
         "agent-" + startUtc.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".jsonl";
 
     /// <summary>Adds the line of one call. It can run on any thread.</summary>
-    public void Write(DateTimeOffset time, string tool, JsonObject? arguments, ToolOutcome outcome)
+    /// <param name="arguments">The arguments of the call, or null for a call without arguments. The line leaves them
+    /// out when they are larger than <see cref="MaxArgumentBytes"/>.</param>
+    /// <param name="ran">False for a call that did not run, for example a call that the rate limit refused. Its line
+    /// leaves out the arguments.</param>
+    public void Write(DateTimeOffset time, string tool, JsonObject? arguments, ToolOutcome outcome, bool ran = true)
     {
         var line = new JsonObject
         {
             ["time"] = time.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
             ["tool"] = tool,
-            ["arguments"] = arguments?.DeepClone() ?? new JsonObject(),
-            ["result"] = Outcome(outcome),
         };
+        var text = ran ? arguments?.ToJsonString() ?? "{}" : null;
+        if (text != null && Encoding.UTF8.GetByteCount(text) <= MaxArgumentBytes)
+            line["arguments"] = JsonNode.Parse(text);
+        else
+            line["arguments_omitted"] = true;
+        line["result"] = Outcome(outcome);
+        var json = line.ToJsonString();
+        var bytes = Encoding.UTF8.GetByteCount(json) + 1;
+        var tell = false;
         lock (gate)
         {
-            try
+            if (stopped)
+                return;
+            if (size + bytes > maxBytes)
             {
-                writer.WriteLine(line.ToJsonString());
+                stopped = true;
+                tell = true;
             }
-            catch (IOException)
+            else
             {
-                // A full disk stops the log, not the call.
+                try
+                {
+                    writer.WriteLine(json);
+                    size += bytes;
+                }
+                catch (IOException)
+                {
+                    // A full disk stops the log, not the call.
+                }
             }
         }
+        if (tell)
+            full?.Invoke();
     }
 
     public void Dispose()
@@ -111,6 +161,7 @@ public sealed class AuditLog : IDisposable
                 throw new InvalidDataException($"Line {number} has no tool name.");
             if (line["arguments"] is { } arguments && arguments is not JsonObject)
                 throw new InvalidDataException($"The arguments of line {number} are not a JSON object.");
+            var omitted = line["arguments_omitted"]?.GetValueKind() == JsonValueKind.True;
             ToolOutcome? expected = null;
             if (line["result"] is JsonObject result)
             {
@@ -119,7 +170,7 @@ public sealed class AuditLog : IDisposable
                     : throw new InvalidDataException($"The result of line {number} has no status.");
             }
             yield return new AuditEntry(number, tool.GetValue<string>(), (JsonObject?)line["arguments"]?.DeepClone(),
-                expected);
+                expected, omitted);
         }
     }
 }

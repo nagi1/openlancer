@@ -413,12 +413,21 @@ public static class ItemRefs
             : Format(new ItemReference(ItemRefKind.CutsceneEvent, "") { Path = element.Path, Row = model.Events.IndexOf(found) });
     }
 
-    /// <summary>The names of a list that are closest to a name, at most three, closest first.</summary>
+    /// <summary>The longest name that gets the closest names. No name of the game data is this long. The distance of
+    /// two names costs the product of their lengths, and a request runs on the thread of the session.</summary>
+    internal const int MaxHintName = 128;
+
+    /// <summary>The names of a list that are closest to a name, at most three, closest first. A name longer than
+    /// <see cref="MaxHintName"/> gets none.</summary>
     internal static IReadOnlyList<string> Closest(string name, IEnumerable<string> candidates)
     {
+        if (name.Length > MaxHintName)
+            return [];
         var limit = Math.Max(2, name.Length / 3);
-        return candidates.Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(c => (Name: c, Distance: Distance(name.ToLowerInvariant(), c.ToLowerInvariant())))
+        var lower = name.ToLowerInvariant();
+        // The distance of two names is at least the difference of their lengths, so such a name is not close.
+        return candidates.Where(c => Math.Abs(c.Length - name.Length) <= limit).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(c => (Name: c, Distance: Distance(lower, c.ToLowerInvariant())))
             .Where(c => c.Distance <= limit)
             .OrderBy(c => c.Distance).ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .Take(3).Select(c => c.Name).ToList();

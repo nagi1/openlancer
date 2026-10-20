@@ -4,8 +4,8 @@ using System.IO;
 using System.Threading.Tasks;
 using LibreLancer;
 using OpenLancer.Data;
+using OpenLancer.Data.Editing;
 using OpenLancer.Editor.Logs;
-using OpenLancer.Mcp;
 using OpenLancer.Studio.Agent;
 
 namespace OpenLancer.Editor.Agent;
@@ -34,6 +34,10 @@ internal sealed class AgentController : IDisposable
     /// <summary>How long the status bar shows the client after its last call.</summary>
     private static readonly TimeSpan ClientShown = TimeSpan.FromSeconds(10);
 
+    /// <summary>The client of the status bar when no call gave the name of its client. A stateless server gets the name
+    /// only in a request that gives it, and a client of an earlier protocol revision gives it only once.</summary>
+    internal const string UnnamedClient = "unnamed client";
+
     private readonly IAgentEditor editor;
     private readonly IUIThread ui;
     private readonly Func<EditorActivity> activity;
@@ -43,7 +47,7 @@ internal sealed class AgentController : IDisposable
     private AgentServer? server;
     private AuditLog? audit;
     private int generation;
-    private (EditorSession? Session, string? Mod) written;
+    private (EditSession? Session, string? Mod) written;
 
     /// <param name="activity">What the editor does now, for the waits of the calls.</param>
     /// <param name="discoveryPath">The discovery file (see <see cref="AgentDiscovery"/>).</param>
@@ -66,8 +70,9 @@ internal sealed class AgentController : IDisposable
     /// <summary>The text of the status bar (section 10 of the MCP1 design).</summary>
     public string StatusText => State switch
     {
-        AgentServerState.On when dispatcher?.Queue is { LastClient: { } client, LastCall: { } last } &&
-                                  DateTimeOffset.UtcNow - last < ClientShown => $"Agent: {client}",
+        AgentServerState.On when dispatcher?.Queue is { LastCall: { } last } queue &&
+                                  DateTimeOffset.UtcNow - last < ClientShown =>
+            $"Agent: {queue.LastClient ?? UnnamedClient}",
         AgentServerState.On => $"Agent server: on, port {Port}",
         AgentServerState.PortInUse => $"Agent server: port {Port} is in use",
         _ => "Agent server: off",
@@ -102,8 +107,8 @@ internal sealed class AgentController : IDisposable
     {
         if (State != AgentServerState.On || dispatcher == null || server == null)
             return;
-        var session = editor.Session;
-        if (session != written.Session || session?.Edits.ActiveMod?.Id != written.Mod)
+        var session = editor.Edits;
+        if (session != written.Session || session?.ActiveMod?.Id != written.Mod)
             WriteDiscovery(server);
         dispatcher.Frame();
     }
@@ -164,8 +169,8 @@ internal sealed class AgentController : IDisposable
 
     private void WriteDiscovery(AgentServer running)
     {
-        var session = editor.Session;
-        written = (session, session?.Edits.ActiveMod?.Id);
+        var session = editor.Edits;
+        written = (session, session?.ActiveMod?.Id);
         try
         {
             using var process = Process.GetCurrentProcess();
@@ -186,7 +191,12 @@ internal sealed class AgentController : IDisposable
     {
         try
         {
-            return new AuditLog(Path.Combine(logFolder, AuditLog.FileName(DateTime.UtcNow)));
+            var path = Path.Combine(logFolder, AuditLog.FileName(DateTime.UtcNow));
+            // The queue writes on worker threads, so the message of a full log goes to the UI thread.
+            return new AuditLog(path, AuditLog.DefaultMaxBytes, () => ui.QueueUIThread(() => editor.Log.Add(
+                ConsoleSeverity.Warning, Source,
+                $"The audit log {path} reached its size limit of {AuditLog.DefaultMaxBytes / (1024 * 1024)} MB. The " +
+                "editor writes no more agent calls into it until the editor starts again.")));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

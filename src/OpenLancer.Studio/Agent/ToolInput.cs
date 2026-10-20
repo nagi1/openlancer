@@ -30,10 +30,16 @@ internal abstract class ToolParam(string name, bool required)
     public abstract bool Fits(JsonNode value);
 }
 
-/// <summary>A text, optionally one of a fixed set of words.</summary>
+/// <summary>A text, optionally one of a fixed set of words. A free text has at most <see cref="MaxLength"/>
+/// characters.</summary>
 internal sealed class TextParam(string name, bool required, IReadOnlyList<string>? choices, string? fallback)
     : ToolParam(name, required)
 {
+    /// <summary>The most characters of a free text. A reference, a name or a filter of the data is much shorter. The
+    /// limit keeps the work of one call on the thread of the session small, for example the search for the closest
+    /// names of a name that does not resolve.</summary>
+    public const int MaxLength = 1024;
+
     public IReadOnlyList<string>? Choices { get; } = choices;
 
     /// <summary>The value when the call does not give the argument, or null.</summary>
@@ -43,19 +49,26 @@ internal sealed class TextParam(string name, bool required, IReadOnlyList<string
     {
         var schema = new JsonObject { ["type"] = "string" };
         if (Choices != null)
+        {
             schema["enum"] = new JsonArray(Choices.Select(c => (JsonNode)c).ToArray());
+        }
         else
+        {
             schema["minLength"] = 1;
+            schema["maxLength"] = MaxLength;
+        }
         if (Default != null)
             schema["default"] = Default;
         return schema;
     }
 
-    public override string Expected => Choices == null ? "a text" : "one of: " + string.Join(", ", Choices);
+    public override string Expected => Choices == null
+        ? $"a text of 1 to {MaxLength} characters"
+        : "one of: " + string.Join(", ", Choices);
 
     public override bool Fits(JsonNode value) =>
         value.GetValueKind() == JsonValueKind.String && value.GetValue<string>() is { Length: > 0 } text &&
-        (Choices == null || Choices.Contains(text, StringComparer.Ordinal));
+        (Choices == null ? text.Length <= MaxLength : Choices.Contains(text, StringComparer.Ordinal));
 }
 
 /// <summary>A whole number from a minimum.</summary>
@@ -164,6 +177,9 @@ internal sealed class ToolInput(params ToolParam[] parameters)
     /// <summary>A tool without arguments.</summary>
     public static readonly ToolInput None = new();
 
+    /// <summary>The most characters of the name of an unknown argument in an error.</summary>
+    private const int MaxShownName = 64;
+
     /// <summary>The schema of the arguments, with the help of each argument.</summary>
     public JsonObject Schema(string tool) => ObjectSchema(tool, Parameters);
 
@@ -202,9 +218,11 @@ internal sealed class ToolInput(params ToolParam[] parameters)
             var parameter = parameters.FirstOrDefault(p => p.Name == name);
             if (parameter == null)
             {
-                throw Bad(Path(name), parameters.Count == 0
-                    ? AgentTexts.Error("argument_none", ("tool", tool), ("name", Path(name)))
-                    : AgentTexts.Error("argument_unknown", ("tool", tool), ("name", Path(name)),
+                // The name of an unknown argument can be long, so the error gives its start only.
+                var shown = Path(name.Length > MaxShownName ? name[..MaxShownName] + "..." : name);
+                throw Bad(shown, parameters.Count == 0
+                    ? AgentTexts.Error("argument_none", ("tool", tool), ("name", shown))
+                    : AgentTexts.Error("argument_unknown", ("tool", tool), ("name", shown),
                         ("names", string.Join(", ", parameters.Select(p => p.Name)))));
             }
             if (value == null)
@@ -220,7 +238,9 @@ internal sealed class ToolInput(params ToolParam[] parameters)
         return new ToolArgs(parameters, values, groups);
     }
 
-    private static EditException Bad(string field, string message) =>
+    /// <summary>The error of an argument that does not fit: <c>invalid_argument</c> with the detail
+    /// <see cref="BadArgument"/> and the name of the argument.</summary>
+    internal static EditException Bad(string field, string message) =>
         new(new EditError(EditErrorKind.InvalidArgument, BadArgument, message) { Field = field });
 }
 

@@ -28,7 +28,7 @@ internal static class AgentTexts
 
     private sealed record Data(IReadOnlyList<string> Instructions, IReadOnlyDictionary<string, string> Fields,
         IReadOnlyDictionary<string, ToolTexts> Tools, IReadOnlyDictionary<string, string> Errors,
-        IReadOnlyDictionary<string, ResourceTexts> Resources);
+        IReadOnlyDictionary<string, ResourceTexts> Resources, IReadOnlyDictionary<string, string> Results);
 
     /// <summary>The server instructions: the order of work in short STE steps (section 9.2 of the MCP1 design).</summary>
     public static IReadOnlyList<string> Instructions => Loaded.Value.Instructions;
@@ -45,6 +45,10 @@ internal static class AgentTexts
     /// <summary>The texts of each resource, by URI.</summary>
     public static IReadOnlyDictionary<string, ResourceTexts> Resources => Loaded.Value.Resources;
 
+    /// <summary>The help of the properties of the results, by JSON name, or by the type name and the JSON name, for
+    /// example <c>RawLineMark.line</c>.</summary>
+    public static IReadOnlyDictionary<string, string> Results => Loaded.Value.Results;
+
     /// <summary>The texts of a tool.</summary>
     /// <exception cref="KeyNotFoundException">The file has no texts for the tool.</exception>
     public static ToolTexts Tool(string name) => Tools.TryGetValue(name, out var texts)
@@ -57,6 +61,19 @@ internal static class AgentTexts
         Tool(tool).Fields.TryGetValue(field, out var own) ? own
         : SharedFields.TryGetValue(field, out var shared) ? shared
         : throw new KeyNotFoundException($"agent-tools.json has no help for the argument {field} of {tool}.");
+
+    /// <summary>The help of a property of a result: the help of the property of its type, else the help of the JSON
+    /// name, or null when the file has neither.</summary>
+    /// <param name="owner">The type that declares the property, or null for a property of each result.</param>
+    public static string? Result(Type? owner, string name)
+    {
+        if (owner != null && Results.TryGetValue(TypeName(owner) + "." + name, out var own))
+            return own;
+        return Results.GetValueOrDefault(name);
+    }
+
+    /// <summary>The name of a type without the arity of a generic type, for example <c>Page</c>.</summary>
+    public static string TypeName(Type type) => type.Name.Split('`')[0];
 
     /// <summary>The text of a host error, with each <c>{name}</c> replaced by its value.</summary>
     /// <exception cref="KeyNotFoundException">The file has no text with the key.</exception>
@@ -88,7 +105,8 @@ internal static class AgentTexts
                 p.Value.GetProperty("name").GetString()!,
                 p.Value.GetProperty("title").GetString()!,
                 p.Value.GetProperty("description").GetString()!,
-                p.Value.GetProperty("text").EnumerateArray().Select(e => e.GetString()!).ToList())));
+                p.Value.GetProperty("text").EnumerateArray().Select(e => e.GetString()!).ToList())),
+            Strings(root.GetProperty("results")));
     }
 
     private static Dictionary<string, string> Strings(JsonElement element) =>

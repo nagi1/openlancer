@@ -29,8 +29,8 @@ internal static class McpCommands
                                             recorded result. The profile opens only to read.
           mcp token                         Print the header with the token of the agent server of the editor, as JSON,
                                             for the headersHelper of Claude Code. Exit 2 and print nothing when no
-                                            editor server runs, or when CLAUDE_CODE_MCP_SERVER_URL names another
-                                            address than the server.
+                                            editor server runs, or when CLAUDE_CODE_MCP_SERVER_URL names no running
+                                            server on 127.0.0.1. The helper gives no token for localhost.
           mcp tools [--json]                Print the agent tools: names, titles and descriptions. --json: print the
                                             tool list of the MCP protocol with the schemas and the hints.
         """;
@@ -117,7 +117,7 @@ internal static class McpCommands
     /// in CLAUDE_CODE_MCP_SERVER_URL. The helper reads no other variable.</summary>
     private static int Token(TextWriter output, TextWriter error)
     {
-        var (headers, problem) = AgentDiscovery.Headers(AgentDiscovery.DefaultPath,
+        var (headers, problem) = AgentDiscovery.Headers(AgentDiscovery.DefaultFolder,
             Environment.GetEnvironmentVariable("CLAUDE_CODE_MCP_SERVER_URL"));
         if (headers == null)
             return Fail(error, problem!);

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Text.Json;
@@ -23,6 +24,11 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
     private const string PopupId = "##agent-menu";
 
     private readonly ConnectDialog connect = new();
+
+    /// <summary>The typed values of the settings fields that are outside their range, by field label. The setting keeps
+    /// its value, and the field shows the typed value with the reason (UI rule 2).</summary>
+    private readonly Dictionary<string, int> drafts = [];
+
     private bool openPopup;
 
     /// <summary>True while a dialog of the menu is open.</summary>
@@ -48,7 +54,8 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
             window.ShowConsoleSearch(AgentController.Source);
         ImGui.SetItemTooltip("Shows the messages of the agent server in the Console.");
         var startWithEditor = settings.StartWithEditor;
-        if (ImGui.MenuItem($"{EditorIcons.Check}   Start the agent server with the editor", "", ref startWithEditor))
+        // ImGui draws the check mark of the setting at the right, so the icon must not look like a check mark.
+        if (ImGui.MenuItem($"{EditorIcons.PlayCircle}   Start the agent server with the editor", "", ref startWithEditor))
         {
             settings.StartWithEditor = startWithEditor;
             window.Settings.Save();
@@ -112,18 +119,15 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
     private void Settings(bool running)
     {
         var settings = window.Settings.Agent;
-        var port = settings.Port;
         ImGui.BeginDisabled(running);
-        ImGui.SetNextItemWidth(MathF.Truncate(120 * ImGuiHelper.Scale));
-        if (ImGui.InputInt("Agent server port", ref port, 0) && port is > 0 and <= 65535)
+        if (RangeField("Agent server port", running
+                ? "Stop the agent server to change its port."
+                : "The port of the agent server on this computer. Use the same port in .mcp.json.",
+                settings.Port, (1, 65535), v => settings.Port = v))
         {
-            settings.Port = port;
             window.Settings.Save();
         }
         ImGui.EndDisabled();
-        ImGui.SetItemTooltip(running
-            ? "Stop the agent server to change its port."
-            : "The port of the agent server on this computer. Use the same port in .mcp.json.");
 
         ImGui.SeparatorText("Agent tool groups");
         ImGui.SetItemTooltip("The agent can use the tools of the selected groups. A tool of a cleared group tells the agent " +
@@ -158,20 +162,24 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         ImGui.SetItemTooltip("The largest work that one agent call can do.");
         var limits = settings.Limits;
         var changed = false;
-        changed |= Field("Rows of a list", "The rows of a list result when the agent gives no limit.", limits.ListRows,
-            v => limits = limits with { ListRows = v });
-        changed |= Field("Most rows of a list", "The most rows of one list result.", limits.MaxListRows,
-            v => limits = limits with { MaxListRows = v });
-        changed |= Field("Size of a result (KB)", "The most text of one result. A larger result asks the agent for pages.",
-            limits.ResultKilobytes, v => limits = limits with { ResultKilobytes = v });
-        changed |= Field("Calls each second", "The most calls that the server takes in one second.", limits.CallsPerSecond,
-            v => limits = limits with { CallsPerSecond = v });
-        changed |= Field("Wait for the editor (s)", "How long a call waits while you edit a field or a dialog is open.",
-            limits.WaitSeconds, v => limits = limits with { WaitSeconds = v });
-        changed |= Field("Time of a check (s)", "How long a check of a retail target can run.", limits.TailSeconds,
-            v => limits = limits with { TailSeconds = v });
-        changed |= Field("Size of a request (MB)", "The largest request. The change applies at the next start of the server.",
-            limits.RequestMegabytes, v => limits = limits with { RequestMegabytes = v });
+        changed |= RangeField("Rows of a page without a limit",
+            "The rows of a list result when the agent gives no limit. A larger list gives more pages.", limits.ListRows,
+            (1, limits.MaxListRows), v => limits = limits with { ListRows = v });
+        changed |= RangeField("Largest page limit", "The largest limit that the agent can ask for in one list result.",
+            limits.MaxListRows, AgentLimits.MaxListRowsRange, v => limits = limits with { MaxListRows = v });
+        changed |= RangeField("Size of a result (KB)",
+            "The most text of one result. A larger result asks the agent for pages.", limits.ResultKilobytes,
+            AgentLimits.ResultKilobytesRange, v => limits = limits with { ResultKilobytes = v });
+        changed |= RangeField("Calls each second", "The most calls that the server takes in one second.",
+            limits.CallsPerSecond, AgentLimits.CallsPerSecondRange, v => limits = limits with { CallsPerSecond = v });
+        changed |= RangeField("Wait for the editor (s)",
+            "How long a call waits while you edit a field or a dialog is open.", limits.WaitSeconds,
+            AgentLimits.WaitSecondsRange, v => limits = limits with { WaitSeconds = v });
+        changed |= RangeField("Time of a check (s)", "How long a check of a retail target can run.", limits.TailSeconds,
+            AgentLimits.TailSecondsRange, v => limits = limits with { TailSeconds = v });
+        changed |= RangeField("Size of a request (MB)",
+            "The largest request. The change applies at the next start of the server.", limits.RequestMegabytes,
+            AgentLimits.RequestMegabytesRange, v => limits = limits with { RequestMegabytes = v });
         if (changed)
         {
             settings.Limits = limits.Clamped();
@@ -179,13 +187,35 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         }
     }
 
-    private static bool Field(string label, string tooltip, int value, Action<int> set)
+    /// <summary>
+    /// A whole-number field of the agent settings with its range. A typed value in the range changes the setting. A
+    /// typed value outside the range stays in the field, and the field shows the reason in red. The setting then keeps
+    /// its value (UI rule 2).
+    /// </summary>
+    /// <returns>True when the setting changed.</returns>
+    private bool RangeField(string label, string tooltip, int value, (int Min, int Max) range, Action<int> set)
     {
+        var shown = drafts.TryGetValue(label, out var draft) ? draft : value;
         ImGui.SetNextItemWidth(MathF.Truncate(120 * ImGuiHelper.Scale));
-        var changed = ImGui.InputInt(label, ref value, 0);
-        ImGui.SetItemTooltip(tooltip);
-        if (changed)
-            set(value);
+        var typed = ImGui.InputInt(label, ref shown, 0);
+        var rangeText = $"Use a value from {range.Min} to {range.Max}.";
+        ImGui.SetItemTooltip($"{tooltip} {rangeText}");
+        var changed = false;
+        if (typed)
+        {
+            if (shown >= range.Min && shown <= range.Max)
+            {
+                drafts.Remove(label);
+                set(shown);
+                changed = true;
+            }
+            else
+            {
+                drafts[label] = shown;
+            }
+        }
+        if (drafts.ContainsKey(label))
+            ImGui.TextColored(EditorTheme.Error, $"{EditorIcons.ExclamationTriangle}  {rangeText} The setting keeps {value}.");
         return changed;
     }
 

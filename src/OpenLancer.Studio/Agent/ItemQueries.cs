@@ -10,29 +10,31 @@ using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Editing.Scene;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Studio.Agent;
 
-/// <summary>The lines of one key of a section (tool <c>get_item</c>).</summary>
+/// <summary>The lines of one key of a section (tools <c>get_item</c> and <c>get_system</c>).</summary>
 /// <param name="Lines">The values of each line of the key, in file order.</param>
 /// <param name="Label">The plain label of the list that the key names, or null.</param>
+/// <param name="Origin">The layer that gives the lines of the key, and if they have an edit that the session did not
+/// save.</param>
 /// <param name="Locked">True when <c>set_fields</c> cannot change the key: the key line, or a section that the editor
 /// cannot change.</param>
-/// <param name="Unsaved">True when the lines of the key have an edit that the session did not save.</param>
-internal sealed record FieldRow(string Key, IReadOnlyList<JsonArray> Lines, string? Label, ValueOrigin Origin, string? Mod,
-    bool Locked, bool Unsaved, IReadOnlyList<Problem> Problems);
+internal sealed record FieldRow(string Key, IReadOnlyList<JsonArray> Lines, string? Label, ItemOrigin Origin, bool Locked,
+    IReadOnlyList<Problem> Problems);
 
 /// <summary>A component of an object and its problems.</summary>
 internal sealed record ComponentRow(ObjectComponent Kind, string Name, IReadOnlyList<Problem> Problems);
 
-/// <summary>A line that names an item.</summary>
+/// <summary>A line of an INI file that names an item.</summary>
 /// <param name="Ref">The canonical reference of the section of the line.</param>
-/// <param name="Line">The position of the line among the lines of the key in the section, from 0.</param>
+/// <param name="KeyLine">The position of the line among the lines of the key in the section, from 0.</param>
 /// <param name="Value">The index of the value in the line, from 0.</param>
 /// <param name="List">The data list of the value.</param>
-internal sealed record ReferenceRow(string Ref, string Key, int Line, int Value, string List);
+internal sealed record ReferenceRow(string Ref, string Key, int KeyLine, int Value, string List);
 
 /// <summary>The text mentions of a nickname in files that the lists do not read.</summary>
 /// <param name="Pending">True while the editor builds the text index. Call the tool again in a few seconds.</param>
@@ -53,8 +55,15 @@ internal sealed record SectionItemView(string Ref, string Type, string File, str
     /// <summary>The objects whose <c>parent</c> line names the object.</summary>
     public IReadOnlyList<string> Children { get; init; } = [];
 
-    /// <summary>The lines that name the item, on request.</summary>
+    /// <summary>The first lines of the INI files that name the item, on request.</summary>
     public IReadOnlyList<ReferenceRow>? UsedBy { get; init; }
+
+    /// <summary>The first lines of the mission scripts that name the item, on request.</summary>
+    public IReadOnlyList<MissionReferenceView>? MissionUsedBy { get; init; }
+
+    /// <summary>The number of lines of the INI files and of the mission scripts that name the item, on
+    /// request.</summary>
+    public int? UsedByTotal { get; init; }
 
     /// <summary>The text mentions of the nickname, on request.</summary>
     public MentionsView? Mentions { get; init; }
@@ -75,17 +84,28 @@ internal sealed record PropGroupRow(string Ref, string Nickname, string Name, st
 
 /// <summary>An asset of the Assets panel (tool <c>search_assets</c>).</summary>
 /// <param name="Ref">The <c>asset:</c> reference.</param>
-/// <param name="Marks">The marks of the tile: <c>added</c>, <c>changed</c> and <c>unsaved</c>.</param>
+/// <param name="Marks">The marks of the tile.</param>
 /// <param name="NotPlaceable">Why the Scene cannot place the asset, or null.</param>
-internal sealed record AssetItemRow(string Ref, string Nickname, string Detail, string Category, ValueOrigin Origin,
-    string? Mod, IReadOnlyList<string> Marks, string? NotPlaceable);
+internal sealed record AssetItemRow(string Ref, string Nickname, string Detail, string Category, ItemOrigin Origin,
+    IReadOnlyList<AssetMark> Marks, string? NotPlaceable);
 
-/// <summary>
-/// The result of <c>get_item</c>: the kind of the item and the view of that kind. Exactly one view is not null.
-/// </summary>
-/// <param name="Kind"><c>section</c>, <c>mission_script</c>, <c>trigger</c>, <c>mission_item</c>,
-/// <c>prefab_instance</c>, <c>prefab</c>, <c>cutscene_element</c>, <c>prop_group</c> or <c>asset</c>.</param>
-internal sealed record ItemView(string Kind)
+/// <summary>The kind of the item of <c>get_item</c>: it names the view that the result has.</summary>
+internal enum ItemViewKind
+{
+    Section,
+    MissionScript,
+    Trigger,
+    MissionItem,
+    PrefabInstance,
+    Prefab,
+    CutsceneElement,
+    PropGroup,
+    Asset,
+}
+
+/// <summary>The result of <c>get_item</c>: the kind of the item and the view of that kind. Exactly one view is not
+/// null.</summary>
+internal sealed record ItemView(ItemViewKind Kind)
 {
     public SectionItemView? Section { get; init; }
 
@@ -106,12 +126,15 @@ internal sealed record ItemView(string Kind)
     public AssetItemRow? Asset { get; init; }
 }
 
-/// <summary>The result of <c>find_references</c>.</summary>
-/// <param name="Lines">The lines of the INI files that name the item.</param>
-/// <param name="MissionLines">The lines of the mission scripts that name the item.</param>
+/// <summary>The result of <c>find_references</c>: one page of the lines that name an item. The page counts the lines
+/// of the INI files first, then the lines of the mission scripts.</summary>
+/// <param name="Lines">The lines of the INI files of the page.</param>
+/// <param name="MissionLines">The lines of the mission scripts of the page.</param>
 /// <param name="Mentions">The text mentions of the nickname, or null for an item without a nickname.</param>
+/// <param name="Total">The number of lines of all pages.</param>
+/// <param name="NextCursor">The cursor of the next page, or null on the last page.</param>
 internal sealed record ReferencesView(IReadOnlyList<ReferenceRow> Lines, IReadOnlyList<MissionReferenceView> MissionLines,
-    MentionsView? Mentions);
+    MentionsView? Mentions, int Total, string? NextCursor);
 
 /// <summary>A value of a data list (tool <c>list_values</c>).</summary>
 /// <param name="Value">The name that a line writes.</param>
@@ -119,11 +142,10 @@ internal sealed record ReferencesView(IReadOnlyList<ReferenceRow> Lines, IReadOn
 /// <param name="Detail">The short text of the detail keys of the list.</param>
 /// <param name="Ref">The reference of the section of the entry, or null for an enum value.</param>
 /// <param name="Problem">Why the engine cannot use the entry, or null.</param>
-internal sealed record ValueRow(string Value, string Label, string Detail, ValueOrigin Origin, string? Mod, string? Ref,
-    bool Unsaved, string? Problem);
+internal sealed record ValueRow(string Value, string Label, string Detail, ItemOrigin Origin, string? Ref, string? Problem);
 
 /// <summary>One line with problems of a raw text.</summary>
-/// <param name="Line">The line, from 1.</param>
+/// <param name="Line">The line in the text, from 1.</param>
 /// <param name="BaseGame">True when each problem of the line is a problem of the base game.</param>
 /// <param name="Note">True for a note without a problem, for example why the editor cannot change a section.</param>
 internal sealed record RawLineMark(int Line, DiagnosticSeverity Severity, string Message, bool BaseGame, bool Note);
@@ -146,28 +168,28 @@ internal static class ItemQueries
         switch (reference.Kind)
         {
             case ItemRefKind.Script:
-                return ToolResult.Of(new ItemView("mission_script") { MissionScript = missions.GetMission(ScriptRef.Parse(text)) });
+                return ToolResult.Of(new ItemView(ItemViewKind.MissionScript) { MissionScript = missions.GetMission(ScriptRef.Parse(text)) });
             case ItemRefKind.Trigger:
-                return ToolResult.Of(new ItemView("trigger") { Trigger = missions.GetTrigger(TriggerRef.Parse(text)) });
+                return ToolResult.Of(new ItemView(ItemViewKind.Trigger) { Trigger = missions.GetTrigger(TriggerRef.Parse(text)) });
             case ItemRefKind.Label:
-                return ToolResult.Of(new ItemView("mission_item") { MissionItem = missions.GetItem(LabelRef.Parse(text)) });
+                return ToolResult.Of(new ItemView(ItemViewKind.MissionItem) { MissionItem = missions.GetItem(LabelRef.Parse(text)) });
             case ItemRefKind.Instance:
-                return ToolResult.Of(new ItemView("prefab_instance") { PrefabInstance = missions.GetPrefabInstance(text) });
+                return ToolResult.Of(new ItemView(ItemViewKind.PrefabInstance) { PrefabInstance = missions.GetPrefabInstance(text) });
             case ItemRefKind.Prefab:
-                return ToolResult.Of(new ItemView("prefab") { Prefab = Prefab(missions, reference) });
+                return ToolResult.Of(new ItemView(ItemViewKind.Prefab) { Prefab = Prefab(missions, reference) });
             case ItemRefKind.Act:
                 throw Bad(text, AgentTexts.Error("ref_act"));
             case ItemRefKind.Cutscene:
                 throw Bad(text, AgentTexts.Error("ref_cutscene"));
             case ItemRefKind.CutsceneEntity or ItemRefKind.CutsceneEvent:
-                return ToolResult.Of(new ItemView("cutscene_element")
+                return ToolResult.Of(new ItemView(ItemViewKind.CutsceneElement)
                 {
                     CutsceneElement = CutsceneQueries.Element(session, ItemRefs.ResolveCutsceneElement(session, reference)),
                 });
             case ItemRefKind.Group:
-                return ToolResult.Of(new ItemView("prop_group") { PropGroup = GroupRow(session, Group(session, reference)) });
+                return ToolResult.Of(new ItemView(ItemViewKind.PropGroup) { PropGroup = GroupRow(session, Group(session, reference)) });
             case ItemRefKind.Asset:
-                return ToolResult.Of(new ItemView("asset") { Asset = Asset(session, reference) });
+                return ToolResult.Of(new ItemView(ItemViewKind.Asset) { Asset = Asset(session, reference) });
         }
 
         var section = ItemRefs.ResolveSection(session, reference);
@@ -175,15 +197,15 @@ internal static class ItemQueries
         {
             var item = ItemRef.Parse(ItemRefs.Of(section));
             return section.Id.Type.Equals("Trigger", StringComparison.OrdinalIgnoreCase) && section.Id.Key is { } trigger
-                ? ToolResult.Of(new ItemView("trigger")
+                ? ToolResult.Of(new ItemView(ItemViewKind.Trigger)
                 {
                     Trigger = missions.GetTrigger(new TriggerRef(section.Path, trigger)),
                 })
-                : ToolResult.Of(new ItemView("mission_item") { MissionItem = missions.GetItem(item) });
+                : ToolResult.Of(new ItemView(ItemViewKind.MissionItem) { MissionItem = missions.GetItem(item) });
         }
-        return ToolResult.Of(new ItemView("section")
+        return ToolResult.Of(new ItemView(ItemViewKind.Section)
         {
-            Section = SectionItem(call, section, call.Args.Flag("include_raw"), call.Args.Flag("include_used_by")),
+            Section = SectionItem(call, reference, section, call.Args.Flag("include_raw"), call.Args.Flag("include_used_by")),
         });
     }
 
@@ -202,7 +224,7 @@ internal static class ItemQueries
                 if (session.Lists.IsScoped(list.Id) || session.Lists.List(list.Id)?.Find(name) != null)
                     lines.AddRange(Rows(session, list.Id, session.Lists.ReferencesTo(list.Id, name)));
             }
-            return ToolResult.Of(new ReferencesView(lines, [], Mentions(session, name)));
+            return ToolResult.Of(References(call, lines, MissionLinesOfName(session, name), Mentions(session, name)));
         }
 
         var reference = ItemRefs.Parse(refText!);
@@ -212,55 +234,66 @@ internal static class ItemQueries
             var script = reference.Kind == ItemRefKind.Line
                 ? ItemRefs.Of(new SectionRef(reference.Path!, reference.Section!))
                 : refText!;
-            return ToolResult.Of(new ReferencesView([], session.Missions.Queries.FindReferences(script), null));
+            return ToolResult.Of(References(call, [], session.Missions.Queries.FindReferences(script), null));
         }
         var section = ItemRefs.ResolveSection(session, reference);
         var key = section.Id.Key ?? throw Bad(refText!, AgentTexts.Error("ref_no_key"));
-        var found = new List<ReferenceRow>();
-        foreach (var list in session.Lists.SourcesOf(section.Path, section.Id.Type))
-        {
-            var scope = session.Lists.IsScoped(list.Id) ? section.Path : null;
-            found.AddRange(Rows(session, list.Id, session.Lists.ReferencesTo(list.Id, key, scope)));
-        }
-        IReadOnlyList<MissionReferenceView> missionLines = reference.Kind is ItemRefKind.Object or ItemRefKind.System or
-            ItemRefKind.Base or ItemRefKind.ListEntry
-            ? TryMissionLines(session, refText!)
-            : [];
-        return ToolResult.Of(new ReferencesView(found, missionLines, Mentions(session, key)));
+        return ToolResult.Of(References(call, LinesNaming(session, section, key), MissionLinesOf(session, reference, refText!),
+            Mentions(session, key)));
     }
 
     public static ToolStep ListValues(ToolCall call)
     {
         var session = call.Session;
         var id = call.Args.Text("list")!;
+        // The argument takes the ids of the retail rule data. A test session can have other rule data.
         if (!session.Lists.RuleData.Lists.TryGetValue(id, out var definition))
         {
-            throw new EditException(new EditError(EditErrorKind.InvalidArgument, "UnknownList",
-                AgentTexts.Error("list_unknown", ("list", id),
-                    ("lists", string.Join(", ", session.Lists.RuleData.Lists.Keys.Order(StringComparer.Ordinal)))))
-            {
-                Field = "list",
-            });
+            throw ToolInput.Bad("list", AgentTexts.Error("list_unknown", ("list", id),
+                ("lists", string.Join(", ", session.Lists.RuleData.Lists.Keys.Order(StringComparer.Ordinal)))));
         }
+        var source = definition.Source;
+        var system = call.Args.Text("system");
+        var script = call.Args.Text("script");
         ListView? view;
-        if (session.Lists.IsScoped(definition.Id))
+        if (source is { Scoped: true, Role: null })
         {
-            var system = call.Args.Text("system") ?? throw new EditException(new EditError(EditErrorKind.InvalidArgument,
-                ToolInput.BadArgument, AgentTexts.Error("list_needs_system", ("list", definition.Id))) { Field = "system" });
-            var path = SceneQueries.System(session, system).Path ?? throw new EditException(new EditError(
-                EditErrorKind.NotFound, ItemRefs.NotFound, AgentTexts.Error("system_no_file", ("system", system))));
-            view = session.Lists.List(definition.Id, path);
+            if (script != null)
+                throw ToolInput.Bad("script", AgentTexts.Error("list_no_script", ("list", id)));
+            var nickname = system ?? throw ToolInput.Bad("system", AgentTexts.Error("list_needs_system", ("list", id)));
+            var path = SceneQueries.System(session, nickname).Path ?? throw new EditException(new EditError(
+                EditErrorKind.NotFound, ItemRefs.NotFound, AgentTexts.Error("system_no_file", ("system", nickname))));
+            view = session.Lists.List(id, path);
+        }
+        else if (source is { Scoped: true })
+        {
+            if (system != null)
+                throw ToolInput.Bad("system", AgentTexts.Error("list_no_system", ("list", id)));
+            var text = script ?? throw ToolInput.Bad("script", AgentTexts.Error("list_needs_script", ("list", id)));
+            var path = ScriptRef.Parse(text).Path;
+            if (!session.Missions.IsMissionFile(path) || session.OpenDocument(path) is not { State.Exists: true })
+            {
+                throw new EditException(new EditError(EditErrorKind.NotFound, ItemRefs.NotFound,
+                    AgentTexts.Error("script_none", ("script", text))) { Field = "script" });
+            }
+            view = session.Lists.List(id, path);
         }
         else
-            view = session.Lists.List(definition.Id);
-        var text = call.Args.Text("text");
+        {
+            if (system != null)
+                throw ToolInput.Bad("system", AgentTexts.Error("list_no_system", ("list", id)));
+            if (script != null)
+                throw ToolInput.Bad("script", AgentTexts.Error("list_no_script", ("list", id)));
+            view = session.Lists.List(id);
+        }
+        var filter = call.Args.Text("text");
         var rows = (view?.Entries ?? [])
             .Select(e => (Entry: e, Label: e.Name ?? (e.Section is { } s ? call.Texts.NameOf(s) : "")))
-            .Where(r => ToolCall.Matches(text, r.Entry.Value, r.Label, r.Entry.Detail))
+            .Where(r => ToolCall.Matches(filter, r.Entry.Value, r.Label, r.Entry.Detail))
             .ToList();
-        return ToolResult.Of(call.Paged(rows, r => new ValueRow(r.Entry.Value, r.Label, r.Entry.Detail, r.Entry.Origin,
-            r.Entry.ModId, r.Entry.Section is { } s ? ItemRefs.Canonical(session, s) : null, r.Entry.Unsaved,
-            r.Entry.Problem)));
+        return ToolResult.Of(call.Paged(rows, r => new ValueRow(r.Entry.Value, r.Label, r.Entry.Detail,
+            new ItemOrigin(r.Entry.Origin, r.Entry.ModId, r.Entry.Unsaved),
+            r.Entry.Section is { } s ? ItemRefs.Canonical(session, s) : null, r.Entry.Problem)));
     }
 
     public static ToolStep SearchAssets(ToolCall call)
@@ -278,7 +311,7 @@ internal static class ItemQueries
         var rows = catalog.Search(category, call.Args.Text("text") ?? "", r => r.Nickname)
             .Where(r => kind == null || AgentTools.Snake(r.Asset.Kind.ToString()) == kind)
             .ToList();
-        return ToolResult.Of(call.Paged(rows, r => AssetRow(r)));
+        return ToolResult.Of(call.Paged(rows, AssetRow));
     }
 
     public static ToolStep ListPropGroups(ToolCall call)
@@ -318,42 +351,49 @@ internal static class ItemQueries
             ids: sections.Select(s => s.Id).ToList());
         var diagnostics = session.Missions.IsMissionFile(path)
             ? session.Missions.Model(path).Problems
-            : sections.SelectMany(s => session.Check(s).Concat(session.Lists.Problems(s).Select(p => p.Diagnostic))
-                .Select(d => d with { Target = d.Target ?? s }));
+            : sections.SelectMany(s => AgentRows.DiagnosticsOf(session, s));
         var marks = IniLint.Marks(raw, diagnostics.Where(d => one == null || one.Equals(d.Target)), showBaseGame: false);
         return ToolResult.Of(new RawIniView(path, one == null ? null : ItemRefs.Canonical(session, one), raw.Text,
             marks.Select(m => new RawLineMark(m.Line + 1, m.Severity, m.Message, m.BaseGame, m.Note)).ToList()));
     }
 
-    /// <summary>The view of a section of an INI file that is not a mission file.</summary>
-    private static SectionItemView SectionItem(ToolCall call, SectionRef section, bool raw, bool usedBy)
+    /// <summary>The fields of a section: the lines of each key with its label, its layer, its unsaved mark, its lock
+    /// and its problems.</summary>
+    /// <param name="diagnostics">The diagnostics of the section (see <see cref="AgentRows.DiagnosticsOf"/>).</param>
+    internal static IReadOnlyList<FieldRow> Fields(EditSession session, SectionRef section, SectionView view,
+        IReadOnlyList<Diagnostic> diagnostics)
     {
-        var session = call.Session;
-        var view = session.Get(section)!;
-        var schema = session.Schema(section);
-        var keyEntry = schema.FirstOrDefault(k => k.IsKeyEntry)?.Name ?? KeyOf(view.Type);
+        var keyEntry = KeyEntry(session, section, view);
         var saved = session.SavedSection(section);
-        var diagnostics = session.Check(section).Concat(session.Lists.Problems(section).Select(p => p.Diagnostic))
-            .Select(d => d with { Target = d.Target ?? section }).ToList();
-        var fields = view.Entries.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase).Select(g =>
+        return view.Entries.GroupBy(e => e.Name, StringComparer.OrdinalIgnoreCase).Select(g =>
         {
             var (origin, mod) = session.Origin(section, g.Key);
             var label = session.Lists.Rules(section, g.Key).SelectMany(r => r.Lists)
                 .Select(l => session.Lists.RuleData.Lists.TryGetValue(l, out var d) ? d.Label : null).FirstOrDefault(l => l != null);
             var unsaved = saved == null || !SameLines(saved, view, g.Key);
-            return new FieldRow(g.Key, g.Select(e => AgentRows.Values(e.Values)).ToList(), label, origin, mod,
-                view.ReadOnlyReason != null || g.Key.Equals(keyEntry, StringComparison.OrdinalIgnoreCase), unsaved,
+            return new FieldRow(g.Key, g.Select(e => AgentRows.Values(e.Values)).ToList(), label,
+                new ItemOrigin(origin, mod, unsaved),
+                view.ReadOnlyReason != null || g.Key.Equals(keyEntry, StringComparison.OrdinalIgnoreCase),
                 diagnostics.Where(d => g.Key.Equals(d.Key, StringComparison.OrdinalIgnoreCase))
                     .Select(d => AgentRows.ProblemOf(session, d)).ToList());
         }).ToList();
+    }
+
+    /// <summary>The view of a section of an INI file that is not a mission file.</summary>
+    private static SectionItemView SectionItem(ToolCall call, ItemReference reference, SectionRef section, bool raw,
+        bool usedBy)
+    {
+        var session = call.Session;
+        var view = session.Get(section)!;
+        var diagnostics = AgentRows.DiagnosticsOf(session, section);
         var isObject = SceneSections.KindOf(session, section) == SceneKind.Object;
         var nickname = section.Id.Key;
-        return new SectionItemView(ItemRefs.Canonical(session, section), view.Type, section.Path,
+        var item = new SectionItemView(ItemRefs.Canonical(session, section), view.Type, section.Path,
             call.Texts.TextOf(section, view.Type.Equals("system", StringComparison.OrdinalIgnoreCase) ? "strid_name" : "ids_name"),
-            AgentRows.OriginOf(session, section, view, keyEntry))
+            AgentRows.OriginOf(session, section, view, KeyEntry(session, section, view)))
         {
             ReadOnlyReason = view.ReadOnlyReason,
-            Fields = fields,
+            Fields = Fields(session, section, view, diagnostics),
             Components = isObject
                 ? ObjectComponents.Of(session, section).Select(c => new ComponentRow(c.Kind, ObjectComponents.Name(c.Kind),
                     c.Problems.Select(p => AgentRows.ProblemOf(session, p)).ToList())).ToList()
@@ -365,22 +405,31 @@ internal static class ItemQueries
                                 string.Equals(SceneSections.Last(child, "parent"), nickname, StringComparison.OrdinalIgnoreCase))
                     .Select(s => ItemRefs.Canonical(session, s)).ToList()
                 : [],
-            UsedBy = usedBy && nickname != null
-                ? session.Lists.SourcesOf(section.Path, section.Id.Type).SelectMany(l => Rows(session, l.Id,
-                    session.Lists.ReferencesTo(l.Id, nickname, session.Lists.IsScoped(l.Id) ? section.Path : null))).ToList()
-                : null,
-            Mentions = usedBy && nickname != null ? Mentions(session, nickname) : null,
             Raw = raw ? RawSectionEdit.Format(view) : null,
             Problems = diagnostics.Where(d => d.Key == null).Select(d => AgentRows.ProblemOf(session, d)).ToList(),
         };
+        if (!usedBy || nickname == null)
+            return item;
+        // A popular item has thousands of users, so the view gives the first rows only. find_references pages them all.
+        var lines = LinesNaming(session, section, nickname);
+        var missionLines = MissionLinesOf(session, reference, ItemRefs.Canonical(session, section));
+        var rows = call.Limits.ListRows;
+        return item with
+        {
+            UsedBy = lines.Take(rows).ToList(),
+            MissionUsedBy = missionLines.Take(rows).ToList(),
+            UsedByTotal = lines.Count + missionLines.Count,
+            Mentions = Mentions(session, nickname),
+        };
     }
 
-    /// <summary>The key line of a section type without a schema, for its origin.</summary>
-    private static string KeyOf(string type) => type.ToLowerInvariant() switch
-    {
-        "nebula" or "asteroids" => "zone",
-        _ => "nickname",
-    };
+    /// <summary>The key line of a section, for its origin and its lock.</summary>
+    private static string KeyEntry(EditSession session, SectionRef section, SectionView view) =>
+        session.Schema(section).FirstOrDefault(k => k.IsKeyEntry)?.Name ?? view.Type.ToLowerInvariant() switch
+        {
+            "nebula" or "asteroids" => "zone",
+            _ => "nickname",
+        };
 
     /// <summary>True when a key has the same lines in two sections.</summary>
     private static bool SameLines(Section saved, SectionView view, string key)
@@ -391,8 +440,26 @@ internal static class ItemQueries
         return before.SequenceEqual(now, StringComparer.Ordinal);
     }
 
+    /// <summary>The lines of the INI files that name a section by its key, through each list whose entries the section
+    /// gives.</summary>
+    private static List<ReferenceRow> LinesNaming(EditSession session, SectionRef section, string key) =>
+        session.Lists.SourcesOf(section.Path, section.Id.Type).SelectMany(l => Rows(session, l.Id,
+            session.Lists.ReferencesTo(l.Id, key, session.Lists.IsScoped(l.Id) ? section.Path : null))).ToList();
+
     private static IEnumerable<ReferenceRow> Rows(EditSession session, string list, IEnumerable<ListReference> references) =>
         references.Select(r => new ReferenceRow(ItemRefs.Canonical(session, r.Section), r.Key, r.Line, r.Index, list));
+
+    /// <summary>One page of the lines that name an item: the lines of the INI files first, then the mission
+    /// lines.</summary>
+    private static ReferencesView References(ToolCall call, IReadOnlyList<ReferenceRow> lines,
+        IReadOnlyList<MissionReferenceView> missionLines, MentionsView? mentions)
+    {
+        var all = lines.Select(l => (Ini: (ReferenceRow?)l, Mission: (MissionReferenceView?)null))
+            .Concat(missionLines.Select(m => (Ini: (ReferenceRow?)null, Mission: (MissionReferenceView?)m))).ToList();
+        var page = call.Paged(all, r => r);
+        return new ReferencesView(page.Rows.Select(r => r.Ini).OfType<ReferenceRow>().ToList(),
+            page.Rows.Select(r => r.Mission).OfType<MissionReferenceView>().ToList(), mentions, page.Total, page.NextCursor);
+    }
 
     /// <summary>The text mentions of a nickname. While the text index builds, the result says so and the tool does not
     /// wait for it, because the editor runs the call between two frames.</summary>
@@ -406,17 +473,43 @@ internal static class ItemQueries
         return new MentionsView(false, session.StoryMentions(nickname));
     }
 
-    /// <summary>The mission lines that name a name of the game data, or none when no mission line can name it.</summary>
-    private static IReadOnlyList<MissionReferenceView> TryMissionLines(EditSession session, string reference)
+    /// <summary>The mission lines that name an item of the game data, or none when no mission line can name it. A
+    /// mission line names an object, a system, a base or an entry of some data lists.</summary>
+    private static IReadOnlyList<MissionReferenceView> MissionLinesOf(EditSession session, ItemReference reference,
+        string text)
     {
+        if (reference.Kind is not (ItemRefKind.Object or ItemRefKind.System or ItemRefKind.Base or ItemRefKind.ListEntry))
+            return [];
         try
         {
-            return session.Missions.Queries.FindReferences(reference);
+            return session.Missions.Queries.FindReferences(text);
         }
         catch (EditException e) when (e.Error.Kind == EditErrorKind.InvalidArgument)
         {
             return [];
         }
+    }
+
+    /// <summary>
+    /// The mission lines that name a name: as a system object, and as a system, a base or an entry of each data list
+    /// that mission lines name. A line value counts once. Each search reads all mission scripts, so the method searches
+    /// twice and not once for each kind: once for the object kinds, whose search skips a name of an item of the script,
+    /// and once for all other kinds.
+    /// </summary>
+    private static IReadOnlyList<MissionReferenceView> MissionLinesOfName(EditSession session, string name)
+    {
+        var references = session.Missions.References;
+        IReadOnlyCollection<MissionValueKind> world =
+        [
+            .. session.Lists.RuleData.Lists.Keys.Select(EditSession.MissionKindOfList).OfType<MissionValueKind>()
+                .Concat([MissionValueKind.System, MissionValueKind.Base]).Distinct(),
+        ];
+        var seen = new HashSet<(SectionRef, int, int)>();
+        return references.Uses(MissionReferences.ObjectKinds, name).Concat(references.Uses(world, name))
+            .Where(u => seen.Add((u.Section, u.Row, u.Value)))
+            .Select(u => new MissionReferenceView(new RowRef(new ItemRef(u.Section.Path, u.Section.Id), u.Row).Reference,
+                u.Key, u.Value))
+            .ToList();
     }
 
     private static MissionPrefabView Prefab(MissionQueries missions, ItemReference reference)
@@ -456,9 +549,9 @@ internal static class ItemQueries
 
     private static AssetItemRow AssetRow(AssetRow row) => new(
         ItemRefs.Format(new ItemReference(ItemRefKind.Asset, row.Asset.Id) { Scope = AgentTools.Snake(row.Asset.Kind.ToString()) }),
-        row.Nickname, row.Detail, row.CategoryId, row.Origin, row.ModId,
-        Enum.GetValues<AssetMark>().Where(m => m != AssetMark.None && row.Mark.HasFlag(m))
-            .Select(m => AgentTools.Snake(m.ToString())).ToList(),
+        row.Nickname, row.Detail, row.CategoryId,
+        new ItemOrigin(row.Origin, row.ModId, row.Mark.HasFlag(AssetMark.Unsaved)),
+        Enum.GetValues<AssetMark>().Where(m => m != AssetMark.None && row.Mark.HasFlag(m)).ToList(),
         row.NotPlaceable);
 
     private static EditException Bad(string target, string message) =>

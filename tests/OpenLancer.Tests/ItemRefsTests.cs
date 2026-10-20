@@ -302,4 +302,17 @@ public sealed class ItemRefsTests
         Assert.Equal(["ol_station_1", "ol_station_2", "ol_station_3"], ItemRefs.Closest("ol_station_4", names));
         Assert.Empty(ItemRefs.Closest("nothing", names.Take(1)));
     }
+
+    /// <summary>The distance of two names costs the product of their lengths, and a call runs on the thread of the
+    /// session. So a long name gets no closest names, and the names of another length do not count.</summary>
+    [Fact]
+    public void ALongNameGetsNoClosestNames()
+    {
+        var name = new string('x', ItemRefs.MaxHintName);
+        var names = Enumerable.Range(1000, 100).Select(i => new string('x', ItemRefs.MaxHintName - 4) + i).ToList();
+
+        Assert.Empty(ItemRefs.Closest(name + "x", [name]));
+        Assert.Equal([name], ItemRefs.Closest(name[..^1] + "y", [name, "x"]));
+        Assert.Equal(3, ItemRefs.Closest(name, names).Count);
+    }
 }

@@ -115,7 +115,7 @@ To connect an agent to the editor:
 
 The text names the server address `http://127.0.0.1:<port>/mcp` and the token helper `"<OpenLancer folder>\oltool.exe" mcp token`. The editor makes a new token at each start of the server, and the helper gives it only to the running server. The status bar shows the state of the server. **Agent > Show agent messages** shows the messages of the server in the Console. **Agent > Agent settings** has the port (47815 by default), the tool groups and the limits.
 
-The server accepts connections from this computer only. It listens on 127.0.0.1, and each request needs the token. Never put a proxy or a tunnel, for example a Tailscale Funnel, in front of the port of the agent server.
+The server accepts connections from this computer only. It listens on 127.0.0.1, and each request needs the token. Use the address with `127.0.0.1`, not `localhost`. The helper gives no token for `localhost`, because another program can listen on the IPv6 address of `localhost`. Never put a proxy or a tunnel, for example a Tailscale Funnel, in front of the port of the agent server.
 
 To run the tools without the editor, add a server that starts oltool:
 

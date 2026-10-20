@@ -51,6 +51,33 @@ public sealed class OltoolMcpTests
         Assert.Contains("get_console: Read the Console (editor only)", output);
     }
 
+    /// <summary>The token helper exits 2 and prints nothing on stdout for an address that is not 127.0.0.1 (section
+    /// 13.2, item 4 of the MCP1 design). It refuses such an address before it reads a discovery file, so the test does
+    /// not depend on an editor of the user.</summary>
+    [Theory]
+    [InlineData("http://localhost:47815/mcp")]
+    [InlineData("http://[::1]:47815/mcp")]
+    [InlineData("http://example.com:47815/mcp")]
+    [InlineData("https://127.0.0.1:47815/mcp")]
+    public async Task TheTokenHelperExits2ForAnAddressThatIsNot127001(string url)
+    {
+        var info = new ProcessStartInfo(Tool)
+        {
+            ArgumentList = { "mcp", "token" },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        info.Environment["CLAUDE_CODE_MCP_SERVER_URL"] = url;
+        using var process = Process.Start(info)!;
+        var output = process.StandardOutput.ReadToEndAsync(Token);
+        var errors = process.StandardError.ReadToEndAsync(Token);
+
+        await process.WaitForExitAsync(Token).WaitAsync(TimeSpan.FromMinutes(1), Token);
+        Assert.Equal(2, process.ExitCode);
+        Assert.Empty(await output);
+        Assert.Contains("Do not use localhost.", await errors);
+    }
+
     [Fact]
     public void ServeNeedsTheModAndReadOnlyInThisBuild()
     {

@@ -11,10 +11,12 @@ using OpenLancer.Data.Editing.Commands;
 namespace OpenLancer.Studio.Agent;
 
 /// <summary>Where a section or an entry comes from, for a row of a result.</summary>
-/// <param name="Mod">The mod of the origin <see cref="ValueOrigin.LowerMod"/> or <see cref="ValueOrigin.ActiveMod"/>,
+/// <param name="Layer">The layer of the edit view that gives the item: the base data, a lower mod or the active
+/// mod.</param>
+/// <param name="Mod">The mod of the layer <see cref="ValueOrigin.LowerMod"/> or <see cref="ValueOrigin.ActiveMod"/>,
 /// else null.</param>
-/// <param name="Unsaved">True when the section has an edit that the session did not save.</param>
-internal sealed record ItemOrigin(ValueOrigin Origin, string? Mod, bool Unsaved);
+/// <param name="Unsaved">True when the item has an edit that the session did not save.</param>
+internal sealed record ItemOrigin(ValueOrigin Layer, string? Mod, bool Unsaved);
 
 /// <summary>The helpers that the query tools share: values of lines, origins of sections and problems.</summary>
 internal static class AgentRows
@@ -37,7 +39,8 @@ internal static class AgentRows
     public static JsonArray Values(IReadOnlyList<ValueBase> values) => new(values.Select(v => (JsonNode?)Value(v)).ToArray());
 
     /// <summary>The numbers of the last line of a key, or null when the section has no such line or a value is not a
-    /// number.</summary>
+    /// finite number. JSON has no value for NaN or an infinity, and the parser reads <c>nan</c> and <c>1e39</c> as
+    /// such values.</summary>
     public static float[]? Numbers(SectionView view, string key)
     {
         if (view.Lines(key).LastOrDefault() is not { Values.Count: > 0 } line)
@@ -46,7 +49,7 @@ internal static class AgentRows
         for (var i = 0; i < numbers.Length; i++)
         {
             if (!float.TryParse(line.Values[i].ToString().Trim(), NumberStyles.Float, CultureInfo.InvariantCulture,
-                    out numbers[i]))
+                    out numbers[i]) || !float.IsFinite(numbers[i]))
                 return null;
         }
         return numbers;
@@ -70,10 +73,14 @@ internal static class AgentRows
     public static Problem ProblemOf(EditSession session, Diagnostic diagnostic) =>
         Problem.From(diagnostic, diagnostic.Target is { } target ? ItemRefs.Canonical(session, target) : null);
 
+    /// <summary>The diagnostics of the field checks and the list checks of a section, each with a target.</summary>
+    public static IReadOnlyList<Diagnostic> DiagnosticsOf(EditSession session, SectionRef section) =>
+        session.Check(section).Concat(session.Lists.Problems(section).Select(p => p.Diagnostic))
+            .Select(d => d with { Target = d.Target ?? section }).ToList();
+
     /// <summary>The problems of the field checks and the list checks of a section.</summary>
     public static IReadOnlyList<Problem> ProblemsOf(EditSession session, SectionRef section) =>
-        session.Check(section).Concat(session.Lists.Problems(section).Select(p => p.Diagnostic))
-            .Select(d => ProblemOf(session, d with { Target = d.Target ?? section })).ToList();
+        DiagnosticsOf(session, section).Select(d => ProblemOf(session, d)).ToList();
 
     /// <summary>True when a problem shows: each problem, or without <paramref name="baseGame"/> each problem whose origin
     /// is not the base game (decision D519).</summary>

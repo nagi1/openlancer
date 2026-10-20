@@ -1,9 +1,9 @@
 using LibreLancer;
 using OpenLancer.Data;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Editor.Agent;
 using OpenLancer.Editor.Logs;
-using OpenLancer.Mcp;
 using OpenLancer.Studio.Agent;
 
 namespace OpenLancer.Editor;
@@ -20,7 +20,8 @@ internal sealed partial class EditorWindow : IAgentEditor
     /// <summary>The agent server and its menu. The window makes them before its first frame.</summary>
     private void MakeAgent()
     {
-        agentController = new AgentController(this, this, Activity, AgentDiscovery.DefaultPath,
+        agentController = new AgentController(this, this, Activity,
+            AgentDiscovery.PathOf(AgentDiscovery.DefaultFolder, System.Environment.ProcessId),
             AppHandler.LogFolder(Product.Name));
         agentMenu = new AgentMenu(this, agentController);
     }
@@ -60,6 +61,14 @@ internal sealed partial class EditorWindow : IAgentEditor
     /// or an edit of the user runs (section 5.5 of the MCP1 design).</summary>
     private EditorActivity Activity() => new(IsEditing || AssetDrag.IsDragging, DialogOpen, Session?.IsBusy == true,
         Session?.Edits is { } edits && (edits.OpenBatch != null || edits.InTransaction));
+
+    EditSession? IAgentEditor.Edits => Session?.Edits;
+
+    string? IAgentEditor.EditReason => Session?.NoEditReason;
+
+    string IAgentEditor.Name(int ids) => Session?.Name(ids) ?? "";
+
+    string IAgentEditor.InfoText(int ids) => Session?.InfoText(ids) ?? "";
 
     AgentSettings IAgentEditor.Settings => Settings.Agent;
 

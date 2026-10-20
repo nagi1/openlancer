@@ -1,4 +1,7 @@
+using System;
+using System.IO;
 using System.Linq;
+using System.Text.Json.Nodes;
 using OpenLancer.Studio.Agent;
 using Xunit;
 using static OpenLancer.Tests.AgentCalls;
@@ -53,6 +56,32 @@ public sealed class AgentToolRunTests
         Assert.Equal("1", (string?)status["rev"]);
         Assert.Equal("user", (string?)status["undo"]!["origin"]);
         Assert.Equal("Set loadout", (string?)status["undo"]!["label"]);
+    }
+
+    /// <summary>A result that the host of the log gave, not the data, does not stop the replay (decision D728): the
+    /// replay skips a call that did not run or that only the editor host has, and it does not compare a result of the
+    /// limits of a host.</summary>
+    [Fact]
+    public void TheReplaySkipsTheResultsOfTheHostOfTheLog()
+    {
+        using var ws = SceneWorkspace.Create();
+        var host = new TestAgentHost(ws.Session("act"));
+        var log = string.Join("\n",
+            """{"tool": "get_console", "arguments": {}, "result": {"status": "ok"}}""",
+            """{"tool": "list_systems", "arguments": {}, "result": {"status": "error", "code": "busy", "detail": "Waited"}}""",
+            """{"tool": "list_systems", "arguments_omitted": true, "result": {"status": "error", "code": "limit", "detail": "CallRate"}}""",
+            """{"tool": "list_systems", "arguments": {}, "result": {"status": "error", "code": "limit", "detail": "ResultSize"}}""",
+            """{"tool": "list_systems", "arguments": {"limit": 500}, "result": {"status": "ok"}}""");
+        var output = new StringWriter();
+
+        Assert.Null(AgentReplay.Run(host, new StringReader(log), output));
+        var lines = output.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => JsonNode.Parse(l)!).ToList();
+        Assert.Equal(["skipped", "skipped", "skipped", "ok", "error"], lines.Select(l => (string?)l["result"]!["status"]));
+        Assert.Equal([null, null, null, false, false], lines.Select(l => (bool?)l["compared"]));
+        Assert.Equal("Only the editor host has the tool get_console.", (string?)lines[0]["reason"]);
+        Assert.Equal("Line 1: get_item gave error not_found, and the log has ok.", AgentReplay.Run(host,
+            new StringReader("""{"tool": "get_item", "arguments": {"ref": "obj:none"}, "result": {"status": "ok"}}"""),
+            new StringWriter()));
     }
 
     [Fact]

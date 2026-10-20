@@ -79,7 +79,9 @@ public sealed class ToolQueue : IDisposable
             {
                 var refused = ToolResult.Failure(EditErrorKind.Limit, "CallRate",
                     AgentTexts.Error("limit_calls", ("max", limits.CallsPerSecond)));
-                audit?.Write(clock.GetUtcNow(), tool, arguments, refused.Outcome);
+                // The call does not run, so its line has no arguments. A client that calls too often then cannot fill
+                // the disk with its arguments.
+                audit?.Write(clock.GetUtcNow(), tool, arguments, refused.Outcome, ran: false);
                 return Task.FromResult(refused);
             }
             accepted.Enqueue(now);
@@ -141,9 +143,11 @@ public sealed class ToolQueue : IDisposable
         {
             step = AgentTools.Run(host, next.Tool, next.Arguments);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
-            next.Done.TrySetException(e);
+            // The tool table gives a fault of a handler as a result. This is the last guard, so each call ends with a
+            // result and a line of the audit log.
+            Finish(next, AgentTools.Failed(next.Tool, e));
             return true;
         }
         if (step.Result is { } result)
@@ -211,9 +215,9 @@ public sealed class ToolQueue : IDisposable
             {
                 pending.Done.TrySetCanceled(pending.Cancel);
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OutOfMemoryException)
             {
-                pending.Done.TrySetException(e);
+                Finish(pending, AgentTools.Failed(pending.Tool, e));
             }
             finally
             {
@@ -226,12 +230,7 @@ public sealed class ToolQueue : IDisposable
     /// <summary>Ends a call with its result. A result above the size limit becomes the error <c>limit</c>.</summary>
     private void Finish(Pending pending, ToolResult result)
     {
-        var kilobytes = host.Limits.ResultKilobytes;
-        if (result.Bytes > kilobytes * 1024)
-        {
-            result = ToolResult.Failure(EditErrorKind.Limit, "ResultSize",
-                AgentTexts.Error("limit_result", ("size", (result.Bytes + 1023) / 1024), ("max", kilobytes)));
-        }
+        result = result.Limited(host.Limits);
         audit?.Write(clock.GetUtcNow(), pending.Tool, pending.Arguments, result.Outcome);
         pending.Done.TrySetResult(result);
     }

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Text.Json.Nodes;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Lists;
@@ -10,34 +9,57 @@ using OpenLancer.Data.Editing.Scene;
 
 namespace OpenLancer.Studio.Agent;
 
+/// <summary>The kind of an item of a system file (tool <c>list_items</c>).</summary>
+internal enum SceneItemKind
+{
+    Object,
+    Zone,
+    Light,
+    Nebula,
+    Field,
+}
+
+/// <summary>The kind of an object of a system file (tool <c>list_items</c>). A wreck is an object whose archetype has
+/// the type <c>MISSION_SATELLITE</c>.</summary>
+internal enum SceneObjectKind
+{
+    Station,
+    Planet,
+    Sun,
+    Satellite,
+    Wreck,
+    Gate,
+    Hole,
+    LaneRing,
+    Other,
+}
+
 /// <summary>A star system of the edit view (tool <c>list_systems</c>).</summary>
 /// <param name="Ref">The <c>system:</c> reference.</param>
 /// <param name="Name">The name that the game shows, or an empty text.</param>
 /// <param name="File">The install path of the system file, or null when the <c>[system]</c> names no file.</param>
 internal sealed record SystemRow(string Ref, string Nickname, string Name, string? File, ItemOrigin Origin);
 
-/// <summary>A line of a section: its key and its values.</summary>
-internal sealed record LineRow(string Key, JsonArray Values);
-
-/// <summary>A jump gate, a jump hole or a trade lane ring of a system.</summary>
-/// <param name="Kind"><c>gate</c>, <c>hole</c> or <c>lane_ring</c>.</param>
-/// <param name="ToSystem">The system of the partner of a gate or a hole, or null.</param>
-/// <param name="ToObject">The partner object of a gate or a hole, or null.</param>
-/// <param name="Previous">The previous ring of a trade lane ring, or null.</param>
-/// <param name="Next">The next ring of a trade lane ring, or null.</param>
-internal sealed record ConnectionRow(string Ref, string Kind, string? ToSystem, string? ToObject, string? Previous,
+/// <summary>A jump gate, a jump hole or a trade lane ring of a system, with the references of its partners.</summary>
+/// <param name="Kind"><see cref="SceneObjectKind.Gate"/>, <see cref="SceneObjectKind.Hole"/> or
+/// <see cref="SceneObjectKind.LaneRing"/>.</param>
+/// <param name="ToSystem">The <c>system:</c> reference of the partner of a gate or a hole, or null.</param>
+/// <param name="ToObject">The <c>obj:</c> reference of the partner of a gate or a hole, or null.</param>
+/// <param name="Previous">The <c>obj:</c> reference of the previous ring of a trade lane ring, or null.</param>
+/// <param name="Next">The <c>obj:</c> reference of the next ring of a trade lane ring, or null.</param>
+internal sealed record ConnectionRow(string Ref, SceneObjectKind Kind, string? ToSystem, string? ToObject, string? Previous,
     string? Next);
 
 /// <summary>A star system with its counts, bases, connections and fields (tool <c>get_system</c>).</summary>
 internal sealed record SystemView(string Ref, string Name, string? File)
 {
-    /// <summary>The lines of the <c>[system]</c> section of <c>universe.ini</c>.</summary>
-    public IReadOnlyList<LineRow> Fields { get; init; } = [];
+    /// <summary>The fields of the <c>[system]</c> section of <c>universe.ini</c>, as <c>get_item</c> gives them.</summary>
+    public IReadOnlyList<FieldRow> Fields { get; init; } = [];
 
-    /// <summary>The number of items of each kind: object, zone, light, nebula, field.</summary>
+    /// <summary>The number of items of each kind, by the names of <see cref="SceneItemKind"/>.</summary>
     public IReadOnlyDictionary<string, int> Counts { get; init; } = new Dictionary<string, int>();
 
-    /// <summary>The number of objects of each object kind, for example station or gate.</summary>
+    /// <summary>The number of objects of each object kind, by the names of <see cref="SceneObjectKind"/>.</summary>
     public IReadOnlyDictionary<string, int> ObjectKinds { get; init; } = new Dictionary<string, int>();
 
     /// <summary>The <c>base:</c> references of the bases that objects of the system name.</summary>
@@ -57,11 +79,10 @@ internal sealed record SystemView(string Ref, string Name, string? File)
 /// <summary>An item of a system (tool <c>list_items</c>).</summary>
 /// <param name="Ref">The canonical reference, for example <c>obj:</c> or <c>zone:</c>.</param>
 /// <param name="Nickname">The nickname, or the zone of a nebula or an asteroid field.</param>
-/// <param name="Kind"><c>object</c>, <c>zone</c>, <c>light</c>, <c>nebula</c> or <c>field</c>.</param>
-internal sealed record SceneItemRow(string Ref, string? Nickname, string Name, string Kind)
+internal sealed record SceneItemRow(string Ref, string? Nickname, string Name, SceneItemKind Kind)
 {
-    /// <summary>The object kind of an object, for example <c>station</c> or <c>wreck</c>, else null.</summary>
-    public string? ObjectKind { get; init; }
+    /// <summary>The object kind of an object, else null.</summary>
+    public SceneObjectKind? ObjectKind { get; init; }
 
     public string? Archetype { get; init; }
 
@@ -82,13 +103,6 @@ internal sealed record SceneItemRow(string Ref, string? Nickname, string Name, s
 /// <summary>The query tools of the star systems and their items (section 7.1 of the MCP1 design).</summary>
 internal static class SceneQueries
 {
-    /// <summary>The kinds of the items of a system, for the argument <c>kinds</c>.</summary>
-    public static readonly IReadOnlyList<string> ItemKinds = ["object", "zone", "light", "nebula", "field"];
-
-    /// <summary>The object kinds, for the argument <c>object_kinds</c>.</summary>
-    public static readonly IReadOnlyList<string> ObjectKindNames =
-        ["station", "planet", "sun", "satellite", "wreck", "gate", "hole", "lane_ring", "other"];
-
     public static ToolStep ListSystems(ToolCall call)
     {
         var session = call.Session;
@@ -97,8 +111,7 @@ internal static class SceneQueries
         var rows = entries.Select(e => (Entry: e, Name: call.Texts.TextOf(e.Section!, "strid_name")))
             .Where(r => ToolCall.Matches(text, r.Entry.Value, r.Name))
             .ToList();
-        return ToolResult.Of(call.Paged(rows, r => new SystemRow(
-            ItemRefs.Format(new ItemReference(ItemRefKind.System, r.Entry.Value)), r.Entry.Value, r.Name,
+        return ToolResult.Of(call.Paged(rows, r => new SystemRow(SystemRef(r.Entry.Value), r.Entry.Value, r.Name,
             session.SystemPath(r.Entry.Value),
             new ItemOrigin(r.Entry.Origin, r.Entry.ModId, session.IsUnsaved(r.Entry.Section!)))));
     }
@@ -117,13 +130,13 @@ internal static class SceneQueries
         string Ref(SectionRef s) => ItemRefs.Canonical(session, s);
         return ToolResult.Of(new SystemView(Ref(section), call.Texts.TextOf(section, "strid_name"), path)
         {
-            Fields = view.Entries.Select(e => new LineRow(e.Name, AgentRows.Values(e.Values))).ToList(),
-            Counts = ItemKinds.ToDictionary(k => k, k => items.Count(i => KindName(i.Kind) == k)),
-            ObjectKinds = objects.GroupBy(o => o.Kind).ToDictionary(g => g.Key, g => g.Count()),
+            Fields = ItemQueries.Fields(session, section, view, AgentRows.DiagnosticsOf(session, section)),
+            Counts = Enum.GetValues<SceneItemKind>().ToDictionary(Name, k => items.Count(i => KindOf(i.Kind) == k)),
+            ObjectKinds = objects.GroupBy(o => o.Kind).ToDictionary(g => Name(g.Key), g => g.Count()),
             Bases = objects.Select(o => SceneSections.Last(o.View, "base")).OfType<string>()
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Select(b => ItemRefs.Format(new ItemReference(ItemRefKind.Base, b))).ToList(),
-            Connections = objects.Where(o => o.Kind is "gate" or "hole" or "lane_ring")
+            Connections = objects.Where(o => o.Kind is SceneObjectKind.Gate or SceneObjectKind.Hole or SceneObjectKind.LaneRing)
                 .Select(o => Connection(session, o.Section, o.View, o.Kind)).ToList(),
             Nebulae = items.Where(i => i.Kind == SceneKind.Nebula).Select(i => Ref(i.Section)).ToList(),
             AsteroidFields = items.Where(i => i.Kind == SceneKind.Asteroids).Select(i => Ref(i.Section)).ToList(),
@@ -149,11 +162,11 @@ internal static class SceneQueries
         var rows = new List<(SectionRef Section, SceneKind Kind)>();
         foreach (var (section, kind) in path == null ? [] : Items(session, path))
         {
-            if (kinds != null && !kinds.Contains(KindName(kind)))
+            if (kinds != null && !kinds.Contains(Name(KindOf(kind))))
                 continue;
             SectionView? view = null;
             SectionView View() => view ??= session.Get(section)!;
-            if (objectKinds != null && (kind != SceneKind.Object || !objectKinds.Contains(kindsOf.Of(View()))))
+            if (objectKinds != null && (kind != SceneKind.Object || !objectKinds.Contains(Name(kindsOf.Of(View())))))
                 continue;
             if (text != null && !ToolCall.Matches(text, section.Id.Key,
                     call.Texts.NameOf(Named(session, section, kind) ?? section), SceneSections.Last(View(), "archetype")))
@@ -161,7 +174,7 @@ internal static class SceneQueries
             if (point is { } p && (AgentRows.Numbers(View(), "pos") is not [var x, var y, var z] ||
                                    Vector3.Distance(p, new Vector3(x, y, z)) > radius))
                 continue;
-            if (origin != null && AgentTools.Snake(Origin(session, section, View(), kind).Origin.ToString()) != origin)
+            if (origin != null && Name(Origin(session, section, View(), kind).Layer) != origin)
                 continue;
             rows.Add((section, kind));
         }
@@ -170,7 +183,7 @@ internal static class SceneQueries
             var view = session.Get(r.Section)!;
             var isObject = r.Kind == SceneKind.Object;
             return new SceneItemRow(ItemRefs.Canonical(session, r.Section), r.Section.Id.Key,
-                call.Texts.NameOf(Named(session, r.Section, r.Kind) ?? r.Section), KindName(r.Kind))
+                call.Texts.NameOf(Named(session, r.Section, r.Kind) ?? r.Section), KindOf(r.Kind))
             {
                 ObjectKind = isObject ? kindsOf.Of(view) : null,
                 Archetype = isObject ? SceneSections.Last(view, "archetype") : null,
@@ -183,13 +196,20 @@ internal static class SceneQueries
         }));
     }
 
-    /// <summary>The <c>[system]</c> of a nickname, with its file.</summary>
-    /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/> with the closest names.</exception>
-    internal static (string Nickname, SectionRef Section, string? Path) System(EditSession session, string nickname)
+    /// <summary>
+    /// The <c>[system]</c> of the argument <c>system</c>, with its file. The argument is a nickname or a
+    /// <c>system:</c> reference, as the rows of <c>list_systems</c> give it.
+    /// </summary>
+    /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/> with the closest names, or
+    /// <see cref="EditErrorKind.InvalidArgument"/> for a reference of another kind.</exception>
+    internal static (string Nickname, SectionRef Section, string? Path) System(EditSession session, string text)
     {
-        var reference = new ItemReference(ItemRefKind.System, nickname);
+        // No nickname holds a ':' (section 5.6 of the MCP1 design), so a text with one is a reference.
+        var reference = text.Contains(':') ? ItemRefs.Parse(text) : new ItemReference(ItemRefKind.System, text);
+        if (reference.Kind != ItemRefKind.System)
+            throw ToolInput.Bad("system", AgentTexts.Error("system_ref", ("ref", text)));
         var section = ItemRefs.ResolveSection(session, reference);
-        var key = section.Id.Key ?? nickname;
+        var key = section.Id.Key ?? reference.Name;
         return (key, section, session.SystemPath(key));
     }
 
@@ -214,15 +234,22 @@ internal static class SceneQueries
         }
     }
 
-    /// <summary>The name of a kind of item for the results.</summary>
-    internal static string KindName(SceneKind kind) => kind switch
+    /// <summary>The kind of an item for the results.</summary>
+    private static SceneItemKind KindOf(SceneKind kind) => kind switch
     {
-        SceneKind.Object => "object",
-        SceneKind.Zone => "zone",
-        SceneKind.Light => "light",
-        SceneKind.Nebula => "nebula",
-        _ => "field",
+        SceneKind.Object => SceneItemKind.Object,
+        SceneKind.Zone => SceneItemKind.Zone,
+        SceneKind.Light => SceneItemKind.Light,
+        SceneKind.Nebula => SceneItemKind.Nebula,
+        _ => SceneItemKind.Field,
     };
+
+    /// <summary>The JSON name of an enum value, as the arguments take it.</summary>
+    private static string Name<T>(T value) where T : struct, Enum => AgentTools.Snake(value.ToString());
+
+    private static string SystemRef(string nickname) => ItemRefs.Format(new ItemReference(ItemRefKind.System, nickname));
+
+    private static string ObjectRef(string nickname) => ItemRefs.Format(new ItemReference(ItemRefKind.Object, nickname));
 
     /// <summary>
     /// The object kinds of the objects of one call. An object of a connection type, or with a <c>goto</c>, a
@@ -235,30 +262,30 @@ internal static class SceneQueries
         private readonly Dictionary<string, string?> types = new(StringComparer.OrdinalIgnoreCase);
         private readonly ListView? archetypes = session.Lists.List("solar_archetype");
 
-        public string Of(SectionView view)
+        public SceneObjectKind Of(SectionView view)
         {
             var type = TypeOf(view);
             if (type != null && session.Lists.RuleData.ConnectionTypes.Contains(type))
             {
                 return type switch
                 {
-                    "jump_gate" or "airlock_gate" => "gate",
-                    "jump_hole" or "jumphole" => "hole",
-                    _ => "lane_ring",
+                    "jump_gate" or "airlock_gate" => SceneObjectKind.Gate,
+                    "jump_hole" or "jumphole" => SceneObjectKind.Hole,
+                    _ => SceneObjectKind.LaneRing,
                 };
             }
             if (view.Lines("goto").Count > 0)
-                return "gate";
+                return SceneObjectKind.Gate;
             if (view.Lines("prev_ring").Count > 0 || view.Lines("next_ring").Count > 0)
-                return "lane_ring";
+                return SceneObjectKind.LaneRing;
             return type switch
             {
-                "station" or "docking_ring" => "station",
-                "planet" => "planet",
-                "sun" => "sun",
-                "satellite" or "waypoint" => "satellite",
-                "mission_satellite" => "wreck",
-                _ => "other",
+                "station" or "docking_ring" => SceneObjectKind.Station,
+                "planet" => SceneObjectKind.Planet,
+                "sun" => SceneObjectKind.Sun,
+                "satellite" or "waypoint" => SceneObjectKind.Satellite,
+                "mission_satellite" => SceneObjectKind.Wreck,
+                _ => SceneObjectKind.Other,
             };
         }
 
@@ -287,12 +314,19 @@ internal static class SceneQueries
     private static ItemOrigin Origin(EditSession session, SectionRef section, SectionView view, SceneKind kind) =>
         AgentRows.OriginOf(session, section, view, kind is SceneKind.Nebula or SceneKind.Asteroids ? "zone" : "nickname");
 
-    private static ConnectionRow Connection(EditSession session, SectionRef section, SectionView view, string kind)
+    /// <summary>A connection with the references of its partners: the <c>goto</c> line of a gate or a hole names the
+    /// system and the object, and the ring lines of a trade lane ring name the rings.</summary>
+    private static ConnectionRow Connection(EditSession session, SectionRef section, SectionView view, SceneObjectKind kind)
     {
         var go = view.Lines("goto").LastOrDefault();
+        string? Value(int index) =>
+            go is { } line && line.Values.Count > index && line.Values[index].ToString().Trim() is { Length: > 0 } text
+                ? text
+                : null;
         return new ConnectionRow(ItemRefs.Canonical(session, section), kind,
-            go is { Values.Count: >= 1 } ? go.Values[0].ToString().Trim() : null,
-            go is { Values.Count: >= 2 } ? go.Values[1].ToString().Trim() : null,
-            SceneSections.Last(view, "prev_ring"), SceneSections.Last(view, "next_ring"));
+            Value(0) is { } system ? SystemRef(system) : null,
+            Value(1) is { } partner ? ObjectRef(partner) : null,
+            SceneSections.Last(view, "prev_ring") is { } previous ? ObjectRef(previous) : null,
+            SceneSections.Last(view, "next_ring") is { } next ? ObjectRef(next) : null);
     }
 }

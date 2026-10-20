@@ -138,6 +138,22 @@ public sealed class AgentServerTests
         Assert.Equal(HttpStatusCode.NotFound, await running.Send(running.Request(HttpMethod.Get, "/")));
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge,
             await running.Send(running.Request(HttpMethod.Post, body: new string(' ', 1024 * 1024 + 1))));
+        // A chunked body has no length in its headers, so Kestrel stops it at the limit while it reads it. Kestrel can
+        // also close the connection while the client still sends. The call never reaches the tools.
+        var chunked = running.Request(HttpMethod.Post, body: new string(' ', 1024 * 1024 + 1) +
+            """{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"studio_status"}}""");
+        chunked.Headers.TransferEncodingChunked = true;
+        chunked.Headers.Accept.ParseAdd("application/json");
+        chunked.Headers.Accept.ParseAdd("text/event-stream");
+        try
+        {
+            Assert.Equal(HttpStatusCode.RequestEntityTooLarge, await running.Send(chunked));
+        }
+        catch (HttpRequestException)
+        {
+            // The server closed the connection before the client read the status.
+        }
+        Assert.Null(running.Thread.Queue.LastCall);
         var localhost = running.Request(HttpMethod.Post, body:
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}""");
         localhost.Headers.Host = $"localhost:{running.Server.Port}";
@@ -168,6 +184,48 @@ public sealed class AgentServerTests
             Assert.Equal(AgentTools.All.Count, tools.Count);
             Assert.Equal("editor", status.StructuredContent!.Value.GetProperty("host").GetString());
             Assert.StartsWith("Call studio_status first.", client.ServerInstructions);
+        }
+    }
+
+    /// <summary>The token is a header of the request, so the audit log, which holds the arguments and the results,
+    /// never holds it (section 8.7, item 3 of the MCP1 design).</summary>
+    [Fact]
+    public async Task TheAuditLogOfACallOverHttpHoldsNoToken()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "openlancer-tests", Guid.NewGuid().ToString("N"));
+        var file = Path.Combine(folder, "agent.jsonl");
+        try
+        {
+            string token;
+            using (var audit = new AuditLog(file))
+            using (var thread = SessionThread.Start(() => new TestAgentHost(null, AgentHostKind.Editor), audit: audit))
+            {
+                var start = await AgentServer.StartAsync(FreePort(), thread.Queue, new AgentLimits());
+                await using var server = start.Server!;
+                token = server.Token;
+                var transport = new HttpClientTransport(new HttpClientTransportOptions
+                {
+                    Endpoint = new Uri($"http://127.0.0.1:{server.Port}{AgentServer.Endpoint}"),
+                    TransportMode = HttpTransportMode.StreamableHttp,
+                    AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + token },
+                });
+                var client = await McpClient.CreateAsync(transport, cancellationToken: Token);
+                await using (client)
+                {
+                    await client.CallToolAsync("studio_status", cancellationToken: Token);
+                    await client.CallToolAsync("list_systems", cancellationToken: Token);
+                }
+            }
+
+            var text = File.ReadAllText(file);
+            Assert.Equal(2, text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length);
+            Assert.DoesNotContain(token, text);
+            Assert.DoesNotContain("Bearer", text);
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, true);
         }
     }
 
@@ -203,7 +261,13 @@ public sealed class AgentControllerTests : IDisposable
 
     private sealed class FakeEditor : IAgentEditor
     {
-        public EditorSession? Session => null;
+        public OpenLancer.Data.Editing.EditSession? Edits { get; set; }
+
+        public string? EditReason { get; set; }
+
+        public string Name(int ids) => ids == 1 ? "Test Name" : "";
+
+        public string InfoText(int ids) => "";
 
         public AgentSettings Settings { get; } = new();
 
@@ -212,7 +276,10 @@ public sealed class AgentControllerTests : IDisposable
         public AgentView View => new("system:Li01", null, null);
     }
 
-    private string Discovery => Path.Combine(folder, "agent", "editor.json");
+    private string Agent => Path.Combine(folder, "agent");
+
+    /// <summary>The discovery file of this test process.</summary>
+    private string Discovery => AgentDiscovery.PathOf(Agent, Environment.ProcessId);
 
     public void Dispose()
     {
@@ -231,7 +298,7 @@ public sealed class AgentControllerTests : IDisposable
         controller.Start();
         ui.RunUntil(() => controller.State == AgentServerState.On, "the start of the server");
         var info = AgentDiscovery.Read(Discovery)!;
-        var headers = AgentDiscovery.Headers(Discovery, $"http://127.0.0.1:{editor.Settings.Port}/mcp");
+        var headers = AgentDiscovery.Headers(Agent, $"http://127.0.0.1:{editor.Settings.Port}/mcp");
         controller.Stop();
 
         Assert.Equal(editor.Settings.Port, info.Port);
@@ -278,23 +345,126 @@ public sealed class AgentControllerTests : IDisposable
     public void TheTokenHelperGivesTheTokenOnlyToTheRunningServer()
     {
         var now = new DateTime(2026, 10, 20, 12, 0, 0, DateTimeKind.Utc);
-        AgentDiscovery.Write(Discovery, new AgentDiscoveryInfo(47815, "abc", 42, now, "test", "act"));
+        var file = AgentDiscovery.PathOf(Agent, 42);
         DateTime? Running(int id) => id == 42 ? now.AddMilliseconds(300) : null;
+        AgentDiscovery.Write(file, new AgentDiscoveryInfo(47815, "abc", 42, now, "test", "act"), Running);
 
-        Assert.Equal("""{"Authorization":"Bearer abc"}""", AgentDiscovery.Headers(Discovery, null, Running).Headers);
-        Assert.NotNull(AgentDiscovery.Headers(Discovery, "http://localhost:47815/mcp", Running).Headers);
-        Assert.Null(AgentDiscovery.Headers(Discovery, "http://127.0.0.1:47816/mcp", Running).Headers);
-        Assert.Null(AgentDiscovery.Headers(Discovery, "http://example.com:47815/mcp", Running).Headers);
-        Assert.Null(AgentDiscovery.Headers(Discovery, "https://127.0.0.1:47815/mcp", Running).Headers);
-        Assert.Null(AgentDiscovery.Headers(Discovery, null, _ => null).Headers);
-        Assert.Null(AgentDiscovery.Headers(Discovery, null, _ => now.AddMinutes(5)).Headers);
+        Assert.Equal("editor-42.json", Path.GetFileName(file));
+        Assert.Equal("""{"Authorization":"Bearer abc"}""", AgentDiscovery.Headers(Agent, null, Running).Headers);
+        Assert.Equal("""{"Authorization":"Bearer abc"}""",
+            AgentDiscovery.Headers(Agent, "http://127.0.0.1:47815/mcp", Running).Headers);
+        // A client can connect to localhost on the IPv6 address, where another program can listen on the same port.
+        var localhost = AgentDiscovery.Headers(Agent, "http://localhost:47815/mcp", Running);
+        Assert.Null(localhost.Headers);
+        Assert.EndsWith("Use the address http://127.0.0.1:<port>/mcp in .mcp.json. Do not use localhost.", localhost.Problem);
+        Assert.Null(AgentDiscovery.Headers(Agent, "http://[::1]:47815/mcp", Running).Headers);
+        Assert.Null(AgentDiscovery.Headers(Agent, "http://127.0.0.1:47816/mcp", Running).Headers);
+        Assert.Null(AgentDiscovery.Headers(Agent, "http://example.com:47815/mcp", Running).Headers);
+        Assert.Null(AgentDiscovery.Headers(Agent, "https://127.0.0.1:47815/mcp", Running).Headers);
+        Assert.Null(AgentDiscovery.Headers(Agent, null, _ => null).Headers);
+        Assert.Null(AgentDiscovery.Headers(Agent, null, _ => now.AddMinutes(5)).Headers);
         Assert.Equal("No agent server of the editor runs. Start it in the Agent menu of the editor.",
-            AgentDiscovery.Headers(Path.Combine(folder, "none.json"), null, Running).Problem);
+            AgentDiscovery.Headers(Path.Combine(folder, "none"), null, Running).Problem);
 
-        AgentDiscovery.Delete(Discovery, "other");
-        Assert.True(File.Exists(Discovery));
-        AgentDiscovery.Delete(Discovery, "abc");
-        Assert.False(File.Exists(Discovery));
+        AgentDiscovery.Delete(file, "other");
+        Assert.True(File.Exists(file));
+        AgentDiscovery.Delete(file, "abc");
+        Assert.False(File.Exists(file));
+    }
+
+    /// <summary>Each editor has its own discovery file. So a second editor on another port does not hide the first
+    /// one, and the stop of one editor does not delete the file of the other.</summary>
+    [Fact]
+    public void EachEditorHasItsOwnDiscoveryFileAndTheHelperPicksThePort()
+    {
+        var now = new DateTime(2026, 10, 20, 12, 0, 0, DateTimeKind.Utc);
+        DateTime? Running(int id) => id is 41 or 42 ? now : null;
+        AgentDiscovery.Write(AgentDiscovery.PathOf(Agent, 43), new AgentDiscoveryInfo(47817, "crashed", 43, now, "c", null),
+            _ => now);
+        AgentDiscovery.Write(AgentDiscovery.PathOf(Agent, 41), new AgentDiscoveryInfo(47815, "first", 41, now, "a", null),
+            _ => now);
+        AgentDiscovery.Write(AgentDiscovery.PathOf(Agent, 42), new AgentDiscoveryInfo(47816, "second", 42, now, "b", null),
+            _ => now);
+
+        Assert.Equal("""{"Authorization":"Bearer first"}""",
+            AgentDiscovery.Headers(Agent, "http://127.0.0.1:47815/mcp", Running).Headers);
+        Assert.Equal("""{"Authorization":"Bearer second"}""",
+            AgentDiscovery.Headers(Agent, "http://127.0.0.1:47816/mcp", Running).Headers);
+        Assert.Equal("No agent server of the editor runs on port 47817. Use the port of the agent settings of the editor " +
+                     "in .mcp.json.", AgentDiscovery.Headers(Agent, "http://127.0.0.1:47817/mcp", Running).Problem);
+        Assert.StartsWith("2 editors run an agent server.", AgentDiscovery.Headers(Agent, null, Running).Problem);
+
+        AgentDiscovery.Delete(AgentDiscovery.PathOf(Agent, 41), "first");
+        Assert.Equal("""{"Authorization":"Bearer second"}""", AgentDiscovery.Headers(Agent, null, Running).Headers);
+        // A write deletes the file of an editor that does not run, and keeps the file of an editor that runs.
+        Assert.True(File.Exists(AgentDiscovery.PathOf(Agent, 43)));
+        AgentDiscovery.Write(AgentDiscovery.PathOf(Agent, 41), new AgentDiscoveryInfo(47815, "again", 41, now, "a", null),
+            Running);
+        Assert.False(File.Exists(AgentDiscovery.PathOf(Agent, 43)));
+        Assert.True(File.Exists(AgentDiscovery.PathOf(Agent, 42)));
+    }
+
+    /// <summary>A client of the protocol revision 2025-11-25 on a stateless server gives its name only in the
+    /// initialize request. The status bar then shows the agent without its name.</summary>
+    [Fact]
+    public async Task ACallWithoutTheNameOfItsClientShowsTheAgentInTheStatusBar()
+    {
+        var editor = new FakeEditor();
+        editor.Settings.Port = FreePort();
+        var ui = new QueuedUIThread();
+        using var controller = new AgentController(editor, ui, () => default, Discovery, folder);
+        controller.Start();
+        ui.RunUntil(() => controller.State == AgentServerState.On, "the start of the server");
+        using var http = new HttpClient();
+        var request = new HttpRequestMessage(HttpMethod.Post,
+            $"http://127.0.0.1:{editor.Settings.Port}{AgentServer.Endpoint}")
+        {
+            Content = new StringContent(
+                """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"studio_status","arguments":{}}}""",
+                Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + AgentDiscovery.Read(Discovery)!.Token);
+        request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
+        request.Headers.Accept.ParseAdd("application/json");
+        request.Headers.Accept.ParseAdd("text/event-stream");
+
+        var call = http.SendAsync(request, TestContext.Current.CancellationToken);
+        var end = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (!call.IsCompleted && DateTime.UtcNow < end)
+        {
+            ui.RunQueued();
+            controller.Frame();
+            Thread.Sleep(5);
+        }
+        using var response = await call;
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("\"host\":\"editor\"", body.Replace(" ", ""));
+        Assert.Equal($"Agent: {AgentController.UnnamedClient}", controller.StatusText);
+        controller.Stop();
+    }
+
+    [Fact]
+    public void TheEditorHostGivesTheReasonOfTheOpenProfile()
+    {
+        using var ws = SceneWorkspace.Create();
+        var editor = new FakeEditor { Edits = ws.Session("act") };
+        var host = new EditorAgentHost(editor);
+
+        var open = AgentCalls.Ok(host, "studio_status");
+        editor.EditReason = "The user did not allow the edits of this mod.";
+        var blocked = AgentCalls.Ok(host, "studio_status");
+        editor.Edits = null;
+        var none = AgentCalls.Ok(host, "studio_status");
+
+        Assert.Equal(("editor", "test", true), ((string?)open["host"], (string?)open["profile"], (bool)open["can_edit"]!));
+        Assert.Null(open["reason"]);
+        Assert.False((bool)blocked["can_edit"]!);
+        Assert.Equal("The user did not allow the edits of this mod.", (string?)blocked["reason"]);
+        Assert.False((bool)none["can_edit"]!);
+        Assert.Equal("No profile is open. Open a profile in the editor, then try again.", (string?)none["reason"]);
+        Assert.Equal("Test Name", host.NameText(1));
     }
 
     [Fact]
@@ -339,13 +509,13 @@ public sealed class AgentControllerTests : IDisposable
         editor.Log.Add(ConsoleSeverity.Error, "Mods", "An error.");
         var host = new EditorAgentHost(editor);
 
-        var all = host.Console(new ConsoleFilter(null, "info", false, null, 50));
-        var warnings = host.Console(new ConsoleFilter(null, "warning", false, null, 50));
-        var agent = host.Console(new ConsoleFilter("agent", "info", false, null, 50));
-        var since = host.Console(new ConsoleFilter(null, "info", false, all[1].Sequence, 50));
+        var all = host.Console(new ConsoleFilter(null, AgentSeverity.Info, false, null));
+        var warnings = host.Console(new ConsoleFilter(null, AgentSeverity.Warning, false, null));
+        var agent = host.Console(new ConsoleFilter("agent", AgentSeverity.Info, false, null));
+        var since = host.Console(new ConsoleFilter(null, AgentSeverity.Info, false, all[1].Sequence));
 
         Assert.Equal(["Opened.", "A warning.", "An error."], all.Select(e => e.Message));
-        Assert.Equal(["warning", "error"], warnings.Select(e => e.Severity));
+        Assert.Equal([AgentSeverity.Warning, AgentSeverity.Error], warnings.Select(e => e.Severity));
         Assert.Equal(["A warning."], agent.Select(e => e.Message));
         Assert.Equal(["An error."], since.Select(e => e.Message));
         Assert.Equal(OpenLancer.Data.OriginKind.OpenLancer, all[0].Origin);
