@@ -355,6 +355,18 @@ public sealed partial class EditSession : IDisposable
             changed);
     }
 
+    /// <summary>True when the session has an edit of a section that it did not save: W of the section is not W at the
+    /// open of its file or at the last save. False when the edit view has no such section.</summary>
+    internal bool IsUnsaved(SectionRef target) =>
+        TryFind(target, out var document, out var index) &&
+        !ReferenceEquals(document.InitialSection(document.IdentityAt(index)), document.Working[index]);
+
+    /// <summary>The section as W had it at the open of its file or at the last save, or null when W did not have it
+    /// then or the edit view has no such section. A caller compares it with W to find the lines of an edit that the
+    /// session did not save.</summary>
+    internal Section? SavedSection(SectionRef target) =>
+        TryFind(target, out var document, out var index) ? document.InitialSection(document.IdentityAt(index)) : null;
+
     /// <summary>
     /// Where the lines of a name in a section come from: the active mod when it sets or removes the name (in its
     /// saved patch or with an edit), else the last lower mod that changes the name or the section, else the base

@@ -84,8 +84,8 @@ internal sealed class FakeClock : TimeProvider
 
 /// <summary>
 /// The queue of the agent calls (section 13.2, items 1 and 5 of the MCP1 design) with a fake thread of the session and a
-/// fake clock: one session part in each run, the waits, <c>busy</c> after the wait limit, the cancel of a call that did
-/// not start, the rate limit, the size limit of a result and the audit log.
+/// fake clock: one session part in each run, the waits, <c>busy</c> after the wait limit, the tails, the cancel of a call
+/// that did not start, the rate limit, the size limit of a result and the audit log.
 /// </summary>
 public sealed class ToolQueueTests
 {
@@ -166,6 +166,57 @@ public sealed class ToolQueueTests
         Assert.Equal(1, queue.Waiting);
         Assert.True(queue.RunNext());
         Assert.False((await Done(other)).IsError);
+    }
+
+    [Fact]
+    public async Task ATailEndsLaterAndTheNextCallRunsWhileItRuns()
+    {
+        using var ws = SceneWorkspace.Create();
+        var release = new TaskCompletionSource();
+        var host = new TestAgentHost(ws.Session("act"))
+        {
+            Target = _ => ToolStep.Then(async token =>
+            {
+                await release.Task.WaitAsync(token);
+                return ToolResult.Of(CheckQueries.Of("target", [], "done"));
+            }),
+        };
+        using var queue = new ToolQueue(host, new FakeClock());
+
+        var check = queue.CallAsync("check", JsonNode.Parse("""{ "target": "vanilla-1.1" }""")!.AsObject(), null, Token);
+        var status = queue.CallAsync("studio_status", null, null, Token);
+        Assert.True(queue.RunNext());
+        Assert.True(queue.RunNext());
+
+        Assert.False((await Done(status)).IsError);
+        Assert.False(check.IsCompleted);
+        release.SetResult();
+        Assert.Equal("done", (string?)(await Done(check)).Content["note"]);
+    }
+
+    [Fact]
+    public async Task ATailAboveItsTimeLimitEndsWithLimit()
+    {
+        var clock = new FakeClock();
+        using var ws = SceneWorkspace.Create();
+        var host = new TestAgentHost(ws.Session("act"))
+        {
+            Target = _ => ToolStep.Then(async token =>
+            {
+                await Task.Delay(Timeout.Infinite, token);
+                return ToolResult.Of(CheckQueries.Of("target", [], null));
+            }),
+        };
+        using var queue = new ToolQueue(host, clock);
+
+        var check = queue.CallAsync("check", JsonNode.Parse("""{ "target": "hde-0.7.1" }""")!.AsObject(), null, Token);
+        Assert.True(queue.RunNext());
+        clock.Advance(TimeSpan.FromSeconds(59));
+        await Task.Delay(100, Token);
+        Assert.False(check.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal(("limit", "TailTime"), Code(await Done(check)));
     }
 
     [Fact]

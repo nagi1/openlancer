@@ -17,7 +17,9 @@ public sealed class AgentToolTableTests
     {
         Assert.Equal(
         [
-            "studio_status",
+            "studio_status", "list_systems", "get_system", "list_items", "get_item", "find_references", "list_values",
+            "search_assets", "list_prop_groups", "list_missions", "get_mission", "get_trigger", "describe_mission_name",
+            "list_cutscenes", "get_cutscene", "get_raw_ini", "check", "get_console",
         ], AgentTools.All.Select(t => t.Name));
     }
 
@@ -47,7 +49,8 @@ public sealed class AgentToolTableTests
     public void EachToolOfThisBuildIsAQueryAndNoToolReachesOutside()
     {
         Assert.All(AgentTools.All, t => Assert.Equal(new ToolHints(ReadOnly: true, Destructive: false, Idempotent: true), t.Hints));
-        Assert.All(AgentTools.All, t => Assert.Equal(ToolHosts.Both, t.Hosts));
+        Assert.Equal(ToolHosts.Editor, AgentTools.Find("get_console")!.Hosts);
+        Assert.All(AgentTools.All.Where(t => t.Name != "get_console"), t => Assert.Equal(ToolHosts.Both, t.Hosts));
     }
 
     [Fact]

@@ -149,7 +149,7 @@ internal sealed class EditDocument : IEditFile
     private KeyCounts? workingCounts;
     private PatchText? initialText;
     private WholeFileText? initialWholeText;
-    private HashSet<SectionIdentity>? initialIds;
+    private Dictionary<SectionIdentity, int>? initialIndex;
 
     private EditDocument(string path, IniDocument b, DocumentState state, PatchSource? source, Diagnostic? refusal,
         string? sourceHash, WholeSource? whole = null)
@@ -331,8 +331,16 @@ internal sealed class EditDocument : IEditFile
 
     /// <summary>True when W had a section with this identity when the document opened or the last save reopened it, so
     /// the mod files have it.</summary>
-    public bool InInitial(SectionIdentity id) =>
-        (initialIds ??= SectionIdentity.Identify(Initial.Working).ToHashSet()).Contains(id);
+    public bool InInitial(SectionIdentity id) => InitialIndex().ContainsKey(id);
+
+    /// <summary>The section that W had with this identity when the document opened or the last save reopened it, or
+    /// null. W shares each section that no edit changed since then, so a section of W that is not this section has an
+    /// edit that the session did not save.</summary>
+    public Section? InitialSection(SectionIdentity id) =>
+        InitialIndex().TryGetValue(id, out var index) ? Initial.Working[index] : null;
+
+    private Dictionary<SectionIdentity, int> InitialIndex() =>
+        initialIndex ??= SectionIdentity.Identify(Initial.Working).Select((s, i) => (s, i)).ToDictionary(p => p.s, p => p.i);
 
     /// <summary>The section of B of the section of W with this identity (see <see cref="BaseIdOf"/>), or null.</summary>
     public Section? BaseSection(SectionIdentity id) =>

@@ -9,12 +9,148 @@
   ],
   "fields": {
     "cursor": "The next_cursor of the previous page. Without it, the list starts at the first row.",
-    "limit": "The most rows of the page. studio_status gives the default and the largest value."
+    "limit": "The most rows of the page. studio_status gives the default and the largest value.",
+    "text": "Show only the rows that hold this text, without letter case.",
+    "ref": "An item reference, for example obj:my_station_1 or sec:DATA\\SHIPS\\loadouts.ini#Loadout/my_loadout.",
+    "system": "The nickname of the system, for example my_system.",
+    "include_lines": "Also give the raw values of each line by their position.",
+    "include_base_game": "Also give the problems and the messages that the base game gives without mods."
   },
   "tools": {
     "studio_status": {
       "title": "Get the status of the studio",
       "description": "Gives the state of the agent server: the profile, the active mod, the revision, the undo and redo steps, the tool groups and the limits. This tool changes nothing. Call it first."
+    },
+    "list_systems": {
+      "title": "List the star systems",
+      "description": "Lists the star systems of the profile with their nicknames, names and files. This tool changes nothing. Use the references of the result in the other tools.",
+      "fields": {
+        "text": "Show only the systems whose nickname or name holds this text, without letter case."
+      }
+    },
+    "get_system": {
+      "title": "Get a star system",
+      "description": "Gives one star system: its fields, the number of items of each kind, its bases, connections, nebulae, asteroid fields and problems. This tool changes nothing."
+    },
+    "list_items": {
+      "title": "List the items of a system",
+      "description": "Lists the items of one system: objects, zones, lights, nebulae and fields. This tool changes nothing. Use the references of the result in the other tools.",
+      "fields": {
+        "kinds": "Show only the items of these kinds.",
+        "object_kinds": "Show only the objects of these kinds. A wreck is an object whose archetype has the type MISSION_SATELLITE.",
+        "text": "Show only the items whose nickname, name or archetype holds this text, without letter case.",
+        "near": "Show only the items in a sphere.",
+        "point": "The center of the sphere in meters: X, Y and Z.",
+        "radius": "The radius of the sphere in meters.",
+        "origin": "Show only the items from this layer: the base data, a lower mod or the active mod."
+      }
+    },
+    "get_item": {
+      "title": "Get an item",
+      "description": "Gives one item by its reference: its fields with their values, origins and problems. A reference of a mission, a cutscene element, a prop group or an asset gives the view of that item. This tool changes nothing.",
+      "fields": {
+        "include_raw": "Also give the INI text of the section.",
+        "include_used_by": "Also give the lines that name the item and the files that name it as text."
+      }
+    },
+    "find_references": {
+      "title": "Find the references to an item",
+      "description": "Finds each line that names an item, also in the mission scripts, and each file that names it as text. Give a reference or a name. This tool changes nothing.",
+      "fields": {
+        "name": "A nickname. The tool finds the lines of each data list that name it."
+      }
+    },
+    "list_values": {
+      "title": "List the values of a data list",
+      "description": "Lists the values that a field can take, from one data list, for example the archetypes or the loadouts. The text filter also reads the detail, so the text MISSION_SATELLITE finds the wreck archetypes. This tool changes nothing.",
+      "fields": {
+        "list": "The id of a data list, for example solar_archetype, loadout or faction. The resource openlancer://catalog/lists has all ids.",
+        "text": "Show only the values whose name, label or detail holds this text, without letter case.",
+        "system": "The nickname of the system of a list of one system, for example the list object_of_system."
+      }
+    },
+    "search_assets": {
+      "title": "Search the assets",
+      "description": "Searches the assets of the Assets panel: archetypes, ships, equipment, models and prop groups. This tool changes nothing.",
+      "fields": {
+        "kind": "Show only the assets of this kind.",
+        "category": "The id of a category of the Assets panel, for example solars/station. The default is all."
+      }
+    },
+    "list_prop_groups": {
+      "title": "List the prop groups",
+      "description": "Lists the prop groups of the mods with their members and problems. This tool changes nothing.",
+      "fields": {
+        "text": "Show only the groups whose nickname or name holds this text, without letter case."
+      }
+    },
+    "list_missions": {
+      "title": "List the mission scripts",
+      "description": "Lists the mission scripts: the story slots and the other scripts, with their state in the mod, their counts and their versions. This tool changes nothing."
+    },
+    "get_mission": {
+      "title": "Get a mission script",
+      "description": "Gives the summary of one mission script: the start triggers, the acts, the prefab instances, the cast and the problems. This tool changes nothing.",
+      "fields": {
+        "script": "The reference of the mission script, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini.",
+        "level": "summary gives the summary. triggers also gives each trigger with its condition and its actions."
+      }
+    },
+    "get_trigger": {
+      "title": "Get a mission trigger",
+      "description": "Gives one trigger: the sentence of its condition, its actions with plain names and labeled values, its links in and out, and its problems. This tool changes nothing.",
+      "fields": {
+        "ref": "The reference of the trigger, for example trg:DATA\\MISSIONS\\M01A\\m01a.ini#my_trigger."
+      }
+    },
+    "describe_mission_name": {
+      "title": "Describe a condition or an action",
+      "description": "Gives the plain name, the group, the values and the OpenLancer coverage of one condition, action or order of the mission scripts. This tool changes nothing.",
+      "fields": {
+        "key": "The key, for example Cnd_Timer or Act_ActTrig."
+      }
+    },
+    "list_cutscenes": {
+      "title": "List the cutscenes",
+      "description": "Lists the cutscene scripts with their folder group, the layer that gives them and their duration. This tool changes nothing.",
+      "fields": {
+        "category": "Show only the cutscenes of this folder group.",
+        "text": "Show only the cutscenes whose path holds this text, without letter case."
+      }
+    },
+    "get_cutscene": {
+      "title": "Get a cutscene",
+      "description": "Gives one cutscene script: its duration, its entities, its events with their times and targets, and its errors. This tool changes nothing.",
+      "fields": {
+        "ref": "The reference of the cutscene, for example thn:DATA\\MODS\\my_mod\\CUTSCENES\\my_scene.thn."
+      }
+    },
+    "get_raw_ini": {
+      "title": "Get the raw INI text",
+      "description": "Gives the INI text of a section or of a whole file of the edit view, with the problems of each line. Give a reference or a file. This tool changes nothing.",
+      "fields": {
+        "ref": "The reference of a section, for example obj:my_station_1.",
+        "file": "The install path of an INI file, for example DATA\\SHIPS\\loadouts.ini."
+      }
+    },
+    "check": {
+      "title": "Check the data",
+      "description": "Runs the checks of the editor and gives the problems with their counts. A problem is data, not a tool error. This tool changes nothing.",
+      "fields": {
+        "scope": "all gives the errors that stop a save of the active mod. item, mission and cutscene give the problems of the item of ref.",
+        "ref": "The reference of the item of the scope item, mission or cutscene.",
+        "target": "Merge all mods of the profile on the files of this retail game, then give the problems. This check reads the saved files only."
+      }
+    },
+    "get_console": {
+      "title": "Read the Console",
+      "description": "Gives the newest entries of the Console of the editor. This tool changes nothing. Only the editor host has a Console.",
+      "fields": {
+        "source": "Show only the entries of this source, for example Editor or Agent.",
+        "severity": "The lowest severity to show.",
+        "since": "Give only the entries after this sequence number.",
+        "include_base_game": "Also give the entries that the base game gives without mods."
+      }
     }
   },
   "errors": {
@@ -30,7 +166,27 @@
     "limit_tail": "The call took more than {seconds} seconds, so the server stopped it.",
     "limit_result": "The result has {size} KB of text, and one result can have at most {max} KB. Use a smaller limit, a filter or the reference of one section.",
     "editor_only": "Only the editor host has the tool {tool}. Start the agent server in the editor.",
-    "group_hidden": "The user hid the tool group '{group}'. Ask the user to show it in the agent settings."
+    "group_hidden": "The user hid the tool group '{group}'. Ask the user to show it in the agent settings.",
+    "ref_act": "An act: reference names a part of the graph of a mission. Use get_mission for the acts.",
+    "ref_cutscene": "Use get_cutscene for a whole cutscene. Use get_item for an entity or an event of a cutscene.",
+    "ref_or_name": "Give a reference or a name, not both.",
+    "ref_no_key": "The section has no key, so no line can name it.",
+    "ref_or_file": "Give a reference or a file, not both.",
+    "list_unknown": "The editor has no data list '{list}'. Use one of these lists: {lists}.",
+    "list_needs_system": "The list {list} holds the items of one system. Give the argument 'system'.",
+    "system_no_file": "The system {system} names no system file, so it has no items.",
+    "asset_category": "The Assets panel has no category '{category}'. Use one of these categories: {categories}.",
+    "file_none": "The edit view has no INI file {file}. Use the path of an INI file of the game data.",
+    "prefab_none": "No behavior prefab has the reference {ref}.",
+    "group_none": "No prop group has the reference {ref}. Use list_prop_groups to find the groups.",
+    "asset_none": "No asset has the reference {ref}. Use search_assets to find the assets.",
+    "mission_name_none": "No condition, action or order has the key {key}.",
+    "check_target_scope": "A target check covers all mods of the profile. Do not give a scope or a reference with it.",
+    "check_all_ref": "The scope all takes no reference. Use the scope item, mission or cutscene for one item.",
+    "check_needs_ref": "The scope {scope} needs a reference. Give the argument 'ref'.",
+    "check_all_note": "The scope all gives the errors that stop a save of the active mod.",
+    "check_target_note": "The target check reads the saved files of the mods. An edit that you did not save is not in it.",
+    "check_target_failed": "The target check did not run. {reason}"
   },
   "resources": {}
 }
