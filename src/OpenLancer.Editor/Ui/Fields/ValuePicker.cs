@@ -16,6 +16,9 @@ internal sealed class ValuePicker
     private bool open;
     private string start = "";
 
+    /// <summary>True while the popup of the picker is open: one opening is one change.</summary>
+    public bool IsOpen => open;
+
     /// <summary>
     /// Draws the popup of the picker. Call it in each frame after the field draws, in the ImGui id scope of the field.
     /// Returns the value of a pick in this frame, the value of the opening after Esc, or null without a change.

@@ -6,6 +6,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Ui;
 
 namespace OpenLancer.Editor.Missions;
@@ -34,6 +35,100 @@ internal sealed record CutsceneLink(string Value);
 /// <param name="Glyph">The glyph of the kind of the item.</param>
 /// <param name="Kind">The kind of the item in plain words, for example "Faction".</param>
 internal sealed record PageReference(string Nickname, string? Name, char Glyph, string Kind);
+
+/// <summary>A link to a line in the "Raw INI" view of the whole script (the row menu item "Show in raw INI").</summary>
+/// <param name="Entry">The index of the line in the section.</param>
+internal sealed record RawLineLink(SectionRef Target, int Entry);
+
+/// <summary>The widget of an editable page field (section 8.4 of the M6b design).</summary>
+internal enum EditWidget
+{
+    /// <summary>A name of the script or of the game data: the list picker with the "Missing" and "None" rows.</summary>
+    Picker,
+
+    /// <summary>A word of a closed set, or a condition of the field "Event": a dropdown.</summary>
+    Words,
+
+    /// <summary>A number: a drag field (M20).</summary>
+    Number,
+
+    /// <summary>A whole number: a drag field of whole numbers.</summary>
+    WholeNumber,
+
+    /// <summary>Three numbers, with "Pick in Scene" for a position.</summary>
+    Position,
+
+    /// <summary>A rotation: four numbers.</summary>
+    Rotation,
+
+    Bool,
+
+    /// <summary>A text id: a number, or own text that the editor writes into <c>strings.json</c>.</summary>
+    TextId,
+
+    Text,
+
+    /// <summary>A list widget (section 8.5 of the M6b design).</summary>
+    List,
+
+    /// <summary>A list of triggers with Add and Remove, for example "Started by".</summary>
+    Triggers,
+}
+
+/// <summary>
+/// The edit binding of a page field (section 8.4 of the M6b design): the widget kind, the value and the functions that
+/// make the command of a new value. The page draws the widget, and one gesture of the widget gives one batch. The
+/// binding makes no change itself, so the tests check the batches.
+/// </summary>
+/// <param name="Label">The label of the history entry of an edit, for example "Set Delay".</param>
+internal sealed record FieldEdit(EditWidget Widget, string Label)
+{
+    /// <summary>The value now: one value, the numbers of a position joined with ", ", or the key of the condition of the
+    /// field "Event".</summary>
+    public string Value { get; init; } = "";
+
+    /// <summary>The spec of the value, or null.</summary>
+    public MissionValueSpec? Spec { get; init; }
+
+    /// <summary>The ids of the data lists of a picker, joined with "+", or null.</summary>
+    public string? List { get; init; }
+
+    /// <summary>The file that scopes the mission lists of a picker: the script.</summary>
+    public string? Scope { get; init; }
+
+    /// <summary>True when the picker offers "None", which writes <see cref="NoneWord"/>.</summary>
+    public string? NoneWord { get; init; }
+
+    /// <summary>The choices of a dropdown: the value, its plain label and its group, or null.</summary>
+    public IReadOnlyList<(string Value, string Label, string? Group)> Choices { get; init; } = [];
+
+    /// <summary>Makes the batch of a new value.</summary>
+    public Func<MissionValue, MissionBatch?>? Make { get; init; }
+
+    /// <summary>Makes the batch of own text of a text id: the text goes into the text of the mod.</summary>
+    public Func<string, MissionBatch?>? MakeText { get; init; }
+
+    /// <summary>Makes the batch of a list after one gesture of the list widget.</summary>
+    public Func<ListFieldModel, MissionBatch?>? MakeList { get; init; }
+
+    /// <summary>The rows of a <see cref="EditWidget.Triggers"/> field.</summary>
+    public IReadOnlyList<string> Rows { get; init; } = [];
+
+    /// <summary>Makes the batch that adds a trigger to a <see cref="EditWidget.Triggers"/> field.</summary>
+    public Func<string, MissionBatch?>? Add { get; init; }
+
+    /// <summary>Makes the batch that removes a trigger of a <see cref="EditWidget.Triggers"/> field.</summary>
+    public Func<string, MissionBatch?>? Remove { get; init; }
+
+    /// <summary>True for a position that "Pick in Scene" can set.</summary>
+    public bool PickInScene { get; init; }
+
+    /// <summary>Why the field cannot change, or null. The widget then has its read-only state.</summary>
+    public string? ReadOnly { get; init; }
+}
+
+/// <summary>An item of a row menu or a page menu, for example "Move up". It runs a batch, or goes to a link.</summary>
+internal sealed record PageAction(string Label, MissionBatch? Batch, object? Link = null, string? Tooltip = null);
 
 /// <summary>One field of a page section: a plain name and a value, with an optional help text and an item to go
 /// to.</summary>
@@ -71,6 +166,13 @@ internal sealed record PageField(string Label, string Value, string? Help = null
     /// <summary>The named parts of a value of several numbers, for example the X, Y and Z of a position. The page draws
     /// one field for each part. Empty for another value.</summary>
     public IReadOnlyList<(string Label, string Value)> Parts { get; init; } = [];
+
+    /// <summary>The edit binding of the field, or null for a field that does not change (section 8.4 of the M6b
+    /// design).</summary>
+    public FieldEdit? Edit { get; init; }
+
+    /// <summary>The items of the row menu of the field, for example "Move up" of an action line.</summary>
+    public IReadOnlyList<PageAction> Actions { get; init; } = [];
 }
 
 /// <summary>One component section of a mission page (section 10.1 of the M6a design).</summary>
@@ -79,7 +181,14 @@ internal sealed record PageField(string Label, string Value, string? Help = null
 /// <param name="Notes">Lines under the fields, for example the special rules of a slot.</param>
 /// <param name="Advanced">True for the closed Advanced section.</param>
 internal sealed record PageSection(string Id, string Title, char Glyph, HelpText? Help, IReadOnlyList<PageField> Fields,
-    IReadOnlyList<string> Notes, bool Advanced = false);
+    IReadOnlyList<string> Notes, bool Advanced = false)
+{
+    /// <summary>The action group of the "+" in the header of an action section of the Trigger page, or null.</summary>
+    public string? AddGroup { get; init; }
+
+    /// <summary>The items of the menu of the section, for example "This ship only" of a ship build.</summary>
+    public IReadOnlyList<PageAction> Actions { get; init; } = [];
+}
 
 /// <summary>
 /// The model of a mission page of the Inspector (section 10.1 of the M6a design): the header, the read-only note, the
@@ -95,8 +204,9 @@ internal sealed record PageSection(string Id, string Title, char Glyph, HelpText
 internal sealed partial record MissionPageModel(string Title, string Kind, char Glyph, HelpText Help,
     CompletenessReport? Completeness, IReadOnlyList<PageSection> Sections, SectionRef? Ini)
 {
-    /// <summary>The tooltip of a field of a mission page. The fields take edits in milestone M6b-2. Until then, the INI
-    /// block of the page and the raw view take the edits (section 8.8 of the M6b design).</summary>
+    /// <summary>The read-only reason of a field without an edit binding, for example a list field of a prefab instance,
+    /// and of each field of a page model without an edit session. The INI block of the page and the raw view take the
+    /// edits of such a field (section 8.8 of the M6b design).</summary>
     public const string FieldNote = "Change this value in the INI block of the page.";
 
     /// <summary>The section of an id, or null.</summary>
@@ -119,6 +229,19 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     /// null.</summary>
     public string? FocusSection { get; init; }
 
+    /// <summary>The trigger of a Trigger page: the button "Add action" and the "+" of the groups add to it.</summary>
+    public MissionTrigger? PageTrigger { get; init; }
+
+    /// <summary>Why the item of the page cannot change, or null. The page shows it under the header (section 8.1 of the
+    /// M6b design).</summary>
+    public string? ReadOnly { get; init; }
+
+    /// <summary>The items of the page menu, for example "Duplicate" and "Delete" of a mission ship.</summary>
+    public IReadOnlyList<PageAction> PageActions { get; init; } = [];
+
+    /// <summary>Makes the batch of "Rename" of the page menu, or null for an item without a rename.</summary>
+    public Func<string, MissionBatch?>? Rename { get; init; }
+
     /// <summary>The Mission page (section 10.2 of the M6a design).</summary>
     /// <param name="text">Gives the text of a text id, or an empty text.</param>
     /// <param name="commFile">Gives the voices file of a comm line, or null when no voices file has it.</param>
@@ -126,8 +249,11 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     /// <param name="hidesOpenLancer">True when the active mod has a targets list without OpenLancer (UI rule 4).</param>
     /// <param name="systemName">Gives the name of a system of the game data, or null when the game data has no such
     /// system. Null when the page knows no system names.</param>
+    /// <param name="readOnlyOf">Gives why a section cannot change, or null when the user can edit it. Null for a page
+    /// without edits.</param>
     public static MissionPageModel Mission(MissionRunResult result, MissionAnalysis analysis, Func<int, string> text,
-        Func<string, string?> commFile, bool showBaseGame, bool hidesOpenLancer, Func<string, string?>? systemName = null)
+        Func<string, string?> commFile, bool showBaseGame, bool hidesOpenLancer, Func<string, string?>? systemName = null,
+        Func<SectionRef, string?>? readOnlyOf = null)
     {
         var schema = MissionSchema.Retail;
         var index = analysis.Index;
@@ -159,11 +285,12 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
             sections.Add(OpenLancer(index));
         sections.Add(VoiceLines(index, commFile));
         sections.Add(Texts(index, text));
-        sections.Add(new PageSection("files", "Files", EditorIcons.Folder, schema.Help["missionFiles"],
-            MissionSummary.Bundle(result, analysis).Select(b => new PageField(b.Name, b.Value, FileTooltip(b),
-                b.ActionPhrase != null ? new BundleLink(analysis.Script.Path, b) : null)).ToList(), []));
-
         var header = analysis.Document.OfKind(MissionSectionKind.Mission).FirstOrDefault();
+        var files = MissionSummary.Bundle(result, analysis).Select(b => new PageField(b.Name, b.Value, FileTooltip(b),
+            b.ActionPhrase != null ? new BundleLink(analysis.Script.Path, b) : null)).ToList();
+        if (header != null && readOnlyOf != null && readOnlyOf(header.Ref) == null)
+            files.Insert(0, ShipBuildFileField(analysis, header));
+        sections.Add(new PageSection("files", "Files", EditorIcons.Folder, schema.Help["missionFiles"], files, []));
         var advanced = new List<PageField>();
         // The keys that the game does not use (decision D426). Their help text says where the titles come from.
         foreach (var key in schema.Section("Mission")?.Keys.Where(k => k.Unused) ?? [])
@@ -176,6 +303,30 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
 
         return new MissionPageModel(title, "Mission", EditorIcons.Route, schema.Help["mission"],
             MissionCompleteness.OfMission(analysis), sections, header?.Ref);
+    }
+
+    /// <summary>
+    /// The field "Ship build file" of the Mission page (section 8.4 of the M6b design): the <c>npc_ship_file</c> line of
+    /// <c>[Mission]</c>. A new ship build of the script goes into this file, so a new build needs it.
+    /// </summary>
+    private static PageField ShipBuildFileField(MissionAnalysis analysis, MissionSection header)
+    {
+        var key = MissionSchema.Retail.Section("Mission")?.Key("npc_ship_file");
+        var value = header.Section.FirstOrDefault(e => MissionIndex.Is(e.Name, "npc_ship_file") && e.Count > 0) is { } line
+            ? MissionIndex.Text(line[0])
+            : "";
+        const string label = "Ship build file";
+        return new PageField(label, value.Length > 0 ? value : "Not set", key?.Help)
+        {
+            Edit = new FieldEdit(EditWidget.Text, $"Set {label}")
+            {
+                Value = value,
+                Make = text => text.Scalar is { Length: > 0 } path
+                    ? new MissionBatch($"Set {label}", [new SetItemKey(new ItemRef(analysis.Script.Path, header.Ref.Id),
+                        "npc_ship_file", [LineSpec.Raw("npc_ship_file", path)])])
+                    : null,
+            },
+        };
     }
 
     /// <summary>The tooltip of a row of the Files section: what it holds, and what a click does.</summary>

@@ -16,6 +16,15 @@ using OpenLancer.Runtime.Missions;
 
 namespace OpenLancer.Editor.Missions;
 
+/// <summary>A field that waits for "Pick in Scene": the next click in the Scene sets its position.</summary>
+/// <param name="Label">The label of the field.</param>
+/// <param name="Set">Sets the position.</param>
+internal sealed record ScenePick(string Label, Action<System.Numerics.Vector3> Set)
+{
+    /// <summary>The hint in the Scene while the pick waits (section 8.11 of the M6b design).</summary>
+    public string Hint => $"Click a point in the Scene to set {Label}. Esc cancels.";
+}
+
 /// <summary>
 /// The mission scripts of the open profile and the open mission (section 4 of the M6a design): the last run of the
 /// mission checks, the open mission, the selection of the Mission tab, and the requests of the raw view and of the
@@ -97,6 +106,25 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <summary>Asks the Scene part to frame the world items of a mission item, for example after a double-click on a
     /// node.</summary>
     public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
+
+    /// <summary>The field that waits for "Pick in Scene", or null (section 8.9 of the M6b design).</summary>
+    public ScenePick? PendingPick { get; private set; }
+
+    /// <summary>Starts "Pick in Scene": the next click in the Scene sets the position of a field. Esc cancels.</summary>
+    /// <param name="label">The label of the field, for the hint in the Scene.</param>
+    /// <param name="set">Sets the position.</param>
+    public void StartPick(string label, Action<System.Numerics.Vector3> set) => PendingPick = new ScenePick(label, set);
+
+    /// <summary>Ends "Pick in Scene" without a change.</summary>
+    public void CancelPick() => PendingPick = null;
+
+    /// <summary>Ends "Pick in Scene" with a point: the field gets it.</summary>
+    public void Picked(System.Numerics.Vector3 point)
+    {
+        var pick = PendingPick;
+        PendingPick = null;
+        pick?.Set(point);
+    }
 
     // The systems that the user picked for items whose system the index cannot find. The Hierarchy menu "Show in
     // system..." picks them (section 9 of the M6a design). The choice lasts until the editor closes and writes nothing.
@@ -500,6 +528,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
         PendingSection = null;
         PendingSceneFrame = null;
         PendingGraphFrame = false;
+        PendingPick = null;
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();

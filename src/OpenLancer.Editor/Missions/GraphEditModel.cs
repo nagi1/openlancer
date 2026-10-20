@@ -500,12 +500,18 @@ internal sealed class GraphEditModel
             return Batch($"Add trigger: {item.Name}", add, link);
         }
         if (context.Trigger is { } trigger && (item.Kind == LibraryKind.Action || context.Filter == QuickAddFilter.Conditions))
-        {
-            var line = MissionLibrary.Line(item);
-            return item.Kind == LibraryKind.Action
-                ? Batch($"Add {item.Name} to {trigger.Nickname}", new AddAction(RefOf(trigger), line))
-                : Batch($"Set the condition of {trigger.Nickname}", new SetCondition(RefOf(trigger), line));
-        }
+            return AddTo(trigger, item);
         return DropOnEmpty(item);
+    }
+
+    /// <summary>The batch that adds an item to a trigger: an action goes to its end, and a condition or an event becomes
+    /// its condition. The quick add of the Trigger page uses it too.</summary>
+    public static MissionBatch AddTo(MissionTrigger trigger, LibraryItem item)
+    {
+        var line = MissionLibrary.Line(item);
+        var reference = new TriggerRef(trigger.Section.Ref.Path, trigger.Nickname);
+        return item.Kind == LibraryKind.Action
+            ? Batch($"Add {item.Name} to {trigger.Nickname}", new AddAction(reference, line))
+            : Batch($"Set the condition of {trigger.Nickname}", new SetCondition(reference, line));
     }
 }

@@ -94,6 +94,22 @@ public sealed partial class MissionEditor
         session.ReadOnlyReason ??
         (InstallPaths.TryParse(path) is { } normal && session.OpenDocument(normal) is { } document ? document.ReadOnlyReason : null);
 
+    /// <summary>
+    /// Why the user cannot change a section of a mission file, or null (section 8.1 of the M6b design): the session
+    /// takes no edits, the file is a whole file of another mod, or a patch cannot change the section, for example a
+    /// repeated nickname of a lower layer (decision D20). The pages show the reason and use the read-only state of their
+    /// widgets.
+    /// </summary>
+    public string? ReadOnlyReason(SectionRef section)
+    {
+        if (ReadOnlyReason(section.Path) is { } reason)
+            return reason;
+        if (InstallPaths.TryParse(section.Path) is not { } normal || session.OpenDocument(normal) is not { } document ||
+            document.IndexOf(section.Id) is not (>= 0 and var index) || document.ReadOnlyReasonAt(index) is not { } why)
+            return null;
+        return why.Length == 0 ? why : char.ToUpperInvariant(why[0]) + why[1..];
+    }
+
     /// <summary>The model cache, for the tests.</summary>
     internal MissionModelCache Cache => cache;
 

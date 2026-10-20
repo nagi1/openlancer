@@ -106,7 +106,17 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// design). Returns true when the section is open. Then draw its rows and call <see cref="EndSection"/>.
     /// </summary>
     /// <param name="help">The text of the info icon, or null for a header without an icon.</param>
-    public bool BeginSection(string key, char icon, string title, bool defaultOpen, HelpText? help)
+    public bool BeginSection(string key, char icon, string title, bool defaultOpen, HelpText? help) =>
+        BeginSection(key, icon, title, defaultOpen, help, null);
+
+    /// <summary>
+    /// Draws a section header with an info icon and a small button at its right end, for example the "+" of an action
+    /// group of the Trigger page (section 8.4 of the M6b design). Returns true when the section is open.
+    /// </summary>
+    /// <param name="button">The glyph and the tooltip of the button, and what a click does, or null for a header
+    /// without a button.</param>
+    public bool BeginSection(string key, char icon, string title, bool defaultOpen, HelpText? help,
+        (char Glyph, string Tooltip, Action Clicked)? button)
     {
         var scale = ImGuiHelper.Scale;
         // A chip of the components strip asks for its section: it opens, and the page scrolls to it (milestone M3).
@@ -147,6 +157,31 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         if (help != null)
         {
             InfoIcon.AtRightEnd($"##info-{key}", help);
+        }
+
+        if (button is var (glyph, tooltip, clicked))
+        {
+            var headerMax = ImGui.GetItemRectMax();
+            var headerMin = ImGui.GetItemRectMin();
+            var cursor = ImGui.GetCursorScreenPos();
+            var size = ImGui.GetFrameHeight();
+            ImGui.SetCursorScreenPos(new Vector2(headerMax.X - 2 * InfoIcon.Width - 2 * ImGui.GetStyle().FramePadding.X,
+                headerMin.Y + MathF.Truncate((headerMax.Y - headerMin.Y - size) / 2)));
+            if (ImGui.InvisibleButton($"##button-{key}", new Vector2(size)))
+            {
+                clicked();
+            }
+
+            var hovered = ImGui.IsItemHovered();
+            var text = glyph.ToString();
+            ImGui.GetWindowDrawList().AddText(ImGui.GetItemRectMin() + (new Vector2(size) - ImGui.CalcTextSize(text)) / 2,
+                ImGui.GetColorU32(hovered ? EditorTheme.AccentText : EditorTheme.TextDim), text);
+            if (hovered)
+            {
+                ImGui.SetTooltip(tooltip);
+            }
+
+            ImGui.SetCursorScreenPos(cursor);
         }
 
         ImGui.PopStyleVar(3);
