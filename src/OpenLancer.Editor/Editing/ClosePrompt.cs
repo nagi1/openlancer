@@ -41,12 +41,19 @@ internal interface IClosePromptHost
     /// <summary>Deletes the recovery file of the session, so that the next open does not offer the edits.</summary>
     void DiscardRecovery();
 
-    /// <summary>Closes the window.</summary>
-    void Close();
+    /// <summary>The loads of the game data of the open session, or null without a session.</summary>
+    DataLoads? Loads { get; }
+
+    /// <summary>Ends the window now.</summary>
+    void Exit();
 
     /// <summary>Shows a dialog: its title, its message and its choices. <paramref name="cancel"/> runs when Escape or
     /// the close button of the title bar closes the dialog.</summary>
     void Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel);
+
+    /// <summary>Shows a dialog that the user cannot cancel. It blocks the window, so the user cannot edit, save or start
+    /// Play until a choice closes it or the window closes.</summary>
+    void Wait(string title, string message, IReadOnlyList<Choice> choices);
 }
 
 /// <summary>
@@ -55,26 +62,47 @@ internal interface IClosePromptHost
 /// A publish draft of the Mods window with unapplied changes asks first: Apply, Revert or Cancel (section 10.7 of the
 /// M11c design).
 /// </summary>
-/// <remarks>A crash or a kill of the editor cannot ask. For these, the recovery file keeps the unsaved edits (decision
-/// D8).</remarks>
+/// <remarks>
+/// <para>While the game data loads, the window closes when the load ends, as Unity ends a running import before it
+/// quits. Each load fills the resources of the session, so the session must not be disposed while a load runs (finding
+/// 9 of the S1 review). Until the load ends, a dialog that the user cannot cancel blocks the window, as the progress bar
+/// of a Unity import does. So no edit comes after the answer of the user. Its button "Close now" closes the window at
+/// once, for a load that does not end. The window then leaves the busy session alone.</para>
+/// <para>A crash or a kill of the editor cannot ask. For these, the recovery file keeps the unsaved edits (decision
+/// D8).</para>
+/// </remarks>
 internal sealed class ClosePrompt(IClosePromptHost host)
 {
     /// <summary>The title of the dialog. ImGui knows a popup by its title, so no other dialog of the editor uses
     /// it.</summary>
     public const string Title = "Close the editor";
 
+    /// <summary>The message of the dialog while the close waits for the running load of the game data.</summary>
+    public const string WaitMessage = "The game data loads now. The editor closes when the load ends.";
+
+    /// <summary>The button of the dialog while the close waits, for a load that does not end.</summary>
+    public const string CloseNow = "Close now";
+
+    /// <summary>The tooltip of <see cref="CloseNow"/>.</summary>
+    public const string CloseNowTooltip =
+        "Closes the editor now. The load of the game data stops. The saved files do not change.";
+
     // True from the request that shows the dialog until the dialog closes.
     private bool asking;
 
+    /// <summary>True while the close waits for the end of the running load of the game data.</summary>
+    public bool Waits => host.Loads?.CloseWaits == true;
+
     /// <summary>
     /// Runs a close request. An open field edit or drag ends first. Without a publish draft and without unsaved edits,
-    /// the result is true: the window closes now. Else a dialog shows and the result is false: first the question about
-    /// the draft, then the question about the unsaved edits. The choices of the user then close the window or keep it
-    /// open. A request while a dialog shows changes nothing and gives false.
+    /// the window closes now, and the result is true. Else a dialog shows and the result is false: first the question
+    /// about the draft, then the question about the unsaved edits. The choices of the user then close the window or
+    /// keep it open. While the game data loads, the close waits for the end of the load, and the result is false. A
+    /// request while a dialog shows or while the close waits changes nothing and gives false.
     /// </summary>
     public bool Request()
     {
-        if (asking)
+        if (asking || Waits)
         {
             return false;
         }
@@ -99,12 +127,13 @@ internal sealed class ClosePrompt(IClosePromptHost host)
     internal static IReadOnlyList<Choice> DraftChoices(Action apply, Action revert, Action cancel) =>
         [new Choice("Apply", apply), new Choice("Revert", revert), new Choice("Cancel", cancel)];
 
-    /// <summary>Asks about the unsaved edits. Returns true when there are none, so that the window can close.</summary>
+    /// <summary>Asks about the unsaved edits. Without unsaved edits, it closes the window (see <see cref="Close"/>) and
+    /// gives its result.</summary>
     private bool AskUnsaved()
     {
         if (host.UnsavedMod is not { } mod)
         {
-            return true;
+            return Close();
         }
 
         asking = true;
@@ -127,19 +156,13 @@ internal sealed class ClosePrompt(IClosePromptHost host)
         CloseAfterDraft();
     }
 
-    private void CloseAfterDraft()
-    {
-        if (AskUnsaved())
-        {
-            host.Close();
-        }
-    }
+    private void CloseAfterDraft() => AskUnsaved();
 
     /// <summary>The window closes after a save. A save that fails keeps it open.</summary>
     private void Save()
     {
         asking = false;
-        host.Save(host.Close);
+        host.Save(() => Close());
     }
 
     /// <summary>The window closes, and the next open does not offer the edits.</summary>
@@ -147,8 +170,31 @@ internal sealed class ClosePrompt(IClosePromptHost host)
     {
         asking = false;
         host.DiscardRecovery();
-        host.Close();
+        Close();
     }
 
     private void Answered() => asking = false;
+
+    /// <summary>
+    /// Closes the window now, or when the running load of the game data ends (see <see cref="DataLoads.Close"/>). While
+    /// the close waits, a dialog that the user cannot cancel blocks the window. Its only button is
+    /// <see cref="CloseNow"/>.
+    /// </summary>
+    /// <returns>True when the window closes now. False when the close waits for the load.</returns>
+    private bool Close()
+    {
+        if (host.Loads is not { } loads)
+        {
+            host.Exit();
+            return true;
+        }
+
+        if (loads.Close(host.Exit))
+        {
+            return true;
+        }
+
+        host.Wait(Title, WaitMessage, [new Choice(CloseNow, host.Exit) { Tooltip = CloseNowTooltip }]);
+        return false;
+    }
 }

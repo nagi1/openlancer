@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
+using OpenLancer.Editor;
 using OpenLancer.Editor.Dialogs;
 using OpenLancer.Editor.Editing;
 using Xunit;
@@ -40,7 +43,7 @@ public sealed class ClosePromptTests
 
         Assert.True(new ClosePrompt(host).Request());
 
-        Assert.Equal(["end edits"], host.Calls);
+        Assert.Equal(["end edits", "exit"], host.Calls);
         Assert.Null(host.Dialog);
     }
 
@@ -88,7 +91,7 @@ public sealed class ClosePromptTests
 
         host.Choose("Save");
 
-        Assert.Equal(["end edits", "ask", "save", "close"], host.Calls);
+        Assert.Equal(["end edits", "ask", "save", "exit"], host.Calls);
         Assert.False(session.IsDirty);
         Assert.Contains("volume = 3", File.ReadAllText(Path.Combine(ws.ModFolder("act"), "patches", GoodsPath)));
     }
@@ -113,7 +116,7 @@ public sealed class ClosePromptTests
         Assert.True(session.IsDirty);
         Assert.False(prompt.Request());
         Assert.NotNull(host.Dialog);
-        Assert.DoesNotContain("close", host.Calls);
+        Assert.DoesNotContain("exit", host.Calls);
     }
 
     /// <summary>Don't Save closes the window and deletes the recovery file, so the next open does not offer the
@@ -133,7 +136,7 @@ public sealed class ClosePromptTests
 
         host.Choose("Don't Save");
 
-        Assert.Equal(["end edits", "ask", "discard", "close"], host.Calls);
+        Assert.Equal(["end edits", "ask", "discard", "exit"], host.Calls);
         Assert.False(File.Exists(recovery));
         session.Dispose();
         Assert.False(ws.Session("act").HasRecovery);
@@ -203,7 +206,7 @@ public sealed class ClosePromptTests
         Assert.Equal(["end edits", "ask", "apply draft", "ask"], host.Calls);
         Assert.Equal($"Save changes to {ModName} before you close?", host.Dialog!.Value.Message);
         host.Choose("Don't Save");
-        Assert.Equal(["end edits", "ask", "apply draft", "ask", "discard", "close"], host.Calls);
+        Assert.Equal(["end edits", "ask", "apply draft", "ask", "discard", "exit"], host.Calls);
     }
 
     /// <summary>Revert drops the draft. Without unsaved edits, the window then closes.</summary>
@@ -216,7 +219,7 @@ public sealed class ClosePromptTests
         Assert.False(new ClosePrompt(host).Request());
         host.Choose("Revert");
 
-        Assert.Equal(["end edits", "ask", "revert draft", "close"], host.Calls);
+        Assert.Equal(["end edits", "ask", "revert draft", "exit"], host.Calls);
     }
 
     /// <summary>Cancel and Escape keep the window open and the draft. The next request asks again.</summary>
@@ -254,7 +257,149 @@ public sealed class ClosePromptTests
 
         Assert.Equal(["end edits", "ask", "apply draft"], host.Calls);
         Assert.False(prompt.Request());
-        Assert.DoesNotContain("close", host.Calls);
+        Assert.DoesNotContain("exit", host.Calls);
+    }
+
+    /// <summary>
+    /// Finding 9 of the S1 review: the user closes the window while the game data loads. The close waits for the end of
+    /// the load. Until then, a dialog that the user cannot cancel blocks the window, so no edit comes after the answer.
+    /// A second close changes nothing. The window ends one time, when the load ends.
+    /// </summary>
+    [Fact]
+    public void ACloseDuringALoadBlocksTheWindowUntilTheLoadEnds()
+    {
+        using var ws = Workspace();
+        using var load = new RunningLoad();
+        var host = new Host(ws.Session("act")) { Loads = load.Loads };
+        var prompt = new ClosePrompt(host);
+
+        Assert.False(prompt.Request());
+
+        Assert.Equal(["end edits", "wait"], host.Calls);
+        Assert.True(prompt.Waits);
+        var wait = host.Waiting!.Value;
+        Assert.Equal((ClosePrompt.Title, ClosePrompt.WaitMessage), (wait.Title, wait.Message));
+        Assert.Equal([ClosePrompt.CloseNow], wait.Choices.Select(c => c.Label).ToList());
+        Assert.Equal(ClosePrompt.CloseNowTooltip, wait.Choices[0].Tooltip);
+        Assert.False(prompt.Request());
+        Assert.Equal(["end edits", "wait"], host.Calls);
+
+        load.End();
+
+        Assert.Equal(["end edits", "wait", "exit"], host.Calls);
+        Assert.False(prompt.Waits);
+    }
+
+    /// <summary>
+    /// Finding 3 of the S3 review: after Don't Save during a load, the close waits. A second close while it waits does
+    /// not ask again, and the dialog of the wait cannot be cancelled. So no edit can come after Don't Save, and the
+    /// recovery file stays deleted.
+    /// </summary>
+    [Fact]
+    public void DontSaveDuringALoadDeletesTheRecoveryFileAndWaits()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        Edit(session);
+        Assert.Empty(session.WriteRecovery());
+        var recovery = RecoveryFile.PathOf(ws.ModFolder("act"));
+        using var load = new RunningLoad();
+        var host = new Host(session) { Loads = load.Loads };
+        var prompt = new ClosePrompt(host);
+        Assert.False(prompt.Request());
+
+        host.Choose("Don't Save");
+        Assert.False(prompt.Request());
+
+        Assert.Equal(["end edits", "ask", "discard", "wait"], host.Calls);
+        Assert.Null(host.Dialog);
+        Assert.False(File.Exists(recovery));
+        load.End();
+        Assert.Equal(["end edits", "ask", "discard", "wait", "exit"], host.Calls);
+    }
+
+    /// <summary>Save in the dialog during a load saves the files, and the window ends when the load ends.</summary>
+    [Fact]
+    public void SaveDuringALoadClosesTheWindowWhenTheLoadEnds()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        Edit(session);
+        using var load = new RunningLoad();
+        var host = new Host(session) { Loads = load.Loads };
+        Assert.False(new ClosePrompt(host).Request());
+
+        host.Choose("Save");
+
+        Assert.Equal(["end edits", "ask", "save", "wait"], host.Calls);
+        Assert.False(session.IsDirty);
+        load.End();
+        Assert.Equal(["end edits", "ask", "save", "wait", "exit"], host.Calls);
+    }
+
+    /// <summary>Finding 4 of the S3 review: a load that does not end must not keep the window open until a kill. Close
+    /// now ends the window at once.</summary>
+    [Fact]
+    public void CloseNowEndsTheWindowWithoutAWaitForTheLoad()
+    {
+        using var ws = Workspace();
+        using var load = new RunningLoad();
+        var host = new Host(ws.Session("act")) { Loads = load.Loads };
+        Assert.False(new ClosePrompt(host).Request());
+
+        host.ChooseInWait(ClosePrompt.CloseNow);
+
+        Assert.Equal(["end edits", "wait", "exit"], host.Calls);
+        Assert.True(load.Loads.IsBusy);
+    }
+
+    /// <summary>Without a running load, the window closes at once, also with a session.</summary>
+    [Fact]
+    public void WithoutARunningLoadTheWindowClosesAtOnce()
+    {
+        using var ws = Workspace();
+        var ui = new QueuedUIThread();
+        var loads = new DataLoads(ui);
+        loads.Load(() => () => { });
+        ui.RunUntil(() => !loads.IsBusy, "the first load");
+        var host = new Host(ws.Session("act")) { Loads = loads };
+
+        Assert.True(new ClosePrompt(host).Request());
+
+        Assert.Equal(["end edits", "exit"], host.Calls);
+        Assert.True(loads.IsClosed);
+    }
+
+    /// <summary>A first load of the game data that runs until the test ends it, as the loads of the editor run.</summary>
+    private sealed class RunningLoad : IDisposable
+    {
+        private readonly QueuedUIThread ui = new();
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RunningLoad()
+        {
+            Loads = new DataLoads(ui);
+            using var running = new ManualResetEventSlim();
+            Loads.Load(() =>
+            {
+                running.Set();
+                Assert.True(release.Task.Wait(TimeSpan.FromSeconds(30)), "The test did not end the load.");
+                return () => { };
+            });
+            Assert.True(running.Wait(TimeSpan.FromSeconds(30)));
+        }
+
+        public DataLoads Loads { get; }
+
+        /// <summary>Ends the load, and runs its end on the UI thread, as the next frame of the editor does.</summary>
+        public void End()
+        {
+            release.TrySetResult();
+            ui.RunUntil(() => !Loads.IsBusy, "the end of the load");
+        }
+
+        /// <summary>Ends a load that the test did not end.</summary>
+        public void Dispose() => release.TrySetResult();
     }
 
     /// <summary>The editor window as the close prompt sees it, on a real edit session. The dialog is a record of its
@@ -262,6 +407,8 @@ public sealed class ClosePromptTests
     private sealed class Host(EditSession session) : IClosePromptHost
     {
         public List<string> Calls { get; } = [];
+
+        public DataLoads? Loads { get; init; }
 
         /// <summary>The display name of the mod of a publish draft with changes, or null.</summary>
         public string? UnappliedDraft { get; set; }
@@ -315,12 +462,29 @@ public sealed class ClosePromptTests
             session.DiscardRecovery();
         }
 
-        public void Close() => Calls.Add("close");
+        public void Exit() => Calls.Add("exit");
 
         public void Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel)
         {
             Calls.Add("ask");
             Dialog = (title, message, choices, cancel);
+        }
+
+        /// <summary>The dialog that the user cannot cancel, or null.</summary>
+        public (string Title, string Message, IReadOnlyList<Choice> Choices)? Waiting { get; private set; }
+
+        public void Wait(string title, string message, IReadOnlyList<Choice> choices)
+        {
+            Calls.Add("wait");
+            Waiting = (title, message, choices);
+        }
+
+        /// <summary>Clicks a button of the dialog that the user cannot cancel.</summary>
+        public void ChooseInWait(string label)
+        {
+            var choice = Waiting!.Value.Choices.Single(c => c.Label == label);
+            Waiting = null;
+            choice.Action();
         }
 
         /// <summary>Clicks a button of the dialog. As in <see cref="ChoiceDialog"/>, the dialog closes first.</summary>

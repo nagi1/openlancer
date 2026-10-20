@@ -23,6 +23,10 @@ internal abstract class ModalDialog
     /// <summary>True while the dialog shows, from <see cref="Open"/> until it closes.</summary>
     public bool IsOpen { get; private set; }
 
+    /// <summary>False for a dialog that the user cannot cancel. Then the title bar has no close button, and Escape does
+    /// nothing. Only a button of the dialog closes it.</summary>
+    protected virtual bool CanCancel => true;
+
     /// <summary>Shows the dialog from the next frame.</summary>
     protected void Open()
     {
@@ -45,8 +49,10 @@ internal abstract class ModalDialog
 
         var viewport = ImGui.GetMainViewport();
         ImGui.SetNextWindowPos(viewport.GetCenter(), ImGuiCond.Appearing, new Vector2(0.5f));
+        const ImGuiWindowFlags flags = ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings;
         var open = true;
-        if (!ImGui.BeginPopupModal(Title, ref open, ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings))
+        var cancellable = CanCancel;
+        if (!(cancellable ? ImGui.BeginPopupModal(Title, ref open, flags) : ImGuiExt.BeginModalNoClose(Title, flags)))
         {
             // The close button of the title bar closed it, or another popup replaced it.
             IsOpen = false;
@@ -56,11 +62,12 @@ internal abstract class ModalDialog
 
         // ImGui does not close a modal popup on Escape, so the dialog does it. While a text field is active, Escape
         // only ends the field, so the check comes before the fields draw.
-        var escape = ImGui.IsKeyPressed(ImGuiKey.Escape, false) && !ImGui.IsAnyItemActive();
+        var escape = cancellable && ImGui.IsKeyPressed(ImGuiKey.Escape, false) && !ImGui.IsAnyItemActive();
         ImGui.PushTextWrapPos(MathF.Truncate(TextWidth * ImGuiHelper.Scale));
         Body();
         ImGui.PopTextWrapPos();
-        if (escape && IsOpen)
+        // A button can show the dialog again with other content, for example a dialog that the user cannot cancel.
+        if (escape && IsOpen && CanCancel)
         {
             Close();
             Cancelled();
