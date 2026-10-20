@@ -158,6 +158,30 @@ public sealed record MissionValueSpec(int Index, string Name, string Label, Miss
 /// map matches each line.</param>
 public sealed record MissionSentence(IReadOnlyDictionary<string, IReadOnlyList<string>> When, string Text);
 
+/// <summary>
+/// What a play from a trigger does with an action of the path to the trigger (section 5.3, step 9 of the M6c design,
+/// decision D748). The schema gives each action one role.
+/// </summary>
+public enum StartRole
+{
+    /// <summary>The action changes the world of space, for example a spawn or an order. It goes into the setup trigger
+    /// that runs when the player comes into space.</summary>
+    World,
+
+    /// <summary>The action changes a state of the player or of the game, for example a reputation or an objective. It
+    /// goes into the setup trigger that runs at the start.</summary>
+    State,
+
+    /// <summary>The start save holds the net result of the action, for example the title of the mission.</summary>
+    Save,
+
+    /// <summary>The action moves the player. The start place uses it.</summary>
+    Place,
+
+    /// <summary>The start does nothing with the action, for example a comm line or a start of a trigger.</summary>
+    Skip,
+}
+
 /// <summary>What a mission name is: a condition, an action of a trigger, or an order of an order list.</summary>
 public enum MissionNameKind
 {
@@ -193,6 +217,14 @@ public sealed record MissionName(string Name, string Plain, MissionNameKind Kind
     /// <summary>True when no retail mission script has a line of this name (decision D425). Rule M28 warns about such
     /// a line, because its effect is not checked.</summary>
     public bool NoRetailExample { get; init; }
+
+    /// <summary>The role of an action in a play from a trigger (decision D748), or null for a condition and an
+    /// order.</summary>
+    public StartRole? Start { get; init; }
+
+    /// <summary>True for a condition that writes its state into a save, after the trigger id (section 2.4, item 6 of the
+    /// M6c design). A start save holds no such state, so a trigger with this condition starts fresh.</summary>
+    public bool SavesState { get; init; }
 
     /// <summary>The spec of a value name, or null.</summary>
     public MissionValueSpec? Value(string name) =>
@@ -719,6 +751,12 @@ public sealed class MissionSchema
             throw new FormatException($"The condition {name.Name} has the unknown event group '{name.Group}'.");
         foreach (var name in Actions.Where(n => Group(n.Group) == null))
             throw new FormatException($"The action {name.Name} has the unknown group '{name.Group}'.");
+        foreach (var name in Actions.Where(n => n.Start == null))
+            throw new FormatException($"The action {name.Name} has no start role.");
+        foreach (var name in Conditions.Concat(Directives).Where(n => n.Start != null))
+            throw new FormatException($"Only an action has a start role, not {name.Name}.");
+        foreach (var name in Actions.Concat(Directives).Where(n => n.SavesState))
+            throw new FormatException($"Only a condition saves a state, not {name.Name}.");
         var specs = Conditions.Concat(Actions).Concat(Directives).SelectMany(n => n.Values)
             .Concat(Sections.Append(ShipBuild).SelectMany(s => s.Keys).SelectMany(k => k.ValueSpecs));
         foreach (var spec in specs)
@@ -794,8 +832,21 @@ public sealed class MissionSchema
             Wake = Strings(e, "wake"),
             Evidence = Optional(e, "evidence"),
             NoRetailExample = Bool(e, "noRetailExample"),
+            Start = Optional(e, "start") is { } role ? Role(role) : null,
+            SavesState = Bool(e, "savesState"),
         };
     }
+
+    /// <summary>The start role of a JSON word.</summary>
+    private static StartRole Role(string text) => text switch
+    {
+        "world" => StartRole.World,
+        "state" => StartRole.State,
+        "save" => StartRole.Save,
+        "place" => StartRole.Place,
+        "skip" => StartRole.Skip,
+        _ => throw new FormatException($"The start role '{text}' is not known."),
+    };
 
     private static IReadOnlyList<MissionSentence> Sentences(JsonElement e, string property) =>
         e.TryGetProperty(property, out var array)

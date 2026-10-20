@@ -86,6 +86,25 @@ public sealed class MissionJsonHost(EditSession session)
             MissionErrors.BadJsonError("The request is a JSON object with script and inputs."))));
     });
 
+    /// <summary>
+    /// The start plan query (the tool <c>mission_start_plan</c>, section 7.3 of the M6c design): a request with
+    /// <c>script</c>, <c>start</c>, <c>target</c> and <c>start_place</c>. It changes nothing.
+    /// </summary>
+    public MissionHostReply StartPlan(string json) => Read(() =>
+    {
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(json);
+        }
+        catch (JsonException)
+        {
+            node = null;
+        }
+        return Queries.StartPlan(RunJson.ReadStartRequest(node as JsonObject ?? throw new EditException(
+            MissionErrors.BadJsonError("The request is a JSON object with script and start."))));
+    });
+
     /// <summary>The JSON Schema of a batch, the input schema of the tool <c>mission_edit</c>.</summary>
     public static string Schema() => MissionJson.Schema().ToJsonString();
 

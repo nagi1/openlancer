@@ -117,6 +117,65 @@ public sealed class MissionSchemaTests
         Assert.Contains("no_such_value", error.Message);
     }
 
+    /// <summary>The start role of each action (section 5.3, step 9 of the M6c design): one role of the closed set for each
+    /// of the 85 actions, and none for a condition or an order.</summary>
+    [Fact]
+    public void EachActionHasOneStartRoleOfTheClosedSet()
+    {
+        Assert.Equal(85, Schema.Actions.Count);
+        foreach (var action in Schema.Actions)
+            Assert.True(action.Start is { } role && Enum.IsDefined(role), action.Name);
+        Assert.All(Schema.Conditions.Concat(Schema.Directives), n => Assert.Null(n.Start));
+        Assert.Equal(StartRole.World, Schema.Name("Act_SpawnFormation")!.Start);
+        Assert.Equal(StartRole.World, Schema.Name("Act_PlayMusic")!.Start);
+        Assert.Equal(StartRole.State, Schema.Name("Act_SetRep")!.Start);
+        Assert.Equal(StartRole.State, Schema.Name("Act_LockDock")!.Start);
+        Assert.Equal(StartRole.Save, Schema.Name("Act_AddRTC")!.Start);
+        Assert.Equal(StartRole.Place, Schema.Name("Act_SetInitialPlayerPos")!.Start);
+        Assert.Equal(StartRole.Skip, Schema.Name("Act_ChangeState")!.Start);
+        Assert.Equal(StartRole.Skip, Schema.Name("Act_SendComm")!.Start);
+    }
+
+    /// <summary>The 11 conditions that write a state line after the trigger id into a save (section 2.4, item 6 of the
+    /// M6c design).</summary>
+    [Fact]
+    public void ElevenConditionsSaveAState()
+    {
+        string[] expected =
+        [
+            "Cnd_Timer", "Cnd_Destroyed", "Cnd_DistShip", "Cnd_DistVec", "Cnd_DistVecLbl", "Cnd_LootAcquired", "Cnd_ProjHit",
+            "Cnd_ProjHitShipToLbl", "Cnd_TetherBroke", "Cnd_NPCSystemEnter", "Cnd_NPCSystemExit",
+        ];
+
+        Assert.Equal(expected.Order(), Schema.Conditions.Where(c => c.SavesState).Select(c => c.Name).Order());
+        Assert.DoesNotContain(Schema.Actions, a => a.SavesState);
+    }
+
+    [Theory]
+    [InlineData(null, "has no start role")]
+    [InlineData("teleport", "start role 'teleport'")]
+    public void AnActionWithoutAKnownStartRoleDoesNotLoad(string? role, string message)
+    {
+        var root = JsonNode.Parse(ResourceText())!;
+        var action = root["actions"]![0]!.AsObject();
+        action.Remove("start");
+        if (role != null)
+            action["start"] = role;
+
+        var error = Assert.Throws<InvalidDataException>(() => MissionSchema.Parse(root.ToJsonString()));
+        Assert.Contains(message, error.Message);
+    }
+
+    [Fact]
+    public void AConditionWithAStartRoleDoesNotLoad()
+    {
+        var root = JsonNode.Parse(ResourceText())!;
+        root["conditions"]![0]!["start"] = "world";
+
+        var error = Assert.Throws<InvalidDataException>(() => MissionSchema.Parse(root.ToJsonString()));
+        Assert.Contains("Only an action has a start role", error.Message);
+    }
+
     /// <summary>
     /// The slot table against the storyline of the engine (section 14.6 of the M6a design). The path of each slot is the
     /// file of its story mission. The start stage is the stage <c>{mission}_loaded</c>, or the stage after it when the

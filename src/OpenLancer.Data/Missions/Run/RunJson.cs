@@ -108,7 +108,7 @@ public sealed record DryRunView(string Script, long Version, int TotalSteps, IRe
 /// design. A line of an <c>event</c> or a <c>fact</c> input is <c>{key, values}</c>, as a mission line of section 4.3 of
 /// the M6b design.
 /// </summary>
-public static class RunJson
+public static partial class RunJson
 {
     /// <summary>The detail code of an input field that the kind does not have.</summary>
     public const string UnknownField = MissionErrors.UnknownField;
@@ -117,6 +117,7 @@ public static class RunJson
     {
         ["start_mission"] = (DryRunInputKind.StartMission, []),
         ["load_checkpoint"] = (DryRunInputKind.LoadCheckpoint, ["trigger"]),
+        ["start_at"] = (DryRunInputKind.StartAt, ["trigger"]),
         ["run_trigger"] = (DryRunInputKind.RunTrigger, ["trigger"]),
         ["event"] = (DryRunInputKind.Event, ["line"]),
         ["fact"] = (DryRunInputKind.Fact, ["line", "on"]),
@@ -157,6 +158,7 @@ public static class RunJson
         {
             DryRunInputKind.StartMission => DryRunInput.StartMission(),
             DryRunInputKind.LoadCheckpoint => DryRunInput.LoadCheckpoint(Trigger(input, script, index)),
+            DryRunInputKind.StartAt => DryRunInput.StartAt(Trigger(input, script, index)),
             DryRunInputKind.RunTrigger => DryRunInput.RunTrigger(Trigger(input, script, index)),
             DryRunInputKind.Event => DryRunInput.Event(Line(input, index, fact: false)),
             DryRunInputKind.Fact => DryRunInput.Fact(Line(input, index, fact: true), Bool(input, "on", index)),
@@ -174,7 +176,7 @@ public static class RunJson
         var result = new JsonObject { ["kind"] = kind };
         switch (input.Kind)
         {
-            case DryRunInputKind.LoadCheckpoint or DryRunInputKind.RunTrigger:
+            case DryRunInputKind.LoadCheckpoint or DryRunInputKind.StartAt or DryRunInputKind.RunTrigger:
                 result["trigger"] = new TriggerRef(script, input.Trigger!).ToString();
                 break;
             case DryRunInputKind.Event:

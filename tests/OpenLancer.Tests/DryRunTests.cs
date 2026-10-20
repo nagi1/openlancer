@@ -383,4 +383,71 @@ public sealed class DryRunTests
         Assert.Equal("The mission ends with success at trigger 't_kills'.", run.State.Trace.Steps[4].Changes[^1].LogText);
         Assert.Equal([DryRun.OverText], run.State.Trace.Steps[5].Changes.Select(c => c.LogText));
     }
+
+    /// <summary>Start at trigger (section 4.2 of the M6c design): the dry run gets the active set of Play from
+    /// here.</summary>
+    [Fact]
+    public void StartAtTriggerGivesTheActiveSetOfThePlanAndRemovesTheInputsBeforeIt()
+    {
+        var index = Index(StartPlanTests.Script);
+        var run = new DryRun(index);
+        run.Add(DryRunInput.StartMission());
+        run.Add(DryRunInput.Heartbeats(1));
+
+        run.Add(DryRunInput.StartAt("T_CHOSEN"));
+
+        var plan = StartPlan.Make(index, StartPlanTests.Slot, MissionStartPoint.At("t_chosen"));
+        Assert.Equal([DryRunInput.StartAt("T_CHOSEN")], run.Inputs);
+        Assert.Equal("Step 1: Start at t_chosen", Assert.Single(run.State.Trace.Steps).Title);
+        Assert.Equal(plan.ActiveSet.Order(), run.State.Machine.Active.Select(t => t.Nickname).Order());
+        Assert.Equal(plan.ActiveSet.Order(), DryRun.Fold(index, run.Inputs).Machine.Active.Select(t => t.Nickname).Order());
+    }
+
+    [Fact]
+    public void StartAtAStartTriggerStartsTheMissionAndAtARestoreTriggerLoadsItsCheckpoint()
+    {
+        var index = Index(StartPlanTests.Script);
+
+        var start = DryRun.Fold(index, [DryRunInput.StartAt("t_start")]);
+        var restore = DryRun.Fold(index, [DryRunInput.StartAt("t_restore")]);
+
+        Assert.Equal(["t_offer"], start.Machine.Pending.Select(t => t.Nickname));
+        Assert.Equal(["t_restore"], restore.Machine.Active.Select(t => t.Nickname));
+    }
+
+    [Fact]
+    public void StartAtATriggerThatCannotStartGivesItsReasonAndAMissingTriggerGivesMissing()
+    {
+        const string text = """
+            [Trigger]
+            nickname = s_start
+            InitState = ACTIVE
+            Cnd_True = no_params
+            Act_ActTrig = s_empty
+
+            [Trigger]
+            nickname = s_empty
+            Act_ActTrig = s_chosen
+
+            [Trigger]
+            nickname = s_chosen
+            Cnd_Timer = 3
+            """;
+
+        var refused = DryRun.Fold(Index(text), [DryRunInput.StartAt("s_chosen")]);
+        var missing = DryRun.Fold(Index(text), [DryRunInput.StartAt("s_none")]);
+
+        Assert.StartsWith(StartPlan.RefusalPrefix + "The path to trigger 's_chosen' passes trigger 's_empty'",
+            Assert.Single(refused.Trace.Steps[0].Changes).LogText);
+        Assert.Empty(refused.Machine.Active);
+        Assert.Equal("Missing: s_none", Assert.Single(missing.Trace.Steps[0].Changes).LogText);
+        Assert.Throws<OpenLancer.Data.Editing.Commands.EditException>(() =>
+            DryRun.Fold(Index(text), [DryRunInput.StartAt("s_none")], strict: true));
+    }
+
+    [Fact]
+    public void StartAtFollowsARename()
+    {
+        Assert.Equal(DryRunInput.StartAt("t_new"), DryRunInput.StartAt("t_old").Renamed("T_OLD", "t_new"));
+    }
 }

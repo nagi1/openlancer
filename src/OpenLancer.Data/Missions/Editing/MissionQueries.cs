@@ -447,6 +447,22 @@ public sealed class MissionQueries
         return RunJson.View(model.Script, model.Version, state, request.SinceStep);
     }
 
+    /// <summary>
+    /// The start plan query (section 7.2 of the M6c design): the plan of a start of a script now, as the Play start page
+    /// shows it. A plan that cannot start is data, with its reason. It changes nothing.
+    /// </summary>
+    /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/>: the script or the trigger of the start does
+    /// not resolve.</exception>
+    public StartPlanView StartPlan(StartPlanRequest request)
+    {
+        var model = editor.Model(request.Script);
+        if (request.Start.Trigger is { } name && model.Index.Trigger(name) is not { IsDuplicate: false })
+            throw new EditException(MissionErrors.TriggerNotFoundError(model.Script, name) with { Field = "start" });
+        var plan = Run.StartPlan.Make(model.Index, model.Analysis.Script.Slot, request.Start, request.Place,
+            request.PlaceBase);
+        return RunJson.View(plan, model.Version);
+    }
+
     /// <summary>The problems of a script that show, with their origin, rule and reference. A problem of the base game
     /// shows only on request, as in the Console (decision D551).</summary>
     /// <param name="baseGame">True to give the problems of the base game too.</param>

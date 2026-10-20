@@ -125,7 +125,7 @@
   "conditions": [
     { "name": "Cnd_True", "plain": "At once", "event": "start", "polls": true, "values": [],
       "sentences": [ { "text": "Starts at once." } ], "evidence": "TR8, TR11, fork Cnd_True" },
-    { "name": "Cnd_Timer", "plain": "After a delay", "event": "start", "polls": true,
+    { "name": "Cnd_Timer", "plain": "After a delay", "event": "start", "savesState": true, "polls": true,
       "values": [
         { "index": 0, "name": "seconds", "label": "Delay", "kind": "number", "help": "The time in seconds after the trigger becomes active." },
         { "index": 1, "name": "upper", "label": "Longest delay", "kind": "number", "optional": true, "help": "With this value, the game picks a random delay between the two values. It picks the delay once, when the mission loads.", "hard": true },
@@ -296,7 +296,7 @@
         { "when": { "ring": "ANY" }, "text": "Starts when {ship} leaves a trade lane." },
         { "text": "Starts when {ship} leaves a trade lane at {ring}." }
       ], "evidence": "MSD 3.5, fork Cnd_TLExited" },
-    { "name": "Cnd_DistShip", "plain": "Near a ship", "event": "distance", "polls": true,
+    { "name": "Cnd_DistShip", "plain": "Near a ship", "event": "distance", "savesState": true, "polls": true,
       "values": [
         { "index": 0, "name": "side", "label": "Side", "kind": "token", "tokens": "side", "help": "inside waits until the ships are closer than the range. outside waits until they are farther.", "hard": true },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" },
@@ -310,7 +310,7 @@
         { "text": "Starts when {ship} is farther than {range} m from {other}." }
       ],
       "suffixes": [ { "when": { "hold": "present" }, "text": " for {hold} s" } ], "evidence": "TR11, fork Cnd_DistShip" },
-    { "name": "Cnd_DistVec", "plain": "Near a point", "event": "distance", "polls": true,
+    { "name": "Cnd_DistVec", "plain": "Near a point", "event": "distance", "savesState": true, "polls": true,
       "values": [
         { "index": 0, "name": "side", "label": "Side", "kind": "token", "tokens": "side", "hard": true, "help": "inside waits until the ship is closer than the radius. outside waits until it is farther." },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" },
@@ -324,7 +324,7 @@
         { "text": "Starts when {ship} is farther than {radius} m from a point." }
       ],
       "suffixes": [ { "when": { "hold": "present" }, "text": " for {hold} s" } ], "evidence": "TR11, fork Cnd_DistVec" },
-    { "name": "Cnd_DistVecLbl", "plain": "Label near a point", "event": "distance", "polls": true, "checked": false,
+    { "name": "Cnd_DistVecLbl", "plain": "Label near a point", "event": "distance", "savesState": true, "polls": true, "checked": false,
       "values": [
         { "index": 0, "name": "side", "label": "Side", "kind": "token", "tokens": "side" },
         { "index": 1, "name": "which", "label": "Which ships", "kind": "text" },
@@ -351,7 +351,7 @@
         { "index": 5, "name": "d", "label": "Plane D", "kind": "number" }
       ],
       "sentences": [ { "text": "Starts when {ship} is on the given side of a plane." } ], "evidence": "TR11, MSD 2.10 (no retail line), fork Cnd_CmpToPlane" },
-    { "name": "Cnd_TetherBroke", "plain": "Too far from the escort", "event": "distance", "wake": ["tether"],
+    { "name": "Cnd_TetherBroke", "plain": "Too far from the escort", "event": "distance", "savesState": true, "wake": ["tether"],
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "other", "label": "Other ship", "kind": "object" },
@@ -360,7 +360,7 @@
         { "index": 4, "name": "inner", "label": "Inner distance", "kind": "number", "optional": true }
       ],
       "sentences": [ { "text": "Starts when {ship} stays farther than {distance} m from {other} for {seconds} s." } ], "evidence": "GA1 CN-05, fork Cnd_TetherBroke" },
-    { "name": "Cnd_Destroyed", "plain": "On destroyed", "event": "combat", "wake": ["destroyed"],
+    { "name": "Cnd_Destroyed", "plain": "On destroyed", "event": "combat", "savesState": true, "wake": ["destroyed"],
       "values": [
         { "index": 0, "name": "target", "label": "Target", "kind": "object", "help": "The ship, formation, solar or label to watch." },
         { "index": 1, "name": "count", "label": "Count", "kind": "wholeNumber", "optional": true, "default": -1, "help": "How many must be destroyed. -1 means the last one. 0 never starts the trigger.", "hard": true },
@@ -381,7 +381,7 @@
       ],
       "sentences": [ { "text": "Starts when the hull of {target} drops to {fraction%} percent or less." } ],
       "suffixes": [ { "when": { "attacker": "present" }, "text": " from attacks by {attacker}" } ], "evidence": "MSD 3.5, fork Cnd_HealthDec" },
-    { "name": "Cnd_ProjHit", "plain": "On hit", "event": "combat", "wake": ["damaged"],
+    { "name": "Cnd_ProjHit", "plain": "On hit", "event": "combat", "savesState": true, "wake": ["damaged"],
       "values": [
         { "index": 0, "name": "target", "label": "Target", "kind": "object" },
         { "index": 1, "name": "count", "label": "Hits", "kind": "wholeNumber" },
@@ -391,7 +391,7 @@
         { "when": { "shooter": "present" }, "text": "Starts when {target} takes {count} hits from {shooter}." },
         { "text": "Starts when {target} takes {count} hits." }
       ], "evidence": "MSD 3.5, fork Cnd_ProjHit" },
-    { "name": "Cnd_ProjHitShipToLbl", "plain": "On hit of a label", "event": "combat", "wake": ["damaged"],
+    { "name": "Cnd_ProjHitShipToLbl", "plain": "On hit of a label", "event": "combat", "savesState": true, "wake": ["damaged"],
       "values": [
         { "index": 0, "name": "label", "label": "Label", "kind": "object" },
         { "index": 1, "name": "count", "label": "Hits", "kind": "wholeNumber" },
@@ -443,7 +443,7 @@
         { "index": 1, "name": "target", "label": "Scanned ship", "kind": "object", "also": "noneExact" }
       ],
       "sentences": [ { "text": "Starts when {scanner} scans the cargo of {target}." } ], "evidence": "MSD 3.5, fork Cnd_CargoScanned" },
-    { "name": "Cnd_LootAcquired", "plain": "On loot pick-up", "event": "story", "wake": ["lootAcquired"],
+    { "name": "Cnd_LootAcquired", "plain": "On loot pick-up", "event": "story", "savesState": true, "wake": ["lootAcquired"],
       "values": [
         { "index": 0, "name": "loot", "label": "Loot", "kind": "object" },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" },
@@ -459,14 +459,14 @@
         { "when": { "target": "present" }, "text": "Starts when the player uses maneuver {maneuver} on {target}." },
         { "text": "Starts when the player uses maneuver {maneuver}." }
       ], "evidence": "MSD 3.5, fork Cnd_PlayerManeuver" },
-    { "name": "Cnd_NPCSystemEnter", "plain": "Ships enter a system", "event": "story", "wake": ["npcSystemEnter", "npcShipCreated"], "polls": true,
+    { "name": "Cnd_NPCSystemEnter", "plain": "Ships enter a system", "event": "story", "savesState": true, "wake": ["npcSystemEnter", "npcShipCreated"], "polls": true,
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system", "also": "any" },
         { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "list": { "items": "ships" }, "help": "The ships that must be in the system together with the player." }
       ],
       "sentences": [ { "text": "Starts when {ships} and the player are in {system}." } ], "evidence": "TR11, MSD 2.12 jumper row, fork Cnd_NPCSystemEnter" },
     { "name": "Cnd_NPCSystemExit", "noRetailExample": true,
-      "plain": "Ships leave a system", "event": "story", "wake": ["npcSystemExit"], "checked": false,
+      "plain": "Ships leave a system", "event": "story", "savesState": true, "wake": ["npcSystemExit"], "checked": false,
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system", "also": "any" },
         { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "list": { "items": "ships" } }
@@ -474,23 +474,23 @@
       "sentences": [ { "text": "Starts when {ships} leave {system}." } ], "evidence": "MSD 2.10 (no retail line), fork Cnd_NPCSystemExit" }
   ],
   "actions": [
-    { "name": "Act_ActTrig", "plain": "Start trigger", "group": "starts",
+    { "name": "Act_ActTrig", "plain": "Start trigger", "group": "starts", "start": "skip",
       "values": [ { "index": 0, "name": "trigger", "label": "Trigger", "kind": "trigger", "closed": true, "help": "The trigger to start. The game starts it after all actions of this trigger." } ],
       "evidence": "TR7, TR13, fork Act_ActTrig" },
-    { "name": "Act_DeactTrig", "plain": "Stop trigger", "group": "stops",
+    { "name": "Act_DeactTrig", "plain": "Stop trigger", "group": "stops", "start": "skip",
       "values": [ { "index": 0, "name": "trigger", "label": "Trigger", "kind": "trigger", "closed": true, "help": "The trigger to stop. A trigger that has run stays complete.", "hard": true } ],
       "evidence": "TR9, fork Act_DeactTrig" },
-    { "name": "Act_Save", "plain": "Save checkpoint", "group": "checkpoint",
+    { "name": "Act_Save", "plain": "Save checkpoint", "group": "checkpoint", "start": "skip",
       "values": [
         { "index": 0, "name": "trigger", "label": "Restore trigger", "kind": "trigger", "closed": true, "help": "After a load, the mission continues at this trigger." },
         { "index": 1, "name": "type", "label": "Save type", "kind": "wholeNumber", "optional": true }
       ], "evidence": "TR14, fork Act_Save" },
-    { "name": "Act_ChangeState", "plain": "End mission", "group": "end",
+    { "name": "Act_ChangeState", "plain": "End mission", "group": "end", "start": "skip",
       "values": [
         { "index": 0, "name": "state", "label": "Result", "kind": "token", "tokens": "missionState", "help": "SUCCEED ends the mission with success. FAIL ends it with fail." },
         { "index": 1, "name": "text", "label": "Message", "kind": "textId", "optional": true, "help": "The text that the player sees. Without it, the game shows its own text." }
       ], "evidence": "MSD 2.1, fork Act_ChangeState" },
-    { "name": "Act_SpawnShip", "plain": "Spawn ship", "group": "spawn",
+    { "name": "Act_SpawnShip", "plain": "Spawn ship", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "group", "closed": true, "exactCase": true, "effect": "degrade", "help": "The ship or formation to spawn. The game compares the name with letter case.", "hard": true },
         { "index": 1, "name": "orders", "label": "Orders", "kind": "objList", "noneToken": "no_ol", "optional": true, "help": "The order list of the first ship. no_ol keeps its own orders.", "hard": true },
@@ -498,7 +498,7 @@
         { "index": 5, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "TR16, MSD 2.6, fork Act_SpawnShip" },
     { "name": "Act_SpawnShipRel", "noRetailExample": true,
-      "plain": "Spawn ship near an object", "group": "spawn",
+      "plain": "Spawn ship near an object", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "group", "closed": true },
         { "index": 1, "name": "orders", "label": "Orders", "kind": "objList", "noneToken": "no_ol" },
@@ -508,199 +508,199 @@
         { "index": 7, "name": "heading", "label": "Heading", "kind": "number", "optional": true },
         { "index": 8, "name": "newName", "label": "New nickname", "kind": "text", "optional": true }
       ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_SpawnFormation", "plain": "Spawn formation", "group": "spawn",
+    { "name": "Act_SpawnFormation", "plain": "Spawn formation", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "formation", "label": "Formation", "kind": "group", "closed": true },
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3, "optional": true },
         { "index": 4, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SpawnFormation" },
-    { "name": "Act_SpawnSolar", "plain": "Spawn solar", "group": "spawn",
+    { "name": "Act_SpawnSolar", "plain": "Spawn solar", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "solar", "label": "Solar", "kind": "solar", "closed": true },
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3, "optional": true },
         { "index": 4, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SpawnSolar" },
-    { "name": "Act_SpawnLoot", "plain": "Spawn loot", "group": "spawn",
+    { "name": "Act_SpawnLoot", "plain": "Spawn loot", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "loot", "label": "Loot", "kind": "loot", "closed": true },
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3, "optional": true },
         { "index": 4, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SpawnLoot" },
-    { "name": "Act_Destroy", "plain": "Destroy object", "group": "spawn",
+    { "name": "Act_Destroy", "plain": "Destroy object", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "how", "label": "How", "kind": "token", "tokens": "destroyKind", "optional": true }
       ], "evidence": "MSD 3.5, fork Act_Destroy" },
-    { "name": "Act_RelocateShip", "plain": "Move ship", "group": "spawn",
+    { "name": "Act_RelocateShip", "plain": "Move ship", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3 },
         { "index": 4, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "MSD 3.7, fork Act_RelocateShip" },
     { "name": "Act_RelocateForm", "noRetailExample": true,
-      "plain": "Move formation", "group": "spawn",
+      "plain": "Move formation", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3 },
         { "index": 4, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_SetOrient", "plain": "Set orientation", "group": "spawn",
+    { "name": "Act_SetOrient", "plain": "Set orientation", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4 }
       ], "evidence": "MSD 3.5, fork Act_SetOrient" },
-    { "name": "Act_SetLifeTime", "plain": "Remove after a time", "group": "spawn",
+    { "name": "Act_SetLifeTime", "plain": "Remove after a time", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "seconds", "label": "Time", "kind": "number", "help": "The time in seconds before the game removes the ship." }
       ], "evidence": "MSD 3.5, fork Act_SetLifetime" },
-    { "name": "Act_Jumper", "plain": "Follow the player through jumps", "group": "spawn",
+    { "name": "Act_Jumper", "plain": "Follow the player through jumps", "group": "spawn", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "jumps", "label": "Jumps", "kind": "bool" }
       ], "evidence": "MSD 2.12 jumper row, fork Act_Jumper" },
-    { "name": "Act_GiveObjList", "plain": "Give orders", "group": "orders",
+    { "name": "Act_GiveObjList", "plain": "Give orders", "group": "orders", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "orders", "label": "Orders", "kind": "objList", "closed": true }
       ], "evidence": "MSD 2.6, fork Act_GiveObjList" },
-    { "name": "Act_SetPriority", "plain": "Set order priority", "group": "orders",
+    { "name": "Act_SetPriority", "plain": "Set order priority", "group": "orders", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "priority", "label": "Priority", "kind": "token", "tokens": "priority" }
       ], "evidence": "MSD 3.5, fork Act_SetPriority" },
     { "name": "Act_PilotParams", "noRetailExample": true,
-      "plain": "Set pilot settings", "group": "orders",
+      "plain": "Set pilot settings", "group": "orders", "start": "world",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "flee", "label": "Flee", "kind": "token", "tokens": "fleeMode" }
       ], "evidence": "MSD 2.10 (no retail line)" },
     { "name": "Act_SetFlee", "noRetailExample": true,
-      "plain": "Set flee", "group": "orders", "checked": false,
+      "plain": "Set flee", "group": "orders", "start": "world", "checked": false,
       "values": [
         { "index": 0, "name": "mode", "label": "Mode", "kind": "token", "tokens": "fleeSet" },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 2, "name": "target", "label": "Target", "kind": "text", "optional": true }
       ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_SetVibe", "plain": "Set attitude", "group": "sides",
+    { "name": "Act_SetVibe", "plain": "Set attitude", "group": "sides", "start": "world",
       "values": [
         { "index": 0, "name": "from", "label": "From", "kind": "object" },
         { "index": 1, "name": "to", "label": "To", "kind": "object" },
         { "index": 2, "name": "attitude", "label": "Attitude", "kind": "attitude", "help": "A number from -1 to 1, or a REP_ word.", "hard": true },
         { "index": 3, "name": "upper", "label": "Upper attitude", "kind": "attitude", "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SetVibe" },
-    { "name": "Act_SetVibeLbl", "plain": "Set attitude between labels", "group": "sides",
+    { "name": "Act_SetVibeLbl", "plain": "Set attitude between labels", "group": "sides", "start": "world",
       "values": [
         { "index": 0, "name": "from", "label": "From label", "kind": "object" },
         { "index": 1, "name": "to", "label": "To label", "kind": "object" },
         { "index": 2, "name": "attitude", "label": "Attitude", "kind": "attitude" },
         { "index": 3, "name": "upper", "label": "Upper attitude", "kind": "attitude", "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SetVibeLbl" },
-    { "name": "Act_SetVibeLblToShip", "plain": "Set attitude of a label to a ship", "group": "sides",
+    { "name": "Act_SetVibeLblToShip", "plain": "Set attitude of a label to a ship", "group": "sides", "start": "world",
       "values": [
         { "index": 0, "name": "from", "label": "From label", "kind": "object" },
         { "index": 1, "name": "to", "label": "To ship", "kind": "object" },
         { "index": 2, "name": "attitude", "label": "Attitude", "kind": "attitude" },
         { "index": 3, "name": "upper", "label": "Upper attitude", "kind": "attitude", "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SetVibeLblToShip" },
-    { "name": "Act_SetVibeShipToLbl", "plain": "Set attitude of a ship to a label", "group": "sides",
+    { "name": "Act_SetVibeShipToLbl", "plain": "Set attitude of a ship to a label", "group": "sides", "start": "world",
       "values": [
         { "index": 0, "name": "from", "label": "From ship", "kind": "object" },
         { "index": 1, "name": "to", "label": "To label", "kind": "object" },
         { "index": 2, "name": "attitude", "label": "Attitude", "kind": "attitude" },
         { "index": 3, "name": "upper", "label": "Upper attitude", "kind": "attitude", "optional": true }
       ], "evidence": "MSD 2.6, fork Act_SetVibeShipToLbl" },
-    { "name": "Act_SetVibeOfferBaseHack", "plain": "Set attitude of the offer base", "group": "sides",
+    { "name": "Act_SetVibeOfferBaseHack", "plain": "Set attitude of the offer base", "group": "sides", "start": "world",
       "values": [ { "index": 0, "name": "base", "label": "Offer base", "kind": "systemObject", "help": "The object of the base that offers the mission." } ],
       "evidence": "MSD 3.5, fork Act_SetVibeOfferBaseHack" },
-    { "name": "Act_SetRep", "plain": "Set reputation", "group": "sides",
+    { "name": "Act_SetRep", "plain": "Set reputation", "group": "sides", "start": "state",
       "values": [
         { "index": 0, "name": "who", "label": "Who", "kind": "object" },
         { "index": 1, "name": "faction", "label": "Faction", "kind": "faction" },
         { "index": 2, "name": "value", "label": "Reputation", "kind": "attitude" }
       ], "evidence": "MSD 2.1, fork Act_SetRep" },
     { "name": "Act_RepChangeRequest", "noRetailExample": true,
-      "plain": "Ask for a reputation change", "group": "sides",
+      "plain": "Ask for a reputation change", "group": "sides", "start": "state",
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system" },
         { "index": 1, "name": "factions", "label": "Factions", "kind": "faction", "rest": true }
       ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_Invulnerable", "plain": "Set plot armor", "group": "armor",
+    { "name": "Act_Invulnerable", "plain": "Set plot armor", "group": "armor", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "on", "label": "Plot armor", "kind": "bool" },
         { "index": 2, "name": "playerCanHurt", "label": "Player can hurt it", "kind": "bool", "optional": true },
         { "index": 3, "name": "floor", "label": "Hull floor", "kind": "number", "optional": true, "help": "The largest fraction of the hull that the object can lose.", "hard": true }
       ], "evidence": "GA1 MA-24, MSD 2.6, fork Act_Invulnerable" },
-    { "name": "Act_AdjHealth", "plain": "Change hull", "group": "armor",
+    { "name": "Act_AdjHealth", "plain": "Change hull", "group": "armor", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "change", "label": "Change", "kind": "number", "help": "The change of the hull as a fraction of the full hull. The game keeps the result from 0 to 1.", "hard": true }
       ], "evidence": "GA1 MA-06, fork Act_AdjHealth" },
-    { "name": "Act_MarkObj", "plain": "Mark object", "group": "armor",
+    { "name": "Act_MarkObj", "plain": "Mark object", "group": "armor", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "mark", "label": "Mark", "kind": "wholeNumber", "help": "1 marks the object. 0 removes the mark." }
       ], "evidence": "MSD 3.9, fork Act_MarkObj" },
-    { "name": "Act_Cloak", "plain": "Cloak", "group": "armor",
+    { "name": "Act_Cloak", "plain": "Cloak", "group": "armor", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "cloaked", "label": "Cloaked", "kind": "bool" }
       ], "evidence": "MSD 2.6, fork Act_Cloak" },
-    { "name": "Act_LightFuse", "plain": "Start fuse", "group": "armor",
+    { "name": "Act_LightFuse", "plain": "Start fuse", "group": "armor", "start": "world",
       "values": [
         { "index": 0, "name": "target", "label": "Object", "kind": "object" },
         { "index": 1, "name": "fuse", "label": "Fuse", "kind": "fuse" },
         { "index": 2, "name": "delay", "label": "Delay", "kind": "number", "optional": true }
       ], "evidence": "MSD 3.5, fork Act_LightFuse" },
-    { "name": "Act_PlayerEnemyClamp", "plain": "Limit attackers of the player", "group": "area",
+    { "name": "Act_PlayerEnemyClamp", "plain": "Limit attackers of the player", "group": "area", "start": "state",
       "values": [
         { "index": 0, "name": "min", "label": "Fewest attackers", "kind": "wholeNumber" },
         { "index": 1, "name": "max", "label": "Most attackers", "kind": "wholeNumber" }
       ], "evidence": "MSD 2.6, fork Act_PlayerEnemyClamp" },
-    { "name": "Act_HostileClamp", "plain": "Limit hostile ships", "group": "area",
+    { "name": "Act_HostileClamp", "plain": "Limit hostile ships", "group": "area", "start": "state",
       "values": [ { "index": 0, "name": "on", "label": "On", "kind": "bool" } ], "evidence": "MSD 2.6, fork Act_HostileClamp" },
-    { "name": "Act_RandomPop", "plain": "Ambient traffic", "group": "area",
+    { "name": "Act_RandomPop", "plain": "Ambient traffic", "group": "area", "start": "state",
       "values": [ { "index": 0, "name": "on", "label": "On", "kind": "bool" } ], "evidence": "MSD 2.6, fork Act_RandomPop" },
-    { "name": "Act_RandomPopSphere", "plain": "Ambient traffic area", "group": "area",
+    { "name": "Act_RandomPopSphere", "plain": "Ambient traffic area", "group": "area", "start": "world",
       "values": [
         { "index": 0, "name": "center", "label": "Center", "kind": "position", "width": 3 },
         { "index": 3, "name": "radius", "label": "Radius", "kind": "number" },
         { "index": 4, "name": "traffic", "label": "Traffic", "kind": "token", "tokens": "onOff", "help": "off stops ambient traffic in the sphere. on allows it again." }
       ], "evidence": "MSD 2.6, fork Act_RandomPopSphere" },
-    { "name": "Act_RpopAttClamp", "plain": "Ambient attack limit", "group": "area",
+    { "name": "Act_RpopAttClamp", "plain": "Ambient attack limit", "group": "area", "start": "state",
       "values": [ { "index": 0, "name": "on", "label": "On", "kind": "bool" } ], "evidence": "MSD 2.6, fork Act_RpopAttClamp" },
-    { "name": "Act_RpopTLAttacksEnabled", "plain": "Trade lane attacks", "group": "area",
+    { "name": "Act_RpopTLAttacksEnabled", "plain": "Trade lane attacks", "group": "area", "start": "state",
       "values": [ { "index": 0, "name": "on", "label": "On", "kind": "bool" } ], "evidence": "MSD 3.5, fork Act_RpopTLAttacksEnabled" },
-    { "name": "Act_GCSClamp", "plain": "Ambient chatter", "group": "area",
+    { "name": "Act_GCSClamp", "plain": "Ambient chatter", "group": "area", "start": "state",
       "values": [ { "index": 0, "name": "on", "label": "Chatter off", "kind": "bool" } ], "evidence": "MSD 3.5, fork Act_GcsClamp" },
-    { "name": "Act_DisableFriendlyFire", "plain": "No friendly fire", "group": "area",
+    { "name": "Act_DisableFriendlyFire", "plain": "No friendly fire", "group": "area", "start": "world",
       "values": [ { "index": 0, "name": "labels", "label": "Labels", "kind": "object", "rest": true } ],
       "evidence": "MSD 2.6, fork Act_DisableFriendlyFire" },
-    { "name": "Act_NagDistLeaving", "plain": "Warn when the player leaves", "group": "warnings",
+    { "name": "Act_NagDistLeaving", "plain": "Warn when the player leaves", "group": "warnings", "start": "world",
       "values": [
         { "index": 0, "name": "id", "label": "Warning id", "kind": "text" },
         { "index": 1, "name": "speaker", "label": "Speaker", "kind": "object", "also": "none" },
         { "index": 2, "name": "target", "label": "Target", "kind": "object", "also": "position" },
         { "index": 3, "name": "more", "label": "More values", "kind": "text", "rest": true, "optional": true, "checked": false }
       ], "evidence": "MSD 2.6, GA1 MA-03" },
-    { "name": "Act_NagDistTowards", "plain": "Warn until the player comes", "group": "warnings",
+    { "name": "Act_NagDistTowards", "plain": "Warn until the player comes", "group": "warnings", "start": "world",
       "values": [
         { "index": 0, "name": "form", "label": "Form", "kind": "token", "tokens": "nagForm" },
         { "index": 1, "name": "id", "label": "Warning id", "kind": "text" },
         { "index": 2, "name": "speaker", "label": "Speaker", "kind": "object", "also": "none" },
         { "index": 3, "name": "more", "label": "More values", "kind": "text", "rest": true, "optional": true, "checked": false }
       ], "evidence": "MSD 2.6, GA1 MA-03" },
-    { "name": "Act_NagOff", "plain": "Stop warning", "group": "warnings",
+    { "name": "Act_NagOff", "plain": "Stop warning", "group": "warnings", "start": "world",
       "values": [ { "index": 0, "name": "id", "label": "Warning id", "kind": "text" } ], "evidence": "MSD 2.6, GA1 MA-03" },
-    { "name": "Act_NagClamp", "plain": "Warning limit", "group": "warnings",
+    { "name": "Act_NagClamp", "plain": "Warning limit", "group": "warnings", "start": "world",
       "values": [ { "index": 0, "name": "on", "label": "Warnings off", "kind": "bool" } ], "evidence": "MSD 2.6, GA1 MA-03" },
-    { "name": "Act_NagGreet", "plain": "Greeting warning", "group": "warnings",
+    { "name": "Act_NagGreet", "plain": "Greeting warning", "group": "warnings", "start": "world",
       "values": [
         { "index": 0, "name": "id", "label": "Warning id", "kind": "text" },
         { "index": 1, "name": "speaker", "label": "Speaker", "kind": "object", "also": "none" }
       ], "evidence": "MSD 3.5, GA1 MA-03" },
-    { "name": "Act_SendComm", "plain": "Send comm line", "group": "comms",
+    { "name": "Act_SendComm", "plain": "Send comm line", "group": "comms", "start": "skip",
       "values": [
         { "index": 0, "name": "sender", "label": "Sender", "kind": "object" },
         { "index": 1, "name": "receiver", "label": "Receiver", "kind": "object", "also": "anyone" },
@@ -712,12 +712,12 @@
         { "index": 7, "name": "body", "label": "Body", "kind": "body", "optional": true },
         { "index": 8, "name": "accessories", "label": "Accessories", "kind": "accessory", "rest": true, "optional": true }
       ], "evidence": "MSD 2.8, fork Act_SendComm" },
-    { "name": "Act_StartDialog", "plain": "Start conversation", "group": "comms",
+    { "name": "Act_StartDialog", "plain": "Start conversation", "group": "comms", "start": "skip",
       "values": [
         { "index": 0, "name": "conversation", "label": "Conversation", "kind": "dialog", "closed": true },
         { "index": 1, "name": "delay", "label": "Delay", "kind": "wholeNumber", "optional": true, "help": "-1, or 1 to 10 seconds.", "hard": true }
       ], "evidence": "MSD 2.8, fork Act_StartDialog" },
-    { "name": "Act_EtherComm", "plain": "Send comm line with a face", "group": "comms",
+    { "name": "Act_EtherComm", "plain": "Send comm line with a face", "group": "comms", "start": "skip",
       "values": [
         { "index": 0, "name": "voice", "label": "Voice", "kind": "voice" },
         { "index": 1, "name": "name", "label": "Name text", "kind": "textId" },
@@ -728,18 +728,18 @@
         { "index": 6, "name": "body", "label": "Body", "kind": "body" },
         { "index": 7, "name": "accessories", "label": "Accessories", "kind": "accessory", "rest": true, "optional": true }
       ], "evidence": "MSD 2.8, fork Act_EtherComm" },
-    { "name": "Act_PopUpDialog", "plain": "Show pop-up", "group": "comms",
+    { "name": "Act_PopUpDialog", "plain": "Show pop-up", "group": "comms", "start": "skip",
       "values": [
         { "index": 0, "name": "title", "label": "Title", "kind": "textId" },
         { "index": 1, "name": "text", "label": "Text", "kind": "textId" },
         { "index": 2, "name": "buttons", "label": "Buttons", "kind": "token", "tokens": "popupButtons", "optional": true }
       ], "evidence": "MSD 3.5, fork Act_PopupDialog" },
-    { "name": "Act_PlaySoundEffect", "plain": "Play sound", "group": "comms",
+    { "name": "Act_PlaySoundEffect", "plain": "Play sound", "group": "comms", "start": "skip",
       "values": [ { "index": 0, "name": "sound", "label": "Sound", "kind": "sound" } ], "evidence": "MSD 3.5, fork Act_PlaySoundEffect" },
     { "name": "Act_PlayNN", "noRetailExample": true,
-      "plain": "Play neural net message", "group": "comms",
+      "plain": "Play neural net message", "group": "comms", "start": "skip",
       "values": [ { "index": 0, "name": "message", "label": "Message", "kind": "text" } ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_PlayMusic", "plain": "Play music", "group": "music", "checked": false,
+    { "name": "Act_PlayMusic", "plain": "Play music", "group": "music", "start": "world", "checked": false,
       "values": [
         { "index": 0, "name": "track1", "label": "Track 1", "kind": "sound", "also": "musicNone" },
         { "index": 1, "name": "track2", "label": "Track 2", "kind": "sound", "also": "musicNone", "optional": true },
@@ -748,136 +748,136 @@
         { "index": 4, "name": "fade", "label": "Time", "kind": "number", "optional": true },
         { "index": 5, "name": "flag", "label": "Flag", "kind": "bool", "optional": true }
       ], "evidence": "MSD 2.6, fork Act_PlayMusic" },
-    { "name": "Act_SetNNObj", "plain": "Set objective", "group": "objective",
+    { "name": "Act_SetNNObj", "plain": "Set objective", "group": "objective", "start": "state",
       "values": [
         { "index": 0, "name": "objective", "label": "Objective", "kind": "objective", "closed": true },
         { "index": 1, "name": "log", "label": "Log", "kind": "token", "tokens": "objectiveLog", "optional": true }
       ], "evidence": "MSD 3.9, fork Act_SetNNObj" },
-    { "name": "Act_SetNNState", "plain": "Set objective state", "group": "objective",
+    { "name": "Act_SetNNState", "plain": "Set objective state", "group": "objective", "start": "state",
       "values": [
         { "index": 0, "name": "objective", "label": "Objective", "kind": "objective", "closed": true },
         { "index": 1, "name": "state", "label": "State", "kind": "token", "tokens": "objectiveState" }
       ], "evidence": "MSD 3.9, fork Act_SetNNState" },
-    { "name": "Act_SetNNHidden", "plain": "Hide objective", "group": "objective",
+    { "name": "Act_SetNNHidden", "plain": "Hide objective", "group": "objective", "start": "state",
       "values": [
         { "index": 0, "name": "objective", "label": "Objective", "kind": "objective", "also": "all", "closed": true },
         { "index": 1, "name": "hidden", "label": "Hidden", "kind": "bool" }
       ], "evidence": "MSD 3.9, fork Act_SetNNHidden" },
-    { "name": "Act_GiveNNObjs", "plain": "Show objectives", "group": "objective", "values": [],
+    { "name": "Act_GiveNNObjs", "plain": "Show objectives", "group": "objective", "start": "state", "values": [],
       "evidence": "MSD 3.9, fork Act_GiveNNObjs" },
-    { "name": "Act_NNIds", "plain": "Add log text", "group": "objective",
+    { "name": "Act_NNIds", "plain": "Add log text", "group": "objective", "start": "state",
       "values": [
         { "index": 0, "name": "text", "label": "Text", "kind": "textId" },
         { "index": 1, "name": "log", "label": "Log", "kind": "token", "tokens": "objectiveLog", "optional": true }
       ], "evidence": "MSD 3.9, fork Act_NNIds" },
-    { "name": "Act_NNPath", "plain": "Show route", "group": "objective",
+    { "name": "Act_NNPath", "plain": "Show route", "group": "objective", "start": "state",
       "values": [
         { "index": 0, "name": "travel", "label": "Travel text", "kind": "textId" },
         { "index": 1, "name": "target", "label": "Target text", "kind": "textId" },
         { "index": 2, "name": "where", "label": "Point or object", "kind": "text", "optional": true, "checked": false },
         { "index": 3, "name": "more", "label": "More values", "kind": "text", "rest": true, "optional": true, "checked": false }
       ], "evidence": "MSD 3.7, fork Act_NNPath" },
-    { "name": "Act_SetTitle", "plain": "Set mission title", "group": "objective",
+    { "name": "Act_SetTitle", "plain": "Set mission title", "group": "objective", "start": "save",
       "values": [ { "index": 0, "name": "text", "label": "Title", "kind": "textId" } ], "evidence": "MSD 2.1, fork Act_SetTitle" },
-    { "name": "Act_SetOffer", "plain": "Set mission offer text", "group": "objective",
+    { "name": "Act_SetOffer", "plain": "Set mission offer text", "group": "objective", "start": "save",
       "values": [ { "index": 0, "name": "text", "label": "Offer text", "kind": "textId" } ], "evidence": "MSD 2.1, fork Act_SetOffer" },
-    { "name": "Act_CallThorn", "plain": "Play space cutscene", "group": "cutscene",
+    { "name": "Act_CallThorn", "plain": "Play space cutscene", "group": "cutscene", "start": "skip",
       "values": [
         { "index": 0, "name": "file", "label": "Cutscene file", "kind": "spaceCutscene", "buffer": "cutscenePath", "help": "The space cutscene to play. The path counts its characters as written." },
         { "index": 1, "name": "anchor", "label": "Anchor", "kind": "object", "optional": true, "help": "The ship that the camera of the cutscene moves with. Without it, the anchor is the player." }
       ], "evidence": "MSD 2.7, TR15, fork Act_CallThorn" },
-    { "name": "Act_StaticCam", "plain": "Fixed camera", "group": "cutscene",
+    { "name": "Act_StaticCam", "plain": "Fixed camera", "group": "cutscene", "start": "skip",
       "values": [
         { "index": 0, "name": "position", "label": "Camera position", "kind": "position", "width": 3 },
         { "index": 3, "name": "rotation", "label": "Camera rotation", "kind": "rotation", "width": 4 },
         { "index": 7, "name": "fov", "label": "Field of view", "kind": "number", "optional": true },
         { "index": 8, "name": "aspect", "label": "Aspect", "kind": "number", "optional": true }
       ], "evidence": "MSD 2.7, fork Act_StaticCam" },
-    { "name": "Act_RevertCam", "plain": "End camera", "group": "cutscene", "values": [], "evidence": "MSD 2.7, fork Act_RevertCam" },
-    { "name": "Act_AddRTC", "plain": "Add base scene", "group": "cutscene",
+    { "name": "Act_RevertCam", "plain": "End camera", "group": "cutscene", "start": "skip", "values": [], "evidence": "MSD 2.7, fork Act_RevertCam" },
+    { "name": "Act_AddRTC", "plain": "Add base scene", "group": "cutscene", "start": "save",
       "values": [
         { "index": 0, "name": "file", "label": "Base scene", "kind": "baseScene", "buffer": "baseScenePath" },
         { "index": 1, "name": "repeats", "label": "Repeats", "kind": "token", "tokens": "repeatable", "optional": true, "help": "repeatable keeps the scene until a Remove base scene line. Another word does nothing.", "hard": true }
       ], "evidence": "MSD 2.7, TR15, fork Act_AddRTC" },
-    { "name": "Act_RemoveRTC", "plain": "Remove base scene", "group": "cutscene",
+    { "name": "Act_RemoveRTC", "plain": "Remove base scene", "group": "cutscene", "start": "save",
       "values": [ { "index": 0, "name": "file", "label": "Base scene", "kind": "baseScene", "buffer": "baseScenePath", "help": "The game compares the path with letter case.", "hard": true } ],
       "evidence": "MSD 2.7, fork Act_RemoveRTC" },
-    { "name": "Act_AddAmbient", "plain": "Add room ambient", "group": "cutscene",
+    { "name": "Act_AddAmbient", "plain": "Add room ambient", "group": "cutscene", "start": "save",
       "values": [
         { "index": 0, "name": "file", "label": "Ambient script", "kind": "ambientScript" },
         { "index": 1, "name": "room", "label": "Room", "kind": "room" },
         { "index": 2, "name": "base", "label": "Base", "kind": "base" }
       ], "evidence": "MSD 3.11, fork Act_AddAmbient" },
-    { "name": "Act_RemoveAmbient", "plain": "Remove room ambient", "group": "cutscene",
+    { "name": "Act_RemoveAmbient", "plain": "Remove room ambient", "group": "cutscene", "start": "save",
       "values": [ { "index": 0, "name": "file", "label": "Ambient script", "kind": "ambientScript" } ],
       "evidence": "MSD 3.11, fork Act_RemoveAmbient" },
-    { "name": "Act_MovePlayer", "plain": "Move player", "group": "player",
+    { "name": "Act_MovePlayer", "plain": "Move player", "group": "player", "start": "place",
       "values": [
         { "index": 0, "name": "position", "label": "Position", "kind": "position", "width": 3 },
         { "index": 3, "name": "radius", "label": "Radius", "kind": "number", "help": "The game moves the player only when the player is farther than this distance from the point.", "hard": true }
       ], "evidence": "MSD 3.7, fork Act_MovePlayer" },
-    { "name": "Act_SetInitialPlayerPos", "plain": "Set player start", "group": "player",
+    { "name": "Act_SetInitialPlayerPos", "plain": "Set player start", "group": "player", "start": "place",
       "values": [
         { "index": 0, "name": "position", "label": "Position", "kind": "position", "width": 3 },
         { "index": 3, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4 }
       ], "evidence": "MSD 3.7, fork Act_SetInitialPlayerPos" },
-    { "name": "Act_ForceLand", "plain": "Force land", "group": "player",
+    { "name": "Act_ForceLand", "plain": "Force land", "group": "player", "start": "skip",
       "values": [ { "index": 0, "name": "base", "label": "Base", "kind": "base", "buffer": "baseName" } ], "evidence": "MSD 3.5, fork Act_ForceLand" },
-    { "name": "Act_PobjIdle", "plain": "Stop player ship", "group": "player", "values": [], "evidence": "MSD 3.5, fork Act_PobjIdle" },
-    { "name": "Act_SetShipAndLoadout", "plain": "Set player ship", "group": "player",
+    { "name": "Act_PobjIdle", "plain": "Stop player ship", "group": "player", "start": "skip", "values": [], "evidence": "MSD 3.5, fork Act_PobjIdle" },
+    { "name": "Act_SetShipAndLoadout", "plain": "Set player ship", "group": "player", "start": "state",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship archetype", "kind": "shipArch", "also": "none" },
         { "index": 1, "name": "loadout", "label": "Loadout", "kind": "loadout", "also": "none", "optional": true }
       ], "evidence": "MSD 3.5, fork Act_SetShipAndLoadout" },
-    { "name": "Act_RemoveCargo", "plain": "Remove cargo", "group": "player",
+    { "name": "Act_RemoveCargo", "plain": "Remove cargo", "group": "player", "start": "state",
       "values": [
         { "index": 0, "name": "loot", "label": "Loot", "kind": "loot" },
         { "index": 1, "name": "count", "label": "Count", "kind": "wholeNumber", "optional": true }
       ], "evidence": "MSD 3.5, fork Act_RemoveCargo" },
-    { "name": "Act_AdjAcct", "plain": "Change money", "group": "player",
+    { "name": "Act_AdjAcct", "plain": "Change money", "group": "player", "start": "skip",
       "values": [ { "index": 0, "name": "credits", "label": "Credits", "kind": "wholeNumber" } ], "evidence": "MSD 2.1, fork Act_AdjAcct" },
     { "name": "Act_PlayerForm", "noRetailExample": true,
-      "plain": "Player formation", "group": "player",
+      "plain": "Player formation", "group": "player", "start": "world",
       "values": [
         { "index": 0, "name": "shape", "label": "Formation shape", "kind": "formationShape" },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" }
       ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_LockManeuvers", "plain": "Lock maneuvers", "group": "player",
+    { "name": "Act_LockManeuvers", "plain": "Lock maneuvers", "group": "player", "start": "state",
       "values": [ { "index": 0, "name": "locked", "label": "Locked", "kind": "bool" } ], "evidence": "MSD 3.5, fork Act_LockManeuvers" },
-    { "name": "Act_EnableManeuver", "plain": "Allow maneuver", "group": "player",
+    { "name": "Act_EnableManeuver", "plain": "Allow maneuver", "group": "player", "start": "state",
       "values": [
         { "index": 0, "name": "maneuver", "label": "Maneuver", "kind": "text" },
         { "index": 1, "name": "allowed", "label": "Allowed", "kind": "bool" }
       ], "evidence": "MSD 3.5, fork Act_EnableManeuver" },
-    { "name": "Act_PlayerCanDock", "plain": "Allow docking", "group": "player",
+    { "name": "Act_PlayerCanDock", "plain": "Allow docking", "group": "player", "start": "state",
       "values": [
         { "index": 0, "name": "allowed", "label": "Allowed", "kind": "bool" },
         { "index": 1, "name": "exceptions", "label": "Exceptions", "kind": "object", "rest": true, "optional": true }
       ], "evidence": "MSD 3.5, fork Act_PlayerCanDock" },
-    { "name": "Act_PlayerCanTradelane", "plain": "Allow trade lanes", "group": "player",
+    { "name": "Act_PlayerCanTradelane", "plain": "Allow trade lanes", "group": "player", "start": "state",
       "values": [
         { "index": 0, "name": "allowed", "label": "Allowed", "kind": "bool" },
         { "index": 1, "name": "exceptions", "label": "Exceptions", "kind": "systemObject", "rest": true, "optional": true }
       ], "evidence": "MSD 3.5, fork Act_PlayerCanTradelane" },
-    { "name": "Act_DockRequest", "plain": "Dock the player", "group": "player",
+    { "name": "Act_DockRequest", "plain": "Dock the player", "group": "player", "start": "skip",
       "values": [ { "index": 0, "name": "target", "label": "Dock with", "kind": "object" } ], "evidence": "MSD 3.5, fork Act_DockRequest" },
-    { "name": "Act_LockDock", "plain": "Lock or unlock dock", "group": "world",
+    { "name": "Act_LockDock", "plain": "Lock or unlock dock", "group": "world", "start": "state",
       "values": [
         { "index": 0, "name": "who", "label": "Who", "kind": "token", "tokens": "dockTarget", "help": "Player or Everyone. The game compares the word with letter case.", "hard": true },
         { "index": 1, "name": "gate", "label": "Gate", "kind": "object", "help": "The jump gate, the jump hole or the dock to lock or unlock." },
         { "index": 2, "name": "action", "label": "Action", "kind": "token", "tokens": "lockMode" }
       ], "evidence": "TR16, fork Act_LockDock" },
-    { "name": "Act_DisableTradelane", "plain": "Turn off trade lane", "group": "world",
+    { "name": "Act_DisableTradelane", "plain": "Turn off trade lane", "group": "world", "start": "state",
       "values": [ { "index": 0, "name": "ring", "label": "Trade lane ring", "kind": "systemObject" } ], "evidence": "MSD 3.5, fork Act_DisableTradelane" },
-    { "name": "Act_EnableEnc", "plain": "Arm random encounter", "group": "world",
+    { "name": "Act_EnableEnc", "plain": "Arm random encounter", "group": "world", "start": "state",
       "values": [ { "index": 0, "name": "encounter", "label": "Random encounter", "kind": "randomEncounter", "closed": true, "buffer": "encounterName" } ],
       "evidence": "MSD 2.6, fork Act_EnableEnc" },
-    { "name": "Act_DisableEnc", "plain": "Disarm random encounter", "group": "world",
+    { "name": "Act_DisableEnc", "plain": "Disarm random encounter", "group": "world", "start": "state",
       "values": [ { "index": 0, "name": "encounter", "label": "Random encounter", "kind": "randomEncounter", "closed": true, "buffer": "encounterName" } ],
       "evidence": "MSD 2.6, fork Act_DisableEnc" },
-    { "name": "Act_DebugMsg", "plain": "Debug message", "group": "debug",
+    { "name": "Act_DebugMsg", "plain": "Debug message", "group": "debug", "start": "skip",
       "values": [ { "index": 0, "name": "text", "label": "Text", "kind": "text" } ], "evidence": "MSD 3.5, fork Act_DebugMsg" },
-    { "name": "Act_GiveMB", "plain": "Give meta behavior", "group": "debug",
+    { "name": "Act_GiveMB", "plain": "Give meta behavior", "group": "debug", "start": "skip",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "behavior", "label": "Behavior", "kind": "metaBehavior", "closed": true }

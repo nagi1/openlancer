@@ -33,6 +33,7 @@ public sealed class RunJsonTests
             DryRunInput.StartMission(),
             DryRunInput.LoadCheckpoint("ol_end"),
             DryRunInput.RunTrigger("ol_wave"),
+            DryRunInput.StartAt("ol_wave"),
             DryRunInput.Event(LineSpec.Of("Cnd_Destroyed", ("target", "ol_ship_1"), ("count", -1))),
             DryRunInput.Fact(LineSpec.Of("Cnd_InSpace", ("inSpace", true)), true),
             DryRunInput.Heartbeats(90),
@@ -50,15 +51,17 @@ public sealed class RunJsonTests
             """{"kind":"load_checkpoint","trigger":"trg:DATA\\MISSIONS\\OL_TEST\\ol_test.ini#ol_end"}""",
             json[1]!.ToJsonString());
         Assert.Equal("""{"kind":"event","line":{"key":"Cnd_Destroyed","values":{"target":"ol_ship_1","count":-1}}}""",
+            json[4]!.ToJsonString());
+        Assert.Equal("""{"kind":"start_at","trigger":"trg:DATA\\MISSIONS\\OL_TEST\\ol_test.ini#ol_wave"}""",
             json[3]!.ToJsonString());
-        Assert.Equal("""{"kind":"heartbeats","until_timer":true}""", json[6]!.ToJsonString());
-        Assert.Equal("""{"kind":"player_system","system":"system:ol_system"}""", json[7]!.ToJsonString());
+        Assert.Equal("""{"kind":"heartbeats","until_timer":true}""", json[7]!.ToJsonString());
+        Assert.Equal("""{"kind":"player_system","system":"system:ol_system"}""", json[8]!.ToJsonString());
         Assert.Equal(RunJson.KindNames.Count, inputs.Select(i => i.Kind).Distinct().Count());
     }
 
     [Theory]
     [InlineData("""{"kind":"jump"}""", "kind")]
-    [InlineData("""{"kind":"start_at","trigger":"x"}""", "kind")]
+    [InlineData("""{"kind":"start_at"}""", "inputs[0].trigger")]
     [InlineData("""{"kind":"start_mission","trigger":"x"}""", "inputs[0].trigger")]
     [InlineData("""{"kind":"run_trigger"}""", "inputs[0].trigger")]
     [InlineData("""{"kind":"run_trigger","trigger":"trg:DATA\\MISSIONS\\OTHER\\other.ini#ol_wave"}""", "inputs[0].trigger")]
@@ -248,5 +251,66 @@ public sealed class RunJsonTests
         Assert.Equal(revision, m.Session.Revision);
         Assert.Equal(version, m.Missions.Version(Script));
         Assert.False(m.Session.CanUndo);
+    }
+
+    /// <summary>The start plan query (section 7.2 of the M6c design): a plan that cannot start is data, not an
+    /// error.</summary>
+    [Fact]
+    public void ARefusedPlanIsDataWithItsReason()
+    {
+        using var m = Create();
+        var request = RunJson.ReadStartRequest(new JsonObject { ["script"] = ScriptRefText, ["start"] = Trg("ol_wave") });
+
+        var view = m.Missions.Queries.StartPlan(request);
+        var json = JsonSerializer.Serialize(view, EditJson.Options);
+
+        Assert.Equal((StartPlanStatus.Refused, StartKind.TestScript), (view.Status, view.Kind));
+        Assert.Equal(StartPlan.NoSlotReason, view.Reason);
+        Assert.Contains("\"status\":\"refused\"", json);
+        Assert.Contains("\"start\":\"trg:", json);
+        Assert.Contains("\"target\":\"openlancer\"", json);
+    }
+
+    [Fact]
+    public void TheStartRequestReadsItsFields()
+    {
+        var plain = RunJson.ReadStartRequest(new JsonObject { ["script"] = ScriptRefText });
+        var full = RunJson.ReadStartRequest(new JsonObject
+        {
+            ["script"] = ScriptRefText,
+            ["start"] = Trg("ol_wave"),
+            ["target"] = "openlancer",
+            ["start_place"] = "base:ol_base",
+        });
+
+        Assert.Equal((MissionStartPoint.MissionStart, StartPlaceChoice.Suggested), (plain.Start, plain.Place));
+        Assert.Equal(MissionStartPoint.At("ol_wave"), full.Start);
+        Assert.Equal((StartPlaceChoice.Base, "ol_base"), (full.Place, full.PlaceBase));
+        Assert.Equal(StartPlaceChoice.Camera, RunJson.ReadPlace(JsonValue.Create("camera")).Place);
+    }
+
+    [Theory]
+    [InlineData("start", "5")]
+    [InlineData("start", "\"trg:DATA\\\\MISSIONS\\\\OTHER\\\\other.ini#ol_wave\"")]
+    [InlineData("target", "\"hde-0.7.1\"")]
+    [InlineData("start_place", "\"base:\"")]
+    [InlineData("start_place", "\"nowhere\"")]
+    public void AStartRequestThatDoesNotFitGivesInvalidArgument(string field, string value)
+    {
+        var request = new JsonObject { ["script"] = ScriptRefText, [field] = JsonNode.Parse(value) };
+
+        var error = Error(() => RunJson.ReadStartRequest(request));
+
+        Assert.Equal((EditErrorKind.InvalidArgument, field), (error.Kind, error.Field));
+    }
+
+    [Fact]
+    public void AStartAtAMissingTriggerGivesNotFound()
+    {
+        using var m = Create();
+
+        var error = Error(() => m.Missions.Queries.StartPlan(new StartPlanRequest(Script, MissionStartPoint.At("ol_none"))));
+
+        Assert.Equal((EditErrorKind.NotFound, "start"), (error.Kind, error.Field));
     }
 }

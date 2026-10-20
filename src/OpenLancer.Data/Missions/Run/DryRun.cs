@@ -16,6 +16,10 @@ public enum DryRunInputKind
     /// <summary>Starts a new run: the restore trigger of a checkpoint starts, as a load of a saved game does.</summary>
     LoadCheckpoint,
 
+    /// <summary>Starts a new run at a trigger with the triggers that wait there, as Play from here does (section 5.3,
+    /// steps 2 to 4 of the M6c design).</summary>
+    StartAt,
+
     /// <summary>An active trigger runs as if its condition is met now.</summary>
     RunTrigger,
 
@@ -39,7 +43,7 @@ public enum DryRunInputKind
 /// case.</summary>
 public sealed record DryRunInput(DryRunInputKind Kind)
 {
-    /// <summary>The trigger of a Load checkpoint or a Run trigger input, else null.</summary>
+    /// <summary>The trigger of a Load checkpoint, a Start at trigger or a Run trigger input, else null.</summary>
     public string? Trigger { get; init; }
 
     /// <summary>The line of an Event or a Fact input: the condition and the values that it gives (section 7.3 of the
@@ -59,7 +63,7 @@ public sealed record DryRunInput(DryRunInputKind Kind)
     public string? System { get; init; }
 
     /// <summary>True for an input that starts a new run. It removes the inputs before it.</summary>
-    public bool BeginsRun => Kind is DryRunInputKind.StartMission or DryRunInputKind.LoadCheckpoint;
+    public bool BeginsRun => Kind is DryRunInputKind.StartMission or DryRunInputKind.LoadCheckpoint or DryRunInputKind.StartAt;
 
     /// <summary>The heartbeats that the input can run at most.</summary>
     public int MostHeartbeats => Kind != DryRunInputKind.Heartbeats ? 0 : UntilTimer ? DryRun.MaxHeartbeats : Count;
@@ -67,6 +71,8 @@ public sealed record DryRunInput(DryRunInputKind Kind)
     public static DryRunInput StartMission() => new(DryRunInputKind.StartMission);
 
     public static DryRunInput LoadCheckpoint(string trigger) => new(DryRunInputKind.LoadCheckpoint) { Trigger = trigger };
+
+    public static DryRunInput StartAt(string trigger) => new(DryRunInputKind.StartAt) { Trigger = trigger };
 
     public static DryRunInput RunTrigger(string trigger) => new(DryRunInputKind.RunTrigger) { Trigger = trigger };
 
@@ -383,6 +389,7 @@ public sealed class DryRun
             {
                 DryRunInputKind.StartMission => StartMission(changes),
                 DryRunInputKind.LoadCheckpoint => LoadCheckpoint(input.Trigger!, changes),
+                DryRunInputKind.StartAt => StartAt(input.Trigger!, changes),
                 DryRunInputKind.RunTrigger => RunTrigger(input.Trigger!, changes),
                 DryRunInputKind.Event => Event(input.Line!, changes),
                 DryRunInputKind.Fact => Fact(input.Line!, input.Value, changes),
@@ -416,6 +423,34 @@ public sealed class DryRun
             NewRun();
             changes.Add(Machine.Load([trigger]));
             return Cause.Of("Load checkpoint", trigger.Nickname);
+        }
+
+        /// <summary>
+        /// Start at trigger (section 4.2 of the M6c design): the replay of the start plan gives the triggers that wait at
+        /// the trigger, and a new run starts them, as the start save of Play from here does. A start trigger starts the
+        /// mission, and a restore trigger loads its checkpoint. A plan that cannot start gives its reason, and the new
+        /// run has no trigger.
+        /// </summary>
+        private Cause StartAt(string name, StepChanges changes)
+        {
+            if (Find(name, changes) is not { } trigger)
+                return Cause.Of("Start at", name);
+            var replay = StartReplay.Run(Index, MissionStartPoint.At(trigger.Nickname));
+            NewRun();
+            if (replay.Refusal != StartRefusal.None)
+            {
+                changes.Note(TraceChange.Note(StartPlan.RefusalPrefix + replay.Reason));
+                return Cause.Of("Start at", trigger.Nickname);
+            }
+            changes.Add(replay.Kind switch
+            {
+                StartKind.MissionStart => Machine.StartMission(),
+                StartKind.Checkpoint => Machine.Load([trigger]),
+                _ => Machine.Load(replay.ActiveSet),
+            });
+            foreach (var warning in replay.Warnings)
+                changes.Note(TraceChange.Note(warning));
+            return Cause.Of("Start at", trigger.Nickname);
         }
 
         private Cause RunTrigger(string name, StepChanges changes)
