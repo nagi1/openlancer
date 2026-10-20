@@ -35,6 +35,7 @@ internal sealed class MissionView : IDisposable
     private readonly RawIniEditor raw = new(MissionWorkspace.Vocabulary);
     private readonly MissionLinks links;
     private readonly LibraryStrip library;
+    private readonly RunPanel runPanel;
 
     // True while the Mission tab is narrower than LibraryStrip.MinTabWidth, from the last frame.
     private bool narrowTab;
@@ -57,6 +58,7 @@ internal sealed class MissionView : IDisposable
         library = new LibraryStrip(window);
         Graph.Library = library;
         links = new MissionLinks(window, missions, Graph);
+        runPanel = new RunPanel(window, missions, Graph);
         window.Scene.DoubleClicked += item =>
         {
             if (window.CenterMode == CenterMode.Mission && missions.Open is { } open)
@@ -128,6 +130,8 @@ internal sealed class MissionView : IDisposable
 
         if (!missions.ShowRaw)
         {
+            ImGui.SameLine();
+            DryRunToggle();
             GraphToolbar(scale);
             EditToolbar();
         }
@@ -211,6 +215,21 @@ internal sealed class MissionView : IDisposable
         }
 
         ImGui.PopTextWrapPos();
+    }
+
+    /// <summary>The tooltip of the toggle "Dry run" (section 8.1 of the M6c design).</summary>
+    internal const string DryRunTip = "Dry run: Run the trigger rules of the retail game on this graph, step by step. The " +
+                                      "dry run has no game world. You decide what happens in the world.";
+
+    /// <summary>The toggle "Dry run": the Run panel shows at the right of the graph, and the graph shows the run
+    /// states (section 4.1 of the M6c design).</summary>
+    private void DryRunToggle()
+    {
+        var on = missions.DryRuns.On;
+        if (ToolbarItems.Toggle("dry-run", EditorIcons.Play, DryRunTip, on) != on)
+        {
+            missions.DryRuns.On = !on;
+        }
     }
 
     /// <summary>The edit items of the graph toolbar (section 8.11 of the M6b design): the toggle "Library" and the button
@@ -394,6 +413,8 @@ internal sealed class MissionView : IDisposable
             return;
         }
 
+        missions.SyncDryRun();
+
         var scale = ImGuiHelper.Scale;
         var origin = ImGui.GetCursorScreenPos();
         var avail = ImGui.GetContentRegionAvail();
@@ -525,7 +546,20 @@ internal sealed class MissionView : IDisposable
             ImGui.SameLine(0, 0);
         }
 
-        Graph.Draw(analysis, ImGui.GetContentRegionAvail());
+        // The Run panel takes the right of the graph part while the dry run is on (section 4.1 of the M6c design).
+        var region = ImGui.GetContentRegionAvail();
+        if (missions.OpenPrefab == null && missions.DryRun is { } run)
+        {
+            var panel = MathF.Min(MathF.Truncate(RunPanel.Width * ImGuiHelper.Scale), MathF.Max(1, region.X / 2));
+            Graph.Draw(analysis, new Vector2(MathF.Max(1, region.X - panel), region.Y));
+            ImGui.SameLine(0, 0);
+            runPanel.Draw(analysis, run, new Vector2(panel, region.Y));
+        }
+        else
+        {
+            Graph.Draw(analysis, region);
+        }
+
         Keys(path);
     }
 

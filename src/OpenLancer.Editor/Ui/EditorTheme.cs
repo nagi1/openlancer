@@ -84,6 +84,12 @@ internal static class EditorTheme
     /// more from the colors of the states, and its contrast is 3:1 or more on the panels.</summary>
     public static readonly Vector4 Override = Rgb(0xA087F5);
 
+    /// <summary>The run states of the dry run and of the live view in the mission graph (decision D761 of the M6c
+    /// design): the outline of a trigger that waits, the flash of a trigger that ran and of its start links. Its hue
+    /// differs by 25 degrees or more from the colors of a selection, an error, a warning, a success, the mission items
+    /// and the prefab overrides. Each run state also has a glyph and a word, so no state depends on color alone.</summary>
+    public static readonly Vector4 MissionRun = Rgb(0x3CCFA5);
+
     /// <summary>The brackets and lines of an item under the mouse, and of the items that the cross-links of the Mission
     /// tab name. It is a light grey, so it does not look like the blue of the selection (UI rule 7).</summary>
     public static readonly Vector4 Highlight = Label;

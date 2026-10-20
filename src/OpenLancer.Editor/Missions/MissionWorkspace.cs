@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using OpenLancer.Data;
@@ -10,6 +11,7 @@ using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Prefabs;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -62,6 +64,32 @@ internal sealed class MissionWorkspace
     {
         this.window = window;
         savePrefab = new SavePrefabDialog(Run);
+        DryRuns = new MissionDryRuns(() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+    }
+
+    // ---- The dry run (section 4 of the M6c design) ----
+
+    /// <summary>The dry runs of the scripts of the session, the toggles "Dry run" and "Follow", and the fold after each
+    /// new model of a script.</summary>
+    public MissionDryRuns DryRuns { get; }
+
+    /// <summary>The dry run of the open mission while the toggle "Dry run" is on, else null. Prefab mode has no dry
+    /// run.</summary>
+    public DryRun? DryRun => DryRuns.On && OpenPrefab == null && Open is { } analysis ? DryRuns.For(analysis) : null;
+
+    /// <summary>Folds the dry run of the open mission again when its model changed, for example after an edit, an Undo
+    /// or a Redo. The Mission tab calls it in each frame.</summary>
+    public void SyncDryRun()
+    {
+        if (DryRuns.On && OpenPrefab == null && Open is { } analysis && window.Session?.Edits is { } edits)
+            DryRuns.Sync(analysis, edits.InTransaction);
+    }
+
+    /// <summary>Adds an input to the dry run of the open mission.</summary>
+    public void AddDryRunInput(DryRunInput input)
+    {
+        if (DryRun != null && Open is { } analysis)
+            DryRuns.Add(analysis, input);
     }
 
     /// <summary>The id of the Missions tab.</summary>
@@ -447,6 +475,8 @@ internal sealed class MissionWorkspace
     /// again.</summary>
     private void ScriptsChanged(MissionScriptsChange change)
     {
+        // The dry run moves its inputs with the renames at its next fold (section 4.2 of the M6c design).
+        DryRuns.ScriptsChanged(change);
         changedDuringRun.UnionWith(change.Versions.Keys);
         if (Result is not { } result || followed is not { } edits)
         {
@@ -778,6 +808,7 @@ internal sealed class MissionWorkspace
         PendingGraphFrame = false;
         pendingPick = null;
         acts.Clear();
+        DryRuns.Clear();
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();

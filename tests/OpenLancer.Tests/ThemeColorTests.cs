@@ -106,6 +106,30 @@ public sealed class ThemeColorTests
         Assert.True(distance >= 25, $"{other} has a hue of {otherHue:0} degrees, only {distance:0} degrees from the override color.");
     }
 
+    /// <summary>The run color of the dry run (decision D761 of the M6c design) differs in hue by 25 degrees or more from
+    /// the colors of a selection, an error, a warning, a success, the mission items and the prefab overrides. The theme
+    /// has no agent color yet, so the test cannot check it.</summary>
+    [Theory]
+    [InlineData(nameof(EditorTheme.Accent))]
+    [InlineData(nameof(EditorTheme.Error))]
+    [InlineData(nameof(EditorTheme.Warning))]
+    [InlineData(nameof(EditorTheme.Success))]
+    [InlineData(nameof(EditorTheme.MissionItem))]
+    [InlineData(nameof(EditorTheme.Override))]
+    public void TheRunColorHasItsOwnHue(string other)
+    {
+        var (hue, saturation) = Hsv(EditorTheme.MissionRun);
+        var (otherHue, _) = Hsv(ThemeColor(other));
+        var distance = MathF.Abs(hue - otherHue);
+        distance = MathF.Min(distance, 360 - distance);
+
+        Assert.True(saturation >= MinSaturation);
+        Assert.True(distance >= 25, $"{other} has a hue of {otherHue:0} degrees, only {distance:0} degrees from the run color.");
+        // When the theme gets the agent color of MCP1, this test must check it too (decision D761).
+        Assert.True(typeof(EditorTheme).GetField("Agent", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static) == null,
+            "Add the agent color to the cases of this test.");
+    }
+
     /// <summary>The violet bar of an override is a mark that is not text, so it needs a contrast of 3:1 or more against
     /// each background of a label cell (WCAG 1.4.11).</summary>
     [Theory]

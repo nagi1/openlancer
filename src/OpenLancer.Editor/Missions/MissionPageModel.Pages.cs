@@ -8,6 +8,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Prefabs;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Ui;
 using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
@@ -80,6 +81,10 @@ internal sealed record PageContext(MissionRunResult Result, MissionAnalysis Anal
     /// in a view without an edit session.</summary>
     public string? SessionReadOnly { get; init; } = MissionPageModel.FieldNote;
 
+    /// <summary>The trace of the dry run of the mission, or null while no run exists (section 4.5 of the M6c design).
+    /// The Trigger page then shows the section "Run".</summary>
+    public MissionTrace? Run { get; init; }
+
     /// <summary>True when the active mod sets a line.</summary>
     public bool Changed(MissionLine line) => ChangedOf(line.Section.Ref).Contains(line.Entry);
 
@@ -150,6 +155,44 @@ internal sealed partial record MissionPageModel
         }
     }
 
+    /// <summary>The info icon of the section "Run" of the Trigger page.</summary>
+    internal static readonly HelpText RunHelp = new("Run",
+        "The state of this trigger in the dry run of the Mission tab. It shows if the trigger waits, how many times it " +
+        "ran, and its last change with its cause.", "Nothing.");
+
+    /// <summary>The section "Run" of the Trigger page while a run exists (section 4.5 of the M6c design): the state,
+    /// the step of the last start, the runs, and the last change with its cause.</summary>
+    internal static PageSection RunSection(MissionTrace trace, MissionTrigger trigger)
+    {
+        var state = trace.StateOf(trigger.Nickname);
+        var chips = state == null ? [] : RunOverlay.ChipsOf(state, trace);
+        var fields = new List<PageField>
+        {
+            new("State", chips.Count == 0 ? "Not active" : string.Join(", ", chips.Select(c => c.Text)),
+                "The state of the trigger after the last step of the run.")
+            {
+                Chips = [.. chips.Select(c => new PageChip(c.Text, c.Tooltip, null))],
+            },
+        };
+        if (state != null)
+        {
+            if (state.ActiveSinceTime is { } time)
+                fields.Add(new PageField("Became active at", TraceStep.Clock(time), "The time of the last start of the trigger."));
+            else if (state.ActiveSinceStep > 0)
+                fields.Add(new PageField("Became active at", $"Step {RunNumber(state.ActiveSinceStep)}",
+                    "The step of the last start of the trigger."));
+            fields.Add(new PageField("Ran", state.Runs == 1 ? "1 time" : $"{RunNumber(state.Runs)} times",
+                "How many times the trigger ran in the run."));
+            if (state.LastChange?.LogText is { } last)
+                fields.Add(new PageField("Last change", last, "The last start, run or stop of the trigger."));
+            if (state.LastStep > 0 && state.LastStep <= trace.Steps.Count)
+                fields.Add(new PageField("Cause", trace.Steps[state.LastStep - 1].Title, "The step of the last change."));
+        }
+        return new PageSection("run", "Run", EditorIcons.Play, RunHelp, fields, []);
+    }
+
+    private static string RunNumber(int value) => value.ToString(CultureInfo.InvariantCulture);
+
     // ---- The trigger page (section 10.3).
 
     /// <summary>The Trigger page: the trigger component, "Starts when", one section for each action group, the sources,
@@ -219,6 +262,8 @@ internal sealed partial record MissionPageModel
 
         sections.Add(new PageSection("startsWhen", "Starts when", MissionGlyphs.OfEvent(trigger.Condition?.Name?.Group),
             schema.Help["startsWhen"], startsWhen, []));
+        if (context.Run is { } trace)
+            sections.Add(RunSection(trace, trigger));
 
         // One section for each action group, in group order. Each line shows its line number, so the order stays
         // visible.

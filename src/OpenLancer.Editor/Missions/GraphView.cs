@@ -12,6 +12,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Prefabs;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
 
@@ -101,6 +102,12 @@ internal sealed partial class GraphView : IDisposable
     private (GraphNode? Node, GraphFrame? Frame)? menuTarget;
     private Navigation pending;
     private int pendingCenter;
+
+    // The run overlay of the dry run of this frame, or null (section 4.5 of the M6c design), the strength of the flash
+    // of the last step from 1 to 0, and the version of the dry runs that "Follow" framed last.
+    private RunOverlay? runOverlay;
+    private float runFlash;
+    private int followedVersion = -1;
 
     /// <summary>A view move that waits for the next frame of the node editor.</summary>
     private enum Navigation
@@ -377,6 +384,7 @@ internal sealed partial class GraphView : IDisposable
         editable = missions.NoEditReason(analysis.Script.Path) == null;
         var graph = Graph!;
         var layout = Layout!;
+        RunState(analysis, graph);
         var origin = ImGui.GetCursorScreenPos();
         Screen = (origin, origin + size);
         rowRects.Clear();
@@ -424,6 +432,7 @@ internal sealed partial class GraphView : IDisposable
         }
 
         DrawStateChips(graph, layout, scale);
+        DrawRunChips(graph, layout, scale);
         if (editable)
         {
             CreateLinks();
@@ -640,12 +649,19 @@ internal sealed partial class GraphView : IDisposable
         var selected = ReferenceEquals(node, selectedBlock);
         var outlined = Outlined.Contains(node.Key) || pathNodes.Contains(node) ||
                        searchText.Length > 0 && results.Contains(node);
+        // A node that waits has the outline in the run color. A node that ran flashes its outline (D761).
+        var run = runOverlay?.Of(node);
+        Vector4? runBorder = run is { Ran: true } && runFlash > 0 ? EditorTheme.MissionRun
+            : run is { Waits: true } ? EditorTheme.MissionRun with { W = 0.8f }
+            : null;
         var border = selected ? EditorTheme.Accent
             : outlined ? EditorTheme.AccentText
-            : node.Kind == GraphNodeKind.Missing ? EditorTheme.Error with { W = 0.6f }
-            : EditorTheme.GraphNodeBorder;
+            : runBorder ?? (node.Kind == GraphNodeKind.Missing ? EditorTheme.Error with { W = 0.6f } : EditorTheme.GraphNodeBorder);
+        var borderWidth = outlined ? 2.5f
+            : runBorder != null ? 2.5f + (run!.Ran ? 1.5f * runFlash : 0)
+            : 1f;
         NodeEditor.PushStyleVar(StyleVar.NodePadding, Vector4.Zero);
-        NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, outlined ? 2.5f : 1f);
+        NodeEditor.PushStyleVar(StyleVar.NodeBorderWidth, borderWidth);
         NodeEditor.PushStyleColor(StyleColor.NodeBg, new Color4(EditorTheme.GraphNode with { W = alpha }));
         NodeEditor.PushStyleColor(StyleColor.NodeBorder, new Color4(border with { W = border.W * alpha }));
         NodeEditor.BeginNode(node.Id);
@@ -1188,6 +1204,14 @@ internal sealed partial class GraphView : IDisposable
             faded = false;
         }
 
+        // The start links of a trigger that ran flash in the run color for one second (section 4.5 of the M6c design).
+        if (runFlash > 0 && runOverlay?.Links.Contains(link.Id) == true)
+        {
+            NodeEditor.Link(link.Id, link.FromPin.Id, link.ToPin.Id,
+                (VertexDiffuse)new Color4(Vector4.Lerp(color, EditorTheme.MissionRun, runFlash)), thickness * (1 + runFlash));
+            return;
+        }
+
         NodeEditor.Link(link.Id, link.FromPin.Id, link.ToPin.Id,
             (VertexDiffuse)new Color4(color with { W = faded ? MissionGraph.FadeAlpha : 1 }), thickness);
     }
@@ -1210,6 +1234,71 @@ internal sealed partial class GraphView : IDisposable
             var width = Chip.WidthOf(font, SmallSize, link.State!);
             var min = new Vector2(origin.X - width - 6, y);
             Chip.Paint(drawList, font, SmallSize, min, min + new Vector2(width, ChipHeight), link.State!, ChipLook.Grey);
+        }
+    }
+
+    /// <summary>The run overlay of the dry run of the open mission in this frame, and "Follow": a new change frames its
+    /// trigger (section 4.5 of the M6c design). Prefab mode has no dry run.</summary>
+    private void RunState(MissionAnalysis analysis, MissionGraph graph)
+    {
+        var runs = missions.DryRuns;
+        runOverlay = missions.DryRun is { } run && missions.OpenPrefab == null && ReferenceEquals(analysis, missions.Open)
+            ? runs.Overlay(graph, run.State.Trace)
+            : null;
+        runFlash = runOverlay == null ? 0 : (float)Math.Clamp(1 - (runs.Now - runs.ChangedAt) / RunOverlay.FlashSeconds, 0, 1);
+        if (runOverlay == null || !runs.Follow || followedVersion == runs.Version)
+        {
+            return;
+        }
+
+        followedVersion = runs.Version;
+        if (runOverlay.Follow is { } key && graph.Nodes.FirstOrDefault(n => n.Key == key) is { } node)
+        {
+            FrameBlock(node);
+        }
+    }
+
+    /// <summary>The run chips of each node above its top edge: a glyph and a word for each state (decision D761). A hover
+    /// shows the tooltip of the state.</summary>
+    private void DrawRunChips(MissionGraph graph, GraphLayout layout, float scale)
+    {
+        if (runOverlay == null || scale < FullDetailScale)
+        {
+            return;
+        }
+
+        var drawList = ImGui.GetWindowDrawList();
+        var font = ImGuiHelper.Roboto;
+        foreach (var node in graph.Nodes)
+        {
+            if (runOverlay.Of(node) is not { Chips.Count: > 0 } state)
+            {
+                continue;
+            }
+
+            var origin = layout.PositionOf(node);
+            var x = origin.X;
+            var y = origin.Y - ChipHeight - 3;
+            foreach (var chip in state.Chips)
+            {
+                var width = Chip.WidthOf(font, SmallSize, chip.Label);
+                var min = new Vector2(x, y);
+                var max = min + new Vector2(width, ChipHeight);
+                var look = chip.Kind switch
+                {
+                    RunChipKind.Waits or RunChipKind.Ran or RunChipKind.FrameWaits => ChipLook.Filled(EditorTheme.MissionRun),
+                    RunChipKind.StartsNext => ChipLook.Outline(EditorTheme.MissionRun),
+                    RunChipKind.Stall => ChipLook.Filled(EditorTheme.Warning),
+                    _ => ChipLook.Grey,
+                };
+                Chip.Paint(drawList, font, SmallSize, min, max, chip.Label, look);
+                if (ImGui.IsMouseHoveringRect(min, max))
+                {
+                    pendingTooltip = chip.Tooltip;
+                }
+
+                x += width + ChipGap;
+            }
         }
     }
 
@@ -1416,7 +1505,34 @@ internal sealed partial class GraphView : IDisposable
             ImGui.SetClipboardText(trigger.Nickname);
         }
 
+        DryRunMenu(trigger);
         EditNodeMenu(node, trigger);
+    }
+
+    /// <summary>The tooltip of the node menu item of the dry run (section 8.1 of the M6c design).</summary>
+    internal const string RunThisTip = "Run this trigger: In the dry run, run this trigger now, as if its condition is met. " +
+                                       "Only a trigger that waits can run.";
+
+    /// <summary>The item of the node menu of the dry run: "Run this trigger (dry run)". Only a trigger that waits can
+    /// run.</summary>
+    private void DryRunMenu(MissionTrigger trigger)
+    {
+        if (missions.DryRun is not { } run)
+        {
+            return;
+        }
+
+        ImGui.Separator();
+        var waits = run.State.Machine.StateOf(trigger).Status == TriggerStatus.Active;
+        if (ImGui.MenuItem("Run this trigger (dry run)", "", false, waits))
+        {
+            missions.AddDryRunInput(DryRunInput.RunTrigger(trigger.Nickname));
+        }
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+        {
+            ImGui.SetTooltip(RunThisTip);
+        }
     }
 
     /// <summary>The focus sets of this frame: the nodes and links of the path view, or the nodes of the neighbor

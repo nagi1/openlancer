@@ -37,7 +37,7 @@ The toggle "base-game messages" shows the problems that the base game has too. T
 
 ## The Mission tab
 
-The Mission tab shows the open mission as a graph. The Scene part is at its right, and a splitter is between them. The toolbar has the mission menu, the switch between Graph and Raw INI, the lens, "Show lines" and "Frame all". It also has the search, the menu Systems, the toggle Library, "Add..." and the toggle Scene.
+The Mission tab shows the open mission as a graph. The Scene part is at its right, and a splitter is between them. The toolbar has the mission menu, the switch between Graph and Raw INI, the toggle "Dry run", the lens, "Show lines" and "Frame all". It also has the search, the menu Systems, the toggle Library, "Add..." and the toggle Scene.
 
 ### The graph
 
@@ -89,6 +89,62 @@ A raw edit has these rules:
 - The editor does not keep a comment inside a mission section.
 - A moved ship or formation section moves, because its place has an effect in the game. Another section keeps its place, and a note tells you.
 - A line of a member of a linked prefab instance shows dim and takes no edit (see "Behavior prefabs").
+
+## The dry run
+
+The dry run runs the trigger rules of the retail game on the graph of the open mission, step by step. It has no game world. You decide what happens in the world. The graph then shows which triggers wait, run and stop, in the order of the retail game. The dry run changes no file, and it works without an active mod.
+
+### Start a dry run
+
+1. Open a mission.
+2. In the toolbar of the Mission tab, click the toggle "Dry run". The Run panel opens at the right of the graph.
+3. Click "Start mission". The start triggers start.
+4. Or click "Load checkpoint", then click a checkpoint. Its restore trigger starts, as a load of a saved game does.
+5. Click "Heartbeat". The triggers that the start triggers start become active at the first heartbeat.
+6. In the group "Waiting events", click "Happens" on the event that happens in your test.
+7. To remove the last step, click "Back".
+
+### The Run panel
+
+| Item | What it does |
+|---|---|
+| Start mission | Starts a new run: the start triggers of the mission start. |
+| Load checkpoint | Starts a new run: the restore trigger of a checkpoint starts, as a load of a saved game does. |
+| Run trigger | Runs the selected trigger now, as if its condition is met. Only a trigger that waits can run. The node menu item "Run this trigger (dry run)" does the same. |
+| Heartbeat | Advances the time by 1/30 s. The game tests timers and some conditions at each heartbeat. |
+| Next timer | Advances the time until the next timer runs, at most 10 minutes. |
+| Back, Reset | Back removes the last step. Reset removes all steps. |
+| Timer ranges | Shortest or Longest: the time of a timer with a range. The game picks a time in the range when the mission loads. |
+| Follow | The graph frames the trigger of each new change. |
+| Player system, Player is in space | The facts about the player. Cnd_SystemEnter is true at once in the system of the player. A timer with RUN_IN_SPACE_ONLY counts only in space. |
+| Waiting events | One row for each condition line that the active triggers wait for. "Happens" makes the event happen. "Is true" sets a fact that the game tests at each heartbeat. A fact stays true until you clear it. |
+| Run log | One row for each step and each change. Click a change to select its trigger. |
+
+A row of "Waiting events" that the run made likely comes first, with "Sent at step {n}" or "Spawned at step {n}". An example is a comm line that the run sent. A condition that counts shows its count, for example "(1 of 3)".
+
+### The run states in the graph
+
+Each state has a chip above the node, with a glyph and a word.
+
+| Chip | Meaning |
+|---|---|
+| Waits | The trigger is active. It waits for its condition. Its outline has the run color. |
+| Ran, Ran {n} times | The trigger ran in the last step. Its outline and its start links flash. |
+| Has run | The trigger ran before. It is not active now. |
+| Stopped | Another trigger stopped this trigger. |
+| Starts next ({k}) | The game starts this trigger at the next event or heartbeat. The number gives the order. |
+| {n} wait | A collapsed frame has {n} triggers that wait. |
+
+The Trigger page of the Inspector gets the section "Run" during a dry run. It shows the state of the trigger, the step of its last start, its runs, and its last change with its cause.
+
+### Rules of the dry run
+
+- The dry run uses the order of the retail game. A trigger that another trigger starts becomes active after the actions of the pass, smallest game id first. The OpenLancer game runs the triggers with its own rules. In some cases they differ.
+- Start mission and Load checkpoint start a new run. The steps before them go. The facts and the facts about the player stay.
+- The dry run follows each change of the script, also Undo and Redo. A rename moves the steps to the new name. A step whose trigger the script does not have now shows "Missing: {name}".
+- One event of the game can match two lines, for example Cnd_BaseEnter of a base and Cnd_BaseEnter ANY. The dry run lists them as two events.
+- A chain of starts that does not end stops the run with a message. A trigger without a condition stops the run too, as it stops the game.
+- An agent can run the same dry run with the agent tool `mission_dry_run`.
 
 ## The Hierarchy and the Inspector
 
