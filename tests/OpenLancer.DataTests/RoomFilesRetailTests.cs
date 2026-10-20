@@ -39,6 +39,7 @@ public sealed class RoomFilesRetailTests(ITestOutputHelper output)
         var session = workspace.Open();
         _ = session.DataFiles.Paths("solar");
 
+        // The gate measures the first use once (see Timing).
         IReadOnlyList<string> rooms = [];
         var first = Timing.Measure(() => rooms = session.DataFiles.Paths("room"));
 

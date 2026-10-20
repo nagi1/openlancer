@@ -222,20 +222,21 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
             Options = inputs.Options, Generation = inputs.Generation,
         };
 
+        // The gate measures the first run of the session. A second run is faster, so the gate does not try again (see
+        // Timing).
         MissionRunResult? result = null;
-        var time = Timing.WarmGate(TimeSpan.FromSeconds(2), 3, () => result = MissionRun.Execute(changed));
+        var time = Timing.Measure(() => result = MissionRun.Execute(changed));
         var run = result!;
 
-        output.WriteLine($"The run of {run.Analyses.Count} changed scripts took {time.TotalMilliseconds:F0} ms (the best " +
-                         "of 3 runs).");
+        output.WriteLine($"The run of {run.Analyses.Count} changed scripts took {time.TotalMilliseconds:F0} ms.");
         Assert.All(run.Analyses.Values, a => Assert.NotNull(a.BaseIndex));
         // The base-game run finds each problem, so each one stays a base-game problem.
         Assert.All(run.Problems, p => Assert.True(p.Origin!.IsBaseGame, p.Message));
         Assert.True(time < TimeSpan.FromSeconds(2), $"The run took {time.TotalMilliseconds:F0} ms.");
     }
 
-    /// <summary>The performance gate of section 18.4: the run of the 14 retail scripts stays under 2 s. Other builds can
-    /// run on the machine at the same time, so the gate measures as <see cref="Timing"/> tells.</summary>
+    /// <summary>The performance gate of section 18.4: the run of the 14 retail scripts stays under 2 s. The gate measures
+    /// the first run of the session once, as <see cref="Timing"/> tells.</summary>
     [Fact]
     [Trait(Timing.Category, Timing.Performance)]
     public void TheRunOfTheRetailScriptsStaysUnderTheGate()
@@ -244,11 +245,10 @@ public sealed class MissionRetailTests(ITestOutputHelper output)
         var inputs = workspace.Open().MissionInputs(EngineCoverage.Instance);
 
         MissionRunResult? result = null;
-        var time = Timing.WarmGate(TimeSpan.FromSeconds(2), 3, () => result = MissionRun.Execute(inputs));
+        var time = Timing.Measure(() => result = MissionRun.Execute(inputs));
         var run = result!;
 
-        output.WriteLine($"The run of {run.Analyses.Count} scripts took {time.TotalMilliseconds:F0} ms (the best of 3 " +
-                         "runs).");
+        output.WriteLine($"The run of {run.Analyses.Count} scripts took {time.TotalMilliseconds:F0} ms.");
         Assert.Equal(14, run.Analyses.Count);
         Assert.True(time < TimeSpan.FromSeconds(2), $"The run took {time.TotalMilliseconds:F0} ms.");
     }

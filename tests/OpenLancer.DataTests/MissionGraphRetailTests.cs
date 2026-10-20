@@ -27,13 +27,15 @@ public sealed class MissionGraphRetailTests(ITestOutputHelper output)
         // A first layout warms the code, so the gate measures the layout and not the start of the program.
         GraphLayout.Of(MissionGraph.Build(analysis, new GraphOptions(GraphLens.Logic, showLines)));
 
+        // The layout runs again after each edit, so the gates can try again (see TimingGates).
+        var gates = new TimingGates();
         foreach (var lens in new[] { GraphLens.Beats, GraphLens.Logic })
         {
             var build = Stopwatch.StartNew();
             var graph = MissionGraph.Build(analysis, new GraphOptions(lens, showLines));
             build.Stop();
             GraphLayout? made = null;
-            var time = Timing.WarmGate(TimeSpan.FromMilliseconds(100), 3, () => made = GraphLayout.Of(graph));
+            var time = gates.WarmGate(TimeSpan.FromMilliseconds(100), 3, () => made = GraphLayout.Of(graph));
             var layout = made!;
 
             output.WriteLine($"{slot} {lens} {(showLines ? "lines" : "summary")}: {graph.Nodes.Count} nodes, " +

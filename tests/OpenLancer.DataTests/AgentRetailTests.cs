@@ -119,7 +119,9 @@ public sealed class AgentRetailTests(ITestOutputHelper output)
         }
         // find_references and get_item with include_used_by read each line of the data and of the mission scripts that
         // names the item. They give their time in the log, with no gate. The gate of each other call takes the median of
-        // five runs as one try (see Timing).
+        // five runs as one try. The first calls warmed up the code, so the gates can try again. All gates of the test
+        // share one patience (see TimingGates).
+        var gates = new TimingGates();
         var times = calls.Where(c => c.Tool.StartsWith("list_") || c.Tool.StartsWith("get_") || c.Tool.StartsWith("find_"))
             .Select(c =>
             {
@@ -134,7 +136,7 @@ public sealed class AgentRetailTests(ITestOutputHelper output)
                     return runs[2];
                 }
                 var gated = !c.Tool.StartsWith("find_") && !c.Arguments.Contains("include_used_by");
-                var median = gated ? Timing.Gate(TimeSpan.FromMilliseconds(FrameMilliseconds), Median) : Median();
+                var median = gated ? gates.Gate(TimeSpan.FromMilliseconds(FrameMilliseconds), Median) : Median();
                 return (Call: $"{c.Tool} {c.Arguments}", Gated: gated, Median: median.TotalMilliseconds);
             }).ToList();
 

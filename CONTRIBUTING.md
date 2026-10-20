@@ -61,7 +61,12 @@ The retail tests in the data tests need your own game data. CI has no game data,
 
 Without game data, the retail tests skip. A skipped test is not a passed test. Write the passed, failed and skipped counts of your retail run in the pull request.
 
-Some retail tests have a timing gate, for example "the run of the 14 story scripts takes less than 2 s". These tests have the trait `Category=Performance`. Each measure runs with a high priority, and a gate takes the best of its tries. While the best try is over the limit, the gate tries again for up to 60 s. So a short burst of other work, for example the unit tests or another build, does not fail a gate. A long build can slow the computer for longer. When a gate fails on a busy computer, run the gates alone:
+Some retail tests have a timing gate, for example "the run of the 14 story scripts takes less than 2 s". These tests have the trait `Category=Performance`. Each measure runs with a high priority. The gates are of two kinds:
+
+- A gate on a first run measures one run. Examples are the first run of the story scripts and the first build of an index. A second run is faster, because the runtime compiled the code and filled the caches. So the gate does not try again. A gate on a step that the test cannot run again, for example a delete, also measures one run.
+- A gate on a step that runs often takes the best of its tries. While the best try is over the limit, the gate tries again. All gates of one test try again for up to 60 s in total. So a short burst of other work, for example the unit tests or another build, does not fail these gates.
+
+A burst of other work can fail a gate of the first kind. A long build can also slow the computer for longer than 60 s. When a gate fails on a busy computer, run the gates alone:
 
 ```
 dotnet test tests/OpenLancer.DataTests --filter Category=Performance

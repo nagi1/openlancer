@@ -36,6 +36,7 @@ public sealed class AssetRetailTests(ITestOutputHelper output)
         // The budget is for the rows. The list of the solar archetypes builds at its first use, as the M21 budgets
         // measure it.
         Assert.NotNull(session.Lists.List("solar_archetype"));
+        // The rows of a category build once in a session, so the gate measures one build (see Timing).
         IReadOnlyList<AssetRow> rows = [];
         var build = Timing.Measure(() => rows = session.Assets.Rows("solars"));
         output.WriteLine($"Solars: {rows.Count} rows in {build.TotalMilliseconds:F1} ms");

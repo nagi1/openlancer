@@ -23,7 +23,7 @@ public sealed class TimingTests
     {
         var count = 0;
 
-        var best = Timing.Gate(TimeSpan.FromSeconds(1), Tries([60, 20, 40], () => count++), tries: 3);
+        var best = new TimingGates().Gate(TimeSpan.FromSeconds(1), Tries([60, 20, 40], () => count++), tries: 3);
 
         Assert.Equal(TimeSpan.FromMilliseconds(20), best);
         Assert.Equal(3, count);
@@ -36,7 +36,7 @@ public sealed class TimingTests
     {
         var count = 0;
 
-        var best = Timing.Gate(TimeSpan.FromMilliseconds(30), Tries([50, 40, 20, 10], () => count++));
+        var best = new TimingGates().Gate(TimeSpan.FromMilliseconds(30), Tries([50, 40, 20, 10], () => count++));
 
         Assert.Equal(TimeSpan.FromMilliseconds(20), best);
         Assert.Equal(3, count);
@@ -49,10 +49,33 @@ public sealed class TimingTests
     {
         var count = 0;
 
-        var best = Timing.Gate(TimeSpan.FromMilliseconds(10), Tries([50, 40], () => count++), patience: TimeSpan.Zero);
+        var best = new TimingGates(TimeSpan.Zero).Gate(TimeSpan.FromMilliseconds(10), Tries([50, 40], () => count++));
 
         Assert.Equal(TimeSpan.FromMilliseconds(50), best);
         Assert.Equal(1, count);
+    }
+
+    /// <summary>
+    /// The gates of one test share one patience. A test with many gates on slow code, for example one gate for each of
+    /// the 53 retail systems, must fail after one patience, not after one patience for each gate. The first gate uses
+    /// up the patience, so the second gate does not try again.
+    /// </summary>
+    [Fact]
+    public void TheGatesOfATestShareOnePatience()
+    {
+        var gates = new TimingGates(TimeSpan.FromMilliseconds(100));
+        var (first, second) = (0, 0);
+
+        var slow = gates.Gate(TimeSpan.FromMilliseconds(10), Tries([50, 5], () =>
+        {
+            first++;
+            Thread.Sleep(150);
+        }));
+        var next = gates.Gate(TimeSpan.FromMilliseconds(10), Tries([50, 5], () => second++));
+
+        Assert.Equal((1, 1), (first, second));
+        Assert.Equal(TimeSpan.FromMilliseconds(50), slow);
+        Assert.Equal(TimeSpan.FromMilliseconds(50), next);
     }
 
     /// <summary>The warm-up runs first and is not measured, so the slow first run does not count.</summary>
@@ -62,7 +85,7 @@ public sealed class TimingTests
         int[] sleeps = [200, 60, 20, 60];
         var runs = 0;
 
-        var best = Timing.WarmGate(TimeSpan.FromSeconds(1), 3, () => Thread.Sleep(sleeps[runs++]));
+        var best = new TimingGates().WarmGate(TimeSpan.FromSeconds(1), 3, () => Thread.Sleep(sleeps[runs++]));
 
         Assert.Equal(4, runs);
         Assert.InRange(best, TimeSpan.FromMilliseconds(19), TimeSpan.FromMilliseconds(59));

@@ -310,28 +310,13 @@ public sealed class SceneBaselineRetailTests(ITestOutputHelper output)
     {
         using var workspace = SceneRetail.Workspace("m3story");
         var session = workspace.Open();
-        // The index builds once for the edit view of a session. So a second try of the gate builds it in a new session
-        // (see Timing).
+        // The index builds once for the edit view of a session. A build in a second session is faster, because the
+        // runtime compiled the code. So the gate measures the first build once and does not try again (see Timing).
         IReadOnlyList<StoryMention> manhattan = [];
-        var tries = 0;
-        var build = Timing.Gate(TimeSpan.FromMilliseconds(1500), () =>
+        var build = Timing.Measure(() =>
         {
-            if (tries++ == 0)
-            {
-                return Timing.Measure(() =>
-                {
-                    session.StartStoryMentions();
-                    manhattan = session.StoryMentions("Li01_01");
-                });
-            }
-
-            using var again = SceneRetail.Workspace("m3story");
-            var other = again.Open();
-            return Timing.Measure(() =>
-            {
-                other.StartStoryMentions();
-                other.StoryMentions("Li01_01");
-            });
+            session.StartStoryMentions();
+            manhattan = session.StoryMentions("Li01_01");
         });
         output.WriteLine($"Index build and first lookup: {build.TotalMilliseconds:F0} ms");
         foreach (var mention in manhattan)
@@ -350,7 +335,8 @@ public sealed class SceneBaselineRetailTests(ITestOutputHelper output)
         Assert.True(mapped > 0);
         Assert.True(build.TotalMilliseconds < 1500, $"The build took {build.TotalMilliseconds:F0} ms.");
 
-        var lookups = Timing.WarmGate(TimeSpan.FromMilliseconds(100), 3, () =>
+        // A lookup runs often, so its gate can try again (see TimingGates).
+        var lookups = new TimingGates().WarmGate(TimeSpan.FromMilliseconds(100), 3, () =>
         {
             for (var i = 0; i < 100; i++)
                 session.StoryMentions("Li01_14");
