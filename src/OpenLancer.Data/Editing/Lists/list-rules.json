@@ -385,7 +385,7 @@
     { "id": "solar", "label": "Other solar",
       "types": ["mission_satellite", "non_targetable", "weapons_platform", "destroyable_depot"] }
   ],
-  "// assetCategories": "The top categories of the Assets panel (milestone M23, decision D267), in the order of the category tree. A category takes its rows from a list or from a kind. The split 'sceneTemplates' makes one child for each template of sceneTemplates and one for connectionTypes, so the types of a category and of its Create template cannot differ. The split 'section' makes one child for each section type, and 'folder' one for each top folder below the data folder.",
+  "// assetCategories": "The top categories of the Assets panel (milestone M23, decision D267), in the order of the category tree. A category takes its rows from a list or from a kind: 'propGroups' for the prop groups and 'missionPrefabs' for the mission prefab assets of the mods (section 8.3 of the M6b design). The split 'sceneTemplates' makes one child for each template of sceneTemplates and one for connectionTypes, so the types of a category and of its Create template cannot differ. The split 'section' makes one child for each section type, and 'folder' one for each top folder below the data folder.",
   "assetCategories": [
     { "id": "groups", "label": "Prop groups", "kind": "propGroups" },
     { "id": "solars", "label": "Solars", "list": "solar_archetype", "split": "sceneTemplates" },
@@ -395,6 +395,7 @@
     { "id": "effects", "label": "Effects", "list": "effect" },
     { "id": "loadouts", "label": "Loadouts", "list": "loadout" },
     { "id": "factions", "label": "Factions", "list": "faction" },
-    { "id": "models", "label": "Models", "list": "model", "split": "folder" }
+    { "id": "models", "label": "Models", "list": "model", "split": "folder" },
+    { "id": "prefabs", "label": "Mission prefabs", "kind": "missionPrefabs" }
   ]
 }

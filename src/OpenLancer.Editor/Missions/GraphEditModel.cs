@@ -7,6 +7,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using static OpenLancer.Editor.Missions.MissionCommandRefs;
 
 namespace OpenLancer.Editor.Missions;
@@ -96,6 +97,7 @@ internal sealed class GraphEditModel
                                        "frame, then insert the trigger on one of the links.";
     public const string NoTriggers = "The clipboard holds no [Trigger] section.";
     public const string MissingNode = "This trigger is missing. Drop the item on a trigger of the script.";
+    public const string PrefabOnNode = "Drop a prefab on an empty place of the graph.";
 
     /// <summary>The words of the watch menu and their texts (section 8.11 of the M6b design). The items write the words
     /// of retail.</summary>
@@ -338,18 +340,35 @@ internal sealed class GraphEditModel
     /// The gesture of Delete with nodes selected (section 8.2 of the M6b design): one batch with
     /// <see cref="RemoveAct"/> for each act frame, then <see cref="RemoveTrigger"/> for each trigger node. The triggers of
     /// an act stay. Each line that names a removed trigger stays and shows "Missing" (decision D81). A duplicate trigger,
-    /// which the game never runs (TR4), goes by its section. Prefab frames and missing nodes give nothing. Null when the
-    /// selection has no trigger and no act.
+    /// which the game never runs (TR4), goes by its section. Missing nodes give nothing. Null when the selection has no
+    /// trigger, no act and no prefab frame.
     /// </summary>
     /// <remarks>The acts go first. The first act edit writes the proposed acts of W, so the act numbers of the
-    /// selection are the numbers of these acts before the triggers go (review finding 5 of M6b-2).</remarks>
+    /// selection are the numbers of these acts before the triggers go (review finding 5 of M6b-2). A prefab frame, open
+    /// or collapsed, deletes its instance: a linked instance with <see cref="RemovePrefabInstance"/>, and a matched
+    /// instance with <see cref="RemoveTrigger"/> for each of its triggers (section 4.9 of the M6b design).</remarks>
     public MissionBatch? Delete(IEnumerable<GraphBlock> selection)
     {
         var blocks = selection.ToList();
-        var acts = blocks.Select(b => b as GraphFrame ?? (b as GraphNode)?.Frame).OfType<GraphFrame>()
-            .Where(f => f is { Kind: GraphFrameKind.Act, Act: not null }).Distinct().ToList();
+        var frames = blocks.Select(b => b as GraphFrame ?? (b as GraphNode)?.Frame).OfType<GraphFrame>().Distinct().ToList();
+        var acts = frames.Where(f => f is { Kind: GraphFrameKind.Act, Act: not null }).ToList();
         var commands = acts.Select(f => (MissionCommand)new RemoveAct(ActRefOf(f.Act!))).ToList();
-        foreach (var trigger in blocks.OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>().Distinct())
+        var removed = new HashSet<MissionTrigger>();
+        foreach (var frame in frames.Where(f => f is { Kind: GraphFrameKind.Prefab, Instance: not null }))
+        {
+            var instance = frame.Instance!;
+            if (instance.Linked is { } linked)
+            {
+                commands.Add(new RemovePrefabInstance(new InstanceRef(Script, linked.Record.Id)));
+                removed.UnionWith(frame.Triggers);
+                continue;
+            }
+
+            foreach (var trigger in frame.Triggers.Where(removed.Add))
+                commands.Add(trigger.IsDuplicate ? new RemoveSection(ItemOf(trigger.Section)) : new RemoveTrigger(RefOf(trigger)));
+        }
+
+        foreach (var trigger in blocks.OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>().Distinct().Where(removed.Add))
             commands.Add(trigger.IsDuplicate ? new RemoveSection(ItemOf(trigger.Section)) : new RemoveTrigger(RefOf(trigger)));
         return commands.Count switch
         {
@@ -426,6 +445,79 @@ internal sealed class GraphEditModel
             1 => new MissionBatch($"Duplicate trigger {((DuplicateTrigger)commands[0]).Trigger.Name}", commands),
             _ => new MissionBatch($"Duplicate {commands.Count.ToString(CultureInfo.InvariantCulture)} triggers", commands),
         };
+    }
+
+    /// <summary>
+    /// The gesture of Ctrl+D on a prefab frame (section 8.2 of the M6b design). A linked instance gives a new instance of
+    /// its prefab with the same values and overrides (<see cref="PlacePrefabInstance"/>). A matched instance gives a copy
+    /// of its triggers, whose start, stop and watch values inside the copy name the new triggers, as a paste does. Null
+    /// for another frame.
+    /// </summary>
+    /// <param name="place">The place of the first node of the copy, or null for the automatic layout.</param>
+    public MissionBatch? DuplicateInstance(GraphFrame frame, GraphPoint? place = null)
+    {
+        if (frame is not { Kind: GraphFrameKind.Prefab, Instance: { } instance })
+            return null;
+        if (instance.Linked is { Record: var record } linked)
+        {
+            if (PrefabRef.TryParse(record.Prefab) is not { } prefab || linked.Missing)
+                return null;
+            var values = record.Values.Concat(record.Overrides).Select(v => new PrefabFieldInput(v.Field, v.Rows)).ToList();
+            return Batch($"Duplicate instance {record.Id}", new PlacePrefabInstance(new ScriptRef(Script), prefab)
+            {
+                Values = values, Place = place,
+            });
+        }
+
+        var copy = Paste(Copy(frame.Triggers), out _);
+        return copy == null ? null : copy with { Label = $"Duplicate {instance.Definition.Name} {instance.Name}" };
+    }
+
+    /// <summary>
+    /// The items of the frame menu of a prefab instance (section 8.11 of the M6b design): "Open prefab", "Select prefab
+    /// asset", "Unpack", "Save as prefab..." and "Delete instance". An item runs a batch or goes to a link of the
+    /// pages. A linked instance has no "Save as prefab...", and a matched instance has no "Unpack".
+    /// </summary>
+    /// <param name="freeId">Gives a free file name of a new prefab for a wanted name.</param>
+    /// <param name="editable">False while the script cannot change: only the links show.</param>
+    public IReadOnlyList<PageAction> FrameActions(MissionPrefabInstance instance, Func<string, string> freeId, bool editable)
+    {
+        var actions = new List<PageAction>();
+        var reference = new InstanceRef(Script, instance.Id);
+        if (instance.Linked is { } linked)
+        {
+            var prefab = PrefabRef.TryParse(linked.Record.Prefab);
+            if (prefab != null && !linked.Missing)
+                actions.Add(new PageAction("Open prefab", null, new PrefabModeLink(prefab), MissionPageModel.OpenPrefabTip));
+            if (prefab is { Builtin: false } && linked.Asset != null)
+                actions.Add(new PageAction("Select prefab asset", null, new PrefabAssetLink(prefab), MissionPageModel.SelectAssetTip));
+            if (editable)
+            {
+                actions.Add(new PageAction("Unpack", Batch($"Unpack {linked.Record.Id}", new UnpackPrefabInstance(reference)),
+                    Tooltip: MissionPageModel.UnpackTip));
+                actions.Add(new PageAction("Delete instance", Batch($"Delete instance {linked.Record.Id}",
+                    new RemovePrefabInstance(reference))));
+            }
+
+            return actions;
+        }
+
+        var definition = instance.Definition;
+        if (BuiltinPrefabs.Text(definition.Id) != null)
+            actions.Add(new PageAction("Open prefab", null, new PrefabModeLink(PrefabRef.BuiltinOf(definition.Id)),
+                MissionPageModel.OpenPrefabTip));
+        if (editable && instance.Core != null)
+            actions.Add(new PageAction("Save as prefab...", null,
+                new SavePrefabLink(reference, definition.Name, freeId(definition.Id.ToLowerInvariant())), MissionPageModel.SaveAsPrefabTip));
+        if (editable && instance.Claimed.Count > 0)
+        {
+            var commands = instance.Claimed.Select(t => t.IsDuplicate
+                ? (MissionCommand)new RemoveSection(ItemOf(t.Section))
+                : new RemoveTrigger(RefOf(t))).ToList();
+            actions.Add(new PageAction("Delete instance", new MissionBatch($"Delete {definition.Name} {instance.Name}", commands)));
+        }
+
+        return actions;
     }
 
     /// <summary>The gesture of F2: <see cref="RenameTrigger"/>. The lines that name the trigger change too. Null when the
@@ -530,7 +622,7 @@ internal sealed class GraphEditModel
     /// <param name="before">The row that a dropped action goes before, or null for the end.</param>
     public MissionBatch? DropOnNode(LibraryItem item, GraphNode node, int? before = null)
     {
-        if (node.Trigger is not { } trigger)
+        if (node.Trigger is not { } trigger || item.Kind == LibraryKind.Prefab)
             return null;
         var line = MissionLibrary.Line(item);
         return item.Kind == LibraryKind.Action
@@ -538,20 +630,31 @@ internal sealed class GraphEditModel
             : Batch($"Set the condition of {trigger.Nickname}", new SetCondition(RefOf(trigger), line));
     }
 
-    /// <summary>Why an item cannot drop on an empty place, or null. Only an event or a condition makes a new
-    /// trigger.</summary>
+    /// <summary>Why an item cannot drop on an empty place, or null. An event or a condition makes a new trigger, and a
+    /// prefab places a new instance.</summary>
     public static string? EmptyDropRefusal(LibraryItem item) =>
-        item.MakesTrigger ? null : "Drop an action on a trigger.";
+        item.Kind == LibraryKind.Prefab ? item.Problem
+        : item.MakesTrigger ? null
+        : "Drop an action on a trigger.";
 
     /// <summary>The gesture of a drop of an event or a condition on an empty place or into an act frame: a new trigger
-    /// with the condition, its node at the place and in the act. Null for an action.</summary>
+    /// with the condition, its node at the place and in the act. A prefab places a new linked instance there. Null for an
+    /// action.</summary>
     public MissionBatch? DropOnEmpty(LibraryItem item, GraphPoint? place = null, ActRef? act = null) =>
-        EmptyDropRefusal(item) != null
-            ? null
-            : Batch($"Add trigger: {item.Name}", new AddTrigger(new ScriptRef(Script))
-            {
-                Nickname = NewTriggerName(), Condition = MissionLibrary.Line(item), Place = place, Act = act,
-            });
+        EmptyDropRefusal(item) != null ? null
+        : item.Kind == LibraryKind.Prefab ? PlacePrefab(item, place, act)
+        : Batch($"Add trigger: {item.Name}", new AddTrigger(new ScriptRef(Script))
+        {
+            Nickname = NewTriggerName(), Condition = MissionLibrary.Line(item), Place = place, Act = act,
+        });
+
+    /// <summary>The gesture that places a prefab of the library or of the Assets panel (section 8.3 of the M6b design): a
+    /// new linked instance with the defaults of the prefab, its first node at the place and its triggers in the act.
+    /// Null for another item.</summary>
+    public MissionBatch? PlacePrefab(LibraryItem item, GraphPoint? place = null, ActRef? act = null) =>
+        item is { Kind: LibraryKind.Prefab, Prefab: { } prefab, Problem: null }
+            ? Batch($"Place prefab {item.Name}", new PlacePrefabInstance(new ScriptRef(Script), prefab) { Place = place, Act = act })
+            : null;
 
     /// <summary>
     /// The gesture of a drag of an action row at the lines level (section 8.2 of the M6b design). In its trigger, the row
@@ -579,7 +682,9 @@ internal sealed class GraphEditModel
     // ---- Quick add ----
 
     /// <summary>True when an item fits the place of quick add (section 8.3 of the M6b design).</summary>
-    public static bool Fits(QuickAddContext context, LibraryItem item) => context.Filter switch
+    public static bool Fits(QuickAddContext context, LibraryItem item) => item.Kind == LibraryKind.Prefab
+        ? context is { Filter: QuickAddFilter.All, From: null } && item.Problem == null
+        : context.Filter switch
     {
         QuickAddFilter.Triggers => item.MakesTrigger,
         QuickAddFilter.Actions => item.Kind == LibraryKind.Action &&
@@ -597,6 +702,8 @@ internal sealed class GraphEditModel
     {
         if (!Fits(context, item))
             return null;
+        if (item.Kind == LibraryKind.Prefab)
+            return PlacePrefab(item, context.Place, context.Act);
         if (context.From is { } from)
         {
             if (NewNodeRefusal(from) != null || !item.MakesTrigger)

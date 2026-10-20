@@ -506,7 +506,7 @@ internal sealed partial class GraphView
 
         if (ImGui.MenuItem("Duplicate", "Ctrl+D"))
         {
-            Run(edit.Duplicate(Copies(selectedBlocks.Contains(node) ? selectedBlocks : [node])));
+            Run(DuplicateSelection(selectedBlocks.Contains(node) ? selectedBlocks : [node]));
         }
 
         if (ImGui.MenuItem("Delete", "Delete"))
@@ -523,6 +523,115 @@ internal sealed partial class GraphView
         {
             Paste();
         }
+    }
+
+    /// <summary>
+    /// The items of the frame menu of a prefab instance (section 8.11 of the M6b design): "Open prefab", "Select prefab
+    /// asset", "Unpack", "Save as prefab...", "Duplicate" and "Delete instance". <see cref="GraphEditModel"/> makes the
+    /// items, and the links go through the workspace.
+    /// </summary>
+    private void PrefabFrameMenu(GraphFrame frame)
+    {
+        if (frame.Instance is not { } instance || edit == null || window.Session?.Edits.Missions is not { } editor)
+        {
+            return;
+        }
+
+        var actions = edit.FrameActions(instance, editor.FreePrefabId, editable);
+        if (actions.Count == 0)
+        {
+            return;
+        }
+
+        ImGui.Separator();
+        // "Duplicate" comes before "Delete instance", as in the node menu.
+        foreach (var action in actions.Where(a => a.Label != "Delete instance"))
+        {
+            FrameItem(action);
+        }
+
+        if (editable && ImGui.MenuItem("Duplicate", "Ctrl+D"))
+        {
+            Run(edit.DuplicateInstance(frame, BesidePlace(frame.Node)));
+        }
+
+        foreach (var action in actions.Where(a => a.Label == "Delete instance"))
+        {
+            FrameItem(action);
+        }
+    }
+
+    /// <summary>One item of the frame menu: it runs its batch, or it goes to its link.</summary>
+    private void FrameItem(PageAction action)
+    {
+        if (ImGui.MenuItem(action.Label))
+        {
+            if (action.Batch != null)
+            {
+                Run(action.Batch);
+            }
+            else if (action.Link != null)
+            {
+                missions.Follow(action.Link);
+            }
+        }
+
+        if (action.Tooltip != null)
+        {
+            ImGui.SetItemTooltip(action.Tooltip);
+        }
+    }
+
+    /// <summary>The violet dot after the title of a collapsed linked instance with overrides (section 8.6 of the M6b
+    /// design), with the tooltip "This instance has {n} overrides."</summary>
+    private void OverridesDot(GraphNode node, ImDrawListPtr drawList, ref float x, Vector2 origin)
+    {
+        if (node.Frame?.Instance?.Linked is not { OverrideCount: > 0 } linked)
+        {
+            return;
+        }
+
+        const float radius = 3.5f;
+        var center = new Vector2(x + radius, origin.Y + MissionGraph.HeaderHeight / 2);
+        drawList.AddCircleFilled(center, radius, EditorTheme.ToAbgr(EditorTheme.Override));
+        if (ImGui.IsMouseHoveringRect(center - new Vector2(radius + 3), center + new Vector2(radius + 3)))
+        {
+            pendingTooltip = MissionPageModel.OverridesDotTip(linked.OverrideCount);
+        }
+
+        x += 2 * radius + 6;
+    }
+
+    /// <summary>The batch of Ctrl+D: a copy of each selected trigger and of each selected prefab instance, in one undo
+    /// entry.</summary>
+    private MissionBatch? DuplicateSelection(IReadOnlyList<GraphBlock> nodes)
+    {
+        if (edit == null)
+        {
+            return null;
+        }
+
+        var batches = new List<MissionBatch>();
+        if (edit.Duplicate(Copies(nodes)) is { } triggers)
+        {
+            batches.Add(triggers);
+        }
+
+        foreach (var frame in nodes.Select(b => b as GraphFrame ?? (b as GraphNode)?.Frame).OfType<GraphFrame>()
+                     .Where(f => f.Kind == GraphFrameKind.Prefab).Distinct())
+        {
+            if (edit.DuplicateInstance(frame, BesidePlace(frame.Node)) is { } copy)
+            {
+                batches.Add(copy);
+            }
+        }
+
+        return batches.Count switch
+        {
+            0 => null,
+            1 => batches[0],
+            _ => new MissionBatch("Duplicate", batches.SelectMany(b => b.Commands).ToList()),
+        };
     }
 
     // ---- After the canvas ----
@@ -578,7 +687,11 @@ internal sealed partial class GraphView
         MissionBatch? batch = null;
         string? refusal = null;
         var type = item != null ? MissionDrag.ItemType : MissionDrag.RowType;
-        if (node is { Kind: GraphNodeKind.Missing })
+        if (item?.Kind == LibraryKind.Prefab && node != null)
+        {
+            refusal = GraphEditModel.PrefabOnNode;
+        }
+        else if (node is { Kind: GraphNodeKind.Missing })
         {
             refusal = GraphEditModel.MissingNode;
         }
@@ -691,8 +804,8 @@ internal sealed partial class GraphView
 
         if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.D, false))
         {
-            Run(edit.Duplicate(Copies(selectedBlocks.Count > 0 ? selectedBlocks
-                : SelectedNode(script) is { } one ? [one] : [])));
+            Run(DuplicateSelection(selectedBlocks.Count > 0 ? selectedBlocks
+                : SelectedNode(script) is { } one ? [one] : []));
         }
 
         if (io.KeyCtrl || io.KeyAlt)
@@ -798,11 +911,11 @@ internal sealed partial class GraphView
             return;
         }
 
-        if (SelectedNode(script) is { } node && (item.Kind != LibraryKind.Event))
+        if (SelectedNode(script) is { } node && item.Kind is not (LibraryKind.Event or LibraryKind.Prefab))
         {
             Run(edit.DropOnNode(item, node));
         }
-        else if (item.MakesTrigger)
+        else if (item.MakesTrigger || item.Kind == LibraryKind.Prefab)
         {
             // A double-click places the item at the center of the view.
             var center = (Screen.Min + Screen.Max) / 2;

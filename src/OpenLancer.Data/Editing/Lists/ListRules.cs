@@ -240,8 +240,8 @@ internal sealed record ListSource(string? Role, IReadOnlyList<string> Sections, 
 /// <param name="Id">The id, for example <c>solars</c>. A child category gets the id of its parent, a slash and a part of
 /// its own, for example <c>solars/station</c>.</param>
 /// <param name="Label">The label of the category tree, for example "Solars".</param>
-/// <param name="Kind">A kind of rows that no list gives: <see cref="PropGroupsKind"/> for the prop groups of the mods.
-/// Null for a category of a list.</param>
+/// <param name="Kind">A kind of rows that no list gives: <see cref="PropGroupsKind"/> for the prop groups of the mods,
+/// and <see cref="MissionPrefabsKind"/> for the mission prefab assets of the mods. Null for a category of a list.</param>
 /// <param name="List">The list whose entries are the rows, or null for a category of a kind.</param>
 /// <param name="Split">How the category gets its children: <see cref="SplitTemplates"/> (one child for each template of
 /// Create, and one for the connection types), <see cref="SplitSection"/> (one child for each section type) or
@@ -249,6 +249,7 @@ internal sealed record ListSource(string? Role, IReadOnlyList<string> Sections, 
 internal sealed record AssetCategoryDefinition(string Id, string Label, string? Kind, string? List, string? Split)
 {
     public const string PropGroupsKind = "propGroups";
+    public const string MissionPrefabsKind = "missionPrefabs";
     public const string SplitTemplates = "sceneTemplates";
     public const string SplitSection = "section";
     public const string SplitFolder = "folder";
@@ -397,7 +398,8 @@ internal sealed class ListRules
                 throw new FormatException($"The asset category id '{category.Id}' is empty, has a slash or repeats.");
             if ((category.Kind == null) == (category.List == null))
                 throw new FormatException($"The asset category {category.Id} needs a list or a kind, not both.");
-            if (category.Kind is { } kind && kind != AssetCategoryDefinition.PropGroupsKind)
+            if (category.Kind is { } kind && kind != AssetCategoryDefinition.PropGroupsKind &&
+                kind != AssetCategoryDefinition.MissionPrefabsKind)
                 throw new FormatException($"The kind '{kind}' of the asset category {category.Id} is not known.");
             if (category.List is { } list && !lists.Any(l => l.Id.Equals(list, StringComparison.OrdinalIgnoreCase)))
                 throw new FormatException($"The asset category {category.Id} names the list '{list}', which the rule " +

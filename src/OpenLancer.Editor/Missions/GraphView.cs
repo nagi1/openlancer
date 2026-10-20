@@ -11,6 +11,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
 
@@ -361,9 +362,17 @@ internal sealed partial class GraphView : IDisposable
         }
     }
 
+    // The template of prefab mode while the graph shows it, or null. Its slots show the labels of their fields.
+    private PrefabTemplate? slotTemplate;
+
+    /// <summary>A text of a node or a row: in prefab mode, each slot shows the label of its field (section 8.6 of the
+    /// M6b design).</summary>
+    private string Shown(string text) => slotTemplate == null ? text : MissionPageModel.SlotText(text, slotTemplate);
+
     /// <summary>Draws the graph of an analysis into a region of the current window.</summary>
     public void Draw(MissionAnalysis analysis, Vector2 size)
     {
+        slotTemplate = PrefabRef.OfScript(analysis.Script.Path) != null ? missions.PrefabMode?.Template : null;
         Build(analysis);
         editable = missions.NoEditReason(analysis.Script.Path) == null;
         var graph = Graph!;
@@ -753,6 +762,7 @@ internal sealed partial class GraphView : IDisposable
         var titleWidth = TextFit.AddText(drawList, font, TextSize, new Vector2(x, y), EditorTheme.ToAbgr(EditorTheme.TextBright),
             node.Title, right - x);
         x += titleWidth + 6;
+        OverridesDot(node, drawList, ref x, origin);
         if (!full)
         {
             return;
@@ -858,10 +868,10 @@ internal sealed partial class GraphView : IDisposable
         var x = origin.X + SidePadding;
         var width = node.Size.X - 2 * SidePadding;
         var line1 = new Vector2(x, LineCenter(origin, 1) - TextSize / 2);
-        TextFit.AddText(drawList, font, TextSize, line1, EditorTheme.ToAbgr(EditorTheme.Text), node.Sentence, width);
+        TextFit.AddText(drawList, font, TextSize, line1, EditorTheme.ToAbgr(EditorTheme.Text), Shown(node.Sentence), width);
         if (ImGui.IsMouseHoveringRect(line1, line1 + new Vector2(width, TextSize)))
         {
-            pendingTooltip = node.Sentence;
+            pendingTooltip = Shown(node.Sentence);
         }
 
         Chips(script, node, new Vector2(x, LineCenter(origin, 2) - ChipHeight / 2), width);
@@ -996,7 +1006,7 @@ internal sealed partial class GraphView : IDisposable
             right = LinkChips(script, node, graphRow, i, drawList, font, min, right, width / 2);
 
             var textWidth = TextFit.AddText(drawList, font, SmallSize, new Vector2(textX, textY), EditorTheme.ToAbgr(color),
-                graphRow.Text, right - textX);
+                Shown(graphRow.Text), right - textX);
             if (graphRow.Kind == GraphRowKind.IgnoredCondition)
             {
                 // The game ignores a condition before the last one (TR1), so the row is struck through.
@@ -1007,7 +1017,7 @@ internal sealed partial class GraphView : IDisposable
 
             if (hovered && pendingTooltip == null)
             {
-                pendingTooltip = RowTip(node, graphRow);
+                pendingTooltip = Shown(RowTip(node, graphRow));
             }
 
             rowRects[(node.Key, graphRow.Line.Entry)] = (NodeEditor.CanvasToScreen(min), NodeEditor.CanvasToScreen(max));
@@ -1359,6 +1369,8 @@ internal sealed partial class GraphView : IDisposable
         {
             window.Selection = GraphViewState.RefOf(script, frame);
         }
+
+        PrefabFrameMenu(frame);
     }
 
     private void NodeMenu(string script, GraphNode node, MissionTrigger trigger)

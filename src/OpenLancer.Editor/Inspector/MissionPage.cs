@@ -9,6 +9,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -34,8 +35,8 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
 
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
     private readonly Dictionary<string, ListField> lists = [];
-    private (MissionRunResult? Result, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer, string? NoEdit,
-        GraphFile? File, MissionPageModel? Model) page;
+    private (MissionRunResult? Result, MissionAnalysis? Analysis, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer,
+        string? NoEdit, GraphFile? File, (long Revision, bool Dirty) Session, MissionPageModel? Model) page;
     private (MissionRunResult? Result, string? Key, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
         block = (null, null, false, null, []);
 
@@ -48,7 +49,8 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             return;
         }
 
-        if (result.Of(item.Script) is not { } analysis)
+        // In prefab mode, the script of the selection is the template of the prefab (section 8.6 of the M6b design).
+        if (missions.Analysis(item.Script) is not { } analysis)
         {
             PanelStates.Message("This mission script is not in the edit view.", "Select a mission in the Missions tab.");
             return;
@@ -201,30 +203,39 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         var showBaseGame = window.Missions.ShowBaseGame;
         var hidesOpenLancer = session.Edits.HidesOpenLancer;
         var noEdit = window.Missions.NoEditReason(item.Script);
-        // The graph file holds the acts, so a change of it makes the page again.
+        // The graph file holds the acts and the records of the prefab instances, so a change of it makes the page again.
+        // A save takes the blue bar of an override away, so a save makes the page again too.
         var file = window.Missions.GraphOf(item.Script);
+        var state = (session.Edits.Revision, session.Edits.IsDirty);
         changed = !Equals(page.Item, item);
-        if (page.Model is { } known && ReferenceEquals(page.Result, result) && !changed &&
-            page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer && page.NoEdit == noEdit &&
-            ReferenceEquals(page.File, file))
+        if (page.Model is { } known && ReferenceEquals(page.Result, result) && ReferenceEquals(page.Analysis, analysis) &&
+            !changed && page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer &&
+            page.NoEdit == noEdit && ReferenceEquals(page.File, file) && page.Session == state)
         {
             return known;
         }
 
+        var prefab = PrefabRef.OfScript(item.Script);
         var context = new PageContext(result, analysis, showBaseGame, hidesOpenLancer)
         {
             Text = id => session.Name(id),
             CommFile = CommFile,
             SystemName = session.SystemName,
             NameOf = NameOf,
-            ReadOnlyOf = section => window.Missions.NoEditReason(section.Path) ?? session.Edits.Missions.ReadOnlyReason(section),
-            Acts = window.Missions.ActsOf(analysis),
+            // A section of a template has the reason of its prefab only.
+            ReadOnlyOf = section => window.Missions.NoEditReason(section.Path) ??
+                                    (PrefabRef.OfScript(section.Path) == null ? session.Edits.Missions.ReadOnlyReason(section) : null),
+            ScriptReadOnly = window.Missions.NoEditReason,
+            UnsavedOverrides = session.Edits.Missions.UnsavedOverrides,
+            FreePrefabId = session.Edits.Missions.FreePrefabId,
+            Prefab = prefab != null ? session.Edits.Missions.PrefabMode(prefab) : null,
+            Acts = prefab == null ? window.Missions.ActsOf(analysis) : null,
             ChangedOf = session.Edits.Missions.ChangedLines,
             BaseOf = session.Edits.Missions.ChangedBase,
             SharedBuildFile = session.Edits.Missions.IsSharedBuildFile,
         };
         var model = MissionPageModel.For(context, item);
-        page = (result, item, showBaseGame, hidesOpenLancer, noEdit, file, model);
+        page = (result, analysis, item, showBaseGame, hidesOpenLancer, noEdit, file, state, model);
         if (changed)
         {
             // The widgets of another item start again, and an open gesture of the item before ends.
@@ -333,15 +344,21 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
 
         var id = $"{section.Id}.{index}";
         var editable = window.Missions.ReadOnlyNote == null;
-        // The label of a value that the active mod sets gets the blue bar (section 8.1 of the M6b design, UI rule 7).
+        // The label of a value that the active mod sets gets the blue bar (section 8.1 of the M6b design, UI rule 7). An
+        // override of a prefab instance is bold with the violet bar (section 8.6).
         if (field.Changed)
         {
             grid.MarkNextChanged();
         }
 
-        // A field with an edit binding that the session can change draws its edit widget (section 8.4 of the M6b
-        // design). Else it uses the read-only state of the widget.
-        if (field is { Heading: false, List: null, Actions.Count: 0, Edit: not null } && EditField(id, field))
+        if (field.Override)
+        {
+            grid.MarkNextOverride();
+        }
+
+        // A field with an edit binding that the session can change draws its edit widget, with its menu after it
+        // (section 8.4 of the M6b design). Else it uses the read-only state of the widget.
+        if (field is { Heading: false, List: null, Edit: not null } && EditField(id, field))
         {
             return;
         }
@@ -590,6 +607,9 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
                 break;
             case CutsceneLink cutscene:
                 missions.OpenCutscene(cutscene.Value);
+                break;
+            case PrefabModeLink or PrefabAssetLink or SavePrefabLink:
+                missions.Follow(link);
                 break;
             case BundleLink { Row.Action: MissionBundleAction.ShowSection, Row.Section: { } id }:
                 grid.RequestSection(SectionKey(id));

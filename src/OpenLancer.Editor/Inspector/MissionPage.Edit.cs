@@ -162,22 +162,30 @@ internal sealed partial class MissionPage
             return false;
         }
 
+        // The menu of the field comes after its widget, for example "Revert" of an override (section 8.6 of the M6b
+        // design).
+        void Row(Action widget) => grid.Row(field.Label, () =>
+        {
+            widget();
+            RowMenu(id, field.Actions);
+        });
+
         switch (edit.Widget)
         {
             case EditWidget.Picker:
-                grid.Row(field.Label, () => Picker(id, field, edit));
+                Row(() => Picker(id, field, edit));
                 break;
             case EditWidget.Words:
-                grid.Row(field.Label, () => Words(field, edit));
+                Row(() => Words(field, edit));
                 break;
             case EditWidget.Number or EditWidget.WholeNumber:
-                grid.Row(field.Label, () => Number(id, edit));
+                Row(() => Number(id, edit));
                 break;
             case EditWidget.Position or EditWidget.Rotation:
-                grid.Row(field.Label, () => Numbers(id, field, edit));
+                Row(() => Numbers(id, field, edit));
                 break;
             case EditWidget.Bool:
-                grid.Row(field.Label, () =>
+                Row(() =>
                 {
                     var on = edit.Value == "true";
                     if (ImGui.Checkbox("##bool", ref on))
@@ -187,13 +195,13 @@ internal sealed partial class MissionPage
                 });
                 break;
             case EditWidget.TextId:
-                grid.Row(field.Label, () => TextId(id, field, edit));
+                Row(() => TextId(id, field, edit));
                 break;
             case EditWidget.Text:
-                grid.Row(field.Label, () => Text(id, edit));
+                Row(() => Text(id, edit));
                 break;
             case EditWidget.AddPicker:
-                grid.Row(field.Label, () => AddPicker(id, edit));
+                Row(() => AddPicker(id, edit));
                 break;
         }
 
@@ -547,10 +555,15 @@ internal sealed partial class MissionPage
         {
             var changed = widget.Draw(key, list, null, readOnly, problems,
                 entries: id => Entries(new FieldEdit(EditWidget.Picker, "") { List = id, Scope = edit?.Scope }),
-                changed: field.Changed);
+                changed: field.Changed, overridden: field.Override);
             if (changed != null && edit?.MakeList is { } make)
             {
                 Run(make(changed));
+            }
+
+            if (readOnly == null)
+            {
+                RowMenu(key, field.Actions);
             }
         });
     }
@@ -582,18 +595,26 @@ internal sealed partial class MissionPage
         }
 
         EditorTheme.PushMenuColors();
+        MenuItems(actions);
+        EditorTheme.PopMenuColors();
+        ImGui.EndPopup();
+    }
+
+    /// <summary>The items of a menu of actions. An item runs its batch or goes to its link. An item without both is a
+    /// heading, for example "Overrides (2)".</summary>
+    private void MenuItems(IReadOnlyList<PageAction> actions)
+    {
         foreach (var action in actions)
         {
+            if (action.IsHeading)
+            {
+                ImGui.SeparatorText(action.Label);
+                continue;
+            }
+
             if (ImGui.MenuItem(action.Label))
             {
-                if (action.Batch != null)
-                {
-                    Run(action.Batch);
-                }
-                else if (action.Link != null)
-                {
-                    GoTo(action.Link);
-                }
+                Do(action);
             }
 
             if (action.Tooltip != null)
@@ -601,9 +622,19 @@ internal sealed partial class MissionPage
                 ImGui.SetItemTooltip(action.Tooltip);
             }
         }
+    }
 
-        EditorTheme.PopMenuColors();
-        ImGui.EndPopup();
+    /// <summary>Runs the batch of an action, or goes to its link.</summary>
+    private void Do(PageAction action)
+    {
+        if (action.Batch != null)
+        {
+            Run(action.Batch);
+        }
+        else if (action.Link != null)
+        {
+            GoTo(action.Link);
+        }
     }
 
     /// <summary>The page menu at the right of the header: "Rename" and the actions of the page. F2 renames the item while
@@ -635,13 +666,7 @@ internal sealed partial class MissionPage
                 rename.Open(model.Title);
             }
 
-            foreach (var action in model.PageActions)
-            {
-                if (ImGui.MenuItem(action.Label))
-                {
-                    Run(action.Batch);
-                }
-            }
+            MenuItems(model.PageActions);
 
             EditorTheme.PopMenuColors();
             ImGui.EndPopup();
@@ -681,18 +706,20 @@ internal sealed partial class MissionPage
     /// <summary>The buttons of the actions of a section, for example "This ship only".</summary>
     private void SectionActions(PageSection section)
     {
-        if (section.Actions.Count == 0 || window.Missions.ReadOnlyNote != null)
+        // A read-only session keeps the buttons that go to a link, for example "Open prefab".
+        var actions = window.Missions.ReadOnlyNote == null ? section.Actions : section.Actions.Where(a => a.Batch == null).ToList();
+        if (actions.Count == 0)
         {
             return;
         }
 
         grid.FullRow(() =>
         {
-            foreach (var action in section.Actions)
+            foreach (var action in actions)
             {
                 if (ImGui.Button(action.Label))
                 {
-                    Run(action.Batch);
+                    Do(action);
                 }
 
                 if (action.Tooltip != null)

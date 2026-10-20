@@ -81,6 +81,28 @@ public sealed partial class MissionEditor
         return result;
     }
 
+    /// <summary>
+    /// A free file name of a new prefab asset (section 5.9 of the M6b design): the wanted name with only letters, digits,
+    /// '_' and '-', and a number after it when a prefab of the library has the name. "Make variant" and "Save as
+    /// prefab" propose it.
+    /// </summary>
+    public string FreePrefabId(string wanted)
+    {
+        var stem = new string(wanted.Trim().Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
+        if (stem.Length == 0)
+            stem = "prefab";
+        stem = stem.Length > 40 ? stem[..40] : stem;
+        var taken = Prefabs().Select(p => p.Ref.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!taken.Contains(stem))
+            return stem;
+        for (var n = 2;; n++)
+        {
+            var made = $"{stem}{n.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            if (!taken.Contains(made))
+                return made;
+        }
+    }
+
     /// <summary>The ids of the assets of a lower mod: the files of its folder <c>prefabs\missions</c>.</summary>
     private static IEnumerable<string> LowerIds(Mods.Mod mod)
     {
@@ -162,6 +184,64 @@ public sealed partial class MissionEditor
         return linked;
     }
 
+    // The analysis of the role form of each template text.
+    private readonly Dictionary<string, (string Text, MissionAnalysis Analysis)> templateAnalyses = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// A prefab in prefab mode (section 8.6 of the M6b design): its template, the analysis of its template sections in
+    /// the role form, the count of its linked instances in the active mod, and why it cannot change. Null when no mod
+    /// has the prefab. The same text gives the same analysis, so a view that keys on it builds again only after a
+    /// change.
+    /// </summary>
+    public PrefabModeModel? PrefabMode(PrefabRef prefab)
+    {
+        if (Prefab(prefab) is not { } asset)
+            return null;
+        var template = asset.Template;
+        MissionAnalysis? analysis = null;
+        if (template != null)
+        {
+            var key = prefab.Script;
+            if (!templateAnalyses.TryGetValue(key, out var known) || !ReferenceEquals(known.Text, asset.Text))
+            {
+                known = (asset.Text, TemplateAnalysis(prefab, template, asset.ModId));
+                templateAnalyses[key] = known;
+            }
+            analysis = known.Analysis;
+        }
+        var instances = prefab.Builtin ? [] : InstancesOf(prefab).ToList();
+        var reason = prefab.Builtin ? PrefabModeModel.BuiltInBanner
+            : !asset.Active ? PrefabModeModel.LowerModBanner(asset.ModId ?? "")
+            : session.ReadOnlyReason;
+        return new PrefabModeModel(asset, template, analysis, instances.Count,
+            instances.Select(i => i.Script).Distinct(VfsPath.Comparer).Count(), reason);
+    }
+
+    /// <summary>The analysis of the template sections of a prefab in the role form. The problems of a line with a slot
+    /// go, because the compile fills the slot.</summary>
+    private MissionAnalysis TemplateAnalysis(PrefabRef prefab, PrefabTemplate template, string? mod)
+    {
+        var inputs = world.Inputs();
+        var sections = OpenLancer.Data.Missions.Prefabs.PrefabMode.RoleForm(template)
+            .Where(s => !OpenLancer.Data.Missions.Prefabs.PrefabMode.IsHeader(s.Name)).ToList();
+        var document = MissionDocument.Of(prefab.Script, sections, false);
+        var index = MissionIndex.Build(document, inputs.Schema, MissionWorld.Empty, inputs.Coverage);
+        bool HasSlot(Diagnostic problem) =>
+            problem.Target is { } target && document.Find(target) is { } section && problem.EntryIndex >= 0 &&
+            problem.EntryIndex < section.Section.Count && section.Section[problem.EntryIndex] is var entry &&
+            (PrefabSlot.KeyField(entry.Name) != null || MissionValues.TextsOf(entry).Any(t => PrefabSlot.Of(t).Count > 0));
+        var problems = MissionChecks.Run(index, inputs.Options).Where(p => !HasSlot(p) && p.Rule is not ("G01" or "G02" or "G03"))
+            .Select(p => p with { Origin = mod != null ? MessageOrigin.Mod(mod, ModEvidence.File) : MessageOrigin.OpenLancer })
+            .ToList();
+        var script = new MissionScriptInfo(prefab.Script, null, MissionScriptState.Changed, mod, false);
+        return new MissionAnalysis(script, [], document, index, problems, null)
+        {
+            Prefabs = new MissionPrefabResult([], new Dictionary<MissionTrigger, MissionPrefabInstance>()),
+            Acts = MissionActs.Propose(index),
+            HasFileBytes = false,
+        };
+    }
+
     /// <summary>The linked instances of the scripts of the active mod whose records name a prefab, by script. The
     /// propagation of a prefab edit compiles them (section 5.7 of the M6b design).</summary>
     internal IEnumerable<(string Script, InstanceRecord Record)> InstancesOf(PrefabRef prefab)
@@ -175,4 +255,32 @@ public sealed partial class MissionEditor
             }
         }
     }
+}
+
+/// <summary>
+/// A prefab in prefab mode (section 8.6 of the M6b design): its asset, its template, the analysis of its template
+/// sections in the role form for the graph and the pages, its linked instances in the active mod, and why it cannot
+/// change.
+/// </summary>
+/// <param name="Analysis">The analysis of the template sections, or null when the file of the prefab has a problem. Its
+/// script is the reference of the prefab, for example <c>prefab:mod:ol_gate</c>.</param>
+/// <param name="Instances">The number of linked instances of the prefab in the scripts of the active mod.</param>
+/// <param name="Scripts">The number of scripts with such an instance.</param>
+/// <param name="ReadOnlyReason">Why the prefab cannot change, or null: a built-in prefab or a prefab of a lower
+/// mod.</param>
+public sealed record PrefabModeModel(PrefabAsset Asset, PrefabTemplate? Template, MissionAnalysis? Analysis, int Instances,
+    int Scripts, string? ReadOnlyReason)
+{
+    /// <summary>The banner of a built-in prefab (section 8.11 of the M6b design).</summary>
+    public const string BuiltInBanner = "This is a built-in prefab. It cannot change. Make a variant to change it.";
+
+    /// <summary>The banner of a prefab of a lower mod.</summary>
+    public static string LowerModBanner(string mod) => $"This prefab belongs to mod {mod}. It cannot change. Make a variant to change it.";
+
+    /// <summary>The text of the bar of prefab mode.</summary>
+    public string BarText(string? mod) =>
+        $"Changes here change {Count(Instances, "instance", "instances")} in {Count(Scripts, "mission", "missions")} of mod {mod}.";
+
+    private static string Count(int n, string one, string many) =>
+        n == 1 ? $"1 {one}" : $"{n.ToString(System.Globalization.CultureInfo.InvariantCulture)} {many}";
 }

@@ -289,8 +289,11 @@ internal sealed partial class MissionDraft
     /// name it. The steps go into the inverse of the command that runs now.
     /// </summary>
     /// <param name="except">The id and the script of an instance that the command compiled itself, or null.</param>
+    /// <param name="roles">The roles of the template that an edit renamed: the old role and the new role, or null. The
+    /// records follow, so each member keeps its section.</param>
     /// <returns>The number of instances that compiled and the number of their scripts.</returns>
-    public (int Instances, int Scripts) Propagate(PrefabRef prefab, PrefabTemplate template, (string Script, string Id)? except = null)
+    public (int Instances, int Scripts) Propagate(PrefabRef prefab, PrefabTemplate template, (string Script, string Id)? except = null,
+        IReadOnlyDictionary<string, string>? roles = null)
     {
         var instances = 0;
         var scripts = new HashSet<string>(OpenLancer.Data.IO.VfsPath.Comparer);
@@ -311,7 +314,16 @@ internal sealed partial class MissionDraft
                 });
                 continue;
             }
-            Compile(document, record, template);
+            string Role(string role) => roles?.GetValueOrDefault(role) ?? role;
+            var renamed = roles is { Count: > 0 }
+                ? record with
+                {
+                    Members = record.Members.Select(m => m with { Role = Role(m.Role) }).ToList(),
+                    Removed = record.Removed.Select(Role).ToList(),
+                    Ports = record.Ports,
+                }
+                : record;
+            Compile(document, renamed, template);
             instances++;
             scripts.Add(path);
             PropagatedScripts.Add(path);
@@ -367,7 +379,7 @@ internal sealed partial class MissionDraft
         }
     }
 
-    /// <summary>The template of a script in prefab mode, or false for a mission script. Prefab mode comes with the
-    /// commands of step 3.4.</summary>
+    /// <summary>True for the template of a prefab in prefab mode, the script <c>prefab:mod:&lt;id&gt;</c>, and false for
+    /// a mission script (section 5.7 of the M6b design).</summary>
     private static bool IsTemplate(EditDocument document) => MissionRefs.IsPrefab(document.Path);
 }

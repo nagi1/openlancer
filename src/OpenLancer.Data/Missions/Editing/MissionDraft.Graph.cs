@@ -23,6 +23,9 @@ internal sealed partial class MissionDraft
     /// this editor does not read.</exception>
     public void SetGraph(EditDocument script, GraphFile file)
     {
+        // A template in prefab mode has no graph file. The graph of prefab mode places its nodes.
+        if (IsTemplate(script))
+            return;
         if (file.Unreadable is { } reason)
             throw Refuse(new EditError(EditErrorKind.Refused, EditPlan.PlanRefused,
                 $"{GraphFile.PathOf(script.Path)}: {reason}"));

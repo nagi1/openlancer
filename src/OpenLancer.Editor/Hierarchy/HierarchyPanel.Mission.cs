@@ -30,8 +30,8 @@ internal sealed partial class HierarchyPanel
     private bool openFaction;
     private string factionFilter = "";
 
-    /// <summary>True when the session takes edits of the open mission.</summary>
-    private bool MissionEditable => window.Missions.OpenPath is { } path && window.Missions.NoEditReason(path) == null;
+    /// <summary>True when the session takes edits of the open mission, or of the template of prefab mode.</summary>
+    private bool MissionEditable => window.Missions.ShownPath is { } path && window.Missions.NoEditReason(path) == null;
 
     private void RunMission(MissionBatch? batch) => window.Missions.Run(batch);
 
@@ -40,7 +40,7 @@ internal sealed partial class HierarchyPanel
     private void MissionCreateButton()
     {
         if (ToolbarItems.Button("create-mission", EditorIcons.Plus, "Add a trigger, a mission ship or another item of the mission",
-                MissionEditable && window.Missions.Open != null))
+                MissionEditable && window.Missions.Shown != null))
         {
             ImGui.OpenPopup("##create-mission");
         }
@@ -52,7 +52,7 @@ internal sealed partial class HierarchyPanel
         }
 
         EditorTheme.PushMenuColors();
-        if (window.Missions.Open is { } analysis)
+        if (window.Missions.Shown is { } analysis)
         {
             foreach (var (kind, label) in MissionTreeEdits.CreateKinds)
             {
@@ -76,7 +76,7 @@ internal sealed partial class HierarchyPanel
     /// <summary>The edit items of the menu of a row of a mission: Rename, Duplicate and Delete.</summary>
     private void MissionEditMenu(MissionRef item)
     {
-        if (!MissionEditable || window.Missions.Open is not { } analysis)
+        if (!MissionEditable || window.Missions.Shown is not { } analysis)
         {
             return;
         }
@@ -117,7 +117,7 @@ internal sealed partial class HierarchyPanel
     /// through the same commands as the graph (section 8.9 of the M6b design).</summary>
     private void MissionKeys()
     {
-        if (!MissionEditable || window.Missions.Open is not { } analysis || window.Selection is not MissionRef item)
+        if (!MissionEditable || window.Missions.Shown is not { } analysis || window.Selection is not MissionRef item)
         {
             return;
         }
@@ -147,7 +147,7 @@ internal sealed partial class HierarchyPanel
     /// <summary>The popup of a rename of a row of a mission. Enter renames, and Esc closes it.</summary>
     private void MissionRenamePopup()
     {
-        if (missionRename.Draw() is { } name && missionRenaming is { } item && window.Missions.Open is { } analysis)
+        if (missionRename.Draw() is { } name && missionRenaming is { } item && window.Missions.Shown is { } analysis)
         {
             RunMission(MissionTreeEdits.Rename(analysis, item, name, window.Missions.ActsOf(analysis)));
         }
@@ -160,7 +160,7 @@ internal sealed partial class HierarchyPanel
     /// </summary>
     private void MissionDragAndDrop(HierarchyNode node)
     {
-        if (!MissionEditable || window.Missions.Open is not { } analysis)
+        if (!MissionEditable || window.Missions.Shown is not { } analysis)
         {
             return;
         }
@@ -234,7 +234,7 @@ internal sealed partial class HierarchyPanel
                 var label = faction.Section != null && session?.SectionName(faction.Section) is { Length: > 0 } text
                     ? $"{text} ({faction.Value})"
                     : faction.Value;
-                if (ImGui.Selectable(label) && droppedShip is { } ship && window.Missions.Open is { } analysis)
+                if (ImGui.Selectable(label) && droppedShip is { } ship && window.Missions.Shown is { } analysis)
                 {
                     var loadout = session?.Edits.Lists.List("loadout")?.Entries
                         .FirstOrDefault(e => string.Equals(e.Detail, ship.Asset.Id, StringComparison.OrdinalIgnoreCase))?.Value;

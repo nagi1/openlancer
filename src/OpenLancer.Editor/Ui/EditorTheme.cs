@@ -79,6 +79,11 @@ internal static class EditorTheme
     /// degrees or more from each other color of the theme and of the kinds, so no other meaning uses it.</summary>
     public static readonly Vector4 MissionItem = Rgb(0xF07AB4);
 
+    /// <summary>The mark of a prefab override (section 8.6 of the M6b design, UI rule 7): the violet bar at the left edge
+    /// of the label cell, and the dot of a collapsed linked instance with overrides. Its hue differs by 25 degrees or
+    /// more from the colors of the states, and its contrast is 3:1 or more on the panels.</summary>
+    public static readonly Vector4 Override = Rgb(0xA087F5);
+
     /// <summary>The brackets and lines of an item under the mouse, and of the items that the cross-links of the Mission
     /// tab name. It is a light grey, so it does not look like the blue of the selection (UI rule 7).</summary>
     public static readonly Vector4 Highlight = Label;

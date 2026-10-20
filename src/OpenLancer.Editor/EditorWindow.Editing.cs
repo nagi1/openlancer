@@ -505,6 +505,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         exportDialog?.Draw();
         newModDialog.Draw();
         newProfileDialog.Draw();
+        Missions.DrawDialogs();
         templateDialog.Draw();
         SceneEdits.Draw();
         closeDialog.Draw();
@@ -512,7 +513,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
-    internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen ||
+    internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen || Missions.DialogOpen ||
                                 templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen ||
                                 exportDialog?.IsOpen == true || Mods.DialogOpen || agentMenu.DialogOpen;
 

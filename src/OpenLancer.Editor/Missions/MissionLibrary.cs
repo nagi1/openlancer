@@ -4,6 +4,8 @@ using System.Linq;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
+using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Missions;
 
 namespace OpenLancer.Editor.Missions;
@@ -17,6 +19,9 @@ internal enum LibraryKind
     Action,
 
     Condition,
+
+    /// <summary>A behavior prefab: a new linked instance of the prefab (section 8.3 of the M6b design).</summary>
+    Prefab,
 }
 
 /// <summary>One item of the mission library and of quick add: an event, an action or a condition.</summary>
@@ -39,6 +44,16 @@ internal sealed record LibraryItem(LibraryKind Kind, string Id, string Name, str
 
     /// <summary>True for an item that makes a trigger: an event or a condition.</summary>
     public bool MakesTrigger => Kind is LibraryKind.Event or LibraryKind.Condition;
+
+    /// <summary>The prefab of a <see cref="LibraryKind.Prefab"/> item, or null.</summary>
+    public PrefabRef? Prefab { get; init; }
+
+    /// <summary>The tooltip of the lock of a prefab of a lower mod, or null. Such a prefab can place, but it cannot
+    /// change.</summary>
+    public string? Lock { get; init; }
+
+    /// <summary>Why the item cannot place, for example a prefab file with a problem, or null.</summary>
+    public string? Problem { get; init; }
 }
 
 /// <summary>A group of the library, for example the actions of one action group.</summary>
@@ -56,10 +71,42 @@ internal sealed record LibrarySection(string Title, IReadOnlyList<LibraryGroup> 
 /// and its marks. The class also makes the first line of an item: the values that the user then changes in the
 /// Inspector. The class makes no ImGui call, so the tests read it.
 /// </summary>
-/// <remarks>The prefabs of the library come with the prefab commands of milestone M6b-3. Until then, the library has
-/// no "Prefabs" group, because a prefab item could not do anything (UI rule 4).</remarks>
 internal static class MissionLibrary
 {
+    /// <summary>The title of the section and the group of the prefabs.</summary>
+    public const string PrefabsTitle = "Prefabs";
+
+    /// <summary>
+    /// The section "Prefabs" of the library (section 8.3 of the M6b design): the built-in prefabs, then the prefabs of
+    /// the active mod, then the prefabs of the lower mods with a lock. A prefab whose file has a problem shows dim and
+    /// does not place.
+    /// </summary>
+    /// <param name="assets">The prefabs in the order of <see cref="MissionEditor.Prefabs"/>.</param>
+    public static LibrarySection Prefabs(IReadOnlyList<PrefabAsset> assets) =>
+        new(PrefabsTitle, [new LibraryGroup(PrefabsTitle, assets.Select(Prefab).ToList())]);
+
+    /// <summary>The item of a prefab. A drag of a tile of the Assets panel carries it too.</summary>
+    public static LibraryItem Prefab(PrefabAsset asset)
+    {
+        var template = asset.Template;
+        var help = template is { Help.Length: > 0 }
+            ? new HelpText(asset.Name, template.Help, template.Writes.Length > 0 ? template.Writes : MissionPageModel.AssetHelp.WhatItWrites)
+            : MissionPageModel.AssetHelp with { Title = asset.Name };
+        var glyph = asset.Ref.Builtin ? MissionGlyphs.OfPrefab(asset.Ref.Id) : EditorIcons.Cubes;
+        return new LibraryItem(LibraryKind.Prefab, asset.Ref.ToString(), asset.Name, PrefabsTitle, glyph, help, asset.Ref.RecordText)
+        {
+            Prefab = asset.Ref,
+            Lock = asset.Ref.Builtin || asset.Active ? null : LockTip(asset.ModId ?? ""),
+            Problem = template == null
+                ? $"The prefab file has a problem, so the prefab cannot place. {asset.Problems.FirstOrDefault()}"
+                : null,
+        };
+    }
+
+    /// <summary>The tooltip of the lock of a prefab of a lower mod (section 8.11 of the M6b design).</summary>
+    public static string LockTip(string mod) =>
+        $"This prefab belongs to mod {mod}. Only a prefab of the active mod can change.";
+
     /// <summary>The delay of a new "After a delay" trigger, in seconds (section 8.2 of the M6b design).</summary>
     public const double DefaultDelay = 3;
 

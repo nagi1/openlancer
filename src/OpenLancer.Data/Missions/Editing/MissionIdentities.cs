@@ -18,14 +18,19 @@ public sealed record ScriptRef(string Path) : IMissionRef
 
     public override int GetHashCode() => VfsPath.Comparer.GetHashCode(Path);
 
-    public override string ToString() => ItemRefs.Format(new ItemReference(ItemRefKind.Script, "") { Path = Path });
+    public override string ToString() => MissionRefs.IsPrefab(Path)
+        ? Path
+        : ItemRefs.Format(new ItemReference(ItemRefKind.Script, "") { Path = Path });
 
     /// <summary>The reference of a text, for example <c>msn:DATA\MISSIONS\M02\m02.ini</c>.</summary>
     /// <exception cref="EditException">The text is not a script reference.</exception>
-    public static ScriptRef Parse(string text) =>
-        ItemRefs.Parse(text) is { Kind: ItemRefKind.Script, Path: { } path }
-            ? new ScriptRef(path)
-            : throw MissionRefs.Bad(text, "a mission script, for example msn:DATA\\MISSIONS\\M02\\m02.ini");
+    public static ScriptRef Parse(string text) => ItemRefs.Parse(text) switch
+    {
+        { Kind: ItemRefKind.Script, Path: { } path } => new ScriptRef(path),
+        // In prefab mode, the script of a command is the template of a prefab (section 4.0.7 of the M6b design).
+        { Kind: ItemRefKind.Prefab, Scope: { } scope } prefab => new ScriptRef($"{PrefabRef.Prefix}{scope}:{prefab.Name}"),
+        _ => throw MissionRefs.Bad(text, "a mission script, for example msn:DATA\\MISSIONS\\M02\\m02.ini"),
+    };
 
     /// <summary>The reference of an install path.</summary>
     /// <exception cref="EditException">The path is not an install path.</exception>
@@ -48,7 +53,7 @@ public sealed record TriggerRef(string Script, string Name) : IMissionRef
 
     /// <exception cref="EditException">The text is not a trigger reference.</exception>
     public static TriggerRef Parse(string text) =>
-        ItemRefs.Parse(text) is { Kind: ItemRefKind.Trigger, Path: { } path } reference && !MissionRefs.IsPrefab(path)
+        ItemRefs.Parse(text) is { Kind: ItemRefKind.Trigger, Path: { } path } reference
             ? new TriggerRef(path, reference.Name)
             : throw MissionRefs.Bad(text, "a trigger, for example trg:DATA\\MISSIONS\\M02\\m02.ini#ol_trigger");
 
@@ -83,8 +88,7 @@ public sealed record ItemRef(string Script, SectionIdentity Section) : IMissionR
     public static ItemRef Parse(string text) => ItemRefs.Parse(text) switch
     {
         { Kind: ItemRefKind.Section, Path: { } path, Section: { } section } => new ItemRef(path, section),
-        { Kind: ItemRefKind.Trigger, Path: { } path } trigger when !MissionRefs.IsPrefab(path) =>
-            new ItemRef(path, new SectionIdentity("Trigger", trigger.Name)),
+        { Kind: ItemRefKind.Trigger, Path: { } path } trigger => new ItemRef(path, new SectionIdentity("Trigger", trigger.Name)),
         _ => throw MissionRefs.Bad(text, "a section, for example sec:DATA\\MISSIONS\\M02\\m02.ini#MsnShip/ol_ship"),
     };
 }
@@ -118,8 +122,7 @@ public sealed record RowRef(ItemRef Item, int Row)
 
     /// <exception cref="EditException">The text is not a line reference.</exception>
     public static RowRef Parse(string text) =>
-        ItemRefs.Parse(text) is { Kind: ItemRefKind.Line, Path: { } path, Section: { } section, Row: { } row } &&
-        !MissionRefs.IsPrefab(path)
+        ItemRefs.Parse(text) is { Kind: ItemRefKind.Line, Path: { } path, Section: { } section, Row: { } row }
             ? new RowRef(new ItemRef(path, section), row)
             : throw MissionRefs.Bad(text, "a line, for example line:DATA\\MISSIONS\\M02\\m02.ini#Trigger/ol_trigger/2");
 }
@@ -223,6 +226,11 @@ public sealed record PrefabRef(bool Builtin, string Id) : IMissionRef
 
     /// <summary>A prefab asset of a mod.</summary>
     public static PrefabRef ModOf(string id) => new(false, id);
+
+    /// <summary>The prefab of the script of a template in prefab mode, for example <c>prefab:mod:ol_gate</c>, or null
+    /// for the path of a mission script.</summary>
+    public static PrefabRef? OfScript(string path) =>
+        path.StartsWith(Prefix, StringComparison.Ordinal) ? TryParse(path) : null;
 
     /// <summary>The prefab of a reference text or of the text of an instance record, or null.</summary>
     public static PrefabRef? TryParse(string text)

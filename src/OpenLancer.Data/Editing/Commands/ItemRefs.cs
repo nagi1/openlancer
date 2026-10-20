@@ -519,7 +519,8 @@ public static class ItemRefs
 
     private static ItemReference SectionRefOf(string text, string rest)
     {
-        var (path, item) = PathAndItem(text, rest, prefabAllowed: false);
+        // In prefab mode, the file of a section is the template of a prefab (section 4.0.7 of the M6b design).
+        var (path, item) = PathAndItem(text, rest, prefabAllowed: true);
         return new ItemReference(ItemRefKind.Section, "") { Path = path, Section = ParseSection(text, item) };
     }
 

@@ -5,6 +5,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
+using OpenLancer.Data.Missions.Prefabs;
 
 namespace OpenLancer.Data.Missions.Editing;
 
@@ -98,17 +99,25 @@ public sealed partial class MissionEditor
     /// <summary>
     /// Why the user cannot change a section of a mission file, or null (section 8.1 of the M6b design): the session
     /// takes no edits, the file is a whole file of another mod, or a patch cannot change the section, for example a
-    /// repeated nickname of a lower layer (decision D20). The pages show the reason and use the read-only state of their
-    /// widgets.
+    /// repeated nickname of a lower layer (decision D20). A member of a linked prefab instance takes no line edits
+    /// either. The pages show the reason and use the read-only state of their widgets.
     /// </summary>
     public string? ReadOnlyReason(SectionRef section)
     {
         if (ReadOnlyReason(section.Path) is { } reason)
             return reason;
         if (InstallPaths.TryParse(section.Path) is not { } normal || session.OpenDocument(normal) is not { } document ||
-            document.IndexOf(section.Id) is not (>= 0 and var index) || document.ReadOnlyReasonAt(index) is not { } why)
+            document.IndexOf(section.Id) is not (>= 0 and var index))
             return null;
-        return why.Length == 0 ? why : char.ToUpperInvariant(why[0]) + why[1..];
+        if (document.ReadOnlyReasonAt(index) is { } why)
+            return why.Length == 0 ? why : char.ToUpperInvariant(why[0]) + why[1..];
+        if (!SectionKeys.IsMissionFile(normal) || Graph(normal).Instances.Count == 0)
+            return null;
+        return Model(normal).Analysis.Prefabs?.Instances.FirstOrDefault(i =>
+                i.Linked?.Sections.Values.Any(s => s.Ref.Equals(section)) == true)?.Linked is { } linked
+            ? PrefabLinks.MemberReason(linked.Asset?.Name ?? PrefabRef.TryParse(linked.Record.Prefab)?.Id ?? linked.Record.Prefab,
+                linked.Record.Id)
+            : null;
     }
 
     /// <summary>
@@ -326,15 +335,39 @@ public sealed partial class MissionEditor
     }
 
     /// <summary>The text of the graph file of a script in the active mod, or null.</summary>
-    private string? GraphFileText(string path)
+    private string? GraphFileText(string path) => GraphFileText(path, saved: false);
+
+    /// <param name="saved">True for the text at the last save.</param>
+    private string? GraphFileText(string path, bool saved)
     {
         try
         {
-            return session.ModFileText(GraphFile.PathOf(path));
+            return saved ? session.ModFileSavedText(GraphFile.PathOf(path)) : session.ModFileText(GraphFile.PathOf(path));
         }
         catch (Exception e) when (e is ArgumentException or System.IO.IOException or UnauthorizedAccessException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The overrides of a linked instance that the last save does not have (section 5.6 of the M6b design): the fields
+    /// whose override differs from the saved record, and the roles of the removed members that the saved record does
+    /// not have. The Inspector gives such an override the blue bar beside the violet bar (UI rule 7).
+    /// </summary>
+    public (IReadOnlySet<string> Fields, IReadOnlySet<string> Members) UnsavedOverrides(InstanceRef instance)
+    {
+        var fields = new HashSet<string>(StringComparer.Ordinal);
+        var members = new HashSet<string>(StringComparer.Ordinal);
+        if (InstallPaths.TryParse(instance.Script) is not { } path || Graph(path).Instance(instance.Id) is not { } record)
+            return (fields, members);
+        var saved = GraphFile.Read(GraphFileText(path, saved: true), out _).Instance(instance.Id);
+        foreach (var value in record.Overrides)
+        {
+            if (saved?.Overrides.FirstOrDefault(o => o.Field == value.Field) is not { } before || !before.Equals(value))
+                fields.Add(value.Field);
+        }
+        members.UnionWith(record.Removed.Where(role => saved?.Removed.Contains(role) != true));
+        return (fields, members);
     }
 }

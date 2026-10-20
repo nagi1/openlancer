@@ -86,6 +86,66 @@ public sealed class ThemeColorTests
             Assert.Equal(EditorTheme.MissionItem, MissionLayer.KindOf(kind).Color);
     }
 
+    /// <summary>The violet of a prefab override (section 8.6 of the M6b design) differs in hue by 25 degrees or more from
+    /// the colors of a selection, an error, a warning, a success and the mission items. So an override does not look
+    /// like another state.</summary>
+    [Theory]
+    [InlineData(nameof(EditorTheme.Accent))]
+    [InlineData(nameof(EditorTheme.Error))]
+    [InlineData(nameof(EditorTheme.Warning))]
+    [InlineData(nameof(EditorTheme.Success))]
+    [InlineData(nameof(EditorTheme.MissionItem))]
+    public void TheOverrideColorHasItsOwnHue(string other)
+    {
+        var (hue, saturation) = Hsv(EditorTheme.Override);
+        var (otherHue, _) = Hsv(ThemeColor(other));
+        var distance = MathF.Abs(hue - otherHue);
+        distance = MathF.Min(distance, 360 - distance);
+
+        Assert.True(saturation >= MinSaturation);
+        Assert.True(distance >= 25, $"{other} has a hue of {otherHue:0} degrees, only {distance:0} degrees from the override color.");
+    }
+
+    /// <summary>The violet bar of an override is a mark that is not text, so it needs a contrast of 3:1 or more against
+    /// each background of a label cell (WCAG 1.4.11).</summary>
+    [Theory]
+    [InlineData(nameof(EditorTheme.Panel))]
+    [InlineData(nameof(EditorTheme.Section))]
+    [InlineData(nameof(EditorTheme.SectionHover))]
+    [InlineData(nameof(EditorTheme.Field))]
+    public void TheOverrideMarkHasContrastOnEachPanel(string background)
+    {
+        var contrast = Contrast(EditorTheme.Override, ThemeColor(background));
+
+        Assert.True(contrast >= 3, $"The override color has a contrast of {contrast:0.00}:1 on {background}.");
+    }
+
+    [Fact]
+    public void TheContrastOfBlackAndWhiteIs21()
+    {
+        Assert.Equal(21, Contrast(EditorTheme.Rgb(0xFFFFFF), EditorTheme.Rgb(0x000000)), 2);
+        Assert.Equal(1, Contrast(EditorTheme.Override, EditorTheme.Override), 2);
+    }
+
+    /// <summary>A color of the theme by its name.</summary>
+    private static Vector4 ThemeColor(string name) =>
+        (Vector4)typeof(EditorTheme).GetField(name, BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+
+    /// <summary>The contrast ratio of two colors from their relative luminance, as WCAG 2 gives it.</summary>
+    internal static double Contrast(Vector4 a, Vector4 b)
+    {
+        static double Channel(float value) =>
+            value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+
+        static double Luminance(Vector4 color) =>
+            0.2126 * Channel(color.X) + 0.7152 * Channel(color.Y) + 0.0722 * Channel(color.Z);
+
+        var (light, dark) = (Luminance(a), Luminance(b));
+        if (light < dark)
+            (light, dark) = (dark, light);
+        return (light + 0.05) / (dark + 0.05);
+    }
+
     /// <summary>The highlight of the cross-links is a grey without a hue. So ten highlighted ships do not look
     /// selected. Blue means a selection or an unsaved edit (decision D537, UI rule 7).</summary>
     [Fact]

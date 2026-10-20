@@ -44,20 +44,38 @@ internal sealed class ListField
     /// field.</param>
     /// <param name="changed">True when the active mod sets the list, also with an edit that is not saved. The label then
     /// gets the blue bar.</param>
+    /// <param name="overridden">True for a list field of a prefab instance that overrides the prefab. The label is bold
+    /// and gets the violet bar (section 8.6 of the M6b design).</param>
     public ListFieldModel? Draw(string id, ListFieldModel model, HelpText? help, string? readOnly,
         IReadOnlyList<ListCellProblem>? problems = null,
-        Func<string, IReadOnlyList<(ListEntry Entry, string Name)>>? entries = null, bool changed = false)
+        Func<string, IReadOnlyList<(ListEntry Entry, string Name)>>? entries = null, bool changed = false,
+        bool overridden = false)
     {
         ImGui.PushID(id);
         var spec = model.Spec;
-        // A list that the active mod sets has the label in the accent color and the blue bar (UI rule 7).
-        if (changed)
+        // A list that the active mod sets has the label in the accent color and the blue bar (UI rule 7). An override
+        // has the violet bar, and the blue bar beside it while it is not saved.
+        var labelMin = ImGui.GetCursorScreenPos();
+        if (overridden)
         {
-            PropertyGrid.ChangedBar(ImGui.GetCursorScreenPos());
+            ImGui.SetCursorScreenPos(labelMin + new Vector2(PropertyGrid.OverrideBar(labelMin, changed), 0));
+        }
+        else if (changed)
+        {
+            PropertyGrid.ChangedBar(labelMin);
         }
 
         ImGui.PushStyleColor(ImGuiCol.Text, changed ? EditorTheme.AccentText : ImGui.GetStyle().Colors[(int)ImGuiCol.Text]);
-        ImGui.Text(string.Create(CultureInfo.InvariantCulture, $"{spec.Label} ({model.Rows.Count})"));
+        var title = string.Create(CultureInfo.InvariantCulture, $"{spec.Label} ({model.Rows.Count})");
+        if (overridden)
+        {
+            CardLayout.Bold(title);
+        }
+        else
+        {
+            ImGui.Text(title);
+        }
+
         ImGui.PopStyleColor();
         if (spec.Help != null)
         {

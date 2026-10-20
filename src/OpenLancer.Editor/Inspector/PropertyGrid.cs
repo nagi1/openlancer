@@ -66,6 +66,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     private string? nextNote;
     private (string Text, bool Hard)? nextHelp;
     private bool nextChanged;
+    private bool nextOverride;
 
     [LibraryImport("cimgui")]
     private static partial void igTableFullRowBegin();
@@ -79,12 +80,35 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// it.
     /// </summary>
     /// <param name="labelMin">The top-left corner of the label text, in screen pixels.</param>
-    internal static void ChangedBar(Vector2 labelMin)
+    internal static void ChangedBar(Vector2 labelMin) => Bar(labelMin, 0, EditorTheme.Accent);
+
+    /// <summary>
+    /// Draws the violet bar of a prefab override at the left edge of a label cell (section 8.6 of the M6b design, UI
+    /// rule 7). An unsaved override has the blue bar beside the violet bar. Returns the space that the label text moves
+    /// to the right, so the two bars do not cover it.
+    /// </summary>
+    /// <param name="labelMin">The top-left corner of the label text, in screen pixels.</param>
+    /// <param name="changed">True when the override is not saved: the blue bar comes beside the violet bar.</param>
+    internal static float OverrideBar(Vector2 labelMin, bool changed)
     {
-        var x = labelMin.X - MathF.Truncate(CellPadding.X * ImGuiHelper.Scale);
+        Bar(labelMin, 0, EditorTheme.Override);
+        if (!changed)
+        {
+            return 0;
+        }
+
+        var width = MathF.Truncate(OriginBarWidth * ImGuiHelper.Scale);
+        Bar(labelMin, width, EditorTheme.Accent);
+        return width;
+    }
+
+    /// <summary>A bar at the left edge of a label cell, moved to the right by an offset in pixels.</summary>
+    private static void Bar(Vector2 labelMin, float offset, Vector4 color)
+    {
+        var x = labelMin.X - MathF.Truncate(CellPadding.X * ImGuiHelper.Scale) + offset;
         ImGui.GetWindowDrawList().AddRectFilled(new Vector2(x, labelMin.Y),
             new Vector2(x + MathF.Truncate(OriginBarWidth * ImGuiHelper.Scale), labelMin.Y + ImGui.GetFrameHeight()),
-            ImGui.GetColorU32(EditorTheme.Accent));
+            ImGui.GetColorU32(color));
     }
 
     /// <summary>
@@ -248,10 +272,18 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     /// </summary>
     public void MarkNextChanged() => nextChanged = true;
 
+    /// <summary>
+    /// Gives the next row the mark of a prefab override (section 8.6 of the M6b design, UI rule 7): the label in bold and
+    /// the violet bar. With <see cref="MarkNextChanged"/>, the blue bar comes beside the violet bar. A row that spans the
+    /// two columns ends the mark.
+    /// </summary>
+    public void MarkNextOverride() => nextOverride = true;
+
     /// <summary>A dim text that spans the two columns and wraps, for example a note of a section.</summary>
     public void NoteRow(string text)
     {
         nextChanged = false;
+        nextOverride = false;
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
         igTableFullRowBegin();
@@ -266,6 +298,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     public void FullRow(Action draw)
     {
         nextChanged = false;
+        nextOverride = false;
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
         igTableFullRowBegin();
@@ -277,6 +310,7 @@ internal sealed partial class PropertyGrid(EditorWindow window)
     public void SubHeading(string text)
     {
         nextChanged = false;
+        nextOverride = false;
         ImGui.TableNextRow();
         ImGui.TableNextColumn();
         igTableFullRowBegin();
@@ -761,16 +795,33 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         nextHelp = null;
         var marked = nextChanged;
         nextChanged = false;
+        var overridden = nextOverride;
+        nextOverride = false;
 
         // A long label is cut at the column edge. The tooltip shows all of it, the INI key and the note.
         ImGui.AlignTextToFramePadding();
         var labelMin = ImGui.GetCursorScreenPos();
+        if (overridden)
+        {
+            // An override has the violet bar, and an unsaved override also the blue bar beside it (UI rule 7).
+            var shift = OverrideBar(labelMin, marked);
+            ImGui.SetCursorScreenPos(labelMin + new Vector2(shift, 0));
+        }
+
         ImGui.PushStyleColor(ImGuiCol.Text,
             marked || field?.Origin == ValueOrigin.ActiveMod ? EditorTheme.AccentText : EditorTheme.Label);
-        ImGui.Text(label);
+        if (overridden)
+        {
+            CardLayout.Bold(label);
+        }
+        else
+        {
+            ImGui.Text(label);
+        }
+
         ImGui.PopStyleColor();
         // The marks of a bound row draw the bar of a value of the active mod.
-        if (marked && field?.Origin != ValueOrigin.ActiveMod)
+        if (marked && !overridden && field?.Origin != ValueOrigin.ActiveMod)
         {
             ChangedBar(labelMin);
         }

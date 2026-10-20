@@ -80,14 +80,41 @@ internal sealed class LibraryStrip(EditorWindow window)
 
     private string search = "";
 
-    /// <summary>The sections of the library, with the OpenLancer marks while the OpenLancer column shows (UI rule
-    /// 4).</summary>
-    public IReadOnlyList<LibrarySection> Sections =>
-        MissionLibrary.Studio(window.Session?.Edits.HidesOpenLancer != true);
+    // The section "Prefabs" with the session and the revision that gave it. A new asset comes with a new revision.
+    private (object? Session, long Revision, LibrarySection Section)? prefabs;
+
+    /// <summary>The sections of the library, with the OpenLancer marks while the OpenLancer column shows (UI rule 4). The
+    /// section "Prefabs" comes first outside prefab mode. A prefab does not go into a prefab.</summary>
+    public IReadOnlyList<LibrarySection> Sections
+    {
+        get
+        {
+            var studio = MissionLibrary.Studio(window.Session?.Edits.HidesOpenLancer != true);
+            return window.Missions.OpenPrefab == null && PrefabSection() is { } section ? [section, .. studio] : studio;
+        }
+    }
+
+    /// <summary>The section "Prefabs" of the session, made again after each change of the session.</summary>
+    private LibrarySection? PrefabSection()
+    {
+        if (window.Session?.Edits is not { } edits)
+        {
+            return null;
+        }
+
+        if (prefabs is not { } known || !ReferenceEquals(known.Session, edits) || known.Revision != edits.Revision)
+        {
+            known = (edits, edits.Revision, MissionLibrary.Prefabs(edits.Missions.Prefabs()));
+            prefabs = known;
+        }
+
+        return known.Section;
+    }
 
     /// <summary>Draws the strip. Returns the item of a double-click, or null.</summary>
     /// <param name="readOnly">The reason why the session takes no edits, or null.</param>
-    public LibraryItem? Draw(Vector2 size, string? readOnly)
+    /// <param name="prefabs">False in prefab mode: the section "Prefabs" does not show.</param>
+    public LibraryItem? Draw(Vector2 size, string? readOnly, bool prefabs = true)
     {
         LibraryItem? picked = null;
         ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Panel);
@@ -108,7 +135,7 @@ internal sealed class LibraryStrip(EditorWindow window)
             }
 
             var filter = search.Trim();
-            foreach (var section in Sections)
+            foreach (var section in Sections.Where(s => prefabs || s.Title != MissionLibrary.PrefabsTitle))
             {
                 var groups = section.Groups.Select(g => g with
                     {
@@ -126,7 +153,9 @@ internal sealed class LibraryStrip(EditorWindow window)
                     ImGui.SetNextItemOpen(true);
                 }
 
-                if (!ImGui.CollapsingHeader(section.Title, flags | (section.Title == "Events" ? ImGuiTreeNodeFlags.DefaultOpen : 0)))
+                if (!ImGui.CollapsingHeader(section.Title, flags | (section.Title is "Events" or MissionLibrary.PrefabsTitle
+                        ? ImGuiTreeNodeFlags.DefaultOpen
+                        : 0)))
                 {
                     continue;
                 }
@@ -172,14 +201,16 @@ internal sealed class LibraryStrip(EditorWindow window)
     private static bool Item(LibraryItem item, bool editable)
     {
         ImGui.PushID($"{item.Kind}.{item.Id}");
-        var dim = item.NoRetailExample;
+        var dim = item.NoRetailExample || item.Problem != null;
+        editable &= item.Problem == null;
         if (dim)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
         }
 
         var infoWidth = InfoIcon.Width;
-        ImGui.Selectable($"{item.Glyph}  {item.Name}", false, ImGuiSelectableFlags.AllowDoubleClick,
+        var text = item.Lock != null ? $"{item.Glyph}  {item.Name}  {EditorIcons.Lock}" : $"{item.Glyph}  {item.Name}";
+        ImGui.Selectable(text, false, ImGuiSelectableFlags.AllowDoubleClick,
             new Vector2(ImGui.GetContentRegionAvail().X - infoWidth - ImGui.GetStyle().ItemSpacing.X, 0));
         if (dim)
         {
@@ -190,6 +221,16 @@ internal sealed class LibraryStrip(EditorWindow window)
         if (ImGui.IsItemHovered() && !ImGui.IsMouseDragging(ImGuiMouseButton.Left))
         {
             var lines = new List<string> { item.Help.WhatItIs, item.Key };
+            if (item.Lock != null)
+            {
+                lines.Add(item.Lock);
+            }
+
+            if (item.Problem != null)
+            {
+                lines.Add(item.Problem);
+            }
+
             if (item.NoRetailExample)
             {
                 lines.Add("No retail example: the game data has no example of this item. Its effect is not checked.");

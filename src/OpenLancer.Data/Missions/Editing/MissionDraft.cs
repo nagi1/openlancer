@@ -69,8 +69,12 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     public EditDocument Script(ScriptRef script) => Script(script.Path);
 
     /// <inheritdoc cref="Script(ScriptRef)"/>
+    /// <remarks>In prefab mode, the script <c>prefab:mod:&lt;id&gt;</c> is the template of the asset in the role form
+    /// (section 5.7 of the M6b design).</remarks>
     public EditDocument Script(string path)
     {
+        if (MissionRefs.IsPrefab(path))
+            return Template(path);
         var document = Session.OpenDocument(path);
         if (document is not { HoldsScript: true, State.Exists: true })
             throw new EditException(MissionErrors.ScriptNotFoundError(path) with { Index = Index });
@@ -86,6 +90,8 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     /// read-only.</exception>
     public EditDocument File(string path)
     {
+        if (MissionRefs.IsPrefab(path))
+            return Template(path);
         if (Session.OpenDocument(path) is not { State.Exists: true } document || !SectionKeys.IsMissionFile(document.Path))
             throw new EditException(MissionErrors.ScriptNotFoundError(path) with { Index = Index });
         if (!IsMissionFile(document.Path))
@@ -284,6 +290,9 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         var before = new SectionRef(document.Path, document.IdentityAt(index));
         document.Replace(index, section, names.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
         var after = new SectionRef(document.Path, document.IdentityAt(index));
+        // The role form of a template is not a file of the session. The write of the asset records the change.
+        if (IsTemplate(document))
+            return;
         if (before.Equals(after) && string.Equals(before.Id.Key, after.Id.Key, StringComparison.Ordinal))
         {
             scope.Changed(before, structural: false);
@@ -310,7 +319,8 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     {
         at = PlaceOfNew(document, at, section);
         document.Insert(at, section);
-        scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
+        if (!IsTemplate(document))
+            scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
         return at;
     }
 
@@ -357,7 +367,8 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         var old = document.Working[index];
         var reference = new SectionRef(document.Path, document.IdentityAt(index));
         document.Remove(index, 1);
-        scope.Changed(reference, structural: true);
+        if (!IsTemplate(document))
+            scope.Changed(reference, structural: true);
         if (member is var (record, role))
             MemberRemoved(document, record, role);
         return old;

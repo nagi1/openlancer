@@ -360,7 +360,10 @@ public static class MissionNaming
         bool Ok(string name) => MissionNames.FormOk(name, max) && !taken.Contains(name);
         if (wanted == null)
         {
-            var stem = System.IO.Path.GetFileNameWithoutExtension(script.Replace('\\', '/')).ToLowerInvariant();
+            // A template in prefab mode has roles, without the name of a file (section 5.7 of the M6b design).
+            var stem = MissionRefs.IsPrefab(script)
+                ? "role"
+                : System.IO.Path.GetFileNameWithoutExtension(script.Replace('\\', '/')).ToLowerInvariant();
             var word = MissionNames.MadeWord(sectionType);
             for (var n = 1;; n++)
             {

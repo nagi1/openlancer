@@ -3072,7 +3072,8 @@
               "effect",
               "loadout",
               "faction",
-              "model"
+              "model",
+              "mission_prefab"
             ],
             "description": "Show only the assets of this kind."
           },

@@ -25,6 +25,12 @@ public sealed partial class EditSession
     /// <exception cref="IOException">The file could not be read.</exception>
     internal string? ModFileText(string relativePath) => ModFile(relativePath)?.Text;
 
+    /// <summary>The text of an editor file of the active mod at the last save, or when the session opened it. Null when
+    /// the file did not exist then.</summary>
+    /// <exception cref="ArgumentException">The path is not the path of an editor file.</exception>
+    /// <exception cref="IOException">The file could not be read.</exception>
+    internal string? ModFileSavedText(string relativePath) => ModFile(relativePath)?.Initial.Text;
+
     /// <summary>
     /// The paths of the editor files of the active mod in a folder that exist in W (section 6.8 of the M6b design): the
     /// files on disk and the files that a command made, without the files that a command deleted. Each path is relative

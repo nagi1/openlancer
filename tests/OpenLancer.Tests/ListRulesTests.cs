@@ -283,12 +283,13 @@ public sealed class ListRulesTests
     [Fact]
     public void TheAssetCategoriesParse()
     {
-        Assert.Equal(["groups", "solars", "ships", "asteroids", "equipment", "effects", "loadouts", "factions", "models"],
+        Assert.Equal(["groups", "solars", "ships", "asteroids", "equipment", "effects", "loadouts", "factions", "models", "prefabs"],
             Rules.AssetCategories.Select(c => c.Id));
         Assert.All(Rules.AssetCategories.Where(c => c.List != null), c => Assert.True(Rules.Lists.ContainsKey(c.List!), c.Id));
         Assert.Equal(("propGroups", null), (Rules.AssetCategories[0].Kind, Rules.AssetCategories[0].List));
-        Assert.Equal(["sceneTemplates", null, null, "section", null, null, null, "folder"],
+        Assert.Equal(["sceneTemplates", null, null, "section", null, null, null, "folder", null],
             Rules.AssetCategories.Skip(1).Select(c => c.Split));
+        Assert.Equal(("missionPrefabs", null), (Rules.AssetCategories[^1].Kind, Rules.AssetCategories[^1].List));
 
         string With(string category) => FilesRules("""{ "files": ".ini" }""", "")[..^1].TrimEnd() +
                                         $$""", "assetCategories": [ {{category}} ] }""";

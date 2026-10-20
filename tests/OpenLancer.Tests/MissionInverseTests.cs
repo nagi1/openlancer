@@ -126,7 +126,7 @@ public sealed class MissionInverseTests
         // The prefab commands need an instance, so PrefabInstanceTests has their samples and their inverse tests.
         var kinds = MissionJson.Kinds.Keys.Where(k => k is not ("delete_script" or "revert_section" or "accept_base" or "remove_act"))
             .ToHashSet();
-        var samples = Commands.Values.Concat(PrefabInstanceTests.Commands.Values)
+        var samples = Commands.Values.Concat(PrefabInstanceTests.Commands.Values).Concat(PrefabModeTests.Commands.Values)
             .SelectMany(Kinds).ToHashSet();
 
         Assert.Empty(kinds.Except(samples));

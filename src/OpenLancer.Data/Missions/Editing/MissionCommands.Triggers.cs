@@ -219,6 +219,8 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
 
         if (ChangeReferences)
             d.RenameInRecords(document, old, name);
+        if (MissionDraft.IsTemplateDocument(document))
+            d.RenameRole(document, old, name);
         var renamed = new TriggerRef(document.Path, name);
         // The inverse gives the own lines that named the trigger their old text first, then the lines of the other
         // sections in reverse order, then the old nickname. So the rename back finds no line that names the new name

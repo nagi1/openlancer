@@ -28,7 +28,7 @@ public sealed class MissionJsonTests
             ["accept_base"] = () => new AcceptBase(Item("MsnShip", "ol_ship_1")),
             ["remove_act"] = () => new RemoveAct(new ActRef(Script, "act_1")),
         };
-        foreach (var (kind, make) in PrefabInstanceTests.Commands)
+        foreach (var (kind, make) in PrefabInstanceTests.Commands.Concat(PrefabModeTests.Commands))
             samples["prefab:" + kind] = make;
         return samples;
     }

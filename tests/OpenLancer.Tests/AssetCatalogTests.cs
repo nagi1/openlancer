@@ -200,7 +200,7 @@ public sealed class AssetCatalogTests
 
         var categories = session.Assets.Categories;
         Assert.Equal(AssetCatalog.AllId, categories[0].Id);
-        Assert.Equal(["groups", "solars", "ships", "asteroids", "equipment", "effects", "loadouts", "factions", "models"],
+        Assert.Equal(["groups", "solars", "ships", "asteroids", "equipment", "effects", "loadouts", "factions", "models", "prefabs"],
             categories.Where(c => c.ParentId == AssetCatalog.AllId).Select(c => c.Id));
         Assert.Equal(["solars/station", "solars/planet", "solars/sun", "solars/satellite", "solars/solar",
             "solars/connections"], categories.Where(c => c.ParentId == "solars").Select(c => c.Id));

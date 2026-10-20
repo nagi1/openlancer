@@ -109,6 +109,12 @@ public static class PrefabLinks
         $"Prefab instance '{instance}' names prefab '{prefab}', whose file has a problem. The triggers stay as they are. " +
         "Correct the prefab file, or unpack the instance.";
 
+    /// <summary>Why a member section of a linked instance does not take line edits (sections 8.1 and 8.11 of the M6b
+    /// design, decision D660). A delete of the member is a removed-member override (decision D676 c).</summary>
+    public static string MemberReason(string prefab, string instance) =>
+        $"This section comes from prefab '{prefab}' (instance '{instance}'). Change a field of the instance, open the " +
+        "prefab, or unpack the instance.";
+
     /// <summary>The text of P03.</summary>
     public static string OutdatedMessage(string prefab, string instance) =>
         $"Prefab '{prefab}' changed after the last compile of instance '{instance}'. The instance does not have the " +

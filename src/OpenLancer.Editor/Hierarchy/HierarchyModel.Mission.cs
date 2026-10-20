@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using OpenLancer.Data;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui;
 
@@ -128,6 +129,84 @@ internal sealed partial class HierarchyModel
 
     /// <summary>The acts of the graph file that the tree of a mission shows, or null for the proposed acts.</summary>
     public MissionActs? Acts { get; private init; }
+
+    /// <summary>The kinds of the rows of prefab mode that the kinds of a mission do not have.</summary>
+    internal static class PrefabKinds
+    {
+        public static readonly ObjectKind Field = new("Field", EditorIcons.List, EditorTheme.Text);
+        public static readonly ObjectKind Port = new("Port", EditorIcons.Link, EditorTheme.Text);
+    }
+
+    /// <summary>
+    /// The tree of prefab mode (section 8.6 of the M6b design): the prefab row, then the groups "Fields", "Ports",
+    /// "Triggers" and "Other sections" of its template. A field row and a port row select the Prefab page at its
+    /// section. A tree of the same template and toggle is the tree before.
+    /// </summary>
+    public static HierarchyModel ForPrefab(PrefabModeModel prefab, bool showBaseGame, HierarchyModel? previous)
+    {
+        var analysis = prefab.Analysis!;
+        if (previous != null && ReferenceEquals(previous.Analysis, analysis) && previous.ShowsBaseGame == showBaseGame)
+        {
+            return previous;
+        }
+
+        return new HierarchyModel(PrefabTree(prefab, showBaseGame), analysis.Script.Path, MissionTypes, previous)
+        {
+            Analysis = analysis,
+            ShowsBaseGame = showBaseGame,
+        };
+    }
+
+    /// <summary>The tree of the template of a prefab.</summary>
+    internal static HierarchyNode PrefabTree(PrefabModeModel prefab, bool showBaseGame)
+    {
+        var analysis = prefab.Analysis!;
+        var script = analysis.Script.Path;
+        var problems = BaseGameMessages.Shown(analysis.Problems, showBaseGame).Where(p => p.Target != null)
+            .GroupBy(p => p.Target!).ToDictionary(g => g.Key, g => g.ToList());
+        var root = new HierarchyNode("prefab", MissionKinds.Prefab, prefab.Asset.Name, "Prefab", MissionRef.Of(script),
+            prefab.ReadOnlyReason ?? script);
+        var template = prefab.Template;
+        var fields = new HierarchyNode("fields", MissionKinds.Group, "Fields");
+        foreach (var field in template?.Fields ?? [])
+        {
+            fields.Add(new HierarchyNode("field:" + field.Id, PrefabKinds.Field, field.Label, MissionPageModel.KindLabel(field),
+                new MissionRef(script, MissionItemKind.Mission, Key: "field:" + field.Id), field.Help.Length > 0 ? field.Help : null,
+                field.Id));
+        }
+
+        AddGroup(root, fields);
+        var ports = new HierarchyNode("ports", MissionKinds.Group, "Ports");
+        foreach (var port in template?.Ports ?? [])
+        {
+            ports.Add(new HierarchyNode("port:" + port.Id, PrefabKinds.Port, port.Label, $"From {port.Role}",
+                new MissionRef(script, MissionItemKind.Mission, Key: "port:" + port.Id), null, port.Id));
+        }
+
+        AddGroup(root, ports);
+        HierarchyNode Row(MissionSection section, string detail) =>
+            new($"s:{section.Index.ToString(CultureInfo.InvariantCulture)}", MissionKinds.Of(section.Kind),
+                section.Nickname ?? section.Ref.Id.ToString(), detail, MissionRef.OfSection(section.Ref, -1), null, Values(section))
+            {
+                Problem = ProblemOf(problems.GetValueOrDefault(section.Ref)),
+            };
+
+        var triggers = new HierarchyNode("triggers", MissionKinds.Group, "Triggers");
+        foreach (var trigger in analysis.Index.Triggers)
+        {
+            triggers.Add(Row(trigger.Section, trigger.Condition?.Name?.Plain ?? "No condition"));
+        }
+
+        AddGroup(root, triggers);
+        var other = new HierarchyNode("other", MissionKinds.Group, "Other sections");
+        foreach (var section in analysis.Document.Sections.Where(s => s.Kind != MissionSectionKind.Trigger))
+        {
+            other.Add(Row(section, section.Type));
+        }
+
+        AddGroup(root, other);
+        return root;
+    }
 
     /// <summary>The tree of a mission.</summary>
     /// <param name="systemName">Gives the name of a system for the act titles, or null. The graph uses the same
