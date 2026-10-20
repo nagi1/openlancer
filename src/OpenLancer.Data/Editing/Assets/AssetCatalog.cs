@@ -82,6 +82,10 @@ public sealed record AssetRow(AssetRef Asset, string Nickname, string Detail, st
     /// <summary>True for a ship, an asteroid or a model when W has a solar archetype with its model: the "prop"
     /// badge.</summary>
     public bool HasProp { get; init; }
+
+    /// <summary>True for an asset whose file has a problem, for example a mission prefab: the error mark. It cannot place,
+    /// and it does not open.</summary>
+    public bool HasProblem { get; init; }
 }
 
 /// <summary>
@@ -414,7 +418,10 @@ public sealed class AssetCatalog
             asset.Ref.Id, detail, definition.Id, asset.Active ? ValueOrigin.ActiveMod : ValueOrigin.LowerMod, asset.ModId, mark,
             problem == null
                 ? "Drag the prefab into the graph of a mission. The Scene does not place it."
-                : $"The prefab file has a problem: {problem}");
+                : $"The prefab file has a problem: {problem}")
+        {
+            HasProblem = problem != null,
+        };
     }
 
     /// <summary>The marks of an entry whose section the active mod adds or changes (decision D245). An entry of a

@@ -194,6 +194,19 @@ internal sealed class MissionWorkspace
         }
     }
 
+    /// <summary>Runs the batch of an action of a menu of the studio, or goes to its link (see <see cref="Follow"/>).</summary>
+    public void Do(PageAction action)
+    {
+        if (action.Batch != null)
+        {
+            Run(action.Batch);
+        }
+        else if (action.Link != null)
+        {
+            Follow(action.Link);
+        }
+    }
+
     /// <summary>Opens the dialog "Save as prefab" of a matched instance (section 5.9 of the M6b design).</summary>
     public void AskSaveAsPrefab(InstanceRef instance, string name, string id) => savePrefab.Show(instance, name, id);
 
@@ -561,6 +574,21 @@ internal sealed class MissionWorkspace
             return false;
         }
 
+        // "Make variant" opens the new variant in prefab mode (section 8.6 of the M6b design). A rename of the prefab of
+        // prefab mode keeps prefab mode on it.
+        if (NewPrefabOf(result) is { } made)
+        {
+            OpenPrefabMode(made);
+            return true;
+        }
+
+        if (OpenPrefab != null && RenamedPrefab(OpenPrefab, result.Renames) is { } renamed)
+        {
+            OpenPrefab = renamed;
+            window.SelectInTab(CenterMode.Mission, Root!);
+            return true;
+        }
+
         var selection = window.Selection;
         var next = result.Select is { } select && Analysis(ScriptOf(select) ?? "") is { } analysis
             ? SelectionOf(analysis, select, PrefabRef.OfScript(analysis.Script.Path) == null ? ActsOf(analysis) : null)
@@ -573,6 +601,18 @@ internal sealed class MissionWorkspace
 
         return true;
     }
+
+    /// <summary>The prefab of the active mod that a result adds and selects, or null: the result of "Make variant". A
+    /// variant of an instance selects the instance, so it stays in its mission.</summary>
+    internal static PrefabRef? NewPrefabOf(MissionEditResult result) =>
+        result.Select is { } select && PrefabRef.OfScript(select) is { Builtin: false } prefab &&
+        result.Adds.Contains(select, StringComparer.OrdinalIgnoreCase)
+            ? prefab
+            : null;
+
+    /// <summary>The new reference of a prefab that a rename of a result renamed, or null.</summary>
+    internal static PrefabRef? RenamedPrefab(PrefabRef prefab, IEnumerable<ResultRename> renames) =>
+        renames.Where(r => PrefabRef.OfScript(r.From)?.Equals(prefab) == true).Select(r => PrefabRef.OfScript(r.To)).FirstOrDefault();
 
     /// <summary>The install path of a reference of a mission item, or null.</summary>
     private static string? ScriptOf(string reference)
@@ -749,10 +789,11 @@ internal sealed class MissionWorkspace
     public bool IsScript(string path) => Result?.IsScript(path) == true;
 
     /// <summary>The analysis of a script, or null. The script of a template in prefab mode gives the analysis of its
-    /// template sections (section 8.6 of the M6b design).</summary>
+    /// template sections (section 8.6 of the M6b design). A prefab whose file has a problem gives an analysis without
+    /// sections, so its Prefab page shows the problems.</summary>
     public MissionAnalysis? Analysis(string path) =>
         PrefabRef.OfScript(path) is { } prefab
-            ? window.Session?.Edits.Missions.PrefabMode(prefab)?.Analysis
+            ? window.Session?.Edits.Missions.PrefabMode(prefab)?.PageAnalysis
             : Result?.Of(path);
 
     /// <summary>

@@ -196,12 +196,49 @@ internal sealed class LibraryStrip(EditorWindow window)
         return picked;
     }
 
+    /// <summary>
+    /// The menu of a prefab of the library (section 8.6 of the M6b design): "Open prefab" opens it in prefab mode, also a
+    /// built-in prefab. A built-in prefab and a prefab of a lower mod also have "Make variant", which copies it into the
+    /// active mod and opens the copy.
+    /// </summary>
+    /// <param name="editable">True when the session takes edits.</param>
+    private void PrefabMenu(LibraryItem item, bool editable)
+    {
+        if (item.Prefab is not { } prefab || !ImGui.BeginPopupContextItem("##prefab-menu"))
+        {
+            return;
+        }
+
+        EditorTheme.PushMenuColors();
+        if (ImGui.MenuItem("Open prefab", "", false, item.Template != null))
+        {
+            window.Missions.OpenPrefabMode(prefab);
+        }
+
+        ImGui.SetItemTooltip(MissionPageModel.OpenPrefabTip);
+        if ((prefab.Builtin || item.Lock != null) && item.Template != null && editable &&
+            window.Session?.Edits.Missions is { } editor)
+        {
+            if (ImGui.MenuItem("Make variant"))
+            {
+                window.Missions.Run(MissionPageModel.VariantBatch(editor.FreePrefabId, prefab, item.Name));
+            }
+
+            ImGui.SetItemTooltip(MissionPageModel.MakeVariantTip);
+        }
+
+        EditorTheme.PopMenuColors();
+        ImGui.EndPopup();
+    }
+
     /// <summary>One item: the glyph and the plain name, the marks, the info icon, the drag source and the
-    /// double-click. Returns true for a double-click.</summary>
-    private static bool Item(LibraryItem item, bool editable)
+    /// double-click. Returns true for a double-click. A prefab has a menu with "Open prefab" and "Make
+    /// variant".</summary>
+    private bool Item(LibraryItem item, bool editable)
     {
         ImGui.PushID($"{item.Kind}.{item.Id}");
         var dim = item.NoRetailExample || item.Problem != null;
+        var session = editable;
         editable &= item.Problem == null;
         if (dim)
         {
@@ -217,6 +254,7 @@ internal sealed class LibraryStrip(EditorWindow window)
             ImGui.PopStyleColor();
         }
 
+        PrefabMenu(item, session);
         var doubleClicked = editable && ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
         if (ImGui.IsItemHovered() && !ImGui.IsMouseDragging(ImGuiMouseButton.Left))
         {

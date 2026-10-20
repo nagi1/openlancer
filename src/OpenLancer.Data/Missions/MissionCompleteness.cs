@@ -146,14 +146,16 @@ public static class MissionCompleteness
     /// <summary>
     /// The completeness of a prefab in prefab mode (section 8.6 of the M6b design): the prefab file has no problem of the
     /// format check, the lines of the template have no error, and each field is in a line. A missing step of a field
-    /// goes to the field on the Prefab page.
+    /// goes to the field on the Prefab page, and a missing step of the file goes to the text of the file.
     /// </summary>
     public static CompletenessReport OfPrefab(Editing.PrefabModeModel prefab)
     {
         var steps = new List<CompletenessStep>
         {
+            // A missing step goes to the text of the file on the Prefab page, with a mark on the line of each problem.
             prefab.Asset.Problems is [var first, ..]
-                ? new CompletenessStep(PrefabFileStep, CompletenessState.Missing, PrefabFileReason, first.ToString(), IsError: true)
+                ? new CompletenessStep(PrefabFileStep, CompletenessState.Missing, PrefabFileReason, first.ToString(),
+                    new MissionRef(prefab.Asset.Ref.Script, MissionItemKind.Mission, Key: "file"), IsError: true)
                 : new CompletenessStep(PrefabFileStep, CompletenessState.Done, PrefabFileReason),
         };
         if (prefab.Template is { } template)

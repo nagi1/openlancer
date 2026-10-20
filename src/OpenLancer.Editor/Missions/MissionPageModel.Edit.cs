@@ -203,8 +203,8 @@ internal sealed partial record MissionPageModel
         result.Add(new PageAction("Duplicate", One($"Duplicate {action.Name?.Plain ?? action.Key}",
             new AddAction(TriggerOf(trigger), copy) { Before = at + 1 < actions.Count ? actions[at + 1].Entry : null })));
         result.Add(new PageAction("Remove", One($"Remove {action.Name?.Plain ?? action.Key}", new RemoveAction(row))));
-        if (context.Prefab?.Template is { } template)
-            result.AddRange(LineChoices(template, action, PrefabFieldKind.Lines));
+        if (context.Prefab is { Template: { } template } prefab)
+            result.AddRange(LineChoices(prefab.Asset.Ref, template, action, PrefabFieldKind.Lines));
         result.AddRange(raw);
         return result;
     }

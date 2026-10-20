@@ -179,7 +179,7 @@ internal sealed partial class HierarchyModel
         var ports = new HierarchyNode("ports", MissionKinds.Group, "Ports");
         foreach (var port in template?.Ports ?? [])
         {
-            ports.Add(new HierarchyNode("port:" + port.Id, PrefabKinds.Port, port.Label, $"From {port.Role}",
+            ports.Add(new HierarchyNode("port:" + port.Id, PrefabKinds.Port, port.Label, MissionPageModel.PortText(port),
                 new MissionRef(script, MissionItemKind.Mission, Key: "port:" + port.Id), null, port.Id));
         }
 
@@ -359,16 +359,21 @@ internal sealed partial class HierarchyModel
         AddGroup(root, Group("encounters", "Random encounters", index.Document.OfKind(MissionSectionKind.RandomEncounter)
             .Select(s => Section("s", s))));
 
-        // Behavior prefabs: each prefab with its count and its instances.
+        // Behavior prefabs: each prefab with its count and its instances. The instances of one prefab share one row, also
+        // the linked instances of a prefab of a mod, whose definitions are records of their own.
         var prefabs = new HierarchyNode("prefabs", MissionKinds.Group, "Behavior prefabs");
-        foreach (var group in (analysis.Prefabs?.Instances ?? []).GroupBy(i => i.Definition).OrderBy(g => g.Key.Order))
+        foreach (var group in (analysis.Prefabs?.Instances ?? []).GroupBy(i => i.PrefabKey, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(g => g.First().Definition.Order).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
         {
-            var kindNode = new HierarchyNode("kind:" + group.Key.Id, MissionKinds.Prefab,
-                $"{group.Key.Name} ({group.Count().ToString(CultureInfo.InvariantCulture)})", "",
-                new MissionRef(script, MissionItemKind.PrefabKind, Key: group.Key.Id), group.Key.Help.FirstSentence);
+            var definition = group.First().Definition;
+            var kindNode = new HierarchyNode("kind:" + group.Key, MissionKinds.Prefab,
+                $"{definition.Name} ({group.Count().ToString(CultureInfo.InvariantCulture)})", "",
+                new MissionRef(script, MissionItemKind.PrefabKind, Key: group.Key), definition.Help.FirstSentence);
             foreach (var instance in group)
             {
-                kindNode.Add(new HierarchyNode("inst:" + instance.Key, MissionKinds.Prefab, instance.Name, group.Key.Name,
+                // An instance of a prefab that no mod has shows "Missing prefab", as Unity does.
+                kindNode.Add(new HierarchyNode("inst:" + instance.Key, MissionKinds.Prefab, instance.Name,
+                    instance.Linked is { Asset: null } ? MissionPageModel.MissingPrefabKind : definition.Name,
                     new MissionRef(script, MissionItemKind.PrefabInstance, Key: instance.Key)));
             }
 

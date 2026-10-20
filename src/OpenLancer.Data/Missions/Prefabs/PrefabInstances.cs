@@ -99,10 +99,16 @@ public static class PrefabLinks
         $"The lines of prefab instance '{instance}' differ from its prefab. A change of the prefab does not change this " +
         "instance. Unpack the instance, or compile it again.";
 
+    /// <summary>The info text of an override (section 8.11 of the M6b design, UI rule 10). Each override has the info
+    /// icon with it.</summary>
+    public static readonly HelpText OverrideHelp = new("Override",
+        "A field of this instance that differs from the prefab. Only this instance has the value.",
+        "The lines of this instance. The prefab does not change until you apply the value.");
+
     /// <summary>The note of a compile that replaced a hand edit of the lines of an instance (rule P01).</summary>
     public static string ReplacedHandEditNote(string instance, string script) =>
         $"The lines of prefab instance '{instance}' in {script} differed from its prefab. The compile replaced them with " +
-        "the lines of the prefab. Undo gives them back.";
+        "the lines of the prefab. Undo restores them.";
 
     /// <summary>The text of P02.</summary>
     public static string MissingMessage(string instance, string prefab) =>

@@ -231,7 +231,12 @@ public sealed partial class MissionEditor
             : !asset.Active ? PrefabModeModel.LowerModBanner(asset.ModId ?? "")
             : session.ReadOnlyReason;
         return new PrefabModeModel(asset, template, analysis, instances.Count,
-            instances.Select(i => i.Script).Distinct(VfsPath.Comparer).Count(), reason);
+            instances.Select(i => i.Script).Distinct(VfsPath.Comparer).Count(), reason)
+        {
+            // A file with a problem has no template sections. The Prefab page still shows its problems and its text.
+            PageAnalysis = analysis ?? TemplateAnalysis(prefab, new PrefabTemplate(prefab.Id, asset.Name, MissionPrefabKind.Beat),
+                asset.ModId),
+        };
     }
 
     /// <summary>The analysis of the template sections of a prefab in the role form. The problems of a line with a slot
@@ -288,6 +293,10 @@ public sealed partial class MissionEditor
 public sealed record PrefabModeModel(PrefabAsset Asset, PrefabTemplate? Template, MissionAnalysis? Analysis, int Instances,
     int Scripts, string? ReadOnlyReason)
 {
+    /// <summary>The analysis of the Prefab page: <see cref="Analysis"/>, or an analysis without sections when the file of
+    /// the prefab has a problem.</summary>
+    public required MissionAnalysis PageAnalysis { get; init; }
+
     /// <summary>The banner of a built-in prefab (section 8.11 of the M6b design).</summary>
     public const string BuiltInBanner = "This is a built-in prefab. It cannot change. Make a variant to change it.";
 

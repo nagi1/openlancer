@@ -430,13 +430,17 @@ internal sealed partial class GraphView
             Paste();
         }
 
-        var newAct = edit.NewAct(selectedBlocks);
-        if (ImGui.MenuItem("New act from selection", "", false, newAct != null))
+        // A template in prefab mode has no acts (UI rule 4).
+        if (edit.HasActs)
         {
-            Run(newAct);
-        }
+            var newAct = edit.NewAct(selectedBlocks);
+            if (ImGui.MenuItem("New act from selection", "", false, newAct != null))
+            {
+                Run(newAct);
+            }
 
-        ImGui.SetItemTooltip("Put the selected triggers into a new act.");
+            ImGui.SetItemTooltip("Put the selected triggers into a new act.");
+        }
 
         EditorTheme.PopMenuColors();
         ImGui.EndPopup();
@@ -537,69 +541,49 @@ internal sealed partial class GraphView
             return;
         }
 
-        var actions = edit.FrameActions(instance, editor.FreePrefabId, editable);
+        var actions = edit.FrameActions(instance, editor.FreePrefabId, editable, edit.DuplicateInstance(frame, BesidePlace(frame.Node)));
         if (actions.Count == 0)
         {
             return;
         }
 
         ImGui.Separator();
-        // "Duplicate" comes before "Delete instance", as in the node menu.
-        foreach (var action in actions.Where(a => a.Label != "Delete instance"))
+        foreach (var action in actions)
         {
-            FrameItem(action);
-        }
+            if (ImGui.MenuItem(action.Label))
+            {
+                missions.Do(action);
+            }
 
-        if (editable && ImGui.MenuItem("Duplicate", "Ctrl+D"))
-        {
-            Run(edit.DuplicateInstance(frame, BesidePlace(frame.Node)));
-        }
-
-        foreach (var action in actions.Where(a => a.Label == "Delete instance"))
-        {
-            FrameItem(action);
+            if (action.Tooltip != null)
+            {
+                ImGui.SetItemTooltip(action.Tooltip);
+            }
         }
     }
 
-    /// <summary>One item of the frame menu: it runs its batch, or it goes to its link.</summary>
-    private void FrameItem(PageAction action)
-    {
-        if (ImGui.MenuItem(action.Label))
-        {
-            if (action.Batch != null)
-            {
-                Run(action.Batch);
-            }
-            else if (action.Link != null)
-            {
-                missions.Follow(action.Link);
-            }
-        }
-
-        if (action.Tooltip != null)
-        {
-            ImGui.SetItemTooltip(action.Tooltip);
-        }
-    }
+    // The radius of the dot of the overrides, and the width that the title leaves for it, in canvas points.
+    private const float OverridesDotRadius = 3.5f;
+    private const float OverridesDotWidth = 2 * OverridesDotRadius + 6;
 
     /// <summary>The violet dot after the title of a collapsed linked instance with overrides (section 8.6 of the M6b
-    /// design), with the tooltip "This instance has {n} overrides."</summary>
-    private void OverridesDot(GraphNode node, ImDrawListPtr drawList, ref float x, Vector2 origin)
+    /// design), with the tooltip "This instance has {n} overrides." The title leaves <see cref="OverridesDotWidth"/> for
+    /// it.</summary>
+    private void OverridesDot(int overrides, ImDrawListPtr drawList, ref float x, Vector2 origin)
     {
-        if (node.Frame?.Instance?.Linked is not { OverrideCount: > 0 } linked)
+        if (overrides <= 0)
         {
             return;
         }
 
-        const float radius = 3.5f;
-        var center = new Vector2(x + radius, origin.Y + MissionGraph.HeaderHeight / 2);
-        drawList.AddCircleFilled(center, radius, EditorTheme.ToAbgr(EditorTheme.Override));
-        if (ImGui.IsMouseHoveringRect(center - new Vector2(radius + 3), center + new Vector2(radius + 3)))
+        var center = new Vector2(x + OverridesDotRadius, origin.Y + MissionGraph.HeaderHeight / 2);
+        drawList.AddCircleFilled(center, OverridesDotRadius, EditorTheme.ToAbgr(EditorTheme.Override));
+        if (ImGui.IsMouseHoveringRect(center - new Vector2(OverridesDotRadius + 3), center + new Vector2(OverridesDotRadius + 3)))
         {
-            pendingTooltip = MissionPageModel.OverridesDotTip(linked.OverrideCount);
+            pendingTooltip = MissionPageModel.OverridesDotTip(overrides);
         }
 
-        x += 2 * radius + 6;
+        x += OverridesDotWidth;
     }
 
     /// <summary>The batch of Ctrl+D: a copy of each selected trigger and of each selected prefab instance, in one undo

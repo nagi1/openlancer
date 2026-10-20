@@ -54,7 +54,7 @@ internal sealed partial class HierarchyPanel
         EditorTheme.PushMenuColors();
         if (window.Missions.Shown is { } analysis)
         {
-            foreach (var (kind, label) in MissionTreeEdits.CreateKinds)
+            foreach (var (kind, label) in MissionTreeEdits.CreateKindsOf(analysis))
             {
                 var refusal = MissionTreeEdits.CreateRefusal(analysis, kind);
                 if (ImGui.MenuItem(label, "", false, refusal == null))

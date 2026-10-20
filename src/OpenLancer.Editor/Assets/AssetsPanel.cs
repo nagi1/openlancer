@@ -56,7 +56,8 @@ internal sealed class AssetsPanel : IDisposable
     private int columns = 1;
     private IReadOnlyList<AssetRow> shown = [];
     private readonly RenamePopup prefabRename = new("##prefab-rename");
-    private string? renamingPrefab;
+    // The prefab of the open rename popup, and true for a rename of the file name, false for the name.
+    private (string Id, bool File)? renamingPrefab;
 
     /// <param name="thumbnailFolder">The folder of the cache of the thumbnails.</param>
     public AssetsPanel(EditorWindow window, string thumbnailFolder)
@@ -253,12 +254,10 @@ internal sealed class AssetsPanel : IDisposable
         ImGui.TextDisabled(TextFit.CutRight(Footer(session), right.X - 2 * ImGui.GetStyle().FramePadding.X));
 
         thumbnails.Frame(CanRender(session));
-        if (prefabRename.Draw() is { } newId && renamingPrefab is { } old)
+        if (prefabRename.Draw() is { } text && renamingPrefab is var (old, file))
         {
             renamingPrefab = null;
-            if (!string.Equals(newId.Trim(), old, StringComparison.Ordinal))
-                window.Missions.Run(new MissionBatch($"Rename prefab {old} to {newId.Trim()}",
-                    [new RenamePrefabAsset(PrefabRef.ModOf(old), newId.Trim())]));
+            window.Missions.Run(RenameBatch(old, text, file));
         }
     }
 
@@ -421,11 +420,24 @@ internal sealed class AssetsPanel : IDisposable
     private static string? PrefabLock(EditorSession session, AssetRow row) =>
         row.Origin != ValueOrigin.ActiveMod ? MissionLibrary.LockTip(row.ModId ?? "") : session.NoEditReason;
 
-    /// <summary>F2 and "Rename" of a mission prefab asset: the popup with the new file name.</summary>
-    private void RenamePrefab(AssetRow row)
+    /// <summary>F2 and "Rename" of a mission prefab asset: the popup with the name that the tile shows. "Rename file..."
+    /// opens it with the file name.</summary>
+    private void RenamePrefab(AssetRow row, bool file = false)
     {
-        renamingPrefab = row.Asset.Id;
-        prefabRename.Open(row.Asset.Id);
+        renamingPrefab = (row.Asset.Id, file);
+        prefabRename.Open(file ? row.Asset.Id : NameOf(row));
+    }
+
+    /// <summary>The batch of a rename of a prefab asset: a new name in the library, or a new file name. Null for the same
+    /// text.</summary>
+    internal static MissionBatch? RenameBatch(string id, string text, bool file)
+    {
+        text = text.Trim();
+        if (text.Length == 0 || file && string.Equals(text, id, StringComparison.Ordinal))
+            return null;
+        return file
+            ? new MissionBatch($"Rename prefab file {id} to {text}", [new RenamePrefabAsset(PrefabRef.ModOf(id), text)])
+            : new MissionBatch($"Rename prefab {id} to '{text}'", [new RenamePrefabAsset(PrefabRef.ModOf(id), id) { NewName = text }]);
     }
 
     /// <summary>Delete and "Delete" of a mission prefab asset (decision D673): its instances keep their lines and get
@@ -436,14 +448,16 @@ internal sealed class AssetsPanel : IDisposable
     /// <summary>The menu of a tile of a mission prefab asset (section 8.3 of the M6b design).</summary>
     private void PrefabMenu(EditorSession session, AssetRow row)
     {
-        if (Theme.IconMenuItem(EditorIcons.Cubes, "Open prefab", row.NotPlaceable?.StartsWith("The prefab file", StringComparison.Ordinal) != true))
+        if (Theme.IconMenuItem(EditorIcons.Cubes, "Open prefab", !row.HasProblem))
             window.Missions.OpenPrefabMode(PrefabOf(row));
         ImGui.SetItemTooltip(MissionPageModel.OpenPrefabTip);
         var reason = PrefabLock(session, row);
         if (ImGui.MenuItem($"{EditorIcons.Pen}   Rename", "F2", false, reason == null))
             RenamePrefab(row);
-        if (reason != null)
-            ImGui.SetItemTooltip(reason);
+        ImGui.SetItemTooltip(reason ?? "Change the name of the prefab in the library.");
+        if (ImGui.MenuItem($"{EditorIcons.Pen}   Rename file...", "", false, reason == null))
+            RenamePrefab(row, file: true);
+        ImGui.SetItemTooltip(reason ?? $"Change the file name of the prefab. {Data.Missions.Prefabs.PrefabAsset.FileNameRule}");
         if (ImGui.MenuItem($"{EditorIcons.TrashAlt}   Delete", "Del", false, reason == null))
             DeletePrefab(row);
         ImGui.SetItemTooltip(reason ?? "Delete the prefab file. Its instances keep their lines and show the warning P02.");
@@ -465,7 +479,7 @@ internal sealed class AssetsPanel : IDisposable
         if ((row.Mark & AssetMark.Added) != 0)
             drawList.AddText(ImGui.GetFont(), badge, min + new Vector2(4 * scale, 0), ImGui.GetColorU32(EditorTheme.Accent), "+");
         if (row.Asset.Kind == AssetKind.PropGroup && row.NotPlaceable != null ||
-            row.Asset.Kind == AssetKind.MissionPrefab && row.NotPlaceable?.StartsWith("The prefab file", StringComparison.Ordinal) == true)
+            row.Asset.Kind == AssetKind.MissionPrefab && row.HasProblem)
             Glyphs.Draw(drawList, EditorIcons.ExclamationTriangle, badge, corner, EditorTheme.ToAbgr(EditorTheme.Error));
         else if (row.Asset.Kind == AssetKind.MissionPrefab)
         {

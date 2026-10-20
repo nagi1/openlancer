@@ -276,6 +276,10 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
     /// <summary>The items of the page menu, for example "Duplicate" and "Delete" of a mission ship.</summary>
     public IReadOnlyList<PageAction> PageActions { get; init; } = [];
 
+    /// <summary>The text of the prefab file of the Prefab page, read-only, with the marks of its problems, or null (UI
+    /// rule 11).</summary>
+    public PrefabFileView? PrefabFile { get; init; }
+
     /// <summary>Makes the batch of "Rename" of the page menu, or null for an item without a rename.</summary>
     public Func<string, MissionBatch?>? Rename { get; init; }
 

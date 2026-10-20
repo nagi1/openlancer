@@ -195,15 +195,10 @@ internal sealed class MissionView : IDisposable
             if (missions.ReadOnlyNote == null && model.Template != null && window.Session?.Edits.Missions is { } editor)
             {
                 ImGui.SameLine();
+                // The run opens the variant in prefab mode, and the variant can change.
                 if (ImGui.SmallButton("Make variant"))
                 {
-                    // Prefab mode then shows the variant, which can change.
-                    var id = editor.FreePrefabId((model.Asset.Ref.Id + "_variant").ToLowerInvariant());
-                    if (missions.Run(new MissionBatch($"Make a variant of {model.Asset.Name}",
-                            [new CreatePrefabAsset(id) { VariantOf = model.Asset.Ref }])))
-                    {
-                        missions.OpenPrefabMode(PrefabRef.ModOf(id));
-                    }
+                    missions.Run(MissionPageModel.VariantBatch(editor.FreePrefabId, model.Asset.Ref, model.Asset.Name));
                 }
 
                 ImGui.SetItemTooltip(MissionPageModel.MakeVariantTip);
@@ -211,7 +206,8 @@ internal sealed class MissionView : IDisposable
         }
         else
         {
-            ImGui.TextColored(EditorTheme.Override, $"{EditorIcons.Cubes}  {model.BarText(mod)}");
+            // The text uses the text color. The violet is only for the marks of the overrides.
+            ImGui.Text($"{EditorIcons.Cubes}  {model.BarText(mod)}");
         }
 
         ImGui.PopTextWrapPos();

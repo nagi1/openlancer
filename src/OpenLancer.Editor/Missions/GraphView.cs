@@ -759,10 +759,12 @@ internal sealed partial class GraphView : IDisposable
             return;
         }
 
+        // The violet dot of the overrides keeps its place before the marks, so a long title does not push it over them.
+        var overrides = node.Frame?.Instance?.Linked?.OverrideCount ?? 0;
         var titleWidth = TextFit.AddText(drawList, font, TextSize, new Vector2(x, y), EditorTheme.ToAbgr(EditorTheme.TextBright),
-            node.Title, right - x);
+            node.Title, right - x - (overrides > 0 ? OverridesDotWidth : 0));
         x += titleWidth + 6;
-        OverridesDot(node, drawList, ref x, origin);
+        OverridesDot(overrides, drawList, ref x, origin);
         if (!full)
         {
             return;

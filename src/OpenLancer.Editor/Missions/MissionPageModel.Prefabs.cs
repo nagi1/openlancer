@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data;
@@ -27,10 +26,14 @@ internal sealed record PrefabAssetLink(PrefabRef Prefab);
 /// <param name="Id">The file name that the dialog proposes.</param>
 internal sealed record SavePrefabLink(InstanceRef Instance, string Name, string Id);
 
+/// <summary>The text of a prefab file on the Prefab page, read-only, with the marks of the format check (UI rule
+/// 11).</summary>
+internal sealed record PrefabFileView(string Path, RawText Text, IReadOnlyList<RawMark> Marks);
+
 /// <summary>
 /// The pages of the behavior prefabs (sections 5.6, 5.8, 5.9 and 8.6 of the M6b design): a linked instance with its
-/// fields, overrides and removed members, a matched instance with the fields that it can write, the Prefab page of
-/// prefab mode, and the value choice of a line of a template.
+/// fields, outputs, overrides and removed members, a matched instance with the fields that it can write, the Prefab page
+/// of prefab mode, and the value choice of a line of a template.
 /// </summary>
 internal sealed partial record MissionPageModel
 {
@@ -44,18 +47,18 @@ internal sealed partial record MissionPageModel
     public const string FieldValueTip = "Each instance can set this value.";
 
     // Texts that the design does not give. They follow the same form.
-    public const string RemovedTip = "You deleted this trigger of the instance. The prefab still has it. Revert brings it back.";
+    public const string RemovedTip = "You deleted this trigger of the instance. The prefab still has it. Revert adds it again.";
     public const string RemovedText = "Removed";
     public const string SaveAsPrefabTip = "Make a prefab asset from the triggers of this instance. The instance then uses it.";
     public const string OpenPrefabTip = "Open the prefab in prefab mode. A change there changes each instance.";
     public const string SelectAssetTip = "Show the asset of the prefab in the Assets panel.";
     public const string PerInstanceText = "Per instance";
     public const string PerInstanceTip = "Each instance sets this value. It never shows as an override.";
-
-    /// <summary>The info text of an override (section 8.11 of the M6b design).</summary>
-    public static readonly HelpText OverrideHelp = new("Override",
-        "A field of this instance that differs from the prefab. Only this instance has the value.",
-        "The lines of this instance. The prefab does not change until you apply the value.");
+    public const string OutputsTip = "The triggers of this mission that the output starts. The instance writes one line for each trigger.";
+    public const string NewFieldText = "New field from this value";
+    public const string NewFieldTip = "Make a field of the prefab with this value as its default. Each instance can then set the value.";
+    public const string NewLineFieldText = "New field from this line";
+    public const string MissingPrefabKind = MissionGraph.MissingPrefab;
 
     /// <summary>The info text of a behavior prefab asset.</summary>
     public static readonly HelpText AssetHelp = new("Behavior prefab asset",
@@ -67,11 +70,29 @@ internal sealed partial record MissionPageModel
         "The edit view of one prefab. A change here changes each instance of the prefab in the active mod.",
         "The prefab file, and the [Trigger] sections of each instance.");
 
-    /// <summary>The tooltip of the violet dot of a collapsed linked instance with overrides.</summary>
-    public static string OverridesDotTip(int count) =>
-        count == 1 ? "This instance has 1 override." : $"This instance has {Count(count)} overrides.";
+    /// <summary>The info text of a prefab: the texts of its template, or the texts of a prefab asset.</summary>
+    internal static HelpText PrefabHelp(string name, PrefabTemplate? template) =>
+        template is { Help.Length: > 0 }
+            ? new HelpText(name, template.Help, template.Writes.Length > 0 ? template.Writes : AssetHelp.WhatItWrites)
+            : AssetHelp with { Title = name };
 
-    private static string Count(int n) => n.ToString(CultureInfo.InvariantCulture);
+    /// <summary>The tooltip of the violet dot of a collapsed linked instance with overrides.</summary>
+    public static string OverridesDotTip(int count) => $"This instance has {MissionChecks.Count(count, "override", "overrides")}.";
+
+    /// <summary>
+    /// The batch of "Make variant" and of "Make a variant with this value" (sections 5.6 and 5.9 of the M6b design): a copy
+    /// of a prefab in the active mod with a free file name. The command gives the variant a free name. Without an
+    /// instance, the result selects the new prefab, and the Mission tab opens it in prefab mode. With an instance, the
+    /// instance links to the variant, the values of its overrides of the fields become the defaults of the variant, and
+    /// the selection stays on the instance.
+    /// </summary>
+    /// <param name="fields">The fields whose values become defaults, or null for all overrides of the instance.</param>
+    internal static MissionBatch VariantBatch(Func<string, string> freeId, PrefabRef prefab, string name,
+        InstanceRef? instance = null, IReadOnlyList<string>? fields = null) =>
+        One($"Make a variant of {name}", new CreatePrefabAsset(freeId(prefab.Id + "_variant"))
+        {
+            VariantOf = prefab, Source = instance, Fields = fields,
+        });
 
     /// <summary>
     /// The text of a line of a template in prefab mode, with the label of the field of each slot in brackets (section 8.6
@@ -109,8 +130,9 @@ internal sealed partial record MissionPageModel
 
     /// <summary>
     /// The page of a linked instance (sections 5.6 and 8.6 of the M6b design): each field of the prefab with the widget
-    /// of its kind, the overrides in bold with the violet bar and their menu, the members and the removed members, and
-    /// the page menu "Overrides ({n})". A field edit gives <see cref="SetPrefabField"/>, so the instance compiles.
+    /// of its kind, the outputs of the ports, the overrides in bold with the violet bar and their menu, the members and
+    /// the removed members, and the page menu "Overrides ({n})". A field edit gives <see cref="SetPrefabField"/>, so the
+    /// instance compiles. An instance of a prefab that no mod has shows "Missing prefab", as Unity does.
     /// </summary>
     private static MissionPageModel LinkedInstancePage(PageContext context, MissionPrefabInstance instance, LinkedInstance linked)
     {
@@ -119,7 +141,7 @@ internal sealed partial record MissionPageModel
         var record = linked.Record;
         var reference = new InstanceRef(script, record.Id);
         var prefab = PrefabRef.TryParse(record.Prefab);
-        var name = linked.Asset?.Name ?? prefab?.Id ?? record.Prefab;
+        var name = linked.Asset?.Name ?? instance.Definition.Name;
         var readOnly = context.ScriptReadOnly(script) ?? (linked.Missing ? PrefabLinks.MissingMessage(record.Id, name) : null);
         var editable = readOnly == null;
         var canApply = linked.Asset is { Active: true };
@@ -173,10 +195,7 @@ internal sealed partial record MissionPageModel
         if (editable || linked.Missing && context.ScriptReadOnly(script) == null)
             buttons.Add(new PageAction("Unpack", One($"Unpack {record.Id}", new UnpackPrefabInstance(reference)), Tooltip: UnpackTip));
 
-        var template = linked.Template;
-        var help = template is { Help.Length: > 0 }
-            ? new HelpText(name, template.Help, template.Writes.Length > 0 ? template.Writes : AssetHelp.WhatItWrites)
-            : AssetHelp with { Title = name };
+        var help = PrefabHelp(name, linked.Template);
         var sections = new List<PageSection>
         {
             new("fields", "Fields", MissionGlyphs.OfPrefab(instance.Definition.Id), help, fields,
@@ -184,14 +203,18 @@ internal sealed partial record MissionPageModel
             {
                 Actions = buttons,
             },
-            new("members", "Triggers in this prefab", EditorIcons.Bolt, MissionSchema.Retail.Help["prefabMembers"], members, []),
-            Problems(analysis, SectionProblems(analysis, linked.Sections.Values.Distinct().ToArray())
-                .Concat(analysis.Problems.Where(p => p.Subject?.EndsWith("|" + record.Id, StringComparison.Ordinal) == true &&
-                                                     p.Target == null)).ToList(), context.ShowBaseGame),
         };
+        if (linked.Template is { Ports.Count: > 0 } template)
+            sections.Add(new PageSection("outputs", "Outputs", EditorIcons.Link, null,
+                template.Ports.Select(p => OutputField(context, reference, record, p, readOnly)).ToList(), []));
+        sections.Add(new PageSection("members", "Triggers in this prefab", EditorIcons.Bolt, MissionSchema.Retail.Help["prefabMembers"],
+            members, []));
+        sections.Add(Problems(analysis, SectionProblems(analysis, linked.Sections.Values.Distinct().ToArray())
+            .Concat(analysis.Problems.Where(p => p.Subject?.EndsWith("|" + record.Id, StringComparison.Ordinal) == true &&
+                                                 p.Target == null)).ToList(), context.ShowBaseGame));
         var ini = record.Members.Select(m => linked.Sections.GetValueOrDefault(m.Role)?.Ref).OfType<SectionRef>().ToList();
-        return new MissionPageModel($"{name} {record.Id}", "Behavior prefab", MissionGlyphs.OfPrefab(instance.Definition.Id),
-            help, MissionCompleteness.OfInstance(analysis, instance), sections, null)
+        return new MissionPageModel($"{name} {record.Id}", linked.Asset == null ? MissingPrefabKind : "Behavior prefab",
+            MissionGlyphs.OfPrefab(instance.Definition.Id), help, MissionCompleteness.OfInstance(analysis, instance), sections, null)
         {
             IniSections = ini,
             IniTitle = linked.Sections.Values.All(s => s.Kind == MissionSectionKind.Trigger) ? "INI (all triggers)" : "INI (all sections)",
@@ -201,6 +224,21 @@ internal sealed partial record MissionPageModel
             ReadOnly = readOnly != FieldNote ? readOnly : null,
             PageActions = editable ? OverridesMenu(context, reference, prefab, name, canApply, linked) : [],
         };
+    }
+
+    /// <summary>
+    /// The field of an output of a linked instance (sections 5.3 and 5.5 of the M6b design): the list of the triggers of
+    /// the mission that the port starts, with a trigger picker in each row. The list widget gives
+    /// <see cref="SetPrefabPort"/>, so the instance writes one line for each trigger. A link drag from the member
+    /// trigger of the port in the graph gives the same command.
+    /// </summary>
+    private static PageField OutputField(PageContext context, InstanceRef instance, InstanceRecord record, PrefabPort port,
+        string? readOnly)
+    {
+        var field = new PrefabFieldDef(port.Id, port.Label, PrefabFieldKind.Triggers) { Help = OutputsTip };
+        var rows = record.Ports.Where(p => p.Port == port.Id).Select(p => PrefabRow.Of(p.Trigger)).ToList();
+        return PrefabValueField(context, field, rows, readOnly,
+            triggers => One($"Set {port.Label}", new SetPrefabPort(instance, port.Id, triggers)));
     }
 
     /// <summary>The compile of a linked instance now, or null when the prefab is missing or the compile refuses.</summary>
@@ -226,21 +264,42 @@ internal sealed partial record MissionPageModel
             ? new RawLineLink(section.Ref, entry)
             : null;
 
-    /// <summary>The kind of a prefab field in plain words, for example "Whole number" or "Condition".</summary>
-    internal static string KindLabel(PrefabFieldDef field)
+    /// <summary>The kind of a prefab field in plain words, for example "Whole number", "Condition" or "Order
+    /// list".</summary>
+    internal static string KindLabel(PrefabFieldDef field) => field.Kind switch
     {
-        var text = field.KindText;
-        var words = new System.Text.StringBuilder();
-        foreach (var c in text)
+        PrefabFieldKind.List => "List",
+        PrefabFieldKind.Triggers => "Trigger list",
+        PrefabFieldKind.Condition => "Condition",
+        PrefabFieldKind.Lines => "Lines",
+        _ => field.ValueKind switch
         {
-            if (char.IsUpper(c) && words.Length > 0)
-                words.Append(' ').Append(char.ToLowerInvariant(c));
-            else
-                words.Append(words.Length == 0 ? char.ToUpperInvariant(c) : c);
-        }
+            MissionValueKind.Object => "Ship, solar or label",
+            MissionValueKind.Group => "Ship or formation",
+            MissionValueKind.Ship => "Mission ship",
+            MissionValueKind.Position => "Position",
+            MissionValueKind.Rotation => "Rotation",
+            MissionValueKind.Number => "Number",
+            MissionValueKind.WholeNumber => "Whole number",
+            MissionValueKind.Attitude => "Attitude",
+            MissionValueKind.TextId => "Text",
+            MissionValueKind.Bool => "Yes or no",
+            MissionValueKind.Token => "Word",
+            MissionValueKind.Text => "Text",
+            MissionValueKind.Head or MissionValueKind.Body or MissionValueKind.Accessory => "Costume part",
+            MissionValueKind.MetaBehavior => "Meta behavior",
+            MissionValueKind.AmbientScript => "Room ambient",
+            MissionValueKind.Sound => "Sound",
+            MissionValueKind.Room => "Room",
+            MissionValueKind.Fuse => "Fuse",
+            MissionValueKind.File => "File",
+            var kind => ValueKindText(kind),
+        },
+    };
 
-        return words.ToString();
-    }
+    /// <summary>The text of a port of a template in plain words: the trigger of the template that writes its
+    /// lines.</summary>
+    internal static string PortText(PrefabPort port) => $"Written by trigger '{port.Role}'";
 
     /// <summary>Two help texts as one, or the one that is not null.</summary>
     private static string? Join(string? first, string second) => first is { Length: > 0 } ? $"{first}\n{second}" : second;
@@ -259,22 +318,19 @@ internal sealed partial record MissionPageModel
                 One($"Apply {label} to prefab {prefabName}", new ApplyOverrideToPrefab(instance) { Field = field }),
                 Tooltip: ApplyTip));
         else if (prefab != null)
-            menu.Add(new PageAction("Make a variant with this value", One($"Make a variant of {prefabName}",
-                new CreatePrefabAsset(context.FreePrefabId((prefab.Id + "_variant").ToLowerInvariant()))
-                {
-                    VariantOf = prefab, Source = instance, Fields = [field],
-                }), Tooltip: VariantTip));
+            menu.Add(new PageAction("Make a variant with this value",
+                VariantBatch(context.FreePrefabId, prefab, prefabName, instance, [field]), Tooltip: VariantTip));
         return menu;
     }
 
-    /// <summary>The menu of a removed member (decision D676 c): "Revert" brings the member back, and "Apply to prefab"
+    /// <summary>The menu of a removed member (decision D676 c): "Revert" adds the member again, and "Apply to prefab"
     /// removes its section from the prefab.</summary>
     private static IReadOnlyList<PageAction> RemovedMenu(InstanceRef instance, string prefabName, bool canApply, string role)
     {
         var menu = new List<PageAction>
         {
             new("Revert", One($"Revert the removed {role}", new RevertOverride(instance) { Member = role }),
-                Tooltip: "Bring the trigger back, with the lines of the prefab."),
+                Tooltip: "Add the trigger again, with the lines of the prefab."),
         };
         if (canApply)
             menu.Add(new PageAction($"Apply to prefab '{prefabName}'",
@@ -292,7 +348,7 @@ internal sealed partial record MissionPageModel
         string prefabName, bool canApply, LinkedInstance linked)
     {
         var record = linked.Record;
-        var menu = new List<PageAction> { new($"Overrides ({Count(linked.OverrideCount)})", null) };
+        var menu = new List<PageAction> { new($"Overrides ({Number(linked.OverrideCount)})", null) };
         foreach (var value in linked.Fields.Where(f => f.Override))
         {
             var label = value.Field.Label;
@@ -309,13 +365,12 @@ internal sealed partial record MissionPageModel
         if (linked.OverrideCount > 0)
         {
             menu.Add(new PageAction("Revert all", One($"Revert all of {record.Id}", new RevertOverride(instance)),
-                Tooltip: "Use the values of the prefab for each field, and bring back each removed trigger."));
+                Tooltip: "Use the values of the prefab for each field, and add each removed trigger again."));
             if (canApply)
                 menu.Add(new PageAction("Apply all", One($"Apply the overrides of {record.Id} to prefab {prefabName}",
                     new ApplyOverrideToPrefab(instance)), Tooltip: "Make each override the value of the prefab."));
             else if (prefab != null)
-                menu.Add(new PageAction("Make a variant with these values", One($"Make a variant of {prefabName}",
-                    new CreatePrefabAsset(context.FreePrefabId((prefab.Id + "_variant").ToLowerInvariant())) { VariantOf = prefab, Source = instance }),
+                menu.Add(new PageAction("Make a variant with these values", VariantBatch(context.FreePrefabId, prefab, prefabName, instance),
                     Tooltip: "Copy the prefab into the active mod, with the values of the overrides."));
         }
 
@@ -327,8 +382,9 @@ internal sealed partial record MissionPageModel
 
     /// <summary>
     /// The field of a value of a prefab field (section 5.5 of the M6b design): a value field has the widget of its kind,
-    /// for example a picker for a formation. A list field, a trigger list, a condition and lines have the list widget,
-    /// with one row for each row of the value. One gesture gives one batch of the rows in their text form.
+    /// for example a picker for a formation or a dropdown for a word. A list field, a trigger list, a condition and lines
+    /// have the list widget, with one row for each row of the value. One gesture gives one batch of the rows in their
+    /// text form.
     /// </summary>
     /// <param name="make">Makes the batch of the new rows of the value.</param>
     internal static PageField PrefabValueField(PageContext context, PrefabFieldDef field, IReadOnlyList<PrefabRow> rows,
@@ -366,7 +422,7 @@ internal sealed partial record MissionPageModel
         var list = PrefabListSpec(field);
         var model = ListFieldModel.Read(list, rows.Select(r => new ListFieldLine(r.Key ?? field.Id,
             r.Texts.Select(t => (ValueBase)new StringValue(t)).ToList())).ToList());
-        return new PageField(field.Label, Count(model.Rows.Count), help)
+        return new PageField(field.Label, Number(model.Rows.Count), help)
         {
             List = model,
             Edit = new FieldEdit(EditWidget.List, $"Set {field.Label}")
@@ -435,7 +491,7 @@ internal sealed partial record MissionPageModel
             {
                 var model = ListFieldModel.Read(spec, values.Where(v => v.Line != null).Select(v => ListFieldLine.Of(v.Line!.Line))
                     .Distinct().ToList());
-                fields.Add(new PageField(field.Label, Count(model.Rows.Count), field.Help)
+                fields.Add(new PageField(field.Label, Number(model.Rows.Count), field.Help)
                 {
                     List = model,
                     Edit = writes
@@ -449,7 +505,7 @@ internal sealed partial record MissionPageModel
             }
             else if (field.List != null)
             {
-                fields.Add(new PageField(field.Label, Count(values.Count), field.Help)
+                fields.Add(new PageField(field.Label, Number(values.Count), field.Help)
                 {
                     Heading = true,
                 });
@@ -459,7 +515,7 @@ internal sealed partial record MissionPageModel
             }
             else
             {
-                fields.Add(MatchedValueField(context, reference, field, values.FirstOrDefault(), writes, Make));
+                fields.Add(MatchedValueField(context, instance, field, values.FirstOrDefault(), writes, Make));
             }
         }
 
@@ -481,7 +537,7 @@ internal sealed partial record MissionPageModel
             buttons.Add(new PageAction("Open prefab", null, new PrefabModeLink(builtin), OpenPrefabTip));
         if (readOnly == null && instance.Core != null)
             buttons.Add(new PageAction("Save as prefab...", null,
-                new SavePrefabLink(reference, definition.Name, context.FreePrefabId(definition.Id.ToLowerInvariant())), SaveAsPrefabTip));
+                new SavePrefabLink(reference, definition.Name, context.FreePrefabId(definition.Id)), SaveAsPrefabTip));
 
         var sections = new List<PageSection>
         {
@@ -507,12 +563,13 @@ internal sealed partial record MissionPageModel
     }
 
     /// <summary>
-    /// The field of a value of a matched instance (section 5.8 of the M6b design). A value of an action has the widget of
-    /// its value spec, a condition has a text field of its line, and a key of the core section has a text field of its
-    /// values. A value without its line has a text field, and the write adds the line. A field without a write rule is
-    /// read-only and goes to its trigger.
+    /// The field of a value of a matched instance (section 5.8 of the M6b design), with the widget of what its write rule
+    /// writes (UI rules 2 and 3): a value of an action or of a key of the core section has the widget of its value spec,
+    /// for example a picker for a faction or a dropdown for a word. A condition has the list widget of one condition. A
+    /// value without its line has the same widget, and the write adds the line. A field without a write rule is read-only
+    /// and goes to its trigger.
     /// </summary>
-    private static PageField MatchedValueField(PageContext context, InstanceRef instance, PrefabField field,
+    private static PageField MatchedValueField(PageContext context, MissionPrefabInstance instance, PrefabField field,
         PrefabFieldValue? value, bool writes, Func<IReadOnlyList<string>, MissionBatch?> make)
     {
         var script = context.Analysis.Script.Path;
@@ -520,55 +577,63 @@ internal sealed partial record MissionPageModel
         var shown = new PageField(field.Label, value?.Text ?? "None", field.Help, link);
         if (!writes)
             return shown;
-        if (value?.Line is not { } line)
+        var line = value?.Line;
+        if (field.Write == PrefabWrite.Value && line?.Name?.Values.FirstOrDefault(s => s.Index == field.From.Value) is { } spec)
+            return ValueField(context, line, spec, field.Label, v => new SetPrefabField(new InstanceRef(script, instance.Id), field.Id,
+                [string.Join(", ", TextsOf(v))])) with { Help = field.Help };
+        if (WriteFieldOf(instance, field, line) is not { } definition)
+            return shown;
+        IReadOnlyList<PrefabRow> rows = field.Write switch
         {
-            // A value without its line gets a text field. The write adds the line (section 5.8 of the M6b design).
-            return field.Write is PrefabWrite.Value or PrefabWrite.Key or PrefabWrite.Condition
-                ? shown with
-                {
-                    Edit = new FieldEdit(EditWidget.Text, $"Set {field.Label}")
-                    {
-                        Make = v => v.Scalar is { Length: > 0 } text ? make([text]) : null,
-                    },
-                }
-                : shown;
-        }
+            PrefabWrite.Condition when line != null => [PrefabRow.Line(line.Key, [.. line.Line.Select(MissionIndex.Text)])],
+            // A key field reads one value of its line of the core section.
+            PrefabWrite.Key when value?.Text is { Length: > 0 } text => [PrefabRow.Of(text)],
+            _ => [],
+        };
+        return PrefabValueField(context, definition, rows, null, make) with { Link = link };
+    }
 
+    /// <summary>The field that a write rule of a matched instance writes, as a prefab field: a condition, or one value with
+    /// the kind of its spec in the schema. Null when the schema has no spec of one value for the field.</summary>
+    /// <param name="line">The line of the value now, or null when the instance does not have it.</param>
+    private static PrefabFieldDef? WriteFieldOf(MissionPrefabInstance instance, PrefabField field, MissionLine? line)
+    {
+        var schema = MissionSchema.Retail;
+        var from = field.From;
+        MissionValueSpec? spec;
         switch (field.Write)
         {
-            case PrefabWrite.Value when line.Name?.Values.FirstOrDefault(s => s.Index == field.From.Value) is { } spec:
-                return ValueField(context, line, spec, field.Label, v => new SetPrefabField(instance, field.Id,
-                    [string.Join(", ", TextsOf(v))])) with { Help = field.Help };
             case PrefabWrite.Condition:
-                var text = MissionEditor.LineText(line.Line);
-                return shown with
-                {
-                    Value = text,
-                    Edit = new FieldEdit(EditWidget.Text, $"Set {field.Label}")
-                    {
-                        Value = text, Make = v => v.Scalar is { Length: > 0 } row ? make([row]) : null,
-                    },
-                };
+                return new PrefabFieldDef(field.Id, field.Label, PrefabFieldKind.Condition) { Help = field.Help };
             case PrefabWrite.Key:
-                var values = string.Join(", ", line.Line.Select(MissionIndex.Text));
-                return shown with
-                {
-                    Edit = new FieldEdit(EditWidget.Text, $"Set {field.Label}")
-                    {
-                        Value = values, Make = v => v.Scalar is { } row ? make([row]) : null,
-                    },
-                };
+                var type = line?.Section.Type ?? instance.CoreSection?.Type;
+                spec = (type != null ? schema.Section(type)?.Key(from.Key!)?.ValueSpecs : null)?.FirstOrDefault(s => s.Covers(from.Value)) ??
+                       schema.Directive(from.Key!)?.Values.FirstOrDefault(s => s.Covers(from.Value));
+                break;
+            case PrefabWrite.Value:
+                spec = schema.Name(line?.Key ?? from.Actions.FirstOrDefault() ?? "")?.ValueAt(from.Value);
+                break;
             default:
-                return shown;
+                return null;
         }
+        if (spec is not { Width: 1, Rest: false })
+            return null;
+        return new PrefabFieldDef(field.Id, field.Label, PrefabFieldKind.Value)
+        {
+            ValueKind = spec.Kind == MissionValueKind.Token && spec.Tokens == null ? MissionValueKind.Text : spec.Kind,
+            Tokens = spec.Tokens,
+            Help = field.Help,
+        };
     }
 
     // ---- Prefab mode (sections 5.7 and 8.6) ----
 
     /// <summary>
     /// The Prefab page of prefab mode (section 8.6 of the M6b design): the steps, the name, the kind, the source of a
-    /// variant, the fields with their kind, default and "Per instance", the ports, the template sections and the
-    /// problems. A built-in prefab or a prefab of a lower mod is read-only, with its banner and "Make variant".
+    /// variant, the fields with their kind, default and "Per instance", the ports, the template sections, the problems
+    /// and the text of the file. A built-in prefab or a prefab of a lower mod is read-only, with its banner and "Make
+    /// variant". A prefab whose file has a problem shows the problems and the text of the file, so the user finds the
+    /// line.
     /// </summary>
     /// <param name="key">The row of the Hierarchy, for example <c>field:delay</c>: the page opens its section.</param>
     internal static MissionPageModel PrefabPage(PageContext context, PrefabModeModel model, string? key = null)
@@ -580,11 +645,23 @@ internal sealed partial record MissionPageModel
         var editable = readOnly == null && template != null;
         var sections = new List<PageSection>();
 
+        var name = new PageField("Name", asset.Name, "The name of the prefab in the library.");
+        if (editable)
+            name = name with
+            {
+                Edit = new FieldEdit(EditWidget.Text, "Rename prefab")
+                {
+                    Value = asset.Name,
+                    Make = v => v.Scalar?.Trim() is { Length: > 0 } text && text != asset.Name
+                        ? One($"Rename prefab {asset.Name} to {text}", new RenamePrefabAsset(prefab, prefab.Id) { NewName = text })
+                        : null,
+                },
+            };
         var about = new List<PageField>
         {
-            new("Name", asset.Name),
+            name,
             new("File", prefab.Builtin ? "Built-in prefab of the editor" : PrefabAsset.PathOf(prefab.Id),
-                prefab.Builtin ? "The editor has this prefab. It cannot change." : "The prefab file in the folder of the mod."),
+                prefab.Builtin ? "The editor has this prefab. It cannot change." : "The prefab file in the folder of the mod. To change the file name, use \"Rename file...\" in the menu of its tile in the Assets panel."),
             new("Mod", asset.ModId ?? "None"),
         };
         if (template != null)
@@ -598,12 +675,14 @@ internal sealed partial record MissionPageModel
 
         if (!prefab.Builtin && model.ReadOnlyReason == null)
             about.Add(new PageField("Instances", model.BarText(asset.ModId)));
-        var makeVariant = new PageAction("Make variant", One($"Make a variant of {asset.Name}",
-            new CreatePrefabAsset(context.FreePrefabId((prefab.Id + "_variant").ToLowerInvariant())) { VariantOf = prefab }), Tooltip: MakeVariantTip);
-        var canVariant = model.ReadOnlyReason != null && context.ScriptReadOnly(prefab.Script) == null && template != null;
+        // A built-in prefab and a prefab of a lower mod cannot change, so they offer a variant in the active mod.
+        var canVariant = model.ReadOnlyReason != null && context.SessionReadOnly == null && template != null;
+        var makeVariant = canVariant
+            ? new PageAction("Make variant", VariantBatch(context.FreePrefabId, prefab, asset.Name), Tooltip: MakeVariantTip)
+            : null;
         sections.Add(new PageSection("prefab", "Prefab", EditorIcons.Cubes, AssetHelp, about, [])
         {
-            Actions = canVariant ? [makeVariant] : [],
+            Actions = makeVariant != null ? [makeVariant] : [],
         });
 
         if (template != null)
@@ -611,12 +690,15 @@ internal sealed partial record MissionPageModel
             var fields = new List<PageField>();
             foreach (var field in template.Fields)
             {
+                // The kind and "Per instance" show on the heading of the field (section 8.6 of the M6b design).
+                fields.Add(new PageField(field.Label, field.PerInstance ? $"{KindLabel(field)}, {PerInstanceText.ToLowerInvariant()}" : KindLabel(field),
+                    field.PerInstance ? PerInstanceTip : null) { Heading = true });
                 var view = PrefabValueField(context, field, field.Default, editable ? null : readOnly ?? FieldNote,
                     rows => One($"Set the default of {field.Label}", new SetPrefabFieldDefault(prefab, field.Id, rows)));
-                var note = $"Kind: {KindLabel(field)}.{(field.PerInstance ? $" {PerInstanceText}." : "")}";
                 fields.Add(view with
                 {
-                    Help = Join(view.Help, note),
+                    Label = "Default",
+                    Help = Join(view.Help, $"The value of {field.Label} in each instance without an override."),
                     Actions = editable
                         ? [new PageAction("Remove field", One($"Remove field {field.Label}", new RemovePrefabField(prefab, field.Id)),
                             Tooltip: "Remove the field. Each line that uses it must have a fixed value first.")]
@@ -625,9 +707,9 @@ internal sealed partial record MissionPageModel
             }
 
             sections.Add(new PageSection("fields", "Fields", EditorIcons.List, null, fields,
-                fields.Count == 0 ? ["The prefab has no fields. Pick \"Field\" in the value choice of a line to make one."] : []));
+                fields.Count == 0 ? [$"The prefab has no fields. Pick \"{NewFieldText}\" in the menu of a value of a template line to make one."] : []));
             sections.Add(new PageSection("ports", "Ports", EditorIcons.Link, null,
-                template.Ports.Select(p => new PageField(p.Label, $"From {p.Role}",
+                template.Ports.Select(p => new PageField(p.Label, PortText(p),
                     "An output of the prefab. Each instance can start triggers of its mission with it.")).ToList(),
                 template.Ports.Count == 0 ? ["The prefab has no ports."] : []));
             var document = model.Analysis?.Document;
@@ -637,28 +719,41 @@ internal sealed partial record MissionPageModel
                     : null)).ToList(), []));
         }
 
-        var problems = asset.Problems.Select(p => new PageField($"Line {Count(p.Line)}", p.Message, null,
+        var problems = asset.Problems.Select(p => new PageField($"Line {Number(p.Line)}", p.Message, null,
             Severity: DiagnosticSeverity.Error)).ToList();
         if (model.Analysis is { } analysis)
             problems.AddRange(Problems(analysis, analysis.Problems, context.ShowBaseGame).Fields);
         sections.Add(new PageSection("problems", "Problems", EditorIcons.ExclamationTriangle, MissionSchema.Retail.Help["problems"],
             problems, problems.Count == 0 ? ["The prefab has no problem."] : []));
 
-        var help = template is { Help.Length: > 0 }
-            ? new HelpText(asset.Name, template.Help, template.Writes.Length > 0 ? template.Writes : AssetHelp.WhatItWrites)
-            : AssetHelp with { Title = asset.Name };
-        return new MissionPageModel(asset.Name, "Behavior prefab", EditorIcons.Cubes, help, MissionCompleteness.OfPrefab(model),
-            sections, null)
+        return new MissionPageModel(asset.Name, "Behavior prefab", EditorIcons.Cubes, PrefabHelp(asset.Name, template),
+            MissionCompleteness.OfPrefab(model), sections, null)
         {
             ReadOnly = model.ReadOnlyReason ?? (readOnly != FieldNote ? readOnly : null),
-            PageActions = canVariant ? [makeVariant] : [],
+            PageActions = makeVariant != null ? [makeVariant] : [],
+            PrefabFile = FileView(asset),
             FocusSection = key?.Split(':')[0] switch
             {
                 "field" => "fields",
                 "port" => "ports",
+                "file" => FileSection,
                 _ => null,
             },
         };
+    }
+
+    /// <summary>The id of the section of the text of a prefab file on the Prefab page.</summary>
+    public const string FileSection = "prefabFile";
+
+    /// <summary>The text of a prefab file with a mark on each line with a problem of the format check (UI rule 11).</summary>
+    private static PrefabFileView FileView(PrefabAsset asset)
+    {
+        var text = RawText.Plain(asset.Text);
+        var marks = asset.Problems.Where(p => p.Line > 0 && p.Line <= text.Lines.Count)
+            .GroupBy(p => p.Line).OrderBy(g => g.Key)
+            .Select(g => new RawMark(g.Key - 1, DiagnosticSeverity.Error, string.Join("\n", g.Select(p => p.Message)), false))
+            .ToList();
+        return new PrefabFileView(asset.Ref.Builtin ? asset.Ref.ToString() : PrefabAsset.PathOf(asset.Ref.Id), text, marks);
     }
 
     /// <summary>The lines of a trigger of a template whose key is the slot of a field of a kind, for example
@@ -680,23 +775,43 @@ internal sealed partial record MissionPageModel
         };
     }
 
-    /// <summary>The line choice of a whole line of a template (section 8.6 of the M6b design): "Field: {label}" for each
-    /// condition field of a condition, or for each lines field that takes the key of an action
-    /// (<see cref="BindValue"/> without a value).</summary>
-    private static IEnumerable<PageAction> LineChoices(PrefabTemplate template, MissionLine line, PrefabFieldKind kind) =>
-        template.Fields.Where(f => f.Kind == kind && (f.Keys.Count == 0 || f.Keys.Any(k => MissionIndex.Is(k, line.Key))))
-            .Select(f => new PageAction($"Field: {f.Label}", One($"Bind the line to {f.Label}", new BindValue(RowOf(line), f.Id)),
-                Tooltip: FieldValueTip));
+    /// <summary>
+    /// The line choice of a whole line of a template (section 8.6 of the M6b design): "Field: {label}" for each condition
+    /// field of a condition, or for each lines field that takes the key of an action (<see cref="BindValue"/> without a
+    /// value). "New field from this line" makes such a field with the line as its default, and binds the line to it.
+    /// </summary>
+    private static IEnumerable<PageAction> LineChoices(PrefabRef prefab, PrefabTemplate template, MissionLine line, PrefabFieldKind kind)
+    {
+        foreach (var field in template.Fields.Where(f => f.Kind == kind && (f.Keys.Count == 0 || f.Keys.Any(k => MissionIndex.Is(k, line.Key)))))
+            yield return new PageAction($"Field: {field.Label}", One($"Bind the line to {field.Label}", new BindValue(RowOf(line), field.Id)),
+                Tooltip: FieldValueTip);
+        var texts = line.Line.Select(MissionIndex.Text).ToList();
+        if (!CanBeDefault(template, texts))
+            yield break;
+        var condition = kind == PrefabFieldKind.Condition;
+        var label = FreeFieldLabel(template, condition ? "Condition" : line.Name?.Plain ?? line.Key);
+        var id = FreeFieldId(template, condition ? "condition" : line.Key);
+        yield return new PageAction(NewLineFieldText, new MissionBatch($"New field {label}",
+        [
+            new AddPrefabField(prefab, id, label, condition ? "condition" : "lines")
+            {
+                Keys = condition ? [] : [line.Key],
+                Default = [PrefabRow.Line(line.Key, [.. texts]).Format()],
+            },
+            new BindValue(RowOf(line), id),
+        ]), Tooltip: NewFieldTip);
+    }
 
     /// <summary>
     /// The value choice of a value of a line of a template in prefab mode (section 8.6 of the M6b design): "Fixed value"
     /// (<see cref="UnbindValue"/>) or "Field: {label}" (<see cref="BindValue"/>) for each field that can give the value.
-    /// A value with the slot of a field shows "Field: {label}".
+    /// A value with the slot of a field shows "Field: {label}". "New field from this value" makes a field with the value
+    /// as its default, and binds the value to it (<see cref="AddPrefabField"/>, section 5.7).
     /// </summary>
     private static PageField ValueChoice(PageContext context, PrefabTemplate template, MissionLine line, MissionValueSpec spec,
         string label, PageField field)
     {
-        if (!context.Editable(line.Section.Ref))
+        if (!context.Editable(line.Section.Ref) || context.Prefab?.Asset.Ref is not { } prefab)
             return field;
         var row = RowOf(line);
         var text = spec.Index < line.Count ? line.Value(spec.Index) : null;
@@ -706,7 +821,12 @@ internal sealed partial record MissionPageModel
                 One($"Bind {label} to {f.Label}", new BindValue(row, f.Id) { Value = spec.Name }), Tooltip: FieldValueTip))
             .ToList();
         if (bound == null)
+        {
+            if (NewValueField(prefab, template, line, spec, label) is { } made)
+                choices.Add(made);
             return field with { Actions = choices };
+        }
+
         var boundLabel = template.Field(bound)?.Label ?? bound;
         return new PageField(label, $"Field: {boundLabel}", FieldValueTip)
         {
@@ -718,5 +838,60 @@ internal sealed partial record MissionPageModel
                 .. choices,
             ],
         };
+    }
+
+    /// <summary>"New field from this value": a field of the kind of the value with the value as its default, and the
+    /// bind of the value to it, in one batch. Null for a value without a text, for example a value that the line does
+    /// not have.</summary>
+    private static PageAction? NewValueField(PrefabRef prefab, PrefabTemplate template, MissionLine line, MissionValueSpec spec,
+        string label)
+    {
+        if (spec.Rest || spec.Index + spec.Width > line.Count)
+            return null;
+        var texts = Enumerable.Range(spec.Index, spec.Width).Select(i => line.Value(i) ?? "").ToList();
+        if (texts.Any(t => t.Length == 0) || !CanBeDefault(template, texts))
+            return null;
+        var kind = spec.Kind == MissionValueKind.Token && spec.Tokens == null ? MissionValueKind.Text : spec.Kind;
+        var fieldLabel = FreeFieldLabel(template, label);
+        var id = FreeFieldId(template, spec.Name);
+        return new PageAction(NewFieldText, new MissionBatch($"New field {fieldLabel}",
+        [
+            new AddPrefabField(prefab, id, fieldLabel, PrefabFieldDef.KindName(kind))
+            {
+                Tokens = kind == MissionValueKind.Token ? spec.Tokens : null,
+                Default = [string.Join(", ", texts)],
+            },
+            new BindValue(RowOf(line), id) { Value = spec.Name },
+        ]), Tooltip: NewFieldTip);
+    }
+
+    /// <summary>True when value texts of a line of the template can be the default of a new field: they have no slot,
+    /// and they name no section of the template. A default that names a member would name the same text in each
+    /// instance, not the member of the instance.</summary>
+    private static bool CanBeDefault(PrefabTemplate template, IEnumerable<string> texts) =>
+        texts.All(t => PrefabSlot.Of(t).Count == 0 && template.Sections.All(s => !s.Role.Equals(t.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>A free id of a new field of a template: the wanted text with only letters, digits, '_' and '-', and a
+    /// number after it when the template has the id.</summary>
+    private static string FreeFieldId(PrefabTemplate template, string wanted)
+    {
+        var stem = new string(wanted.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
+        if (stem.Length == 0)
+            stem = "field";
+        stem = stem.Length > 40 ? stem[..40] : stem;
+        var id = stem;
+        for (var n = 2; template.Field(id) != null; n++)
+            id = $"{stem}{Number(n)}";
+        return id;
+    }
+
+    /// <summary>A free label of a new field of a template: the wanted label, and a number after it when a field of the
+    /// template has the label (UI rule 9).</summary>
+    private static string FreeFieldLabel(PrefabTemplate template, string wanted)
+    {
+        var label = wanted;
+        for (var n = 2; template.Fields.Any(f => f.Label.Equals(label, StringComparison.OrdinalIgnoreCase)); n++)
+            label = $"{wanted} {Number(n)}";
+        return label;
     }
 }

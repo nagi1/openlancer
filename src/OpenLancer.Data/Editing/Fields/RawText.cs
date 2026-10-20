@@ -123,6 +123,11 @@ public sealed class RawText
             ReadOnly(path, sections));
     }
 
+    /// <summary>A text as it is, without a map of its lines to sections, for example an editor file that the game does not
+    /// read. A view shows it read-only.</summary>
+    public static RawText Plain(string text) =>
+        new(text.Replace("\r\n", "\n").TrimEnd('\n').Split('\n'), true, null, [], [], [], new Dictionary<int, string>());
+
     /// <summary>The canonical text of sections.</summary>
     /// <param name="reason">Why the file text is not used, or null.</param>
     /// <param name="ids">The identities of the sections in their file, or null to identify them in the list. A list

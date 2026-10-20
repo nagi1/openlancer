@@ -22,6 +22,11 @@ internal static class MissionTreeEdits
         ("random_encounter", "Random encounter"), ("act", "Act"),
     ];
 
+    /// <summary>The items of the "+" menu of a script. The template of a prefab in prefab mode has no acts, so it has no
+    /// item "Act" (UI rule 4).</summary>
+    public static IReadOnlyList<(string Kind, string Label)> CreateKindsOf(MissionAnalysis analysis) =>
+        PrefabRef.OfScript(analysis.Script.Path) == null ? CreateKinds : CreateKinds.Where(k => k.Kind != "act").ToList();
+
     /// <summary>The reason of a "+" item that cannot add, or null. A new mission ship of the menu gets the pilot of the
     /// first <c>[NPC]</c> of the script. Without one, a ship tile of the Assets panel adds a ship.</summary>
     public static string? CreateRefusal(MissionAnalysis analysis, string kind) =>

@@ -53,7 +53,15 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         // In prefab mode, the script of the selection is the template of the prefab (section 8.6 of the M6b design).
         if (missions.Analysis(item.Script) is not { } analysis)
         {
-            PanelStates.Message("This mission script is not in the edit view.", "Select a mission in the Missions tab.");
+            if (PrefabRef.OfScript(item.Script) is { } missing)
+            {
+                PanelStates.Message($"No mod has the prefab '{missing.Id}'.", "Select a prefab in the library or in the Assets panel.");
+            }
+            else
+            {
+                PanelStates.Message("This mission script is not in the edit view.", "Select a mission in the Missions tab.");
+            }
+
             return;
         }
 
@@ -120,6 +128,7 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             AddAction(model);
             ImGui.Unindent(padding);
             Ini(result, analysis, model, wholeScript: item.Kind == MissionItemKind.Mission);
+            PrefabFile(model);
         }
 
         ImGui.EndChild();
@@ -227,6 +236,7 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             ReadOnlyOf = section => window.Missions.NoEditReason(section.Path) ??
                                     (PrefabRef.OfScript(section.Path) == null ? session.Edits.Missions.ReadOnlyReason(section) : null),
             ScriptReadOnly = window.Missions.NoEditReason,
+            SessionReadOnly = window.Missions.ReadOnlyNote,
             UnsavedOverrides = session.Edits.Missions.UnsavedOverrides,
             FreePrefabId = session.Edits.Missions.FreePrefabId,
             Prefab = prefab != null ? session.Edits.Missions.PrefabMode(prefab) : null,
@@ -575,6 +585,27 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             window.Missions.ShowRaw = true;
             window.Missions.OpenMission(analysis.Script.Path, show: true);
         }
+    }
+
+    /// <summary>The text of the prefab file of the Prefab page, read-only, with a mark on each line with a problem (UI rule
+    /// 11). A prefab mode edit changes the file through the commands, so the text does not take edits.</summary>
+    private void PrefabFile(MissionPageModel model)
+    {
+        if (model.PrefabFile is not { } file)
+        {
+            return;
+        }
+
+        if (!grid.BeginSection(SectionKey(MissionPageModel.FileSection), EditorIcons.Terminal, "Prefab file (read-only)", false,
+                MissionSchema.Retail.Help["rawIni"]))
+        {
+            return;
+        }
+
+        grid.EndSection();
+        ImGui.TextDisabled(file.Path);
+        var height = MathF.Min(IniHeight * 2 * ImGuiHelper.Scale, (file.Text.Lines.Count + 2) * ImGui.GetTextLineHeightWithSpacing());
+        ini.Draw("##prefab-file", file.Text, file.Marks, new Vector2(ImGui.GetContentRegionAvail().X, height));
     }
 
     /// <summary>Goes to the item of a link: a mission selection, a line of a problem, a section, a system or a

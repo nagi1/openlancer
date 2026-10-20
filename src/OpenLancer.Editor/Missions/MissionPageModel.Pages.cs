@@ -75,6 +75,11 @@ internal sealed record PageContext(MissionRunResult Result, MissionAnalysis Anal
     /// 8.6 of the M6b design).</summary>
     public PrefabModeModel? Prefab { get; init; }
 
+    /// <summary>Why the session takes no edits, or null. A built-in prefab and a prefab of a lower mod cannot change, but
+    /// the session can still make a variant of them in the active mod. Without a value, the session takes no edits, as
+    /// in a view without an edit session.</summary>
+    public string? SessionReadOnly { get; init; } = MissionPageModel.FieldNote;
+
     /// <summary>True when the active mod sets a line.</summary>
     public bool Changed(MissionLine line) => ChangedOf(line.Section.Ref).Contains(line.Entry);
 
@@ -138,8 +143,8 @@ internal sealed partial record MissionPageModel
             case MissionItemKind.PrefabInstance when analysis.Prefabs?.Instances.FirstOrDefault(i => i.Key == item.Key) is
                 { } instance:
                 return PrefabInstance(context, instance);
-            case MissionItemKind.PrefabKind when MissionPrefabs.Retail.Definition(item.Key ?? "") is { } definition:
-                return PrefabKind(context, definition);
+            case MissionItemKind.PrefabKind when KindOfKey(analysis, item.Key) is { } definition:
+                return PrefabKind(context, definition, item.Key!);
             default:
                 return Item(analysis, item, context.ShowBaseGame);
         }
@@ -187,7 +192,9 @@ internal sealed partial record MissionPageModel
             startsWhen.Add(new PageField("Event", condition.Sentence(), EventTip)
             {
                 Edit = EventEdit(context, trigger), Changed = context.Changed(condition),
-                Actions = template != null && editable ? LineChoices(template, condition, PrefabFieldKind.Condition).ToList() : [],
+                Actions = template != null && editable
+                    ? LineChoices(context.Prefab!.Asset.Ref, template, condition, PrefabFieldKind.Condition).ToList()
+                    : [],
             });
             startsWhen.AddRange(ValueFields(context, condition, (spec, value) => new SetConditionValue(tref, spec.Name, value)));
         }
@@ -1443,13 +1450,27 @@ internal sealed partial record MissionPageModel
 
     // ---- The prefab pages (sections 10.4 and 10.5).
 
+    /// <summary>The definition of the row of a prefab in the Hierarchy: the key is the prefab as a record names it, for
+    /// example <c>builtin:spawnWave</c> or <c>mod:ol_gate</c>. An id without a prefix is a built-in prefab.</summary>
+    private static MissionPrefabDefinition? KindOfKey(MissionAnalysis analysis, string? key)
+    {
+        if (key == null)
+            return null;
+        if (analysis.Prefabs?.Instances.FirstOrDefault(i => i.PrefabKey.Equals(key, StringComparison.OrdinalIgnoreCase)) is { } instance)
+            return instance.Definition;
+        return MissionPrefabs.Retail.Definition(PrefabRef.TryParse(key) is { Builtin: true } builtin ? builtin.Id : key);
+    }
+
     /// <summary>The page of a prefab kind (section 10.5 of the M6a design): what it is, what it writes, its fields, its
-    /// steps and its uses.</summary>
-    private static MissionPageModel PrefabKind(PageContext context, MissionPrefabDefinition definition)
+    /// steps and its uses. A prefab of a mod has the same page.</summary>
+    /// <param name="key">The prefab as a record names it (see <see cref="MissionPrefabInstance.PrefabKey"/>).</param>
+    private static MissionPageModel PrefabKind(PageContext context, MissionPrefabDefinition definition, string key)
     {
         var script = context.Analysis.Script.Path;
-        var uses = context.Analysis.Prefabs?.OfPrefab(definition.Id).ToList() ?? [];
-        var total = context.Result.Analyses.Values.Sum(a => a.Prefabs?.OfPrefab(definition.Id).Count() ?? 0);
+        var prefabKey = PrefabRef.TryParse(key)?.RecordText ?? PrefabRef.BuiltinOf(key).RecordText;
+        bool Of(MissionPrefabInstance i) => i.PrefabKey.Equals(prefabKey, StringComparison.OrdinalIgnoreCase);
+        var uses = context.Analysis.Prefabs?.Instances.Where(Of).ToList() ?? [];
+        var total = context.Result.Analyses.Values.Sum(a => a.Prefabs?.Instances.Count(Of) ?? 0);
         var sections = new List<PageSection>
         {
             new("whatItIs", "What it is", EditorIcons.InfoCircle, null, [], [definition.Help.WhatItIs]),

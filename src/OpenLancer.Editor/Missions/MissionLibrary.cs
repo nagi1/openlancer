@@ -92,9 +92,7 @@ internal static class MissionLibrary
     public static LibraryItem Prefab(PrefabAsset asset)
     {
         var template = asset.Template;
-        var help = template is { Help.Length: > 0 }
-            ? new HelpText(asset.Name, template.Help, template.Writes.Length > 0 ? template.Writes : MissionPageModel.AssetHelp.WhatItWrites)
-            : MissionPageModel.AssetHelp with { Title = asset.Name };
+        var help = MissionPageModel.PrefabHelp(asset.Name, template);
         var glyph = asset.Ref.Builtin ? MissionGlyphs.OfPrefab(asset.Ref.Id) : EditorIcons.Cubes;
         return new LibraryItem(LibraryKind.Prefab, asset.Ref.ToString(), asset.Name, PrefabsTitle, glyph, help, asset.Ref.RecordText)
         {

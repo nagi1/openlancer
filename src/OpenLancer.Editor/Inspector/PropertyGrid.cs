@@ -12,6 +12,7 @@ using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -827,6 +828,13 @@ internal sealed partial class PropertyGrid(EditorWindow window)
         }
 
         var hovered = ImGui.IsItemHovered(ImGuiHoveredFlags.ForTooltip);
+        if (overridden)
+        {
+            // An override has its info icon: what it is and what it writes (section 8.11 of the M6b design, UI rule 10).
+            ImGui.SameLine(0, ImGui.GetStyle().ItemInnerSpacing.X);
+            InfoIcon.Draw("override-info", PrefabLinks.OverrideHelp);
+        }
+
         if (field != null)
         {
             RowMenu(field);

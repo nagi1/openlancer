@@ -25,12 +25,16 @@ namespace OpenLancer.Tests;
 /// </summary>
 public sealed class PrefabStudioTests
 {
-    /// <summary>The context of a page of the test script now, with the reasons and the overrides of the session.</summary>
-    private static PageContext Context(MissionEdits m, MissionAnalysis? analysis = null, PrefabModeModel? prefab = null) =>
+    /// <summary>The context of a page of the test script now, with the reasons and the overrides of the session, as the
+    /// Inspector gives them. A built-in prefab and a prefab of a lower mod have the reason of their banner.</summary>
+    internal static PageContext Context(MissionEdits m, MissionAnalysis? analysis = null, PrefabModeModel? prefab = null) =>
         new(MissionRun.Execute(m.Missions.RunInputs()), analysis ?? m.Missions.Model(Script).Analysis, false, false)
         {
-            ReadOnlyOf = section => PrefabRef.OfScript(section.Path) != null ? null : m.Missions.ReadOnlyReason(section),
-            ScriptReadOnly = path => PrefabRef.OfScript(path) != null ? null : m.Missions.ReadOnlyReason(path),
+            ReadOnlyOf = section => PrefabRef.OfScript(section.Path) is { } p ? m.Missions.PrefabMode(p)?.ReadOnlyReason
+                : m.Missions.ReadOnlyReason(section),
+            ScriptReadOnly = path => PrefabRef.OfScript(path) is { } p ? m.Missions.PrefabMode(p)?.ReadOnlyReason
+                : m.Missions.ReadOnlyReason(path),
+            SessionReadOnly = m.Session.ReadOnlyReason,
             UnsavedOverrides = m.Missions.UnsavedOverrides,
             FreePrefabId = m.Missions.FreePrefabId,
             Prefab = prefab,
@@ -250,7 +254,7 @@ public sealed class PrefabStudioTests
         // A value without its line gets a text field, and the write adds the line.
         var scene = definition.Fields.Single(f => f.Id == "endScene");
         var endScene = Field(InstancePage(m, "success/ol_win"), "fields", scene.Label);
-        Assert.Equal((EditWidget.Text, "None"), (endScene.Edit!.Widget, endScene.Value));
+        Assert.Equal((EditWidget.Picker, "None"), (endScene.Edit!.Widget, endScene.Value));
         Run(m, endScene.Edit.Make!(@"missions\ol\ol_room.thn"));
         Assert.Contains(@"Act_AddRTC = missions\\ol\\ol_room.thn", m.Lines("ol_win"));
 
@@ -287,11 +291,15 @@ public sealed class PrefabStudioTests
         // The steps of the prefab (UI rule 12): the file, the lines and the fields.
         Assert.Equal(["Prefab file", "Valid lines", "Fields in lines"], page.Completeness!.Steps.Select(s => s.Name));
         Assert.Equal(3, page.Completeness.Done);
-        var delay = Field(page, "fields", "Spawn after");
+        // Each field shows its kind and "Per instance" on its heading, then its default (section 8.6 of the M6b design).
+        var fields = page.Section("fields")!.Fields.ToList();
+        var heading = Field(page, "fields", "Spawn after");
+        Assert.Equal((true, "Number"), (heading.Heading, heading.Value));
+        Assert.Equal("Formation, per instance", Field(page, "fields", "Enemy formation").Value);
+        var delay = fields[fields.IndexOf(heading) + 1];
+        Assert.Equal("Default", delay.Label);
         Assert.Equal(["Remove field"], delay.Actions.Select(a => a.Label));
-        Assert.Contains("Kind: Number.", delay.Help);
-        Assert.Contains("Kind: Formation. Per instance.", Field(page, "fields", "Enemy formation").Help);
-        Assert.Equal("From end", Field(page, "ports", "When all are destroyed").Value);
+        Assert.Equal("Written by trigger 'end'", Field(page, "ports", "When all are destroyed").Value);
         Assert.Equal(["spawn", "end"], page.Section("sections")!.Fields.Select(f => f.Label));
         Assert.All(page.Section("sections")!.Fields, f => Assert.IsType<MissionRef>(f.Link));
         Assert.Equal("Changes here change 1 instance in 1 mission of mod act.", Field(page, "prefab", "Instances").Value);
@@ -316,7 +324,7 @@ public sealed class PrefabStudioTests
         var variant = Assert.Single(page.PageActions);
         Assert.Equal(("Make variant", MissionPageModel.MakeVariantTip), (variant.Label, variant.Tooltip));
         Assert.Equal(new CreatePrefabAsset("spawnwave_variant") { VariantOf = prefab }, Assert.Single(variant.Batch!.Commands));
-        Assert.All(page.Section("fields")!.Fields, f => Assert.NotNull(f.Edit?.ReadOnly));
+        Assert.All(page.Section("fields")!.Fields.Where(f => !f.Heading), f => Assert.NotNull(f.Edit?.ReadOnly));
         Run(m, variant.Batch);
         Assert.Equal("builtin:spawnWave", m.Missions.Prefab(PrefabRef.ModOf("spawnwave_variant"))!.Template!.VariantOf);
     }
@@ -545,6 +553,320 @@ public sealed class PrefabStudioTests
         Assert.Equal([new RemoveTrigger(T("ol_win"))], MissionTreeEdits.Delete(retail, win, null)!.Commands);
         Run(matched, MissionTreeEdits.Duplicate(retail, win));
         Assert.True(matched.Has("ol_win_2"));
+    }
+
+    // ---- Outputs of linked instances (sections 5.3 and 5.5) ----
+
+    [Fact]
+    public void TheOutputsOfALinkedInstanceLinkItsPortToTriggersOfTheMission()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        var output = Field(InstancePage(m, "ol_w1"), "outputs", "When all are destroyed");
+
+        Assert.Equal(EditWidget.List, output.Edit!.Widget);
+        Assert.Empty(output.List!.Rows);
+        var rows = output.List.Add(0, new ListFieldRow("done", ["ol_end"], null));
+        One(new SetPrefabPort(I("ol_w1"), "done", ["ol_end"]), output.Edit.MakeList!(rows));
+        Run(m, output.Edit.MakeList!(rows));
+
+        Assert.Contains("Act_ActTrig = ol_end", m.Lines("ol_w1_end"));
+        Assert.Single(Field(InstancePage(m, "ol_w1"), "outputs", "When all are destroyed").List!.Rows);
+        Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule == "P01");
+    }
+
+    /// <summary>The model of the graph of the test script with all frames open, at the lines level.</summary>
+    private static GraphEditModel OpenGraph(MissionEdits m) =>
+        new(MissionGraph.Build(m.Missions.Model(Script).Analysis, new GraphOptions(GraphLens.Logic, ShowLines: true)));
+
+    private static GraphNode Node(GraphEditModel model, string trigger) => model.Graph.TriggerNode(model.Graph.Index.Trigger(trigger)!)!;
+
+    [Fact]
+    public void ALinkDragFromAMemberLinksTheOutputOfItsRole()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        var model = OpenGraph(m);
+        var start = new GraphEnd(Node(model, "ol_start"), Node(model, "ol_start").Pin(GraphPinKind.Start)!);
+
+        var link = model.Link(new GraphEnd(Node(model, "ol_w1_end"), null), start);
+
+        Assert.Equal(new SetPrefabPort(I("ol_w1"), "done", ["ol_start"]), Assert.Single(link.Batch!.Commands), Equal);
+        Run(m, link.Batch);
+        Assert.Contains("Act_ActTrig = ol_start", m.Lines("ol_w1_end"));
+
+        // The member spawn has no output, so a link from it refuses with the reason.
+        model = OpenGraph(m);
+        var refused = model.Link(new GraphEnd(Node(model, "ol_w1_spawn"), null),
+            new GraphEnd(Node(model, "ol_end"), Node(model, "ol_end").Pin(GraphPinKind.Start)!));
+        Assert.Equal(GraphEditModel.MemberLinkRefusal("ol_w1_spawn", "ol_w1"), refused.Reason);
+
+        // Remove link takes the trigger from the output.
+        var output = model.Graph.Links.First(l => l.From == Node(model, "ol_w1_end") && l.To == Node(model, "ol_start"));
+        Assert.Equal(new SetPrefabPort(I("ol_w1"), "done", []), Assert.Single(model.Unlink(output)!.Commands), Equal);
+        Run(m, model.Unlink(output));
+        Assert.DoesNotContain("Act_ActTrig = ol_start", m.Lines("ol_w1_end"));
+    }
+
+    /// <summary>Compares two commands by their JSON form, because a list of a command compares by reference.</summary>
+    private static readonly IEqualityComparer<MissionCommand> Equal = new JsonEquality();
+
+    private sealed class JsonEquality : IEqualityComparer<MissionCommand>
+    {
+        public bool Equals(MissionCommand? x, MissionCommand? y) =>
+            x != null && y != null && MissionJson.Write(x) == MissionJson.Write(y);
+
+        public int GetHashCode(MissionCommand obj) => MissionJson.Write(obj).GetHashCode();
+    }
+
+    [Fact]
+    public void ADuplicateKeepsTheRemovedMembersAndTheOutputs()
+    {
+        using var m = PrefabInstanceTests.Create();
+        m.Apply(new PlacePrefabInstance(TestScript, GateRef)
+        {
+            Id = "ol_w1", Values = [new PrefabFieldInput("formation", ["ol_form"])], Ports = [new InstancePort("done", "ol_start")],
+        });
+        m.Apply(new RemoveTrigger(T("ol_w1_spawn")));
+        var (model, frame) = FrameOf(m, "ol_w1");
+
+        var copy = Assert.IsType<PlacePrefabInstance>(Assert.Single(model.DuplicateInstance(frame)!.Commands));
+
+        Assert.Equal(["spawn"], copy.Removed);
+        Assert.Equal([new InstancePort("done", "ol_start")], copy.Ports);
+        Run(m, model.DuplicateInstance(frame));
+        var record = m.Missions.Graph(Script).Instances.Single(i => i.Id != "ol_w1");
+        Assert.Equal(["spawn"], record.Removed);
+    }
+
+    // ---- The selection after a prefab command (section 8.10) ----
+
+    [Fact]
+    public void TheSelectionStaysOnAnInstanceThatGetsAnotherPrefab()
+    {
+        using var m = PrefabInstanceTests.Create();
+        m.Apply(new PlacePrefabInstance(TestScript, PrefabRef.BuiltinOf("spawnWave")) { Id = "ol_b" });
+        m.Apply(new SetPrefabField(I("ol_b"), "spawnWhen", ["Cnd_Timer = 5"]));
+        string Key() => m.Missions.Model(Script).Prefabs!.Instances.Single(i => i.Id == "ol_b").Key;
+        var key = Key();
+        var variant = Field(InstancePage(m, "ol_b"), "fields", "Spawn when").Actions.Single(a => a.Label == "Make a variant with this value");
+
+        var result = m.Missions.Apply(variant.Batch!);
+
+        var selection = MissionWorkspace.SelectionOf(m.Missions.Model(Script).Analysis, result.Select!);
+        Assert.Equal(new MissionRef(Script, MissionItemKind.PrefabInstance, Key: key), selection);
+        Assert.Null(MissionWorkspace.NewPrefabOf(result));
+        Assert.Equal("Spawn wave variant ol_b", MissionPageModel.For(Context(m), selection!).Title);
+
+        var rename = m.Missions.Apply(new RenamePrefabAsset(PrefabRef.ModOf("spawnwave_variant"), "ol_wave_b"));
+        Assert.Equal(key, Key());
+        Assert.Equal(PrefabRef.ModOf("ol_wave_b"), MissionWorkspace.RenamedPrefab(PrefabRef.ModOf("spawnwave_variant"), rename.Renames));
+
+        var unpack = m.Missions.Apply(new UnpackPrefabInstance(I("ol_b")));
+        Assert.Equal(MissionItemKind.Trigger, MissionWorkspace.SelectionOf(m.Missions.Model(Script).Analysis, unpack.Select!)!.Kind);
+    }
+
+    [Fact]
+    public void MakeVariantOfABuiltInPrefabSelectsTheVariantForPrefabMode()
+    {
+        using var m = PrefabInstanceTests.Create();
+        var prefab = PrefabRef.BuiltinOf("spawnWave");
+        var model = m.Missions.PrefabMode(prefab)!;
+        var page = MissionPageModel.For(Context(m, model.Analysis, model), MissionRef.Of(prefab.Script));
+
+        var result = m.Missions.Apply(page.PageActions.Single(a => a.Label == "Make variant").Batch!);
+
+        Assert.Equal(PrefabRef.ModOf("spawnwave_variant"), MissionWorkspace.NewPrefabOf(result));
+        Assert.Equal("Spawn wave variant", m.Missions.Prefab(PrefabRef.ModOf("spawnwave_variant"))!.Name);
+        // A second variant gets another name in the library (UI rule 9).
+        m.Apply(new CreatePrefabAsset("spawnwave_variant2") { VariantOf = prefab });
+        Assert.Equal("Spawn wave variant 2", m.Missions.Prefab(PrefabRef.ModOf("spawnwave_variant2"))!.Name);
+    }
+
+    [Fact]
+    public void APrefabOfALowerModOffersMakeVariantOnItsPage()
+    {
+        using var m = MissionEdits.Create(lowerMod: new Dictionary<string, string>
+        {
+            [@"prefabs\missions\ol_low.ini"] = Gate.Replace("id = ol_gate", "id = ol_low"),
+        });
+        var prefab = PrefabRef.ModOf("ol_low");
+        var model = m.Missions.PrefabMode(prefab)!;
+
+        var page = MissionPageModel.For(Context(m, model.Analysis, model), MissionRef.Of(prefab.Script));
+
+        Assert.Equal(PrefabModeModel.LowerModBanner("low"), page.ReadOnly);
+        Assert.Equal(["Make variant"], page.PageActions.Select(a => a.Label));
+    }
+
+    [Fact]
+    public void ThePrefabPageRenamesThePrefabInTheLibrary()
+    {
+        using var m = PrefabInstanceTests.Create();
+        var model = m.Missions.PrefabMode(GateRef)!;
+        var name = Field(MissionPageModel.For(Context(m, model.Analysis, model), MissionRef.Of(GateRef.Script)), "prefab", "Name");
+
+        One(new RenamePrefabAsset(GateRef, "ol_gate") { NewName = "Gate wave" }, name.Edit!.Make!("Gate wave"));
+        Run(m, name.Edit.Make!("Gate wave"));
+
+        Assert.Equal("Gate wave", m.Missions.Prefab(GateRef)!.Name);
+        One(new RenamePrefabAsset(GateRef, "ol_gate") { NewName = "Gate b" }, OpenLancer.Editor.Assets.AssetsPanel.RenameBatch("ol_gate", "Gate b", file: false));
+        One(new RenamePrefabAsset(GateRef, "ol_gate_b"), OpenLancer.Editor.Assets.AssetsPanel.RenameBatch("ol_gate", "ol_gate_b", file: true));
+    }
+
+    [Fact]
+    public void ThePrefabPageOfAFileWithAProblemShowsTheProblemAndTheText()
+    {
+        using var m = PrefabInstanceTests.Create(new Dictionary<string, string>
+        {
+            [@"prefabs\missions\ol_bad.ini"] = Gate.Replace("id = ol_gate", "id = ol_bad").Replace("Cnd_Timer = {delay}", "Cnd_Timer = {nothing}"),
+        });
+        var prefab = PrefabRef.ModOf("ol_bad");
+        var model = m.Missions.PrefabMode(prefab)!;
+
+        var page = MissionPageModel.For(Context(m, model.PageAnalysis, model), MissionRef.Of(prefab.Script));
+
+        var step = page.Completeness!.Steps.Single(s => s.Name == "Prefab file");
+        Assert.Equal(CompletenessState.Missing, step.State);
+        Assert.Equal(new MissionRef(prefab.Script, MissionItemKind.Mission, Key: "file"), step.GoTo);
+        var file = page.PrefabFile!;
+        Assert.Equal(@"prefabs\missions\ol_bad.ini", file.Path);
+        var mark = Assert.Single(file.Marks);
+        Assert.Contains("{nothing}", file.Text.Lines[mark.Line]);
+        Assert.Equal(MissionPageModel.FileSection,
+            MissionPageModel.For(Context(m, model.PageAnalysis, model), (MissionRef)step.GoTo!).FocusSection);
+    }
+
+    // ---- Prefab mode: new fields (section 5.7) ----
+
+    [Fact]
+    public void NewFieldFromAValueMakesAFieldAndBindsTheValue()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        var model = m.Missions.PrefabMode(GateRef)!;
+        var end = model.Analysis!.Index.Trigger("end")!;
+        var page = MissionPageModel.For(Context(m, model.Analysis, model), new MissionRef(GateRef.Script, MissionItemKind.Trigger, end.Section.Ref));
+        var action = page.Section("startsWhen")!.Fields.SelectMany(f => f.Actions).Single(a => a.Label == MissionPageModel.NewFieldText);
+
+        Run(m, action.Batch);
+
+        var template = m.Missions.Prefab(GateRef)!.Template!;
+        var field = Assert.Single(template.Fields, f => f.Id != "formation" && f.Id != "delay");
+        Assert.Equal([PrefabRow.Of("-1")], field.Default);
+        Assert.Contains(template.Section("end")!.Lines, l => l.Value == $"{{formation}}, {{{field.Id}}}");
+        Assert.Contains("Cnd_Destroyed = ol_form, -1", m.Lines("ol_w1_end"));
+    }
+
+    [Fact]
+    public void NewFieldFromALineMakesAConditionField()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        m.Apply(new UnbindValue(new RowRef(new TriggerRef(GateRef.Script, "spawn").Item, 1)) { Value = "seconds" });
+        var model = m.Missions.PrefabMode(GateRef)!;
+        var spawn = model.Analysis!.Index.Trigger("spawn")!;
+        var page = MissionPageModel.For(Context(m, model.Analysis, model), new MissionRef(GateRef.Script, MissionItemKind.Trigger, spawn.Section.Ref));
+        var action = Field(page, "startsWhen", "Event").Actions.Single(a => a.Label == MissionPageModel.NewLineFieldText);
+
+        Run(m, action.Batch);
+
+        var field = m.Missions.Prefab(GateRef)!.Template!.Field("condition")!;
+        Assert.Equal((PrefabFieldKind.Condition, "Condition"), (field.Kind, field.Label));
+        Assert.Equal([PrefabRow.Line("Cnd_Timer", "5")], field.Default);
+        Assert.Contains("Cnd_Timer = 5", m.Lines("ol_w1_spawn"));
+        // A line with a slot, or a line that names a member of the prefab, cannot be a default: each instance names its own
+        // member. The other lines of the spawn trigger are such lines.
+        model = m.Missions.PrefabMode(GateRef)!;
+        page = MissionPageModel.For(Context(m, model.Analysis, model), MissionRef.OfSection(model.Analysis!.Index.Trigger("spawn")!.Section.Ref, -1));
+        Assert.DoesNotContain(page.Sections.SelectMany(s => s.Fields).SelectMany(f => f.Actions), a => a.Label == MissionPageModel.NewLineFieldText);
+    }
+
+    // ---- Matched instances: the widgets of the write rules ----
+
+    private const string EscortText = """
+        [Mission]
+
+        [ObjList]
+        nickname = ol_follow
+        Follow = Player, 300
+        """;
+
+    [Fact]
+    public void AKeyFieldOfAMatchedInstanceHasTheWidgetOfItsValue()
+    {
+        using var m = MissionEdits.Create(EscortText);
+        var page = InstancePage(m, "escort/ol_follow");
+        var follows = Field(page, "fields", "Follows");
+        var distance = Field(page, "fields", "Distance");
+
+        Assert.Equal((EditWidget.Picker, "Player"), (follows.Edit!.Widget, follows.Edit.Value));
+        Assert.Equal((EditWidget.WholeNumber, "300"), (distance.Edit!.Widget, distance.Edit.Value));
+        Run(m, distance.Edit.Make!(500));
+
+        Assert.Equal(["nickname = ol_follow", "Follow = Player, 500"], m.Lines(Item("ObjList", "ol_follow")));
+    }
+
+    [Fact]
+    public void AConditionFieldOfAMatchedInstanceHasTheListOfOneCondition()
+    {
+        using var m = PrefabInstanceTests.Create();
+        var analysis = m.Missions.Model(Script).Analysis;
+        var instance = analysis.Prefabs!.Instances.First(i => i.Definition.Fields.Any(f => f.Write == PrefabWrite.Condition));
+        var definition = instance.Definition.Fields.First(f => f.Write == PrefabWrite.Condition);
+        var field = Field(InstancePage(m, instance.Id), "fields", definition.Label);
+
+        Assert.Equal(EditWidget.List, field.Edit!.Widget);
+        Assert.Single(field.List!.Rows);
+    }
+
+    // ---- Hierarchy ----
+
+    [Fact]
+    public void TheInstancesOfAPrefabOfTheModShareOneRowOfTheHierarchy()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        Place(m, "ol_w2");
+        var analysis = m.Missions.Model(Script).Analysis;
+
+        var root = HierarchyModel.MissionTree(analysis, _ => "", showBaseGame: false);
+
+        var rows = Flatten(root).Where(n => n.Id.StartsWith("kind:mod:", System.StringComparison.Ordinal)).ToList();
+        var row = Assert.Single(rows);
+        Assert.Equal(("kind:mod:ol_gate", 2), (row.Id, row.Children.Count));
+        var page = MissionPageModel.For(Context(m), (MissionRef)row.Item!);
+        Assert.Equal("Gate ambush", page.Title);
+        Assert.Equal(2, page.Section("uses")!.Fields.Count);
+    }
+
+    private static IEnumerable<HierarchyNode> Flatten(HierarchyNode node) => node.Children.SelectMany(Flatten).Prepend(node);
+
+    [Fact]
+    public void AnInstanceOfAMissingPrefabShowsMissingPrefab()
+    {
+        using var m = PrefabInstanceTests.Create();
+        Place(m, "ol_w1");
+        Run(m, new MissionBatch("Delete", [new RemovePrefabAsset(GateRef)]) { Confirm = true });
+        var analysis = m.Missions.Model(Script).Analysis;
+
+        Assert.Equal(MissionGraph.MissingPrefab, InstancePage(m, "ol_w1").Kind);
+        Assert.Contains(Flatten(HierarchyModel.MissionTree(analysis, _ => "", showBaseGame: false)),
+            n => n.Id.StartsWith("inst:", System.StringComparison.Ordinal) && n.Detail == MissionGraph.MissingPrefab);
+        Assert.StartsWith(MissionGraph.MissingPrefab, FrameOf(m, "ol_w1").Frame.Title);
+    }
+
+    [Fact]
+    public void PrefabModeHasNoActItems()
+    {
+        using var m = PrefabInstanceTests.Create();
+        var model = m.Missions.PrefabMode(GateRef)!;
+
+        Assert.DoesNotContain(MissionTreeEdits.CreateKindsOf(model.Analysis!), k => k.Kind == "act");
+        Assert.Contains(MissionTreeEdits.CreateKindsOf(m.Missions.Model(Script).Analysis), k => k.Kind == "act");
+        var graph = new GraphEditModel(MissionGraph.Build(model.Analysis!, new GraphOptions(GraphLens.Logic)));
+        Assert.False(graph.HasActs);
+        Assert.Null(graph.NewAct(graph.Graph.Nodes));
     }
 
     // ---- Assets ----
