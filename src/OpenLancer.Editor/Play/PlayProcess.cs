@@ -38,11 +38,11 @@ internal sealed class PlayProcess : IDisposable
     private readonly object processLock = new();
     private bool ended;
 
-    private PlayProcess(Process process, IUIThread ui, Action<PlayEvent> onEvent, Action<string> onLogLine,
-        Action<int, string> onExit)
+    private PlayProcess(Process process, StreamWriter input, IUIThread ui, Action<PlayEvent> onEvent,
+        Action<string> onLogLine, Action<int, string> onExit)
     {
         this.process = process;
-        input = process.StandardInput;
+        this.input = input;
         job = ProcessJob.For(process);
         reader = Task.Run(() => Read(ui, onEvent, onLogLine, onExit));
     }
@@ -71,12 +71,31 @@ internal sealed class PlayProcess : IDisposable
         Action<string> onLogLine, Action<int, string> onExit)
     {
         info.RedirectStandardInput = true;
+        var process = StartWithOutput(info);
+        return new PlayProcess(process, process.StandardInput, ui, onEvent, onLogLine, onExit);
+    }
+
+    /// <summary>
+    /// Starts the program as <see cref="Start(ProcessStartInfo, IUIThread, Action{PlayEvent}, Action{string}, Action{int, string})"/>
+    /// does, but <see cref="Send"/> writes to <paramref name="input"/>, not to the standard input of the program. The
+    /// tests give a pipe whose read end stays open after the game ends, so that a write to it succeeds. The input pipe of
+    /// a game can also take a write for a moment after the exit (see <see cref="Send"/>).
+    /// </summary>
+    internal static PlayProcess Start(ProcessStartInfo info, StreamWriter input, IUIThread ui,
+        Action<PlayEvent> onEvent, Action<string> onLogLine, Action<int, string> onExit)
+    {
+        info.RedirectStandardInput = false;
+        return new PlayProcess(StartWithOutput(info), input, ui, onEvent, onLogLine, onExit);
+    }
+
+    /// <summary>Starts the program with redirected output and error output, and without a console window.</summary>
+    private static Process StartWithOutput(ProcessStartInfo info)
+    {
         info.RedirectStandardOutput = true;
         info.RedirectStandardError = true;
         info.UseShellExecute = false;
         info.CreateNoWindow = true;
-        var process = Process.Start(info) ?? throw new InvalidOperationException($"{info.FileName} did not start.");
-        return new PlayProcess(process, ui, onEvent, onLogLine, onExit);
+        return Process.Start(info) ?? throw new InvalidOperationException($"{info.FileName} did not start.");
     }
 
     /// <summary>Writes a command on the standard input of the game.</summary>
