@@ -723,38 +723,16 @@ internal static class PatchWriter
         /// of the edit, and the new section can hold what a change of the old one cannot, for example the bool string
         /// <c>true</c> where B has <c>True</c>.</item>
         /// </list>
-        /// A moved section takes its children with it.
+        /// A moved section takes its children with it. In a mission file, the kept sections are the longest run of
+        /// sections of B in their order of B, so a move of one ship section moves only that section (section 6.4 of the
+        /// M6b design).
         /// </summary>
         /// <param name="deleted">The sections that the loaded patch or an edit deleted.</param>
         /// <param name="placed">The indexes in W of the new and moved sections that get <c>ol.before</c>. They do not
         /// move the sections after them.</param>
         private HashSet<SectionIdentity> Moved(IReadOnlySet<SectionIdentity> deleted, IReadOnlySet<int> placed)
         {
-            var result = new HashSet<SectionIdentity>();
-            var lastKept = -1;
-            var afterNew = false;
-            var childAfterNew = false;
-            for (var j = 0; j < w.Count; j++)
-            {
-                var isChild = SectionKeys.IsChild(w[j].Name);
-                if (!isChild)
-                    childAfterNew = false;
-                var i = BIndexOfW(j);
-                var inB = i >= 0;
-                if (inB && !afterNew && !(isChild && childAfterNew) && i > lastKept)
-                {
-                    lastKept = i;
-                    continue;
-                }
-                if (inB)
-                    result.Add(bIds[i]);
-                if (placed.Contains(j))
-                    continue;
-                if (isChild)
-                    childAfterNew = true;
-                else
-                    afterNew = true;
-            }
+            var result = SectionKeys.IsMissionFile(path) ? MovedOfMissionFile(placed) : MovedInOrder(placed);
 
             // From the end: the sections that an edit deleted and added again, with no kept section after them.
             var keptAfter = false;
@@ -786,6 +764,85 @@ internal static class PatchWriter
                     keptChildAfter = false;
                     children.Clear();
                 }
+            }
+            return result;
+        }
+
+        /// <summary>The sections of B that come out of their order: each section of B before a section that comes
+        /// earlier in B, and each section after a new or moved section that is not placed. A child after a new or
+        /// moved child of its parent moves too.</summary>
+        private HashSet<SectionIdentity> MovedInOrder(IReadOnlySet<int> placed)
+        {
+            var result = new HashSet<SectionIdentity>();
+            var lastKept = -1;
+            var afterNew = false;
+            var childAfterNew = false;
+            for (var j = 0; j < w.Count; j++)
+            {
+                var isChild = SectionKeys.IsChild(w[j].Name);
+                if (!isChild)
+                    childAfterNew = false;
+                var i = BIndexOfW(j);
+                var inB = i >= 0;
+                if (inB && !afterNew && !(isChild && childAfterNew) && i > lastKept)
+                {
+                    lastKept = i;
+                    continue;
+                }
+                if (inB)
+                    result.Add(bIds[i]);
+                if (placed.Contains(j))
+                    continue;
+                if (isChild)
+                    childAfterNew = true;
+                else
+                    afterNew = true;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// The sections of B that come out of their order in a mission file, which has no child sections. The kept
+        /// sections are the longest run of sections of B in their order of B, before the first new section that is not
+        /// placed. Each other section of B moves.
+        /// </summary>
+        private HashSet<SectionIdentity> MovedOfMissionFile(IReadOnlySet<int> placed)
+        {
+            var end = 0;
+            while (end < w.Count && (BIndexOfW(end) >= 0 || placed.Contains(end)))
+                end++;
+            // From the end of the file, so that of two runs with the same length the run with the earlier sections stays,
+            // as the merge keeps the first sections in order.
+            var candidates = Enumerable.Range(0, end).Where(j => BIndexOfW(j) >= 0).Reverse().ToList();
+            // The longest decreasing run of B indexes, with the place of the last item of each length.
+            var tails = new List<int>();
+            var previous = new int[candidates.Count];
+            for (var k = 0; k < candidates.Count; k++)
+            {
+                var value = -BIndexOfW(candidates[k]);
+                int low = 0, high = tails.Count;
+                while (low < high)
+                {
+                    var middle = (low + high) / 2;
+                    if (-BIndexOfW(candidates[tails[middle]]) < value)
+                        low = middle + 1;
+                    else
+                        high = middle;
+                }
+                previous[k] = low > 0 ? tails[low - 1] : -1;
+                if (low == tails.Count)
+                    tails.Add(k);
+                else
+                    tails[low] = k;
+            }
+            var kept = new HashSet<int>();
+            for (var k = tails.Count > 0 ? tails[^1] : -1; k >= 0; k = previous[k])
+                kept.Add(candidates[k]);
+            var result = new HashSet<SectionIdentity>();
+            for (var j = 0; j < w.Count; j++)
+            {
+                if (BIndexOfW(j) is >= 0 and var i && !kept.Contains(j))
+                    result.Add(bIds[i]);
             }
             return result;
         }

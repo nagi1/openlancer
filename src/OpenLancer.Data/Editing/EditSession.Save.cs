@@ -385,19 +385,24 @@ public sealed partial class EditSession
         var path = document.Path;
         if (document.ChangedWholeFile() is not { } file)
             return null;
-        if (WholeMissionFileInRepo(active) is { } inRepo)
+        if (file.Bytes != null && WholeMissionFileInRepo(active) is { } inRepo)
         {
             problems.Add(Diagnostic.Error(path, inRepo));
             return null;
         }
-        problems.AddRange(MissingText(document));
-        if (!activeNow.Files.TryGetValue(path, out var target))
+        if (file.Bytes != null)
+            problems.AddRange(MissingText(document));
+        var root = Path.Combine(active.Folder, Mod.FilesFolder);
+        // A new script of the mod (CreateScript) has no file yet (decision D680).
+        if (!activeNow.Files.TryGetValue(path, out var target) && !document.Initial.Exists && file.Bytes != null &&
+            !activeNow.Patches.ContainsKey(path))
+            target = Path.Combine(root, LocalPath(path));
+        if (target == null)
         {
             problems.Add(Diagnostic.Error(path, $"The active mod has no whole file for {path} now. Open the profile " +
                                                 "again."));
             return null;
         }
-        var root = Path.Combine(active.Folder, Mod.FilesFolder);
         if (!PathRules.IsInside(target, root))
         {
             problems.Add(Diagnostic.Error(path, $"The file {target} is not in the folder {root}."));

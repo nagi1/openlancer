@@ -123,6 +123,16 @@ internal sealed class PatchSource
     /// <param name="key">The key of the section (see <see cref="SectionIdentity.KeyOf"/>), or null.</param>
     public SourceSection? Existing(string type, string? key) => existing.GetValueOrDefault(new SectionIdentity(type, key));
 
+    /// <summary>The value of the <c>ol.base</c> line of the loaded sections that change a section of B, or null when they
+    /// have none (section 6.3 of the M6b design).</summary>
+    /// <param name="id">The identity of the section in B.</param>
+    public string? BaseHash(SectionIdentity id) =>
+        Existing(id.Type, id.Key)?.Lines.Select(l => l.Parsed)
+            .FirstOrDefault(e => e.Name.Equals(Ini.IniPatcher.DirectiveBase, StringComparison.OrdinalIgnoreCase) && e.Count == 1)
+            is { } line
+            ? Ini.SectionHash.TextOf(line[0])
+            : null;
+
     /// <summary>
     /// The loaded sections that add a section with this type and key, as one section. The <paramref name="ordinal"/>-th
     /// new section of W with this type and key gets the <paramref name="ordinal"/>-th such section of the file that the

@@ -55,9 +55,10 @@ public sealed partial class EditSession
             var document = documents[path];
             if (document.IsWholeFile)
             {
+                // A whole file without text is the delete of the file (DeleteScript).
                 if (document.ChangedWholeFile() is { } whole)
                     files.Add(new RecoveredFile(path, RecoveredKind.WholeFile, document.SourceHash,
-                        IniDocument.TextEncoding.GetString(whole.Bytes)));
+                        whole.Bytes == null ? null : IniDocument.TextEncoding.GetString(whole.Bytes)));
                 continue;
             }
             var patch = document.ChangedPatch();
@@ -152,10 +153,14 @@ public sealed partial class EditSession
                         cutscene.Restore(reopened.State);
                     continue;
                 }
+                // A new script of the mod that the earlier session did not save has no file, so the session makes its
+                // document first (decision D680).
+                if (recovered is { Kind: RecoveredKind.WholeFile, KnownHash: null } && OpenDocument(recovered.Path) == null &&
+                    EditDocument.EditsWholeFile(recovered.Path))
+                    NewWholeDocument(recovered.Path);
                 var document = scope.Document(recovered.Path);
                 if (document.SourceHash != recovered.KnownHash ||
-                    recovered.Kind != (document.IsWholeFile ? RecoveredKind.WholeFile : RecoveredKind.Patch) ||
-                    document.IsWholeFile && recovered.Text == null)
+                    recovered.Kind != (document.IsWholeFile ? RecoveredKind.WholeFile : RecoveredKind.Patch))
                 {
                     problems.Add(Diagnostic.Error(recovered.Path, changed));
                     continue;
@@ -164,7 +169,9 @@ public sealed partial class EditSession
                 {
                     try
                     {
-                        document.Restore(document.WholeState(IniDocument.TextEncoding.GetBytes(recovered.Text!)));
+                        document.Restore(recovered.Text == null
+                            ? document.Initial with { Working = [], Exists = false }
+                            : document.WholeState(IniDocument.TextEncoding.GetBytes(recovered.Text)));
                     }
                     catch (Exception e) when (e is not InvalidOperationException)
                     {

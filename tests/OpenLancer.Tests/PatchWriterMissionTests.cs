@@ -123,7 +123,7 @@ public sealed class PatchWriterMissionTests
         var session = ws.Session("act");
         var mission = new SectionRef(ScriptPath, new SectionIdentity("Mission", null));
 
-        session.Execute(EditCommand.SetLinesFromText(mission, "npc_ship_file", [@"missions\ol_test\ol_b.ini"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(mission, "npc_ship_file", [@"missions\ol_test\ol_b.ini"])));
         var result = session.Save();
 
         Assert.True(result.Saved, string.Join("\n", result.Problems));
@@ -148,8 +148,8 @@ public sealed class PatchWriterMissionTests
         using (var session = ws.Session("act"))
         {
             Assert.Null(session.Get(wave)!.ReadOnlyReason);
-            session.Execute(EditCommand.SetLinesFromText(wave, "Cnd_True", []));
-            session.Execute(EditCommand.SetLinesFromText(wave, "Cnd_Timer", ["5"]));
+            session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(wave, "Cnd_True", [])));
+            session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(wave, "Cnd_Timer", ["5"])));
             Assert.True(session.Save().Saved);
         }
 
@@ -210,7 +210,7 @@ public sealed class PatchWriterMissionTests
         Assert.Contains(session.EditView.Diagnostics, BaseWarning);
         var mission = new SectionRef(ScriptPath, new SectionIdentity("Mission", null));
 
-        session.Execute(EditCommand.SetLinesFromText(mission, "npc_ship_file", [@"missions\ol_test\ol_b.ini"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(mission, "npc_ship_file", [@"missions\ol_test\ol_b.ini"])));
         var result = session.Save();
 
         Assert.True(result.Saved, string.Join("\n", result.Problems));

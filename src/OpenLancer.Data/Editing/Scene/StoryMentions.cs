@@ -16,9 +16,10 @@ public sealed record StoryMention(string Path, int Count);
 /// <summary>
 /// Finds a nickname as text in the files that the reverse index of the lists does not read (decisions D239 and D261 of
 /// the M3 design): each <c>.ini</c> and <c>.thn</c> file of the edit view, except the system files of
-/// <c>universe.ini</c> and their nebula and field files. So the scan covers the mission files, <c>KnowledgeMap.ini</c>,
-/// <c>InitialWorld.ini</c> and the cutscenes. A mention is a warning only. Milestone M29 replaces the scan of the mission
-/// files with the mission index.
+/// <c>universe.ini</c> and their nebula and field files. So the scan covers <c>KnowledgeMap.ini</c>,
+/// <c>InitialWorld.ini</c>, the cutscenes and the files of the missions that are not scripts. A mention is a warning
+/// only. The scan leaves out the mission scripts, because the mission index has each of their references, and a
+/// rename changes them (decision D668 of the M6b design).
 /// </summary>
 /// <remarks>
 /// <para>A match is the nickname without letter case, with no letter, digit or <c>_</c> just before or after it. A
@@ -60,8 +61,10 @@ internal sealed class StoryMentions(EditSession session)
             .Concat(session.FieldFiles.Files("Nebula"))
             .Concat(session.FieldFiles.Files("Asteroids"))
             .ToHashSet(VfsPath.Comparer);
+        // The mission index has each reference of a mission script, so the scan leaves them out (decision D668).
         return index.Find(nickname.Trim())
-            .Where(m => !skip.Contains(m.Path))
+            .Where(m => !skip.Contains(m.Path) &&
+                        !(Ini.SectionKeys.IsMissionFile(m.Path) && session.OpenDocument(m.Path) is { HoldsScript: true }))
             .OrderBy(m => m.Path, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }

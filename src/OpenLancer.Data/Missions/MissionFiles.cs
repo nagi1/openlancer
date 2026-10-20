@@ -58,8 +58,7 @@ public static class MissionFiles
         var result = new List<string>();
         foreach (var path in VfsFiles.Find(files, ".ini", missionsFolder))
         {
-            var below = path.Length > missionsFolder.Length ? path[(missionsFolder.Length + 1)..] : path;
-            if (below.StartsWith(EncountersFolder + "\\", StringComparison.OrdinalIgnoreCase))
+            if (!IsScanned(path, missionsFolder))
                 continue;
             byte[] bytes;
             try
@@ -104,8 +103,19 @@ public static class MissionFiles
         return false;
     }
 
+    /// <summary>True for a path that the scan reads: a file below the missions folder, outside the encounters
+    /// folder.</summary>
+    /// <param name="missionsFolder">The install path of <c>DATA\MISSIONS</c>.</param>
+    internal static bool IsScanned(string path, string missionsFolder)
+    {
+        if (path.Length <= missionsFolder.Length + 1 || !path.StartsWith(missionsFolder, StringComparison.OrdinalIgnoreCase) ||
+            path[missionsFolder.Length] != '\\')
+            return false;
+        return !path[(missionsFolder.Length + 1)..].StartsWith(EncountersFolder + "\\", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>True for the section types that only a mission script has.</summary>
-    private static bool IsScriptSection(string type) =>
+    internal static bool IsScriptSection(string type) =>
         type.Equals("Mission", StringComparison.OrdinalIgnoreCase) || type.Equals("Trigger", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>

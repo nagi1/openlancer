@@ -12,6 +12,9 @@ namespace OpenLancer.Data.Editing;
 
 public sealed partial class EditSession
 {
+    /// <summary>The text of the active mod with the edits, for the tests.</summary>
+    internal ModText CurrentText => text;
+
     /// <summary>
     /// The sections of the active mod that hold each text placeholder in a value. A section of a file that the
     /// session opened comes from W, so it shows the edits. A null section is a line of a file of the active mod that

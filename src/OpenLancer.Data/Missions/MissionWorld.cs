@@ -46,6 +46,19 @@ public sealed class MissionWorld
         }
     }
 
+    /// <summary>A world with more names of some kinds, for example the names of a test that the data lists of its game
+    /// data do not have.</summary>
+    internal MissionWorld WithNames(IReadOnlyDictionary<MissionValueKind, IEnumerable<string>> more)
+    {
+        var all = names.ToDictionary(p => p.Key, p => (IEnumerable<string>)p.Value);
+        foreach (var (kind, values) in more)
+            all[kind] = all.TryGetValue(kind, out var known) ? known.Concat(values).ToList() : values;
+        var world = new MissionWorld(all, fileExists);
+        return removed.Count == 0
+            ? world
+            : world.WithRemoved(removed.ToDictionary(p => p.Key, p => (IReadOnlyDictionary<string, string>)p.Value));
+    }
+
     /// <summary>True when the world holds names that a mod removes or renames (see <see cref="WithRemoved"/>).</summary>
     public bool HasRemovedNames => removed.Count > 0;
 

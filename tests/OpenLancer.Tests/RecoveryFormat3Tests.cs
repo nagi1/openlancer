@@ -20,8 +20,8 @@ public sealed class RecoveryFormat3Tests
     private static void Edit(EditSession session)
     {
         session.Execute(Set(Good("g1"), "price", new Int32Value(300)));
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]));
-        session.Execute(EditCommand.SetModFile(GraphPath, GraphText));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, GraphText)));
     }
 
     [Fact]
@@ -113,8 +113,8 @@ public sealed class RecoveryFormat3Tests
     {
         using var ws = WholeFileScriptTests.Workspace(new() { [WholeFile] = Script, [GraphPath] = GraphText });
         var session = ws.Session("act");
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]));
-        session.Execute(EditCommand.SetModFile(GraphPath, "[Graph]\r\nformat = 1\r\n"));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, "[Graph]\r\nformat = 1\r\n")));
         Assert.Empty(session.WriteRecovery());
         session.Dispose();
         File.AppendAllText(Path.Combine(ws.ModFolder("act"), GraphPath), "; changed\r\n");

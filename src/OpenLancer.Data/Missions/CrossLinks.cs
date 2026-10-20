@@ -65,7 +65,7 @@ public static class CrossLinks
     }
 
     /// <summary>The trigger of a section of the script, or null.</summary>
-    private static MissionTrigger? TriggerOf(MissionAnalysis analysis, Editing.SectionRef section) =>
+    private static MissionTrigger? TriggerOf(MissionAnalysis analysis, OpenLancer.Data.Editing.SectionRef section) =>
         analysis.Document.Find(section) is { } found ? analysis.Index.Triggers.FirstOrDefault(t => t.Section == found) : null;
 
     /// <summary>

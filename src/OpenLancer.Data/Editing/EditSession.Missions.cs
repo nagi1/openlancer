@@ -6,12 +6,21 @@ using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Mods;
 
 namespace OpenLancer.Data.Editing;
 
 public sealed partial class EditSession
 {
+    private MissionEditor? missions;
+
+    /// <summary>
+    /// The mission editor of the session: the only write path for mission files (section 4 of the M6b design, decision
+    /// D660). The studio, the M3 rename and delete, the headless host and the agent tools use this instance.
+    /// </summary>
+    public MissionEditor Missions => missions ??= new MissionEditor(this, new SessionMissionWorld(this));
+
     // The scripts and the files of the NPC ship builds of the last run of the mission checks, or null before the first
     // run. The roles 'mission' and 'mission_ships' read them.
     private IReadOnlyList<string>? missionScripts;
@@ -29,10 +38,16 @@ public sealed partial class EditSession
 
     /// <summary>
     /// Makes the snapshot of a run of the mission checks (section 12.3 of the M6a design). Call it on the UI thread: it
-    /// reads the data lists. The run gets a new generation, so the result of an older run is dropped.
+    /// reads the data lists. The run gets a new generation, so the result of an older run is dropped. The snapshot has
+    /// the overlay of W of the mission files that the session changed and did not save (section 7 of the M6b design).
     /// </summary>
     /// <param name="coverage">The OpenLancer marks of the engine.</param>
-    public MissionInputs MissionInputs(IEngineCoverage coverage)
+    public MissionInputs MissionInputs(IEngineCoverage coverage) =>
+        (MissionWorldInputs(coverage) with { Generation = ++missionGeneration }).WithOverlay(MissionOverlay());
+
+    /// <summary>The snapshot of the names of the game data for the mission checks, without an overlay and without a
+    /// new generation. The mission editor keeps it until the names change.</summary>
+    internal MissionInputs MissionWorldInputs(IEngineCoverage coverage)
     {
         var files = EditView.CreateFileSystem();
         var baseFiles = EditView.Base.OpenFileSystem();
@@ -54,7 +69,130 @@ public sealed partial class EditSession
             Coverage = coverage,
             ActiveModId = ActiveMod?.Id,
             Options = new MissionCheckOptions(targets?.Contains(ModTargets.OpenLancer) == true),
-            Generation = ++missionGeneration,
+            Generation = missionGeneration,
+        };
+    }
+
+    /// <summary>The message of the guard of the mission files (decision D660).</summary>
+    internal static string MissionGuardMessage(string path) =>
+        $"{path} is a mission file. Change it with the mission commands, so that the checks, the references and the " +
+        "undo of the missions follow the edit.";
+
+    /// <summary>
+    /// True when the guard of the mission files covers a file (section 4.1 of the M6b design, decision D660): a mission
+    /// script, and each ship build file that a <c>[Mission] npc_ship_file</c> line of a script names. The shared files
+    /// directly in <c>DATA\MISSIONS</c>, for example <c>npcships.ini</c> and the pilot files, are world data (review
+    /// finding RB2).
+    /// </summary>
+    /// <param name="path">An install path in normal form.</param>
+    internal bool IsGuardedMissionFile(string path)
+    {
+        if (!SectionKeys.IsMissionFile(path))
+            return false;
+        if (OpenDocument(path) is { HoldsScript: true })
+            return true;
+        if (DataPath("MISSIONS") is { } missions && VfsPath.Normalize(System.IO.Path.GetDirectoryName(path) ?? "") is { } folder &&
+            VfsPath.Comparer.Equals(folder, missions))
+            return false;
+        return ShipBuildFilesOfScripts().Contains(path);
+    }
+
+    private (int Revision, HashSet<string> Files)? shipBuildFiles;
+
+    /// <summary>The ship build files that the <c>[Mission] npc_ship_file</c> lines of the scripts of W name (see
+    /// <see cref="MissionEditor.ScriptPaths"/>).</summary>
+    internal IReadOnlySet<string> ShipBuildFilesOfScripts()
+    {
+        if (shipBuildFiles is var (revision, known) && revision == CacheRevision)
+            return known;
+        var files = new HashSet<string>(VfsPath.Comparer);
+        var scripts = Missions.ScriptPaths();
+        foreach (var script in scripts)
+        {
+            if (ShipBuildFileOf(script) is { } file)
+                files.Add(file);
+        }
+        shipBuildFiles = (CacheRevision, files);
+        return files;
+    }
+
+    /// <summary>The install path of the ship build file that the <c>[Mission] npc_ship_file</c> line of W of a script
+    /// names, or null.</summary>
+    internal string? ShipBuildFileOf(string script) =>
+        OpenDocument(script) is { } document &&
+        document.Working.FirstOrDefault(s => s.Name.Equals("Mission", StringComparison.OrdinalIgnoreCase)) is { } mission &&
+        ItemIndex.First(mission, "npc_ship_file") is { } relative && MissionFiles.RelativeOf(relative) is { } normal
+            ? DataPath(normal)
+            : null;
+
+    /// <summary>
+    /// The document of a new whole file of the active mod at an install path (decision D680). The document exists
+    /// in the session, but the file exists only after a command makes it. A path that the session has a document for
+    /// gives that document.
+    /// </summary>
+    /// <exception cref="ArgumentException">The path is not an install path.</exception>
+    internal EditDocument NewWholeDocument(string path)
+    {
+        var normal = Data.Editing.Commands.InstallPaths.TryParse(path) ??
+                     throw new ArgumentException($"{path} is not an install path.", nameof(path));
+        if (TryDocument(normal, out var known))
+            return known!;
+        var document = EditDocument.NewWhole(normal);
+        documents[normal] = document;
+        return document;
+    }
+
+    /// <summary>The install paths of the mission scripts that the session opened and that exist in W.</summary>
+    internal IEnumerable<string> OpenMissionScripts() =>
+        documents.Values.Where(d => d is { HoldsScript: true, State.Exists: true }).Select(d => d.Path);
+
+    /// <summary>A new number for a run of the mission checks, so the result of an older run is dropped.</summary>
+    internal int NextMissionGeneration() => ++missionGeneration;
+
+    /// <summary>
+    /// W of the files under <c>DATA\MISSIONS</c> that the session changed and did not save (section 7 of the M6b
+    /// design). A run of the mission checks reads them in place of the files of the edit view.
+    /// </summary>
+    internal IReadOnlyDictionary<string, MissionOverlayFile> MissionOverlay()
+    {
+        var result = new Dictionary<string, MissionOverlayFile>(VfsPath.Comparer);
+        foreach (var (path, document) in documents)
+        {
+            if (!ReferenceEquals(document.State, document.Initial) && SectionKeys.IsMissionFile(path))
+                result[path] = OverlayOf(document, document.State);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// W of a state of a mission file for the overlay of a run, with the mods that change the file and each section: the
+    /// lower mods that the lower layer records, and the active mod for each section that W changes. So a problem of an
+    /// unsaved edit has the origin of the active mod (decision D551).
+    /// </summary>
+    internal MissionOverlayFile OverlayOf(EditDocument document, DocumentState state)
+    {
+        var path = document.Path;
+        var active = ActiveMod?.Id;
+        var ledger = lowerView.Ledger;
+        var sections = new Dictionary<SectionIdentity, IReadOnlyList<string>>();
+        foreach (var (id, baseId, changed) in document.Compare(state))
+        {
+            IReadOnlyList<string> mods = baseId != null && !document.IsWholeFile ? ledger.ModsThatChangeSection(path, baseId) : [];
+            if (changed && active != null)
+                mods = [.. mods.Where(m => m != active), active];
+            if (mods.Count > 0)
+                sections[id] = mods;
+        }
+        IReadOnlyList<string> fileMods = document.IsWholeFile ? [] : ledger.ModsThatChangeFile(path);
+        if (active != null && document.ChangesBase(state))
+            fileMods = [.. fileMods.Where(m => m != active), active];
+        return new MissionOverlayFile(state.Working, document.IsBinary)
+        {
+            Exists = state.Exists,
+            FileMods = fileMods,
+            ReplacedBy = document.IsWholeFile ? active : ledger.ReplacedBy(path),
+            SectionMods = sections,
+            State = state,
         };
     }
 

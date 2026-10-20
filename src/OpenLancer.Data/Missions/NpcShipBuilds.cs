@@ -51,12 +51,16 @@ public sealed class NpcShipBuilds
     /// <summary>Reads the <c>[NPCShipArch]</c> sections of files. The first build of a nickname counts, in the order of the
     /// files and of the sections. A file that does not exist or does not parse gives no build.</summary>
     /// <param name="parsed">Gives the sections of a file that the run already parsed, or null.</param>
+    /// <param name="absent">True for a file that the run must not read, because W does not have it now. Null for
+    /// none.</param>
     public static NpcShipBuilds Read(FileSystem files, IEnumerable<string> paths,
-        Func<string, MissionDocument?>? parsed = null)
+        Func<string, MissionDocument?>? parsed = null, Func<string, bool>? absent = null)
     {
         var result = new NpcShipBuilds();
         foreach (var path in paths)
         {
+            if (absent?.Invoke(path) == true)
+                continue;
             var document = parsed?.Invoke(path) ?? Parse(files, path);
             foreach (var section in document?.Sections.Where(s => MissionIndex.Is(s.Type, "NPCShipArch")) ?? [])
             {

@@ -225,8 +225,9 @@ public sealed class StoryMentionsTests
         var session = ws.Session("act");
 
         var mentions = session.StoryMentions("LI01_01");
-        Assert.Equal([(SceneWorkspace.KnowledgeMapPath, 1), (SceneWorkspace.MissionPath, 2)],
-            mentions.Select(m => (m.Path, m.Count)), new PathCount());
+        // The mission scripts are not in the scan, because the mission index has their references (decision D668 of
+        // the M6b design).
+        Assert.Equal([(SceneWorkspace.KnowledgeMapPath, 1)], mentions.Select(m => (m.Path, m.Count)), new PathCount());
         // Li01_01_Base is another word, and the system files do not count.
         Assert.Empty(session.StoryMentions("Li01_0"));
         Assert.DoesNotContain(session.StoryMentions("Zone_hole"), m => m.Path.EndsWith("cloud.ini", StringComparison.OrdinalIgnoreCase));
@@ -236,8 +237,9 @@ public sealed class StoryMentionsTests
     public void ABinaryFileAndANicknameWithASpaceAreFound()
     {
         using var ws = SceneWorkspace.Create();
-        ws.WriteBaseBini(@"DATA\MISSIONS\bini.ini", "[Trigger]\nnickname = t2\nCnd = Li01_child\n");
-        ws.WriteBase(@"DATA\MISSIONS\space.ini", "[Trigger]\nname = Br03_weapons platform_5, x\nname = abr03_weapons platform_5\n");
+        // Files of the missions that are not scripts are in the scan.
+        ws.WriteBaseBini(@"DATA\MISSIONS\bini.ini", "[Rumor]\nnickname = t2\nCnd = Li01_child\n");
+        ws.WriteBase(@"DATA\MISSIONS\space.ini", "[Rumor]\nname = Br03_weapons platform_5, x\nname = abr03_weapons platform_5\n");
         var session = ws.Session("act");
 
         Assert.Contains(session.StoryMentions("li01_child"), m => m.Path.EndsWith("bini.ini", StringComparison.OrdinalIgnoreCase));

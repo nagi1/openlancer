@@ -1,5 +1,5 @@
 {
-  "// about": "The argument schema of mission scripts (milestone M6a). Facts in plain words. Evidence names the record of the fact (a TR rule, a GA1 row or an MSD section of the mission studio design) and the fork class, when the fork has the behavior. The help texts follow the STE rules of AGENTS.md.",
+  "// about": "The argument schema of mission scripts (milestone M6a). Facts in plain words. Evidence names the record of the fact (a TR rule, a GA1 row or an MSD section of the mission studio design) and the fork class, when the fork has the behavior. The help texts follow the STE rules of AGENTS.md. A default is the value that a new line of a mission command writes when it does not give the value (milestone M6b). The defaults of GotoVec are the most common values of the retail scripts. noRetailExample marks a name that no retail script uses (rule M28).",
   "storySlots": [
     { "slot": "M01a", "controller": "Mission_01a", "path": "MISSIONS\\M01A\\m01a.ini", "startStage": 1, "acceptStage": 2,
       "next": { "kind": "atOnce" }, "titleId": 21800, "missionId": 32000, "notes": ["baseEntry"] },
@@ -166,7 +166,8 @@
         { "index": 2, "name": "base", "label": "Base", "kind": "base" }
       ],
       "sentences": [ { "text": "Starts when the player selects {character} in {room} on {base}." } ], "evidence": "MSD 3.5, fork Cnd_CharSelect" },
-    { "name": "Cnd_RumorHeard", "plain": "On rumor heard", "event": "talk", "wake": ["rumorHeard"], "checked": false,
+    { "name": "Cnd_RumorHeard", "noRetailExample": true,
+      "plain": "On rumor heard", "event": "talk", "wake": ["rumorHeard"], "checked": false,
       "values": [
         { "index": 0, "name": "rumor", "label": "Rumor", "kind": "text" },
         { "index": 1, "name": "room", "label": "Room", "kind": "room" },
@@ -245,7 +246,8 @@
         { "index": 0, "name": "system", "label": "System", "kind": "system", "also": "any" }
       ],
       "sentences": [ { "text": "Starts when the player arrives in {system} through a jump." } ], "evidence": "MSD 3.5, fork Cnd_JumpInComplete" },
-    { "name": "Cnd_JumpgateAct", "plain": "On jump gate use", "event": "place", "wake": ["jumpgateActivate"], "checked": false,
+    { "name": "Cnd_JumpgateAct", "noRetailExample": true,
+      "plain": "On jump gate use", "event": "place", "wake": ["jumpgateActivate"], "checked": false,
       "values": [
         { "index": 0, "name": "gate", "label": "Jump gate", "kind": "systemObject" }
       ],
@@ -338,7 +340,8 @@
         { "index": 1, "name": "ring", "label": "Ring object", "kind": "object", "help": "The object of the ring. Its rotation sets the plane, and its size sets the radius.", "hard": true }
       ],
       "sentences": [ { "text": "Starts when {ship} flies through the ring of {ring}." } ], "evidence": "TR11, GA1 CN-01, fork Cnd_DistCircle" },
-    { "name": "Cnd_CmpToPlane", "plain": "Past a plane", "event": "distance", "polls": true, "checked": false,
+    { "name": "Cnd_CmpToPlane", "noRetailExample": true,
+      "plain": "Past a plane", "event": "distance", "polls": true, "checked": false,
       "values": [
         { "index": 0, "name": "side", "label": "Side", "kind": "token", "tokens": "side" },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" },
@@ -360,7 +363,7 @@
     { "name": "Cnd_Destroyed", "plain": "On destroyed", "event": "combat", "wake": ["destroyed"],
       "values": [
         { "index": 0, "name": "target", "label": "Target", "kind": "object", "help": "The ship, formation, solar or label to watch." },
-        { "index": 1, "name": "count", "label": "Count", "kind": "wholeNumber", "optional": true, "help": "How many must be destroyed. -1 means the last one. 0 never starts the trigger.", "hard": true },
+        { "index": 1, "name": "count", "label": "Count", "kind": "wholeNumber", "optional": true, "default": -1, "help": "How many must be destroyed. -1 means the last one. 0 never starts the trigger.", "hard": true },
         { "index": 2, "name": "mode", "label": "How it dies", "kind": "token", "tokens": "destroyMode", "optional": true },
         { "index": 3, "name": "killer", "label": "Destroyed by", "kind": "object", "optional": true }
       ],
@@ -462,7 +465,8 @@
         { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "list": { "items": "ships" }, "help": "The ships that must be in the system together with the player." }
       ],
       "sentences": [ { "text": "Starts when {ships} and the player are in {system}." } ], "evidence": "TR11, MSD 2.12 jumper row, fork Cnd_NPCSystemEnter" },
-    { "name": "Cnd_NPCSystemExit", "plain": "Ships leave a system", "event": "story", "wake": ["npcSystemExit"], "checked": false,
+    { "name": "Cnd_NPCSystemExit", "noRetailExample": true,
+      "plain": "Ships leave a system", "event": "story", "wake": ["npcSystemExit"], "checked": false,
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system", "also": "any" },
         { "index": 1, "name": "ships", "label": "Ships", "kind": "object", "rest": true, "list": { "items": "ships" } }
@@ -493,7 +497,8 @@
         { "index": 2, "name": "position", "label": "Position", "kind": "position", "width": 3, "optional": true },
         { "index": 5, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "TR16, MSD 2.6, fork Act_SpawnShip" },
-    { "name": "Act_SpawnShipRel", "plain": "Spawn ship near an object", "group": "spawn",
+    { "name": "Act_SpawnShipRel", "noRetailExample": true,
+      "plain": "Spawn ship near an object", "group": "spawn",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "group", "closed": true },
         { "index": 1, "name": "orders", "label": "Orders", "kind": "objList", "noneToken": "no_ol" },
@@ -532,7 +537,8 @@
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3 },
         { "index": 4, "name": "rotation", "label": "Rotation", "kind": "rotation", "width": 4, "optional": true }
       ], "evidence": "MSD 3.7, fork Act_RelocateShip" },
-    { "name": "Act_RelocateForm", "plain": "Move formation", "group": "spawn",
+    { "name": "Act_RelocateForm", "noRetailExample": true,
+      "plain": "Move formation", "group": "spawn",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "position", "label": "Position", "kind": "position", "width": 3 },
@@ -563,12 +569,14 @@
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "priority", "label": "Priority", "kind": "token", "tokens": "priority" }
       ], "evidence": "MSD 3.5, fork Act_SetPriority" },
-    { "name": "Act_PilotParams", "plain": "Set pilot settings", "group": "orders",
+    { "name": "Act_PilotParams", "noRetailExample": true,
+      "plain": "Set pilot settings", "group": "orders",
       "values": [
         { "index": 0, "name": "ship", "label": "Ship", "kind": "object" },
         { "index": 1, "name": "flee", "label": "Flee", "kind": "token", "tokens": "fleeMode" }
       ], "evidence": "MSD 2.10 (no retail line)" },
-    { "name": "Act_SetFlee", "plain": "Set flee", "group": "orders", "checked": false,
+    { "name": "Act_SetFlee", "noRetailExample": true,
+      "plain": "Set flee", "group": "orders", "checked": false,
       "values": [
         { "index": 0, "name": "mode", "label": "Mode", "kind": "token", "tokens": "fleeSet" },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" },
@@ -611,7 +619,8 @@
         { "index": 1, "name": "faction", "label": "Faction", "kind": "faction" },
         { "index": 2, "name": "value", "label": "Reputation", "kind": "attitude" }
       ], "evidence": "MSD 2.1, fork Act_SetRep" },
-    { "name": "Act_RepChangeRequest", "plain": "Ask for a reputation change", "group": "sides",
+    { "name": "Act_RepChangeRequest", "noRetailExample": true,
+      "plain": "Ask for a reputation change", "group": "sides",
       "values": [
         { "index": 0, "name": "system", "label": "System", "kind": "system" },
         { "index": 1, "name": "factions", "label": "Factions", "kind": "faction", "rest": true }
@@ -727,7 +736,8 @@
       ], "evidence": "MSD 3.5, fork Act_PopupDialog" },
     { "name": "Act_PlaySoundEffect", "plain": "Play sound", "group": "comms",
       "values": [ { "index": 0, "name": "sound", "label": "Sound", "kind": "sound" } ], "evidence": "MSD 3.5, fork Act_PlaySoundEffect" },
-    { "name": "Act_PlayNN", "plain": "Play neural net message", "group": "comms",
+    { "name": "Act_PlayNN", "noRetailExample": true,
+      "plain": "Play neural net message", "group": "comms",
       "values": [ { "index": 0, "name": "message", "label": "Message", "kind": "text" } ], "evidence": "MSD 2.10 (no retail line)" },
     { "name": "Act_PlayMusic", "plain": "Play music", "group": "music", "checked": false,
       "values": [
@@ -826,7 +836,8 @@
       ], "evidence": "MSD 3.5, fork Act_RemoveCargo" },
     { "name": "Act_AdjAcct", "plain": "Change money", "group": "player",
       "values": [ { "index": 0, "name": "credits", "label": "Credits", "kind": "wholeNumber" } ], "evidence": "MSD 2.1, fork Act_AdjAcct" },
-    { "name": "Act_PlayerForm", "plain": "Player formation", "group": "player",
+    { "name": "Act_PlayerForm", "noRetailExample": true,
+      "plain": "Player formation", "group": "player",
       "values": [
         { "index": 0, "name": "shape", "label": "Formation shape", "kind": "formationShape" },
         { "index": 1, "name": "ship", "label": "Ship", "kind": "object" }
@@ -1019,9 +1030,9 @@
   ],
   "objListDirectives": [
     { "key": "GotoVec", "plain": "Fly to a point", "values": [
-      { "index": 0, "name": "movement", "label": "Movement", "kind": "token", "tokens": "gotoKind" },
+      { "index": 0, "name": "movement", "label": "Movement", "kind": "token", "tokens": "gotoKind", "default": "goto_no_cruise" },
       { "index": 1, "name": "point", "label": "Point", "kind": "position", "width": 3, "whole": true },
-      { "index": 4, "name": "range", "label": "Range", "kind": "wholeNumber" },
+      { "index": 4, "name": "range", "label": "Range", "kind": "wholeNumber", "default": 100 },
       { "index": 5, "name": "more", "label": "More values", "kind": "text", "rest": true, "optional": true, "checked": false } ] },
     { "key": "GotoShip", "plain": "Fly to a ship", "values": [
       { "index": 0, "name": "movement", "label": "Movement", "kind": "token", "tokens": "gotoKind" },

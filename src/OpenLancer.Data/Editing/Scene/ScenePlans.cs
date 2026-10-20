@@ -493,8 +493,13 @@ public static partial class ScenePlans
         warnings = warnings.DistinctBy(w => w.Message).ToList();
         plan.Warnings = warnings;
         plan.Mentions = mentions;
+        // The mission lines that name a deleted object stay and show "Missing" (decision D668).
+        plan.MissionMissing = session.Missions.References.Missing(Missions.Editing.MissionReferences.ObjectKinds,
+            deletes.Where(d => SceneSections.KindOf(session, d.Section) == SceneKind.Object && d.Section.Id.Key != null)
+                .Select(d => d.Section.Id.Key!));
         plan.NeedsConfirmation = deletes.Any(d => d.Why == DeleteReason.Cascade) || plan.Fixes.Count > 0 ||
-                                 missing.Count > 0 || warnings.Count > 0 || mentions.Count > 0;
+                                 missing.Count > 0 || warnings.Count > 0 || mentions.Count > 0 ||
+                                 plan.MissionMissing.Count > 0;
         plan.Command = EditCommand.Group(plan.Label, commands, session.Snapshot());
         return plan;
     }
@@ -586,6 +591,10 @@ public static partial class ScenePlans
         }
         if (SceneSections.IsNamed(kind))
             warnings.AddRange(DanglingWarnings(session, name, item.Path));
+        // The mission lines that name the object follow the rename in the same entry (decision D668).
+        var mission = kind == SceneKind.Object
+            ? session.Missions.References.Rename(Missions.Editing.MissionReferences.ObjectKinds, old, name, warnings)
+            : null;
 
         var renamed = item with { Id = item.Id with { Key = name } };
         plan.Label = $"Rename {old} to {name}";
@@ -594,7 +603,9 @@ public static partial class ScenePlans
         plan.SelectAfter = renamed;
         plan.NeedsConfirmation = warnings.Count > 0 || mentions.Count > 0;
         // The order of review finding R21: no command changes a reference that a later command uses.
-        plan.Command = EditCommand.Group(plan.Label, [.. values, .. keyed, EditCommand.Rename(item, name)], session.Snapshot());
+        plan.Command = EditCommand.Group(plan.Label,
+            [.. values, .. keyed, EditCommand.Rename(item, name), .. mission == null ? [] : new[] { mission }],
+            session.Snapshot());
         return plan;
     }
 

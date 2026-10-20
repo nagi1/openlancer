@@ -34,7 +34,9 @@ public sealed class ScenePlansDeleteTests
             plan.Deletes.Select(d => (d.Section.Id.Key!, d.Why, d.Cause)));
         Assert.Equal("Delete Li01_01 and 2 more", plan.Label);
         Assert.True(plan.NeedsConfirmation);
-        Assert.Equal([("Li01_01", 1), ("Li01_01", 2), ("Li01_child", 1)],
+        // The mission scripts are not in the text scan, because the mission index has their references (decision
+        // D668 of the M6b design).
+        Assert.Equal([("Li01_01", 1), ("Li01_child", 1)],
             plan.Mentions.Select(m => (m.Nickname, m.Count)).OrderBy(m => m.Item1).ThenBy(m => m.Item2));
         session.Execute(plan.Command!);
 
@@ -409,7 +411,8 @@ public sealed class ScenePlansRenameTests
         var station = ScenePlans.Rename(session, Object("Li01_01"), "Li01_ghost");
         var zone = ScenePlans.Rename(session, Zone("Zone_Tradelane_a"), "Zone_lane_a");
 
-        Assert.Equal([(MissionPath, 2)], station.Mentions.Select(m => (m.Path, m.Count)), new PathCount());
+        // The mission scripts are not in the text scan (decision D668 of the M6b design).
+        Assert.Empty(station.Mentions);
         Assert.Contains(station.Warnings, w => w.Message == "KnowledgeMap.ini names Li01_01. After the rename, a text does not " +
                                                            "reveal this item on the navigation map.");
         Assert.Contains(station.Warnings, w => w.Message == "1 line names Li01_ghost, but no item has this name. After the edit, " +

@@ -263,15 +263,15 @@ public sealed class CutsceneViewerTests
         Assert.Equal(Trigger("t2"), CutsceneWorkspace.SectionOf(session, uses[1]));
 
         // t2 is at place 0 now, and t3 is at place 1.
-        session.Execute(EditCommand.DeleteSection(Trigger("t1")));
+        session.Execute(MissionTestData.Raw(EditCommand.DeleteSection(Trigger("t1"))));
         Assert.Equal(Trigger("t2"), CutsceneWorkspace.SectionOf(session, uses[0]));
         Assert.Equal(Trigger("t2"), CutsceneWorkspace.SectionOf(session, uses[1]));
 
         // Only t2 is left, so place 1 is past the end of the file.
-        session.Execute(EditCommand.DeleteSection(Trigger("t3")));
+        session.Execute(MissionTestData.Raw(EditCommand.DeleteSection(Trigger("t3"))));
         Assert.Equal(Trigger("t2"), CutsceneWorkspace.SectionOf(session, uses[1]));
 
-        session.Execute(EditCommand.RemoveName(Trigger("t2"), "Act_CallThorn"));
+        session.Execute(MissionTestData.Raw(EditCommand.RemoveName(Trigger("t2"), "Act_CallThorn")));
         Assert.Null(CutsceneWorkspace.SectionOf(session, uses[0]));
         Assert.Null(CutsceneWorkspace.SectionOf(session, uses[1]));
     }

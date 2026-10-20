@@ -28,6 +28,10 @@ internal sealed record DocumentState(
     /// B.</summary>
     public ImmutableDictionary<SectionIdentity, SectionIdentity> Renamed { get; init; } =
         ImmutableDictionary<SectionIdentity, SectionIdentity>.Empty;
+
+    /// <summary>False when W has no such file: a new whole file of the active mod before its create, or a whole file
+    /// after its delete (section 6.7 of the M6b design). Each other file exists.</summary>
+    public bool Exists { get; init; } = true;
 }
 
 /// <summary>
@@ -99,8 +103,9 @@ internal sealed class EditDocument : IEditFile
         this.whole = whole;
     }
 
-    /// <summary>The file of the active mod of a whole file, and its bytes as the session read them.</summary>
-    private sealed record WholeSource(string File, byte[] Bytes);
+    /// <summary>The file of the active mod of a whole file, and its bytes as the session read them. A new whole file
+    /// has no file and no bytes.</summary>
+    private sealed record WholeSource(string? File, byte[] Bytes);
 
     /// <summary>The install path, in <see cref="VfsPath.Normalize"/> form.</summary>
     public string Path { get; }
@@ -131,6 +136,23 @@ internal sealed class EditDocument : IEditFile
     /// <summary>True for a document of the kind "whole file": B is a whole file of the active mod, and a save writes
     /// the whole file.</summary>
     public bool IsWholeFile => whole != null;
+
+    /// <summary>
+    /// True when the file is a mission script: a file under <c>DATA\MISSIONS</c> whose B or W holds a <c>[Mission]</c>
+    /// or a <c>[Trigger]</c> section (decision D535). A new script of the active mod is a script too.
+    /// </summary>
+    public bool HoldsScript
+    {
+        get
+        {
+            if (!SectionKeys.IsMissionFile(Path))
+                return false;
+            baseHoldsScript ??= b.Sections.Any(s => Missions.MissionFiles.IsScriptSection(s.Name));
+            return baseHoldsScript.Value || state.Working.Any(s => Missions.MissionFiles.IsScriptSection(s.Name));
+        }
+    }
+
+    private bool? baseHoldsScript;
 
     /// <summary>
     /// True when the editor edits a whole file of the active mod at an install path (decision D680, section 6.7 of the
@@ -198,9 +220,20 @@ internal sealed class EditDocument : IEditFile
     /// <param name="bytes">The bytes of the patch file, or null for no patch.</param>
     /// <remarks>For a document of the kind "whole file", the bytes are the whole file, and they become B.</remarks>
     public EditDocument Reopen(string modId, string patchFile, byte[]? bytes, List<Diagnostic> diagnostics) =>
-        whole != null && bytes != null
-            ? Whole(Path, patchFile, bytes, b, diagnostics)
+        whole != null
+            ? bytes != null ? Whole(Path, patchFile, bytes, b, diagnostics) : NewWhole(Path)
             : Load(Path, b, modId, patchFile, bytes, diagnostics);
+
+    /// <summary>
+    /// The document of a new whole file of the active mod at an install path (section 6.7 of the M6b design, decision
+    /// D680): B has no sections, and the file does not exist until a command makes it. <c>CreateScript</c> uses it.
+    /// </summary>
+    public static EditDocument NewWhole(string path) =>
+        new(path, IniDocument.Parse(path, []), new DocumentState(ImmutableList<Section>.Empty,
+                ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>>.Empty, ImmutableHashSet<SectionIdentity>.Empty)
+            {
+                Exists = false,
+            }, null, null, null, new WholeSource(null, []));
 
     /// <summary>The pinned names of a section.</summary>
     public IReadOnlyCollection<string> Pins(SectionIdentity id) => state.Pins.GetValueOrDefault(id, NoPins);
@@ -302,6 +335,25 @@ internal sealed class EditDocument : IEditFile
 
     public void Insert(int index, Section section) => Change(state with { Working = state.Working.Insert(index, section) });
 
+    /// <summary>
+    /// Puts a section back at an index, for example the inverse of a delete (section 4.8 of the M6b design). When the
+    /// section has the identity and the lines of a deleted section of B, W gets the section of B again, and the
+    /// section does not count as deleted any more. So the writer writes no change for it.
+    /// </summary>
+    public void InsertRestored(int index, Section section)
+    {
+        Insert(index, section);
+        var id = IdentityAt(index);
+        if (whole == null && state.Deleted.Contains(id) && BaseSection(id) is { } lower &&
+            SectionComparer.Equivalent(lower, section, IsBinary, Path))
+            Change(state with { Working = state.Working.SetItem(index, lower), Deleted = state.Deleted.Remove(id) });
+    }
+
+    /// <summary>The hash of the <c>ol.base</c> line of the loaded patch for a section of W, or null when the loaded
+    /// patch has no such line for it (section 6.3 of the M6b design).</summary>
+    public string? BaseHashOfPatch(SectionIdentity id) =>
+        BaseIdOf(id) is { } before ? source?.BaseHash(before) : null;
+
     /// <summary>Removes <paramref name="count"/> sections from <paramref name="index"/>, and their pins. A removed
     /// section that has a new key counts as a deleted section of B under its old key.</summary>
     public void Remove(int index, int count)
@@ -319,6 +371,35 @@ internal sealed class EditDocument : IEditFile
 
     /// <summary>Puts back a state that <see cref="State"/> gave, to undo or redo an edit.</summary>
     public void Restore(DocumentState restored) => Change(restored);
+
+    /// <summary>
+    /// The sections of W of a state with their identity in B, and true for each section that the active mod changes:
+    /// a section that B does not have, a section that W does not share with B, and each section of a whole file. The
+    /// state can be an older state of the document. The mission checks give the origin of a problem with it (section
+    /// 7 of the M6b design).
+    /// </summary>
+    public IReadOnlyList<(SectionIdentity Id, SectionIdentity? BaseId, bool Changed)> Compare(DocumentState s)
+    {
+        var ids = SectionIdentity.Identify(s.Working);
+        var renamedAway = s.Renamed.Values.ToHashSet();
+        var result = new (SectionIdentity, SectionIdentity?, bool)[ids.Length];
+        for (var i = 0; i < ids.Length; i++)
+        {
+            var id = ids[i];
+            SectionIdentity? before = s.Renamed.TryGetValue(id, out var renamed) ? renamed
+                : BaseIndexOf(id) >= 0 && !renamedAway.Contains(id) ? id
+                : null;
+            var changed = whole != null || before == null || !ReferenceEquals(b.Sections[BaseIndexOf(before)], s.Working[i]);
+            result[i] = (id, before, changed);
+        }
+        return result;
+    }
+
+    /// <summary>True when W of a state differs from B in a way that the active mod causes: a whole file, a changed, new
+    /// or renamed section, or a deleted section.</summary>
+    public bool ChangesBase(DocumentState s) =>
+        whole != null || s.Working.Count != b.Sections.Count || s.Renamed.Count > 0 ||
+        s.Working.Where((section, i) => !ReferenceEquals(section, b.Sections[i])).Any();
 
     void IEditFile.Restore(IFileState restored) => Restore((DocumentState)restored);
 
@@ -355,9 +436,14 @@ internal sealed class EditDocument : IEditFile
     {
         if (whole == null || refusal != null || state == Initial)
             return null;
+        // A delete of the file, and a new file that does not exist on disk yet (decision D680).
+        if (!state.Exists)
+            return Initial.Exists ? new WholeFileText(null, null) : null;
+        if (!Initial.Exists)
+            return new WholeFileText(b.WithSections(state.Working).ToText(), null);
         var text = WholeText(state);
         initialWholeText ??= WholeText(Initial);
-        return text.Bytes.AsSpan().SequenceEqual(initialWholeText.Bytes) ? null : text;
+        return text.Bytes.AsSpan().SequenceEqual(initialWholeText.Bytes!) ? null : text;
     }
 
     /// <summary>The state with the sections that the bytes of a whole file give, for the restore of the recovery
@@ -368,14 +454,14 @@ internal sealed class EditDocument : IEditFile
     {
         if (whole == null)
             throw new InvalidOperationException($"{Path} is not a whole file of the mod.");
-        return Initial with { Working = IniDocument.Parse(Path, bytes).Sections.ToImmutableList() };
+        return Initial with { Working = IniDocument.Parse(Path, bytes).Sections.ToImmutableList(), Exists = true };
     }
 
     private WholeFileText WholeText(DocumentState s)
     {
         var w = b.WithSections(s.Working);
         if (b.IsBinary)
-            return new WholeFileText(w.ToText(), $"The save writes the binary file {whole!.File} as text.");
+            return new WholeFileText(w.ToText(), $"The save writes the binary file {whole!.File ?? Path} as text.");
         var result = IniTextEdit.Write(whole!.Bytes, b, w, IniSectionDiff.Compare(b.Sections, s.Working));
         return new WholeFileText(result.Bytes, result.Fallback == null
             ? null
@@ -523,6 +609,7 @@ internal sealed class EditDocument : IEditFile
 }
 
 /// <summary>The bytes that a save writes for a whole file of the mod.</summary>
+/// <param name="Bytes">The bytes of the file, or null when the save deletes the file.</param>
 /// <param name="Note">A warning for the save, or null: the save writes a binary file as text, or writes canonical text
 /// and drops the comments.</param>
-internal sealed record WholeFileText(byte[] Bytes, string? Note);
+internal sealed record WholeFileText(byte[]? Bytes, string? Note);

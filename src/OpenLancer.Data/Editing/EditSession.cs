@@ -86,6 +86,8 @@ public sealed partial class EditSession : IDisposable
         (text, textHash) = ActiveMod == null ? (ModText.Empty, null) : ReadText(ActiveMod);
         savedText = text;
         HasRecovery = ActiveMod != null && modLock != null && File.Exists(RecoveryFile.PathOf(ActiveMod.Folder));
+        // The mission editor counts the script versions from the open (section 4.2 of the M6b design).
+        _ = Missions;
     }
 
     public ModProfile Profile { get; }
@@ -169,6 +171,9 @@ public sealed partial class EditSession : IDisposable
     /// <summary>The open batch, or null (see <see cref="BeginBatch"/>). A command of the command layer joins
     /// it.</summary>
     public EditBatch? OpenBatch => batch;
+
+    /// <summary>True while a transaction is open (see <see cref="Begin"/>).</summary>
+    public bool InTransaction => transaction != null;
 
     /// <summary>True when the session has edits that it did not save.</summary>
     public bool IsDirty => history.IsDirty;
@@ -446,6 +451,7 @@ public sealed partial class EditSession : IDisposable
         var change = history.Undo(by);
         text = change.Undo(FileAt) ?? text;
         CacheRevision++;
+        NoteWorld(change);
         Revision++;
         Changed?.Invoke(change.UndoChange);
     }
@@ -458,6 +464,7 @@ public sealed partial class EditSession : IDisposable
         var change = history.Redo();
         text = change.Redo(FileAt) ?? text;
         CacheRevision++;
+        NoteWorld(change);
         Revision++;
         Changed?.Invoke(change.Change);
     }
@@ -473,6 +480,7 @@ public sealed partial class EditSession : IDisposable
         finally
         {
             CacheRevision++;
+            NoteWorld(change);
             // Also when the command throws: the edit view is then back at its state before the transaction, not at
             // the state of the step before.
             if (!change.IsEmpty)
@@ -484,6 +492,7 @@ public sealed partial class EditSession : IDisposable
     {
         transaction = null;
         CacheRevision++;
+        NoteWorld(change);
         if (commit)
         {
             Push(change);
@@ -507,6 +516,7 @@ public sealed partial class EditSession : IDisposable
     {
         text = change.Undo(FileAt) ?? text;
         CacheRevision++;
+        NoteWorld(change);
     }
 
     /// <summary>Forgets a batch that ended.</summary>
@@ -533,6 +543,28 @@ public sealed partial class EditSession : IDisposable
         {
             // Also a command that throws: it changed W and put back the states before.
             CacheRevision++;
+            NoteWorld(change);
+        }
+    }
+
+    /// <summary>
+    /// A number that grows at each change of W of a file that can give names to the mission checks: each INI file
+    /// except the mission scripts. The mission editor makes a new mission world when it changed (section 7 of the M6b
+    /// design).
+    /// </summary>
+    internal long WorldRevision { get; private set; }
+
+    /// <summary>Grows <see cref="WorldRevision"/> when a change set holds an INI file that is not a mission
+    /// script.</summary>
+    private void NoteWorld(ChangeSet change)
+    {
+        foreach (var path in change.Paths)
+        {
+            if (documents.TryGetValue(path, out var document) && !document.HoldsScript)
+            {
+                WorldRevision++;
+                return;
+            }
         }
     }
 
@@ -541,6 +573,7 @@ public sealed partial class EditSession : IDisposable
     internal void Push(ChangeSet change)
     {
         CacheRevision++;
+        NoteWorld(change);
         change.Finish(FileAt, text);
         // A transaction whose last step threw ends in its state before, so it can change nothing.
         if (!change.ChangesState)
@@ -635,6 +668,18 @@ public sealed partial class EditSession : IDisposable
     /// </summary>
     internal sealed class CommandScope(EditSession session, ChangeSet change)
     {
+        /// <summary>
+        /// The depth of the mission plan commands that run in the scope now (section 4.1 of the M6b design, decision
+        /// D660). While it is 0, the scope refuses a section of a mission file, except in the restore of unsaved edits.
+        /// </summary>
+        internal int MissionDepth { get; set; }
+
+        /// <summary>Who makes the change.</summary>
+        internal EditOrigin Origin => change.Origin;
+
+        /// <summary>The session of the scope.</summary>
+        internal EditSession Session => session;
+
         /// <summary>The text of the active mod.</summary>
         /// <exception cref="InvalidOperationException">The session is read-only.</exception>
         public ModText Text
@@ -655,6 +700,7 @@ public sealed partial class EditSession : IDisposable
         {
             if (!session.TryDocument(path, out var document))
                 throw new ArgumentException($"The edit view has no INI file {path}.", nameof(path));
+            Guard(document!.Path);
             return Editable(document!);
         }
 
@@ -664,6 +710,7 @@ public sealed partial class EditSession : IDisposable
         public (EditDocument Document, int Index) Find(SectionRef target)
         {
             var (document, index) = session.Find(target);
+            Guard(document.Path);
             Editable(document);
             if (document.ReadOnlyReasonAt(index) is { } reason)
                 throw new InvalidOperationException($"{target}: {reason}");
@@ -714,6 +761,10 @@ public sealed partial class EditSession : IDisposable
         public void Changed(SectionRef section, bool structural) =>
             change.Note(Normal(section), structural);
 
+        /// <summary>Records a change of sections that the scope does not list one by one, for example a new whole
+        /// file.</summary>
+        public void NoteStructural() => change.NoteStructural();
+
         /// <summary>Records that a section got a new key, for <see cref="EditChange.Renames"/>.</summary>
         public void Renamed(SectionRef from, SectionRef to) => change.NoteRename(Normal(from), Normal(to));
 
@@ -729,10 +780,23 @@ public sealed partial class EditSession : IDisposable
         public ModFileDocument ModFile(string relativePath)
         {
             session.ThrowIfReadOnly();
+            if (ModFileDocument.Normalize(relativePath) == null)
+                throw new ArgumentException(ModFileDocument.PathProblem(relativePath), nameof(relativePath));
+            // The editor files are mission files: a graph file or a mission prefab (decision D660).
+            if (MissionDepth == 0 && change.Origin != EditOrigin.Recovery)
+                throw new InvalidOperationException(MissionGuardMessage(relativePath));
             var document = session.ModFile(relativePath) ??
                            throw new InvalidOperationException("There is no active mod. Select a mod to edit.");
             change.Capture(document);
             return document;
+        }
+
+        /// <summary>Refuses a mission file outside a mission plan command (decision D660). The restore of unsaved edits
+        /// passes, because it writes the patches that the mission commands made (review finding RB1).</summary>
+        private void Guard(string path)
+        {
+            if (MissionDepth == 0 && change.Origin != EditOrigin.Recovery && session.IsGuardedMissionFile(path))
+                throw new InvalidOperationException(MissionGuardMessage(path));
         }
 
         private EditDocument Editable(EditDocument document)

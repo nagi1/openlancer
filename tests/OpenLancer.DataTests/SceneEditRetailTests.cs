@@ -317,7 +317,12 @@ public sealed class SceneBaselineRetailTests(ITestOutputHelper output)
         foreach (var mention in manhattan)
             output.WriteLine($"{mention.Path}: {mention.Count}");
 
-        Assert.Contains(manhattan, m => m.Path.Contains(@"\MISSIONS\", StringComparison.OrdinalIgnoreCase));
+        // The mission scripts are not in the text scan. The mission index has their references, and the reference
+        // provider of the mission editor gives them (decision D668 of the M6b design).
+        Assert.DoesNotContain(manhattan, m => m.Path.Contains(@"\MISSIONS\", StringComparison.OrdinalIgnoreCase) &&
+                                              session.Missions.ScriptPaths().Contains(m.Path, StringComparer.OrdinalIgnoreCase));
+        Assert.NotEmpty(session.Missions.References.Uses(OpenLancer.Data.Missions.Editing.MissionReferences.ObjectKinds,
+            "Li01_01"));
         Assert.DoesNotContain(manhattan, m => m.Path.Equals(SceneRetail.Li01, StringComparison.OrdinalIgnoreCase));
         var mapped = session.Sections(SceneRetail.Li01).Where(s => s.Id.Type == "Object")
             .Count(s => session.StoryMentions(s.Id.Key!).Any(m => m.Path.EndsWith("KnowledgeMap.ini", StringComparison.OrdinalIgnoreCase)));

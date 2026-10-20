@@ -39,6 +39,10 @@ public abstract class EditPlan
     /// <summary>The lines that show "Missing" after the command.</summary>
     public IReadOnlyList<MissingReference> Missing { get; protected internal set; } = [];
 
+    /// <summary>The mission lines that show "Missing" after the command (section 4.10 of the M6b design). The mission
+    /// editor gives them, because the rules of the lists do not cover the mission lines.</summary>
+    public IReadOnlyList<ResultMissing> MissionMissing { get; protected internal set; } = [];
+
     /// <summary>Why the command cannot run. A plan with a refusal has no session command.</summary>
     public IReadOnlyList<Diagnostic> Refusals { get; protected internal set; } = [];
 
@@ -98,7 +102,7 @@ public abstract class EditPlan
             Deletes = Deletes.Select(d => new ResultDelete(Ref(d.Section), d.Why, d.Cause)).ToList(),
             Fixes = Fixes.Select(f => new ResultFix(Ref(f.Section), f.Key, f.Text)).ToList(),
             Missing = Missing.Select(m => new ResultMissing(Ref(m.Reference.Section), m.Reference.Key, m.Consequence,
-                m.BlocksSave)).ToList(),
+                m.BlocksSave)).Concat(MissionMissing).ToList(),
             Warnings = Warnings.Select(w => Problem.From(w, TargetOf(w))).ToList(),
             Refusals = Refusals.Select(r => Problem.From(r, TargetOf(r))).ToList(),
             Mentions = Mentions,

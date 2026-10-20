@@ -75,6 +75,9 @@ internal sealed class ChangeSet(string label, EditOrigin origin = EditOrigin.Use
             Renames = renames.ToList(),
             ModFiles = files.Keys.Where(ModFileDocument.IsKey).Select(k => k[ModFileDocument.KeyPrefix.Length..])
                 .Order(StringComparer.OrdinalIgnoreCase).ToList(),
+            Files = files.Keys.Where(k => !ModFileDocument.IsKey(k) && !cutscenes.Contains(k, VfsPath.Comparer) &&
+                                          k.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
+                .Order(StringComparer.OrdinalIgnoreCase).ToList(),
         };
 
     /// <summary>What an undo of the entry changes: the same sections, and each rename in the other direction, in

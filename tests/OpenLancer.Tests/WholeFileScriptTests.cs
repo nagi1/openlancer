@@ -61,7 +61,7 @@ public sealed class WholeFileScriptTests
         Assert.Null(session.Get(Wave)!.ReadOnlyReason);
         Assert.Null(session.Get(secondTwin)!.ReadOnlyReason);
         Assert.Equal((ValueOrigin.ActiveMod, "act"), session.Origin(Next, "Cnd_Timer"));
-        session.Execute(EditCommand.SetLinesFromText(secondTwin, "Cnd_Timer", ["2"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(secondTwin, "Cnd_Timer", ["2"])));
         Assert.Equal(["2"], Values(session, secondTwin, "Cnd_Timer"));
     }
 
@@ -71,7 +71,7 @@ public sealed class WholeFileScriptTests
         using var ws = Workspace();
         var session = ws.Session("act");
 
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
         var result = session.Save();
 
         Assert.True(result.Saved, string.Join("\n", result.Problems));
@@ -90,8 +90,8 @@ public sealed class WholeFileScriptTests
         var session = ws.Session("act");
         var before = TestWorkspace.Files(ws.ModFolder("act"));
 
-        session.Execute(EditCommand.SetLinesFromText(Wave, "Cnd_True", []));
-        session.Execute(EditCommand.SetLinesFromText(Wave, "Cnd_Timer", ["2"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Wave, "Cnd_True", [])));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Wave, "Cnd_Timer", ["2"])));
         Assert.Equal(["system", "nickname", "Act_ActTrig", "Cnd_Timer"], session.Get(Wave)!.Entries.Select(e => e.Name));
         session.Undo();
         session.Undo();
@@ -112,7 +112,7 @@ public sealed class WholeFileScriptTests
             IniWriter.WriteBini(stream, IniFile.ParseFile(file, new MemoryStream(Encoding.ASCII.GetBytes(Script))).ToArray());
         var session = ws.Session("act");
 
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
         var result = session.Save();
 
         Assert.True(result.Saved, string.Join("\n", result.Problems));
@@ -132,7 +132,7 @@ public sealed class WholeFileScriptTests
         File.WriteAllText(Path.Combine(ws.Root, RepoCheck.MarkerFile), "<Solution />");
         var bytes = File.ReadAllBytes(Path.Combine(ws.ModFolder("act"), WholeFile));
         var session = ws.Session("act");
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
 
         var result = session.Save();
 
@@ -163,8 +163,8 @@ public sealed class WholeFileScriptTests
         {
             using var ws = Workspace();
             var session = ws.Session("act");
-            session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]));
-            session.Execute(EditCommand.SetModFile(ModFileDocumentTests.GraphPath, ModFileDocumentTests.GraphText));
+            session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
+            session.Execute(MissionTestData.Raw(EditCommand.SetModFile(ModFileDocumentTests.GraphPath, ModFileDocumentTests.GraphText)));
             Assert.Throws<EditorStopped>(() => session.Save(false, done =>
             {
                 if (done == k)
@@ -200,7 +200,7 @@ public sealed class WholeFileScriptTests
                      "to the whole file, so the editor cannot save an edit of this file. Move the lines of the patch into " +
                      "the whole file, then delete the patch.", view.ReadOnlyReason);
         Assert.Throws<InvalidOperationException>(() =>
-            session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
+            session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"]))));
         Assert.Equal(["9"], Values(session, Next, "Cnd_Timer"));
     }
 
@@ -214,7 +214,7 @@ public sealed class WholeFileScriptTests
         ws.Mod("lower", new() { [@"patches\" + ScriptPath] = "[Trigger]\nnickname = ol_next\nCnd_Timer = 4\n" });
         ws.WriteProfile("lower", "act");
         var session = ws.Session("act");
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["6"]));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["6"])));
         File.WriteAllText(Path.Combine(ws.ModFolder("lower"), "patches", ScriptPath),
             "[Trigger]\nnickname = ol_next\nCnd_Timer = 5\n");
 
@@ -233,7 +233,7 @@ public sealed class WholeFileScriptTests
         var session = ws.Session("act");
         Assert.DoesNotContain(session.SaveProblems(), p => p.Target == Next);
 
-        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", []));
+        session.Execute(MissionTestData.Raw(EditCommand.SetLinesFromText(Next, "Cnd_Timer", [])));
         var result = session.Save();
 
         Assert.False(result.Saved);

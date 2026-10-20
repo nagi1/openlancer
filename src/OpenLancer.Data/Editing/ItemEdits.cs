@@ -62,6 +62,17 @@ public static class ItemEdits
             commands.Add(EditCommand.SetLines(moved.GetValueOrDefault(section, section), name, lines));
             relinked.Add(section);
         }
+        // The mission lines that name the item follow the rename in the same entry (decision D668).
+        var missionKinds = renamed.Select(r => r.Kind switch
+        {
+            ItemFileKind.Ships => (Missions.MissionValueKind?)Missions.MissionValueKind.ShipArch,
+            ItemFileKind.Goods => Missions.MissionValueKind.Good,
+            ItemFileKind.Equipment => Missions.MissionValueKind.Equipment,
+            _ => null,
+        }).OfType<Missions.MissionValueKind>().Distinct().ToList();
+        if (missionKinds.Count > 0 &&
+            session.Missions.References.Rename(missionKinds, oldNickname, newNickname, []) is { } mission)
+            commands.Add(mission);
         // The new nickname goes into the key lines and the links, so each of their files must take it.
         foreach (var binary in renamed.Select(r => r.Section).Concat(relinked).Select(index.IsBinary).Distinct())
         {

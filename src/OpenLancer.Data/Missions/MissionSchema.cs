@@ -139,6 +139,10 @@ public sealed record MissionValueSpec(int Index, string Name, string Label, Miss
     /// <summary>The list field of a value that repeats up to the end of the line, or null (decision D540).</summary>
     public MissionListInfo? List { get; init; }
 
+    /// <summary>The text that a new line of a command writes when it does not give the value, but a later value, or
+    /// null (section 4.3 of the M6b design). The "none" word (<see cref="NoneToken"/>) also fills such a gap.</summary>
+    public string? Default { get; init; }
+
     /// <summary>The index after the last value of the spec.</summary>
     public int End => Rest ? int.MaxValue : Index + Width;
 
@@ -185,6 +189,10 @@ public sealed record MissionName(string Name, string Plain, MissionNameKind Kind
 
     /// <summary>The record of the fact and the fork class.</summary>
     public string? Evidence { get; init; }
+
+    /// <summary>True when no retail mission script has a line of this name (decision D425). Rule M28 warns about such
+    /// a line, because its effect is not checked.</summary>
+    public bool NoRetailExample { get; init; }
 
     /// <summary>The spec of a value name, or null.</summary>
     public MissionValueSpec? Value(string name) =>
@@ -328,6 +336,8 @@ public sealed record MissionKeySpec(string Key, string Label, MissionValueKind K
             },
             Closed = Closed, Tokens = Tokens, Buffer = Buffer ?? DefaultBuffer(Kind), Help = Help, NoneToken = NoneToken,
             Hard = Hard,
+            // The rows of a value-list key are the values of one line, for example the classes of an npc_class line.
+            Rest = List?.Values == true,
         }];
 
     private static string? DefaultBuffer(MissionValueKind kind) => MissionSchema.DefaultBuffer(kind);
@@ -783,6 +793,7 @@ public sealed class MissionSchema
             Polls = Bool(e, "polls"),
             Wake = Strings(e, "wake"),
             Evidence = Optional(e, "evidence"),
+            NoRetailExample = Bool(e, "noRetailExample"),
         };
     }
 
@@ -824,6 +835,7 @@ public sealed class MissionSchema
             Checked = !e.TryGetProperty("checked", out var c) || c.GetBoolean(),
             Hard = Bool(e, "hard"),
             List = ReadList(e, "list"),
+            Default = e.TryGetProperty("default", out var fallback) ? JsonText(fallback) : null,
         };
     }
 

@@ -180,12 +180,19 @@ public sealed class EditBatch : IDisposable
         End();
         change.Label = UndoLabel;
         session.Push(change);
-        return result with
+        var committed = result with
         {
             UndoLabel = result.Status == EditStatus.Applied ? UndoLabel : null,
             Revision = session.Revision,
         };
+        Committed?.Invoke(committed);
+        return committed;
     }
+
+    /// <summary>Raised after a commit, with the result of the commit. A member that joined the batch of a caller learns
+    /// the end of the batch from it, for example the mission editor for its <c>Applied</c> event (section 4.5 of the M6b
+    /// design).</summary>
+    public event Action<EditResult>? Committed;
 
     /// <summary>
     /// Runs the commit checks, gives the result and cancels the batch. The status is

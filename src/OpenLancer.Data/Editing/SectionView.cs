@@ -89,6 +89,11 @@ public sealed record EditChange(IReadOnlyList<SectionRef> Sections, bool Structu
     /// <c>graphs\DATA\MISSIONS\M02\m02.ini</c> (section 6.8 of the M6b design). A change of an editor file alone lists
     /// no section.</summary>
     public IReadOnlyList<string> ModFiles { get; init; } = [];
+
+    /// <summary>The install paths of the INI files that the change set holds, in normal form, also a file whose W did
+    /// not change in the end. A restore of unsaved edits lists its files here and no section. The mission editor gives
+    /// the new script versions from it (section 4.2 of the M6b design).</summary>
+    public IReadOnlyList<string> Files { get; init; } = [];
 }
 
 /// <summary>The result of <see cref="EditSession.Save"/>.</summary>

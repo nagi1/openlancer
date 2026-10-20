@@ -14,7 +14,9 @@ namespace OpenLancer.Data.Missions;
 /// The snapshot of one run of the mission checks (section 12.3 of the M6a design). The UI thread makes it. The worker
 /// reads only the snapshot: it does not call the edit session, the data lists or the Console.
 /// </summary>
-public sealed class MissionInputs
+/// <remarks>The overlay holds W of the mission files that the edit session changed and did not save (section 7 of the
+/// M6b design). A run reads a file of the overlay in place of the file of the edit view.</remarks>
+public sealed record MissionInputs
 {
     /// <summary>The file system of the edit view.</summary>
     public required FileSystem EditView { get; init; }
@@ -52,8 +54,80 @@ public sealed class MissionInputs
     /// <summary>The number of the run. A run that a newer run replaced drops its result.</summary>
     public int Generation { get; init; }
 
+    /// <summary>
+    /// W of the mission files that the edit session changed and did not save, by install path in normal form (section 7
+    /// of the M6b design). The states of W cannot change, so a worker can read them.
+    /// </summary>
+    public IReadOnlyDictionary<string, MissionOverlayFile> Overlay { get; init; } =
+        new Dictionary<string, MissionOverlayFile>(VfsPath.Comparer);
+
     /// <summary>The install path of a path relative to the data folder, or null.</summary>
     public string? DataPath(string relative) => DataPaths.Resolve(FreelancerIni, relative);
+
+    /// <summary>
+    /// The inputs with an overlay of W. The ledger then gives the mods of each file of the overlay from the overlay, and
+    /// the mods of the other files from the ledger of these inputs.
+    /// </summary>
+    public MissionInputs WithOverlay(IReadOnlyDictionary<string, MissionOverlayFile> overlay)
+    {
+        var saved = Ledger is OverlayLedger known ? known.Saved : Ledger;
+        return this with
+        {
+            Overlay = overlay,
+            Ledger = overlay.Count == 0 ? saved : new OverlayLedger(saved, overlay),
+        };
+    }
+
+    /// <summary>True when the edit view, or the overlay, has a file.</summary>
+    internal bool FileExists(string path) =>
+        Overlay.TryGetValue(VfsPath.Normalize(path) ?? path, out var file) ? file.Exists : EditView.FileExists(path);
+
+    /// <summary>The sections of a file of the overlay, or null when the overlay does not have the file.</summary>
+    internal MissionOverlayFile? OverlayOf(string path) =>
+        Overlay.GetValueOrDefault(VfsPath.Normalize(path) ?? path);
+}
+
+/// <summary>W of one mission file in the overlay of a run (section 7 of the M6b design), with the mods that change it.
+/// </summary>
+/// <param name="Sections">The sections of W. They never change.</param>
+/// <param name="IsBinary">True when the file is a binary INI file.</param>
+public sealed record MissionOverlayFile(IReadOnlyList<Section> Sections, bool IsBinary)
+{
+    /// <summary>False when W has no such file, for example after a delete of a whole file of the active mod.</summary>
+    public bool Exists { get; init; } = true;
+
+    /// <summary>The mods that change the file in W, in load order.</summary>
+    public IReadOnlyList<string> FileMods { get; init; } = [];
+
+    /// <summary>The mod whose whole file gives the content of the file, or null.</summary>
+    public string? ReplacedBy { get; init; }
+
+    /// <summary>The mods that change each section of W, in load order. A section that no mod changes has no
+    /// entry.</summary>
+    public IReadOnlyDictionary<SectionIdentity, IReadOnlyList<string>> SectionMods { get; init; } =
+        new Dictionary<SectionIdentity, IReadOnlyList<string>>();
+
+    /// <summary>The state of W that the overlay holds. The model cache uses it as a key.</summary>
+    public object? State { get; init; }
+}
+
+/// <summary>A ledger that answers for the files of an overlay from the overlay, and for the other files from the
+/// ledger of the saved files.</summary>
+internal sealed class OverlayLedger(IMissionLedger saved, IReadOnlyDictionary<string, MissionOverlayFile> overlay)
+    : IMissionLedger
+{
+    /// <summary>The ledger of the saved files.</summary>
+    public IMissionLedger Saved { get; } = saved;
+
+    public IReadOnlyList<string> ModsThatChangeFile(string path) =>
+        Find(path) is { } file ? file.FileMods : Saved.ModsThatChangeFile(path);
+
+    public IReadOnlyList<string> ModsThatChangeSection(string path, SectionIdentity section) =>
+        Find(path) is { } file ? file.SectionMods.GetValueOrDefault(section) ?? [] : Saved.ModsThatChangeSection(path, section);
+
+    public string? ReplacedBy(string path) => Find(path) is { } file ? file.ReplacedBy : Saved.ReplacedBy(path);
+
+    private MissionOverlayFile? Find(string path) => overlay.GetValueOrDefault(VfsPath.Normalize(path) ?? path);
 }
 
 /// <summary>The analysis of one mission script of a run.</summary>
@@ -79,10 +153,14 @@ public sealed record MissionAnalysis(MissionScriptInfo Script, byte[] Bytes, Mis
     /// <summary>The number of <c>[NPCShipArch]</c> sections in the mission ship file.</summary>
     public int ShipBuilds { get; init; }
 
+    /// <summary>True when <see cref="Bytes"/> are the bytes of the file. The analysis of W of the overlay has no file
+    /// bytes, so its raw text is the canonical text.</summary>
+    public bool HasFileBytes { get; init; } = true;
+
     /// <summary>The raw text of the script (decision D529): the file text with its comments for a text script that no
     /// mod changes, else the canonical text.</summary>
-    public RawText RawText() => Editing.Fields.RawText.Of(Script.Path, Document.Sections.Select(s => s.Section).ToList(),
-        Document.IsBinary, Bytes, fileText: Script.State == MissionScriptState.BaseGame);
+    public RawText RawText() => OpenLancer.Data.Editing.Fields.RawText.Of(Script.Path, Document.Sections.Select(s => s.Section).ToList(),
+        Document.IsBinary, Bytes, fileText: HasFileBytes && Script.State == MissionScriptState.BaseGame);
 }
 
 /// <summary>A news item or a rumor with the story stages of its range (section 5.2 of the M6a design).</summary>
@@ -127,6 +205,8 @@ public sealed record MissionRunResult(int Generation, IReadOnlyList<MissionScrip
 /// The worker run of the mission checks (section 12.3 of the M6a design): it finds the scripts, reads each one, builds
 /// its document, its index and its prefab instances, runs the checks, and gives each problem its origin.
 /// </summary>
+/// <remarks>A file of the overlay of the inputs takes the place of the file of the edit view (section 7 of the M6b
+/// design). So the run shows the unsaved edits of the session.</remarks>
 public static class MissionRun
 {
     /// <summary>Runs the checks on a snapshot. It reads only the snapshot, so a worker task can call it.</summary>
@@ -134,10 +214,10 @@ public static class MissionRun
     {
         var watch = Stopwatch.StartNew();
         var schema = inputs.Schema;
-        var scanned = inputs.DataPath("MISSIONS") is { } missions ? MissionFiles.Scan(inputs.EditView, missions) : [];
+        var scanned = inputs.DataPath("MISSIONS") is { } missions ? Scan(inputs, missions) : [];
         var slotPaths = schema.StorySlots
             .Select(slot => (slot, MissionFiles.SlotPath(inputs.FreelancerIni, slot) is { } path &&
-                                   inputs.EditView.FileExists(path) ? path : null))
+                                   inputs.FileExists(path) ? path : null))
             .ToList();
         var scripts = MissionFiles.List(slotPaths, scanned, path => StateOf(inputs, path));
 
@@ -160,19 +240,97 @@ public static class MissionRun
     }
 
     /// <summary>
+    /// Analyzes one script from its sections (section 7 of the M6b design): the index, the checks with the origins, the
+    /// prefab instances and the acts. The worker run and the model cache of the mission editor use the same code. The
+    /// state of the script comes from the inputs, with their overlay.
+    /// </summary>
+    /// <param name="path">The install path of the script.</param>
+    /// <param name="sections">The sections of the script, for example W of the edit session. They must not change.</param>
+    /// <param name="binary">True when the script is a binary INI file.</param>
+    public static MissionAnalysis AnalyzeScript(MissionInputs inputs, string path, IReadOnlyList<Section> sections,
+        bool binary) => AnalyzeScript(inputs, path, sections, binary, null);
+
+    /// <param name="baseRun">Gives the base-game run of a script that a mod changes, or null to run it now. The model
+    /// cache keeps the base-game runs, because the base folder without mods does not change in a session.</param>
+    internal static MissionAnalysis AnalyzeScript(MissionInputs inputs, string path, IReadOnlyList<Section> sections,
+        bool binary, Func<MissionScriptInfo, BaseRun?>? baseRun)
+    {
+        var normal = VfsPath.Normalize(path) ?? path;
+        var script = Info(inputs, normal);
+        var document = MissionDocument.Of(normal, sections, binary);
+        return Analyze(inputs, script, document, [], baseRun) with { HasFileBytes = false };
+    }
+
+    /// <summary>The script info of a path: the story slot, the state, the mod and the base presence.</summary>
+    internal static MissionScriptInfo Info(MissionInputs inputs, string path)
+    {
+        var slot = inputs.Schema.StorySlots.FirstOrDefault(s =>
+            MissionFiles.SlotPath(inputs.FreelancerIni, s) is { } slotPath && VfsPath.Comparer.Equals(slotPath, path));
+        var (state, mod, inBase) = StateOf(inputs, path);
+        return new MissionScriptInfo(path, slot, state, mod, inBase);
+    }
+
+    /// <summary>The base-game run of a script (decision D551): its index and its problems.</summary>
+    internal sealed class BaseRun(MissionIndex index, IReadOnlyList<Diagnostic> problems)
+    {
+        private MissionPrefabResult? prefabs;
+
+        public MissionIndex Index { get; } = index;
+
+        public IReadOnlyList<Diagnostic> Problems { get; } = problems;
+
+        /// <summary>The prefab instances of the base-game run, made at the first use.</summary>
+        public MissionPrefabResult Prefabs => prefabs ??= MissionPrefabs.Retail.Match(Index);
+    }
+
+    /// <summary>
+    /// The base-game run of a script that a mod changes: the base-game version of the script, with the names of the
+    /// base game. Null when the script has no base-game version, or when no mod changes it.
+    /// </summary>
+    internal static BaseRun? ChangedBaseRun(MissionInputs inputs, MissionScriptInfo script)
+    {
+        if (script.State == MissionScriptState.BaseGame || !script.InBase || inputs.BaseView is not { } baseView ||
+            Read(baseView, script.Path) is not var (_, baseDocument))
+            return null;
+        var index = MissionIndex.Build(baseDocument, inputs.Schema, inputs.BaseWorld ?? inputs.World, inputs.Coverage);
+        return new BaseRun(index, MissionChecks.Run(index, inputs.Options));
+    }
+
+    /// <summary>The scripts of the scan of the edit view, with the scripts of the overlay: a new script of the overlay
+    /// joins, and a script that the overlay deletes goes.</summary>
+    private static IReadOnlyList<string> Scan(MissionInputs inputs, string missions)
+    {
+        var scanned = MissionFiles.Scan(inputs.EditView, missions).Where(inputs.FileExists).ToList();
+        var known = scanned.ToHashSet(VfsPath.Comparer);
+        foreach (var (path, file) in inputs.Overlay)
+        {
+            if (file.Exists && !known.Contains(path) && MissionFiles.IsScanned(path, missions) &&
+                file.Sections.Any(s => MissionFiles.IsScriptSection(s.Name)))
+                scanned.Add(path);
+        }
+        return scanned;
+    }
+
+    /// <summary>
     /// The ship builds of the edit view. Also the ship builds of the base game when a mod changes, replaces or adds a
     /// file of the ship builds (decision D551). A script that the run parsed is not parsed again.
     /// </summary>
     private static (NpcShipBuilds Edit, NpcShipBuilds? Base) ReadShipBuilds(MissionInputs inputs,
         IReadOnlyList<string> shipFiles, IReadOnlyDictionary<string, MissionAnalysis> analyses)
     {
-        var edit = NpcShipBuilds.Read(inputs.EditView, shipFiles, path => analyses.GetValueOrDefault(path)?.Document);
+        var edit = NpcShipBuilds.Read(inputs.EditView, shipFiles,
+            path => analyses.GetValueOrDefault(path)?.Document ?? OverlayDocument(inputs, path),
+            path => inputs.OverlayOf(path) is { Exists: false });
         if (inputs.BaseView is not { } baseView)
             return (edit, null);
         var changed = shipFiles.Any(path => inputs.Ledger.ModsThatChangeFile(path).Count > 0 ||
                                             inputs.Ledger.ReplacedBy(path) != null || !baseView.FileExists(path));
         return (edit, changed ? NpcShipBuilds.Read(baseView, shipFiles) : null);
     }
+
+    /// <summary>The document of W of a file of the overlay, or null.</summary>
+    private static MissionDocument? OverlayDocument(MissionInputs inputs, string path) =>
+        inputs.OverlayOf(path) is { Exists: true } file ? MissionDocument.Of(path, file.Sections, file.IsBinary) : null;
 
     /// <summary>The news items of <c>news.ini</c> and the rumors of <c>mBases.ini</c> with a stage range. The stage
     /// names come from the story stages of the engine (section 14.6 of the M6a design).</summary>
@@ -201,43 +359,57 @@ public static class MissionRun
         return result;
     }
 
-    /// <summary>Reads and checks one script. Null when the file cannot be read.</summary>
+    /// <summary>Reads and checks one script, from the overlay or from the edit view. Null when the file cannot be
+    /// read.</summary>
+    /// <param name="baseRun">Gives the base-game run of a script that a mod changes, or null to run it now.</param>
+    internal static MissionAnalysis? Analyze(MissionInputs inputs, MissionScriptInfo script,
+        Func<MissionScriptInfo, BaseRun?>? baseRun = null)
+    {
+        if (inputs.OverlayOf(script.Path) is { } file)
+        {
+            return file.Exists
+                ? Analyze(inputs, script, MissionDocument.Of(script.Path, file.Sections, file.IsBinary), [], baseRun)
+                    with { HasFileBytes = false }
+                : null;
+        }
+        return Read(inputs.EditView, script.Path) is var (bytes, document)
+            ? Analyze(inputs, script, document, bytes, baseRun)
+            : null;
+    }
+
     /// <remarks>The base-game run of a script (decision D551) checks the base-game version of a script that a mod
     /// changes. It also checks a script that no mod changes when a mod removes or renames a name that the script names.
     /// Then the base-game run uses the names of the base game, so a problem that the mod causes shows.</remarks>
-    internal static MissionAnalysis? Analyze(MissionInputs inputs, MissionScriptInfo script)
+    private static MissionAnalysis Analyze(MissionInputs inputs, MissionScriptInfo script, MissionDocument document,
+        byte[] bytes, Func<MissionScriptInfo, BaseRun?>? baseRun)
     {
-        if (Read(inputs.EditView, script.Path) is not var (bytes, document))
-            return null;
         var index = MissionIndex.Build(document, inputs.Schema, inputs.World, inputs.Coverage);
         var problems = MissionChecks.Run(index, inputs.Options);
-        MissionIndex? baseIndex = null;
-        IReadOnlyList<Diagnostic>? baseProblems = null;
-        var baseWorld = inputs.BaseWorld ?? inputs.World;
-        if (script.State != MissionScriptState.BaseGame && script.InBase && inputs.BaseView is { } baseView &&
-            Read(baseView, script.Path) is var (_, baseDocument))
+        var run = baseRun != null ? baseRun(script) : ChangedBaseRun(inputs, script);
+        if (run == null && script.State == MissionScriptState.BaseGame && inputs.BaseWorld is { } names &&
+            NamesRemovedName(index, names))
         {
-            baseIndex = MissionIndex.Build(baseDocument, inputs.Schema, baseWorld, inputs.Coverage);
-            baseProblems = MissionChecks.Run(baseIndex, inputs.Options);
+            var baseIndex = MissionIndex.Build(document, inputs.Schema, names, inputs.Coverage);
+            run = new BaseRun(baseIndex, MissionChecks.Run(baseIndex, inputs.Options));
         }
-        else if (script.State == MissionScriptState.BaseGame && inputs.BaseWorld is { } names && NamesRemovedName(index, names))
-        {
-            baseIndex = MissionIndex.Build(document, inputs.Schema, names, inputs.Coverage);
-            baseProblems = MissionChecks.Run(baseIndex, inputs.Options);
-        }
-        var classified = MissionOrigins.Apply(problems, baseProblems, script, inputs.Ledger, inputs.ActiveModId,
+        var classified = MissionOrigins.Apply(problems, run?.Problems, script, inputs.Ledger, inputs.ActiveModId,
             problem => RemovedNameOf(index, problem, inputs.BaseWorld));
         var prefabs = MissionPrefabs.Retail.Match(index);
         var shipFile = document.OfKind(MissionSectionKind.Mission).Select(s => ItemIndex.First(s.Section, "npc_ship_file"))
             .OfType<string>().Select(inputs.DataPath).OfType<string>().FirstOrDefault();
-        var shipBuilds = shipFile != null && Read(inputs.EditView, shipFile) is var (_, ships)
-            ? ships.Sections.Count(s => MissionIndex.Is(s.Type, "NPCShipArch"))
-            : 0;
-        return new MissionAnalysis(script, bytes, document, index, classified, baseIndex)
+        var shipBuilds = 0;
+        if (shipFile != null)
+        {
+            var ships = inputs.OverlayOf(shipFile) is { } overlay
+                ? overlay.Exists ? MissionDocument.Of(shipFile, overlay.Sections, overlay.IsBinary) : null
+                : Read(inputs.EditView, shipFile)?.Document;
+            shipBuilds = ships?.Sections.Count(s => MissionIndex.Is(s.Type, "NPCShipArch")) ?? 0;
+        }
+        return new MissionAnalysis(script, bytes, document, index, classified, run?.Index)
         {
             Prefabs = prefabs,
             Acts = MissionActs.Propose(index),
-            BasePrefabs = baseIndex == null ? null : MissionPrefabs.Retail.Match(baseIndex),
+            BasePrefabs = run?.Prefabs,
             ShipFile = shipFile,
             ShipBuilds = shipBuilds,
         };
@@ -280,7 +452,7 @@ public static class MissionRun
     private static (MissionScriptState State, string? ModId, bool InBase) StateOf(MissionInputs inputs, string path)
     {
         var inBase = inputs.BaseView?.FileExists(path) ?? true;
-        if (!inputs.EditView.FileExists(path))
+        if (!inputs.FileExists(path))
             return (MissionScriptState.Missing, null, inBase);
         if (inputs.Ledger.ReplacedBy(path) is { } replaced)
             return (MissionScriptState.Replaced, replaced, inBase);

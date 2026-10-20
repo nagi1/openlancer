@@ -20,6 +20,14 @@ internal static class MissionTestData
     /// <summary>The install path of the test script.</summary>
     public const string Path = @"DATA\MISSIONS\TEST\test.ini";
 
+    /// <summary>
+    /// A session command that passes the guard of the mission files (decision D660 of the M6b design). The tests of the
+    /// writer, the save and the recovery of mission files use it to make a raw edit. The editor and the agent tools
+    /// change mission files only with the mission commands.
+    /// </summary>
+    internal static EditCommand Raw(EditCommand command) =>
+        OpenLancer.Data.Missions.Editing.MissionPlanCommand.Wrap(command);
+
     /// <summary>The document of a script text.</summary>
     public static MissionDocument Document(string text, string path = Path) =>
         MissionDocument.Parse(path, Encoding.ASCII.GetBytes(text.ReplaceLineEndings("\r\n")));

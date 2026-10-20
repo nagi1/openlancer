@@ -26,7 +26,7 @@ public sealed class ModFileDocumentTests
         var session = ws.Session("act");
         Assert.Null(session.ModFileText(GraphPath));
 
-        session.Execute(EditCommand.SetModFile(GraphPath, GraphText));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, GraphText)));
 
         Assert.Equal(GraphText, session.ModFileText(GraphPath));
         Assert.True(session.IsDirty);
@@ -47,7 +47,7 @@ public sealed class ModFileDocumentTests
         var changes = new List<EditChange>();
         session.Changed += changes.Add;
 
-        session.Execute(EditCommand.SetModFile(GraphPath, GraphText));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, GraphText)));
         session.Undo();
         session.Redo();
         session.Execute(Set(Good("g1"), "price", new Int32Value(300)));
@@ -68,7 +68,7 @@ public sealed class ModFileDocumentTests
             using var ws = Workspace(new() { [GraphPath] = GraphText });
             var file = Path.Combine(ws.ModFolder("act"), GraphPath);
             var session = ws.Session("act");
-            session.Execute(EditCommand.SetModFile(GraphPath, null));
+            session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, null)));
             session.Execute(Set(Good("g1"), "price", new Int32Value(300)));
             var stop = k;
             Assert.Throws<EditorStopped>(() => session.Save(false, done =>
@@ -94,7 +94,7 @@ public sealed class ModFileDocumentTests
         var session = ws.Session("act");
         var file = Path.Combine(ws.ModFolder("act"), "graphs", "DATA", "MISSIONS", "OL_TEST", "ol_test.ini");
 
-        session.Execute(EditCommand.SetModFile(GraphPath, GraphText + "; Ünïcode\r\n"));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, GraphText + "; Ünïcode\r\n")));
         var saved = session.Save();
 
         Assert.True(saved.Saved, string.Join("\n", saved.Problems));
@@ -102,7 +102,7 @@ public sealed class ModFileDocumentTests
         Assert.Equal(Encoding.UTF8.GetBytes(GraphText + "; Ünïcode\r\n"), File.ReadAllBytes(file));
         Assert.False(session.IsDirty);
 
-        session.Execute(EditCommand.SetModFile(GraphPath, null));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, null)));
         var deleted = session.Save();
 
         Assert.True(deleted.Saved, string.Join("\n", deleted.Problems));
@@ -121,8 +121,8 @@ public sealed class ModFileDocumentTests
         var text = session.ModFileText(GraphPath);
         Assert.Equal(ws.ReadModFile(GraphPath), text);
 
-        session.Execute(EditCommand.SetModFile(GraphPath, "changed"));
-        session.Execute(EditCommand.SetModFile(GraphPath, text));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, "changed")));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, text)));
         var result = session.Save();
 
         Assert.True(result.Saved);
@@ -138,7 +138,7 @@ public sealed class ModFileDocumentTests
 
         var batch = session.BeginBatch("Price and graph");
         batch.Run(Set(Good("g1"), "price", new Int32Value(300)));
-        batch.Run(EditCommand.SetModFile(GraphPath, GraphText));
+        batch.Run(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, GraphText)));
         var result = batch.Commit();
 
         Assert.Equal([GoodsPath], result.Files);
@@ -169,7 +169,7 @@ public sealed class ModFileDocumentTests
         var session = ws.Session("act");
 
         Assert.Null(ModFileDocument.Normalize(path));
-        Assert.Throws<ArgumentException>(() => session.Execute(EditCommand.SetModFile(path, "x")));
+        Assert.Throws<ArgumentException>(() => session.Execute(MissionTestData.Raw(EditCommand.SetModFile(path, "x"))));
         Assert.False(session.CanUndo);
     }
 
@@ -184,7 +184,7 @@ public sealed class ModFileDocumentTests
     {
         using var ws = Workspace(new() { [GraphPath] = GraphText });
         var session = ws.Session("act");
-        session.Execute(EditCommand.SetModFile(GraphPath, "[Graph]\r\nformat = 1\r\n"));
+        session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, "[Graph]\r\nformat = 1\r\n")));
         File.WriteAllText(Path.Combine(ws.ModFolder("act"), GraphPath), "changed outside");
 
         var result = session.Save();
@@ -202,7 +202,7 @@ public sealed class ModFileDocumentTests
         using var ws = Workspace();
         var session = ws.Session(null);
 
-        Assert.Throws<InvalidOperationException>(() => session.Execute(EditCommand.SetModFile(GraphPath, GraphText)));
+        Assert.Throws<InvalidOperationException>(() => session.Execute(MissionTestData.Raw(EditCommand.SetModFile(GraphPath, GraphText))));
         Assert.Null(session.ModFileText(GraphPath));
     }
 
