@@ -48,7 +48,11 @@ public sealed class PlayProcessTests : IDisposable
         Assert.False(stub.Runs(0));
     }
 
-    /// <summary>(2) Review finding R6: a command to a game that ended gives false and never throws.</summary>
+    /// <summary>
+    /// (2) Review finding R6: a command to a game that ended gives false and never throws. The exit comes when Windows
+    /// gives the exit code of the stub. Windows can close the input pipe of the stub after that, so a write to the pipe
+    /// can still succeed. Send must ask the process, not the pipe.
+    /// </summary>
     [Fact]
     public void SendToAGameThatEndedReturnsFalse()
     {

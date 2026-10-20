@@ -34,7 +34,7 @@ internal sealed class PlayProcess : IDisposable
     private readonly ProcessJob? job;
     private readonly Task reader;
 
-    // Kill and the end of the reader use the process object on two threads.
+    // Kill, Send and the end of the reader use the process object on two threads.
     private readonly object processLock = new();
     private bool ended;
 
@@ -82,8 +82,19 @@ internal sealed class PlayProcess : IDisposable
     /// <summary>Writes a command on the standard input of the game.</summary>
     /// <returns>False when the game ended or its input is closed. It never throws for an ended game (review finding
     /// R6).</returns>
+    /// <remarks>A write to the input is no sign that the game runs. Windows gives the exit code of a process before it
+    /// closes the handles of the process, and the reader gives the exit when the exit code is there. So the input pipe
+    /// can take a write after the exit came. The process tells the end first.</remarks>
     public bool Send(PlayCommand command)
     {
+        lock (processLock)
+        {
+            if (ended || process.HasExited)
+            {
+                return false;
+            }
+        }
+
         try
         {
             input.WriteLine(PlayProtocol.Write(command));

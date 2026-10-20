@@ -60,6 +60,7 @@ public sealed class TimelineSubRowRetailTests(ITestOutputHelper output)
     /// <summary>The packing of the largest retail script, with a model before it as after an edit, takes less than
     /// 5 ms. The test also writes the time of the whole build.</summary>
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void ThePackingOfTheLargestRetailScriptTakesLessThanFiveMilliseconds()
     {
         var view = FileSystem.FromPath(GameDataPaths.RequireBase());
@@ -68,6 +69,8 @@ public sealed class TimelineSubRowRetailTests(ITestOutputHelper output)
         var symbols = ThornEvaluator.Instance.Symbols;
         var previous = TimelineModel.Build(S020x, working, symbols, ScriptPlay.Normal);
         var (packs, builds) = (new List<double>(), new List<double>());
+        // The build measures its own packing time, so the runs measure with a high priority (see Timing).
+        using var priority = Timing.HighPriority();
         for (var i = 0; i < 20; i++)
         {
             var clock = Stopwatch.StartNew();

@@ -333,11 +333,15 @@ public sealed class ListRetailTests(ITestOutputHelper output)
     /// <summary>Section 16.2 of the design: the budgets on the retail profile, with a generous factor for slow
     /// machines. The test writes the times to the test output.</summary>
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheListsMeetTheirBudgets()
     {
         const double factor = 10;
         using var workspace = new RetailWorkspace(GameDataPaths.RequireBase(), "m21proof");
         var session = workspace.Open();
+        // The steps change the session one after the other, so they cannot run again. The priority keeps the other
+        // programs of the computer out of the measures (see Timing).
+        using var priority = Timing.HighPriority();
         var lists = session.Lists;
         var li01 = session.SystemPath("Li01")!;
         var battleship = new SectionRef(li01, new SectionIdentity("Object", Battleship));

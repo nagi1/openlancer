@@ -1,5 +1,5 @@
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using LibreLancer;
@@ -31,6 +31,7 @@ public sealed class RoomFilesRetailTests(ITestOutputHelper output)
     /// 446 room files of 461 [Room] sections of 197 bases. The first use takes less than 200 ms, and it opens no base
     /// file as a document of the session.</summary>
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheRoomRoleHoldsTheRoomFilesOfTheEngine()
     {
         var baseFolder = GameDataPaths.RequireBase();
@@ -38,9 +39,8 @@ public sealed class RoomFilesRetailTests(ITestOutputHelper output)
         var session = workspace.Open();
         _ = session.DataFiles.Paths("solar");
 
-        var clock = Stopwatch.StartNew();
-        var rooms = session.DataFiles.Paths("room");
-        var first = clock.Elapsed;
+        IReadOnlyList<string> rooms = [];
+        var first = Timing.Measure(() => rooms = session.DataFiles.Paths("room"));
 
         var view = FileSystem.FromPath(baseFolder);
         var items = EngineDataLoader.Load(view).RequireComplete();

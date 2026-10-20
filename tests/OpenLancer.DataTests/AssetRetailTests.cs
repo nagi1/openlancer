@@ -27,6 +27,7 @@ public sealed class AssetRetailTests(ITestOutputHelper output)
     /// <summary>The six children of Solars hold each of the 321 retail solar archetypes once (decision D267, review
     /// finding R8). The rows of a category build within the budget of section 5.3.</summary>
     [Fact]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheSolarCategoriesHoldEachRetailArchetypeOnce()
     {
         using var workspace = SceneRetail.Workspace("m23cats");
@@ -35,10 +36,9 @@ public sealed class AssetRetailTests(ITestOutputHelper output)
         // The budget is for the rows. The list of the solar archetypes builds at its first use, as the M21 budgets
         // measure it.
         Assert.NotNull(session.Lists.List("solar_archetype"));
-        var watch = Stopwatch.StartNew();
-        var rows = session.Assets.Rows("solars");
-        watch.Stop();
-        output.WriteLine($"Solars: {rows.Count} rows in {watch.Elapsed.TotalMilliseconds:F1} ms");
+        IReadOnlyList<AssetRow> rows = [];
+        var build = Timing.Measure(() => rows = session.Assets.Rows("solars"));
+        output.WriteLine($"Solars: {rows.Count} rows in {build.TotalMilliseconds:F1} ms");
         var children = session.Assets.Categories.Where(c => c.ParentId == "solars").ToList();
         foreach (var child in children)
             output.WriteLine($"{child.Id}: {child.Count}");
@@ -49,10 +49,10 @@ public sealed class AssetRetailTests(ITestOutputHelper output)
         Assert.Equal(321, rows.Count);
         Assert.Equal(321, rows.Select(r => r.Nickname.ToLowerInvariant()).Distinct().Count());
         Assert.All(rows.Where(r => r.CategoryId != "solars/connections"), r => Assert.Null(r.NotPlaceable));
-        Assert.True(watch.Elapsed.TotalMilliseconds < 20, $"The rows of Solars took {watch.Elapsed.TotalMilliseconds:F1} ms.");
+        Assert.True(build.TotalMilliseconds < 20, $"The rows of Solars took {build.TotalMilliseconds:F1} ms.");
 
         // The search budget of section 5.4: one category, and All assets with each category.
-        watch.Restart();
+        var watch = Stopwatch.StartNew();
         var found = session.Assets.Search("solars", "freeport", r => r.Nickname);
         var one = watch.Elapsed.TotalMilliseconds;
         var all = session.Assets.Rows(AssetCatalog.AllId).Count;

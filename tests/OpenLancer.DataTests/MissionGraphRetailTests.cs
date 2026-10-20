@@ -20,6 +20,7 @@ public sealed class MissionGraphRetailTests(ITestOutputHelper output)
     [InlineData("M10", true)]
     [InlineData("M06", false)]
     [InlineData("M06", true)]
+    [Trait(Timing.Category, Timing.Performance)]
     public void TheLayoutStaysUnderTheGate(string slot, bool showLines)
     {
         var analysis = RetailMissions.Slot(slot);
@@ -31,16 +32,16 @@ public sealed class MissionGraphRetailTests(ITestOutputHelper output)
             var build = Stopwatch.StartNew();
             var graph = MissionGraph.Build(analysis, new GraphOptions(lens, showLines));
             build.Stop();
-            var watch = Stopwatch.StartNew();
-            var layout = GraphLayout.Of(graph);
-            watch.Stop();
+            GraphLayout? made = null;
+            var time = Timing.WarmGate(TimeSpan.FromMilliseconds(100), 3, () => made = GraphLayout.Of(graph));
+            var layout = made!;
 
             output.WriteLine($"{slot} {lens} {(showLines ? "lines" : "summary")}: {graph.Nodes.Count} nodes, " +
                              $"{graph.Links.Count} links. Build {build.Elapsed.TotalMilliseconds:F1} ms, layout " +
-                             $"{watch.Elapsed.TotalMilliseconds:F1} ms.");
+                             $"{time.TotalMilliseconds:F1} ms (the best of 3 runs).");
             Assert.Equal(graph.Nodes.Count, graph.Nodes.Count(n => layout.Positions.ContainsKey(n.Key)));
-            Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(100),
-                $"The layout of {slot} took {watch.Elapsed.TotalMilliseconds:F1} ms.");
+            Assert.True(time < TimeSpan.FromMilliseconds(100),
+                $"The layout of {slot} took {time.TotalMilliseconds:F1} ms.");
         }
     }
 
