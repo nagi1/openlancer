@@ -299,7 +299,7 @@ public sealed class PrefabStudioTests
         var delay = fields[fields.IndexOf(heading) + 1];
         Assert.Equal("Default", delay.Label);
         Assert.Equal(["Remove field"], delay.Actions.Select(a => a.Label));
-        Assert.Equal("Written by trigger 'end'", Field(page, "ports", "When all are destroyed").Value);
+        Assert.Equal("When trigger 'end' runs", Field(page, "ports", "When all are destroyed").Value);
         Assert.Equal(["spawn", "end"], page.Section("sections")!.Fields.Select(f => f.Label));
         Assert.All(page.Section("sections")!.Fields, f => Assert.IsType<MissionRef>(f.Link));
         Assert.Equal("Changes here change 1 instance in 1 mission of mod act.", Field(page, "prefab", "Instances").Value);
@@ -892,6 +892,14 @@ public sealed class PrefabStudioTests
         Assert.Equal(("Variant of ol_gate", AssetMark.Added | AssetMark.Unsaved), (copy.Detail, copy.Mark));
         Assert.True(m.Session.Save().Saved);
         Assert.Equal(AssetMark.None, assets.Find(AssetKind.MissionPrefab, "ol_copy")!.Mark);
+    }
+
+    [Fact]
+    public void AnOverrideHasTheInfoTextOfTheDesign()
+    {
+        Assert.Equal(("Override", "A field of this instance that differs from the prefab. Only this instance has the value.",
+                "The lines of this instance. The prefab does not change until you apply the value."),
+            (PrefabLinks.OverrideHelp.Title, PrefabLinks.OverrideHelp.WhatItIs, PrefabLinks.OverrideHelp.WhatItWrites));
     }
 
     [Fact]

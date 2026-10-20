@@ -7,6 +7,7 @@ Without an active mod, the studio shows each mission and takes no edits. So you 
 This version has these limits:
 
 - The graph of prefab mode shows a slot of a field as its label in brackets, for example "[Enemy formation]", not as a chip.
+- In prefab mode, the Raw INI view does not show, and the INI block of a page is read-only. The Prefab page shows the text of the prefab file.
 - The Scene part does not drag mission items yet. Use "Pick in Scene" to set a position.
 - The editor writes the lines of a mission. OpenLancer does not run each line yet. The column OpenLancer of the Missions tab tells what it runs.
 
@@ -15,7 +16,7 @@ This version has these limits:
 1. Run `start.bat` to build and start the editor.
 2. Click File > Open profile, then click a profile.
 3. Click the Missions tab at the bottom of the window. The 14 story missions come first, in the order of the game. The other scripts of the game data and the mods follow.
-4. Type a part of a name, a nickname or a value in the search field, for example `m04` or a trigger name.
+4. Type a name, a nickname or a value in the search field. For example, type `m04` or a trigger name.
 5. Double-click a row. The mission opens in the Mission tab, beside the Scene tab. One mission is open at a time.
 
 ## The Missions tab
@@ -79,7 +80,15 @@ When the Mission tab is narrow, the Scene part closes. The toggle Scene of the t
 
 ### The Raw INI view
 
-The switch Raw INI shows the whole script as text, with the colors of the INI keys and the marks of the checks. A cursor in a section selects its item. With an active mod, you can edit the text. The editor checks the text when you leave the field. A problem keeps nothing: the Console holds the problem and your text, so you can copy it back.
+The switch Raw INI shows the whole script as text, with the colors of the INI keys and the marks of the checks. A cursor in a section selects its item. With an active mod, you can edit the text. The editor checks the text when you leave the field. A problem keeps nothing: the Console holds the problem and your text, so you can copy it again.
+
+A raw edit has these rules:
+
+- A change of the first nickname of a section stops the edit. Use Rename (F2), so that the lines that name the item change too.
+- When another edit changed a section while you typed, the edit stops with "The section changed while you typed." Copy your text, and edit again.
+- The editor does not keep a comment inside a mission section.
+- A moved ship or formation section moves, because its place has an effect in the game. Another section keeps its place, and a note tells you.
+- A line of a member of a linked prefab instance shows dim and takes no edit (see "Behavior prefabs").
 
 ## The Hierarchy and the Inspector
 
@@ -107,7 +116,7 @@ The studio takes edits when the profile has an active mod. Each gesture is one e
 | Quick add | Press Space, type a part of the name, then press Enter. |
 | Inspector | Change a field. A name has a picker, a word has a dropdown and a list has the buttons Add and Remove. "Pick in Scene" sets a position with a click in the Scene. |
 | Inspector | Click "Fix" on a problem or on a missing step. |
-| Hierarchy | Use the "+" menu to add an item. Drag a ship from the Assets panel onto the group Cast to add a mission ship. F2, Ctrl+D and Delete work on the selected row, also on a prefab instance. |
+| Hierarchy | Use the "+" menu to add an item. Drag a ship from the Assets panel onto the group Cast to add a mission ship. F2, Ctrl+D and Delete work on the selected row. On a prefab instance, Ctrl+D and Delete work. |
 | Raw INI | Edit the text of the script or of the INI block of a page. |
 
 A delete of a trigger keeps each line that names it, and the line shows "Missing". A rename changes each line that names the trigger, in the same entry of the history.
@@ -124,11 +133,23 @@ A behavior prefab is a group of triggers with named fields, for example "Spawn w
 
 ### Place a prefab
 
-1. Open a mission, and make sure that the profile has an active mod.
-2. Open the group "Prefabs" of the library strip. The built-in prefabs come first, then the prefabs of the active mod, then the prefabs of the lower mods with a lock.
-3. Drag a prefab onto an empty place of the graph. Or drag a tile of the category "Mission prefabs" of the Assets panel.
-4. Select the new frame. The Inspector shows the fields and the completeness panel of the instance.
-5. Set the fields. Each edit compiles the triggers of the instance again.
+1. Make sure that the profile has an active mod.
+2. Open a mission.
+3. Open the group "Prefabs" of the library strip. The built-in prefabs come first, then the prefabs of the active mod, then the prefabs of the lower mods with a lock.
+4. Drag a prefab onto an empty place of the graph. Or drag a tile of the category "Mission prefabs" of the Assets panel.
+5. Select the new frame. The Inspector shows the fields and the completeness panel of the instance.
+6. Set the fields. Each edit compiles the triggers of the instance again.
+7. Link the outputs of the instance (see "Outputs").
+
+### Outputs
+
+A prefab can have outputs, for example "When all are destroyed" of "Spawn wave". An output is a port of the prefab. It starts triggers of the mission when its trigger in the prefab runs. So a placed instance continues the mission through its outputs.
+
+- The section "Outputs" of the instance page has a trigger list for each output. Add a row, and pick a trigger of the mission.
+- In the graph, drag from the "+" pin of an instance trigger to the Start pin of another trigger. When the prefab has an output for that instance trigger, the link goes to the output.
+- Remove link on such a link removes the trigger from the output.
+
+A trigger of the instance without an output for the link refuses the drag, with the reason.
 
 ### Overrides
 
@@ -139,36 +160,53 @@ The menu of an override has:
 - **Revert**: use the value of the prefab.
 - **Apply to prefab '{name}'**: make the value the value of the prefab. Each instance of the prefab in the active mod without an override of the field gets it.
 - **Make a variant with this value**: for a built-in prefab or a prefab of a lower mod, which cannot change. The editor copies the prefab into the active mod with the value, and the instance uses the copy.
-- **Show in raw INI**: go to the line of the field in the Raw INI view. Each field of a linked instance has this item.
+- **Show in raw INI**: go to the line of the field in the Raw INI view. A field whose value is in a line has this item.
 
-The page menu "Overrides ({n})" lists each override with Revert and Apply. It also has "Revert all" and "Apply all", as the Overrides list of Unity does.
+The page menu "Overrides ({n})" lists each override with Revert and Apply. It also has "Revert all" and "Apply all", as the Overrides list of Unity does. The info icon of an override tells what it is and what it writes.
 
-A trigger of a linked instance takes no line edits, because the prefab gives its lines. Change a field of the instance, open the prefab, or unpack the instance. The Raw INI view shows its lines dim. Hover a line to see its prefab. An edit of such a line stops, and the Console names the line. A delete of such a trigger is allowed. It shows as a removed trigger with the violet bar, and Revert brings it back.
+A trigger of a linked instance takes no line edits, because the prefab gives its lines. Change a field of the instance, open the prefab, or unpack the instance. The Raw INI view shows its lines dim. Hover a line to see its prefab. An edit of such a line stops, and the Console names the line.
+
+A delete of such a trigger is allowed. The section "Triggers in this prefab" of the instance page then shows the trigger as "Removed", with the violet bar. The other triggers of the instance lose each line that names it, as Unity sets a reference to a removed child to None. Revert adds the trigger again. "Apply to prefab" removes it from the prefab and from each instance.
 
 ### Save as prefab and unpack
 
-- **Save as prefab...** in the menu of a matched instance makes a prefab asset from its triggers. Each value that a field reads becomes a field of the prefab, with the value of the instance as its default. The instance becomes a linked instance of the new prefab, with no override.
-- **Unpack** removes the link of a linked instance. The triggers stay, and the studio can find them again as a matched instance.
+- **Save as prefab...** in the menu of a matched instance makes a prefab asset from its triggers. Each value that a field reads becomes a field of the prefab, with the value of the instance as its default. A start, stop or checkpoint line to a trigger outside the instance becomes an output. The instance becomes a linked instance of the new prefab, with no override, and it stays selected.
+- **Unpack** removes the link of a linked instance. The triggers stay, and the studio can find them again as a matched instance. The first trigger of the instance becomes the selection.
+
+The dialog "Save as prefab" has two fields:
+
+| Field | Content |
+|---|---|
+| Name | The name in the library. |
+| File name | The name of the prefab file. Use lowercase letters, digits, `_` and `-`, with at most 47 characters. No prefab of the library can have the same file name. |
 
 ### Prefab mode
 
 Prefab mode edits a prefab asset of the active mod. A change there changes each linked instance of the prefab in the active mod.
 
-1. Click "Open prefab" in the menu of a frame or on the page of an instance. Or double-click a tile of "Mission prefabs" in the Assets panel.
-2. The bar at the top of the Mission tab names the mission and the prefab. It tells how many instances change, for example "Changes here change 3 instances in 2 missions of mod my-mod."
+1. Click "Open prefab" in the menu of a frame or on the page of an instance. Or double-click a tile of "Mission prefabs" in the Assets panel. Or right-click a prefab of the library strip, then click "Open prefab".
+2. Read the bar at the top of the Mission tab. It names the mission and the prefab, and it tells how many instances change. For example: "Changes here change 3 instances in 2 missions of mod my-mod."
 3. Edit the triggers of the prefab in the graph and in the Inspector, as in a mission. The Scene part closes, because a prefab has no world.
-4. To make a value a field, open the menu of the value and click "Field: {label}". Click "Fixed value" to give it one value again.
-5. Select the prefab row of the Hierarchy to see the Prefab page. It shows the steps of the prefab, the fields with their kind and default, the ports and the sections. Change a default there, or remove a field. A field that no line holds is a missing step.
-6. Press Esc or click the back arrow to go back to the mission.
+4. To make a value a new field, open the menu of the value. Then click "New field from this value".
+5. To make a whole condition or line a new field, open its menu. Then click "New field from this line".
+6. To use a field that exists, click "Field: {label}" in the menu of the value. "Fixed value" gives the value one fixed text again.
+7. To see the Prefab page, select the prefab row of the Hierarchy.
+8. On the Prefab page, change a default, the name of the prefab, or remove a field.
+9. To go back to the mission, press Esc or click the back arrow.
 
-Each edit in prefab mode and the compile of all instances are one entry of the history. The Console says how many instances changed, and names each instance that did not change. A built-in prefab and a prefab of a lower mod open read-only, with the button "Make variant".
+The Prefab page shows the steps of the prefab, the fields with their kind, "Per instance" and default, the ports and the sections. A field that no line holds is a missing step. The page also shows the text of the prefab file, read-only, with a mark on each line with a problem.
+
+Each edit in prefab mode and the compile of all instances are one entry of the history. The Console says how many instances changed, and names each instance that did not change.
+
+A built-in prefab and a prefab of a lower mod cannot change. They open read-only, with the button "Make variant". "Make variant" copies the prefab into the active mod with a new file name and name, and opens the copy in prefab mode. You can also make a variant in the library strip. Right-click a built-in prefab, then click "Make variant".
 
 ### The Assets panel
 
 The category "Mission prefabs" of the Assets panel shows the prefab assets of the active mod and of the lower mods. A prefab of a lower mod has a lock.
 
-- F2 renames a prefab of the active mod. The file, its id and each instance of the active mod change.
-- Delete removes a prefab of the active mod. The editor asks first when instances use it. The instances keep their lines and get the warning P02. Undo brings the prefab back.
+- F2 or Rename changes the name of a prefab of the active mod in the library.
+- "Rename file..." changes the file name of a prefab of the active mod. Its id and each instance record of the active mod change too.
+- Delete removes a prefab of the active mod. The editor asks first when instances use it. The instances keep their lines, show "Missing prefab" and get the warning P02. Undo restores the prefab.
 - A drag of a tile into the graph places the prefab.
 
 ### Warnings of linked instances

@@ -342,19 +342,18 @@ internal sealed class GraphEditModel
         foreach (var group in link.Sources.GroupBy(s => (s.Source, Name: s.TargetName.ToLowerInvariant(), s.Kind)))
         {
             var first = group.First();
-            if (first.Kind is MissionLinkKind.Start or MissionLinkKind.Stop && MemberOf(first.Source) is var (instance, linked, role))
+            if (first.Kind is MissionLinkKind.Start or MissionLinkKind.Stop && MemberOf(first.Source) is var (instance, linked, role) &&
+                linked.Template is { } template &&
+                PortOf(template, role, first.Kind == MissionLinkKind.Stop ? LinkKind.Stop : LinkKind.Start) is { } port &&
+                LinksOf(linked.Record, port.Id).Any(t => t.Equals(first.TargetName.Trim(), StringComparison.OrdinalIgnoreCase)))
             {
-                var kind = first.Kind == MissionLinkKind.Stop ? LinkKind.Stop : LinkKind.Start;
-                if (linked.Template is { } template && PortOf(template, role, kind) is { } port)
-                {
-                    if (!outputs.TryGetValue((instance, port.Id), out var links))
-                        outputs[(instance, port.Id)] = links = LinksOf(linked.Record, port.Id);
-                    links.RemoveAll(t => t.Equals(first.TargetName.Trim(), StringComparison.OrdinalIgnoreCase));
-                }
-
+                if (!outputs.TryGetValue((instance, port.Id), out var links))
+                    outputs[(instance, port.Id)] = links = LinksOf(linked.Record, port.Id);
+                links.RemoveAll(t => t.Equals(first.TargetName.Trim(), StringComparison.OrdinalIgnoreCase));
                 continue;
             }
 
+            // Another link goes with its lines. The command refuses a line of a member, with the reason.
             switch (first.Kind)
             {
                 case MissionLinkKind.Start or MissionLinkKind.Stop:

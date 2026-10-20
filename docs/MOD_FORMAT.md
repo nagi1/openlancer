@@ -385,7 +385,7 @@ When the active mod has a whole mission file and a patch for the same path, the 
 
 The editor keeps the graph of each mission script in `graphs/<install path>`, and each mission prefab of the mod in `prefabs/missions/<id>.ini`. The game, the merge, `oltool deploy`, the validation and the packages ignore these folders. The editor writes them at the save of the mod, in the same save as the patches. Undo and the recovery file of unsaved edits cover them. A graph file without content is not written, and the save deletes an old one with the empty folders below `graphs/`. The editor files of the lower mods are read-only.
 
-A graph file holds a `[Node]` record for each trigger node that you moved or placed. The other nodes take the automatic layout. It holds the `[Act]` records after your first edit of an act. That edit writes all acts that the editor proposed, so you start from them. A proposed act has no `name` line, so its title stays "Act {n}: {system name}". A trigger is in one act. A trigger that no act names takes the act that the editor proposes for it. The collapse state of the frames and the lens are not in the file. The editor does not change a graph file of another format.
+A graph file holds a `[Node]` record for each trigger node that you moved or placed. A linked prefab instance gets a `[Node]` record for each member trigger, and the graph places the frame of the instance around these nodes. The other nodes take the automatic layout. It holds the `[Act]` records after your first edit of an act. That edit writes all acts that the editor proposed, so you start from them. A proposed act has no `name` line, so its title stays "Act {n}: {system name}". A trigger is in one act. A trigger that no act names takes the act that the editor proposes for it. The collapse state of the frames and the lens are not in the file. The editor does not change a graph file of another format.
 
 ```ini
 ; OpenLancer mission graph, format 1. The game does not read this file.
@@ -476,7 +476,7 @@ Cnd_Destroyed = {formation}, -1
 Act_ActTrig = {port:done}
 ```
 
-- `[Prefab]` is the first section. `id` is the file name, with letters, digits, `_` and `-`. `kind` is `beat` or `order`. `help` and `writes` are the texts of the info icon. `variant_of` names the prefab that a variant copies, as `builtin:<id>` or `mod:<id>`.
+- `[Prefab]` is the first section. `id` is the file name, with letters, digits, `_` and `-`. The editor gives a new prefab a file name with lowercase letters only. `kind` is `beat` or `order`. `help` and `writes` are the texts of the info icon. `variant_of` names the prefab that a variant copies, as `builtin:<id>` or `mod:<id>`.
 - Each `[Field]` has an `id`, a `label` and a `kind`. A kind is a value kind of the mission schema, for example `number`, `wholeNumber` or `formation`, or `list`, `triggers`, `condition` or `lines`. A word field has a `tokens` line with the id of a word set. A list field has one `column = <id>, <kind>, <label>` line for each column. A condition field and a lines field can limit their keys with `key` lines. `default` gives the value of a new instance, with one line for each row. `per_instance = true` makes a field that each instance sets, and `optional = true` lets a value field have no value.
 - Each `[Port]` has an `id`, a `label` and the `role` of its section.
 - Each other section is a template section of a mission section type. Its first line is `role`, and its `nickname` line uses `{instance}`.

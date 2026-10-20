@@ -134,6 +134,11 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         ImGui.EndChild();
     }
 
+    /// <summary>Why the INI block of a template in prefab mode takes no edits.</summary>
+    internal const string TemplateIniNote =
+        "This block shows the lines of the prefab with the roles as names. Change the lines in the fields or in the graph. " +
+        "The Prefab page shows the text of the prefab file.";
+
     /// <summary>The key of a section of the page in the settings and in a section request.</summary>
     private static string SectionKey(string id) => $"Mission.{id}";
 
@@ -577,9 +582,11 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             (text.Lines.Count + 2) * ImGui.GetTextLineHeightWithSpacing());
         var path = sections[0].Ref.Path;
         var ids = sections.Select(s => s.Ref.Id).ToList();
+        // The INI block of a template in prefab mode shows its lines in the role form. The prefab file is the text that the
+        // editor writes, so the block is read-only. The Prefab page shows the text of the file.
+        var readOnly = PrefabRef.OfScript(path) != null ? TemplateIniNote : window.Missions.NoEditReason(path);
         ini.DrawEditable("##ini", key, text, block.Marks, new Vector2(ImGui.GetContentRegionAvail().X, height),
-            window.Missions.NoEditReason(path), (start, end) => window.Missions.CommitRaw(path, ids, start, end),
-            window.Missions.Draft(path, ids));
+            readOnly, (start, end) => window.Missions.CommitRaw(path, ids, start, end), window.Missions.Draft(path, ids));
         if (wholeScript && ImGui.Button("Open the whole script"))
         {
             window.Missions.ShowRaw = true;

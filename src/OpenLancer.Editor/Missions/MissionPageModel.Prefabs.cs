@@ -297,9 +297,9 @@ internal sealed partial record MissionPageModel
         },
     };
 
-    /// <summary>The text of a port of a template in plain words: the trigger of the template that writes its
-    /// lines.</summary>
-    internal static string PortText(PrefabPort port) => $"Written by trigger '{port.Role}'";
+    /// <summary>The text of a port of a template in plain words: the trigger of the template whose lines start the
+    /// triggers of the port.</summary>
+    internal static string PortText(PrefabPort port) => $"When trigger '{port.Role}' runs";
 
     /// <summary>Two help texts as one, or the one that is not null.</summary>
     private static string? Join(string? first, string second) => first is { Length: > 0 } ? $"{first}\n{second}" : second;
@@ -661,7 +661,10 @@ internal sealed partial record MissionPageModel
         {
             name,
             new("File", prefab.Builtin ? "Built-in prefab of the editor" : PrefabAsset.PathOf(prefab.Id),
-                prefab.Builtin ? "The editor has this prefab. It cannot change." : "The prefab file in the folder of the mod. To change the file name, use \"Rename file...\" in the menu of its tile in the Assets panel."),
+                prefab.Builtin
+                    ? "The editor has this prefab. It cannot change."
+                    : "The prefab file in the folder of the mod. To change the file name, use \"Rename file...\" in the menu " +
+                      "of its tile in the Assets panel."),
             new("Mod", asset.ModId ?? "None"),
         };
         if (template != null)
@@ -691,8 +694,8 @@ internal sealed partial record MissionPageModel
             foreach (var field in template.Fields)
             {
                 // The kind and "Per instance" show on the heading of the field (section 8.6 of the M6b design).
-                fields.Add(new PageField(field.Label, field.PerInstance ? $"{KindLabel(field)}, {PerInstanceText.ToLowerInvariant()}" : KindLabel(field),
-                    field.PerInstance ? PerInstanceTip : null) { Heading = true });
+                var kind = field.PerInstance ? $"{KindLabel(field)}, {PerInstanceText.ToLowerInvariant()}" : KindLabel(field);
+                fields.Add(new PageField(field.Label, kind, field.PerInstance ? PerInstanceTip : null) { Heading = true });
                 var view = PrefabValueField(context, field, field.Default, editable ? null : readOnly ?? FieldNote,
                     rows => One($"Set the default of {field.Label}", new SetPrefabFieldDefault(prefab, field.Id, rows)));
                 fields.Add(view with
@@ -707,7 +710,9 @@ internal sealed partial record MissionPageModel
             }
 
             sections.Add(new PageSection("fields", "Fields", EditorIcons.List, null, fields,
-                fields.Count == 0 ? [$"The prefab has no fields. Pick \"{NewFieldText}\" in the menu of a value of a template line to make one."] : []));
+                fields.Count == 0
+                    ? [$"The prefab has no fields. Pick \"{NewFieldText}\" in the menu of a value of a template line to make one."]
+                    : []));
             sections.Add(new PageSection("ports", "Ports", EditorIcons.Link, null,
                 template.Ports.Select(p => new PageField(p.Label, PortText(p),
                     "An output of the prefab. Each instance can start triggers of its mission with it.")).ToList(),
