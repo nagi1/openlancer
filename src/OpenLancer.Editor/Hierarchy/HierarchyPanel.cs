@@ -28,7 +28,7 @@ namespace OpenLancer.Editor.Hierarchy;
 /// The rows of a system take a tile of the Assets panel, and a row drags onto the prop groups of the Assets panel
 /// (section 8.1 of the M23 design). The rows of a cutscene take no drop (review finding R20).
 /// </remarks>
-internal sealed class HierarchyPanel(EditorWindow window)
+internal sealed partial class HierarchyPanel(EditorWindow window)
 {
     private const string SearchTip =
         "Search by name or nickname. A t: word shows one type, for example t:station.\n" +
@@ -70,6 +70,8 @@ internal sealed class HierarchyPanel(EditorWindow window)
 
         if (window.CenterMode == CenterMode.Mission)
         {
+            MissionCreateButton();
+            ImGui.SameLine();
             ToolbarItems.SearchField("search-mission", "Search (t:ship)", ref missionSearch, -1, MissionSearchTip);
             return;
         }
@@ -205,12 +207,22 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.EndPopup();
         }
 
+        if (window.CenterMode == CenterMode.Mission)
+        {
+            MissionRenamePopup();
+            FactionMenu();
+        }
+
         if (focused && !ImGui.GetIO().WantTextInput)
         {
             Keys(tree);
             if (IsScene)
             {
                 window.SceneEdits.Keys(window.Selection);
+            }
+            else if (window.CenterMode == CenterMode.Mission)
+            {
+                MissionKeys();
             }
         }
     }
@@ -354,6 +366,10 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (IsScene)
         {
             DragAndDrop(node);
+        }
+        else if (window.CenterMode == CenterMode.Mission)
+        {
+            MissionDragAndDrop(node);
         }
 
         if (ImGui.BeginPopupContextItem())
@@ -626,6 +642,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (item is MissionRef mission)
         {
             MissionMenu(mission);
+            MissionEditMenu(mission);
             return;
         }
 

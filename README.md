@@ -86,7 +86,17 @@ Open the Missions tab of the editor to see the mission scripts of the game data 
 
 The Mission tab shows the mission as a graph beside the Scene. Each box is one trigger: the event that starts it, and what it does. Frames group the acts and the behavior prefabs, for example a spawn wave. A lens shows one part of the mission, for example the battles or the conversations. Select a trigger, and the Scene shows the ships, points and volumes that it uses. Select an item in the Scene, and the graph shows the triggers that use it.
 
-The Hierarchy lists the items of the open mission, and the Inspector shows each item with named fields and a completeness panel. The Raw INI view shows the whole script with the marks of the checks. This version shows mission scripts but does not change them. The toggle "base-game messages" shows the problems that the base game has too. They are hidden by default.
+The Hierarchy lists the items of the open mission, and the Inspector shows each item with named fields and a completeness panel. The Raw INI view shows the whole script with the marks of the checks. The toggle "base-game messages" shows the problems that the base game has too. They are hidden by default.
+
+With an active mod, you can edit the mission. Each gesture is one entry of the edit history, and a save writes a patch of the script:
+
+- In the graph, drag from the "+" pin of a trigger to the Start or the Stop pin of another trigger. Right-click a link to insert a trigger or to remove the link. Delete, Ctrl+D, F2, Ctrl+C and Ctrl+V work on the selected triggers. Space opens quick add.
+- Drag an event, an action or a condition from the library strip at the left of the graph onto a trigger or onto an empty place.
+- Change the fields of a page in the Inspector. Use "Pick in Scene" to set a position with a click in the Scene.
+- Click "Fix" on a problem or on a missing step when the fix needs no choice.
+- Use the "+" menu of the Hierarchy to add an item. Drag a ship from the Assets panel onto the group "Cast" to add a mission ship.
+
+The editor keeps the places of the nodes that you move and the acts that you edit in a graph file of the mod. The game does not read it. See "Editor files of missions" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md).
 
 To measure the frame time of the Mission tab, start the editor with `OpenLancer.Editor <profile.json> --bench-mission <install path>...`. For example, give the scripts `DATA\MISSIONS\M10\m10.ini` and `DATA\MISSIONS\M06\m06.ini`. The bench opens the profile without an active mod and shows each mission with the Scene beside it. For each mission, it draws 300 frames in the Beats lens and 300 frames in the Logic lens with "Show lines". The frames pan and zoom the graph.
 

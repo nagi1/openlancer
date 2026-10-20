@@ -143,6 +143,29 @@ internal sealed class AssetDrag(EditorWindow window)
     }
 
     /// <summary>
+    /// The group "Cast" of the tree of a mission as a drop target (section 8.9 of the M6b design): a ship tile adds a
+    /// mission ship. The caller asks for the faction, then adds the ship as one undo entry.
+    /// </summary>
+    /// <param name="dropped">Takes the dropped ship tile.</param>
+    public void Cast(Action<AssetRow> dropped)
+    {
+        if (!ImGui.BeginDragDropTarget())
+            return;
+        if (Payload(AssetType) is AssetRow row)
+        {
+            if (row.Asset.Kind != AssetKind.Ship)
+                Refuse("Drop a ship here. It becomes a mission ship.");
+            else
+            {
+                Hint($"{ObjectKinds.Assets.Of(row).Icon}  Add mission ship {row.Asset.Id}");
+                if (Accept(AssetType))
+                    dropped(row);
+            }
+        }
+        ImGui.EndDragDropTarget();
+    }
+
+    /// <summary>
     /// An Inspector list field as a drop target: it takes a tile of an entry of a list of its rule, as Unity drops an
     /// asset on an object field (decision D281). The drop sets the value as a pick of the picker does.
     /// </summary>
