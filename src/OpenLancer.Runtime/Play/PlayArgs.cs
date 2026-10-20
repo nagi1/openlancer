@@ -9,9 +9,12 @@ namespace OpenLancer.Runtime.Play;
 /// What the editor gives the play process (section 6.3 of the M4 design):
 /// <code>
 /// OpenLancer.Play.exe --profile &lt;profile.json&gt; [--mod &lt;active mod id&gt;] [--save &lt;n&gt;]
-///                     (--space &lt;system&gt; &lt;x&gt; &lt;y&gt; &lt;z&gt; &lt;qx&gt; &lt;qy&gt; &lt;qz&gt; &lt;qw&gt; | --base &lt;base nickname&gt;)
+///                     (--space &lt;system&gt; &lt;x&gt; &lt;y&gt; &lt;z&gt; &lt;qx&gt; &lt;qy&gt; &lt;qz&gt; &lt;qw&gt; | --base &lt;base nickname&gt;
+///                      | --start-save &lt;file&gt; [--test-layer &lt;folder&gt;])
 ///                     [--package &lt;ship package nickname&gt;]
 /// </code>
+/// A mission play (section 5.6 of the M6c design) gives <c>--start-save</c> and, for its setup triggers,
+/// <c>--test-layer</c>.
 /// Numbers use the invariant culture. Each float has the round-trip format <c>R</c>, so a write and a read give the
 /// same record.
 /// </summary>
@@ -28,6 +31,8 @@ public sealed record PlayArgs(string Profile, string? ActiveMod, int Save, PlayS
     private const string SpaceOption = "--space";
     private const string BaseOption = "--base";
     private const string PackageOption = "--package";
+    private const string StartSaveOption = "--start-save";
+    private const string TestLayerOption = "--test-layer";
 
     /// <summary>The numbers after the system of <c>--space</c>: the position, then the quaternion.</summary>
     private const int SpaceNumbers = 7;
@@ -52,6 +57,11 @@ public sealed record PlayArgs(string Profile, string? ActiveMod, int Save, PlayS
             case PlayStart.AtBase atBase:
                 args.AddRange([BaseOption, atBase.Base]);
                 break;
+            case PlayStart.FromSave fromSave:
+                args.AddRange([StartSaveOption, fromSave.Save]);
+                if (fromSave.TestLayer != null)
+                    args.AddRange([TestLayerOption, fromSave.TestLayer]);
+                break;
         }
         if (Package != null)
             args.AddRange([PackageOption, Package]);
@@ -61,7 +71,7 @@ public sealed record PlayArgs(string Profile, string? ActiveMod, int Save, PlayS
     /// <exception cref="FormatException">The list is not valid. The message gives the reason.</exception>
     public static PlayArgs Parse(IReadOnlyList<string> args)
     {
-        string? profile = null, mod = null, package = null;
+        string? profile = null, mod = null, package = null, layer = null;
         int? save = null;
         PlayStart? start = null;
         for (var i = 0; i < args.Count;)
@@ -91,15 +101,29 @@ public sealed record PlayArgs(string Profile, string? ActiveMod, int Save, PlayS
                 case PackageOption:
                     package = Once(package, option, Values(args, ref i, option, 1)[0]);
                     break;
+                case StartSaveOption:
+                    start = OneStart(start, new PlayStart.FromSave(Values(args, ref i, option, 1)[0], null));
+                    break;
+                case TestLayerOption:
+                    layer = Once(layer, option, Values(args, ref i, option, 1)[0]);
+                    break;
                 default:
                     throw new FormatException($"The argument '{option}' is not known.");
             }
         }
+        if (layer != null)
+        {
+            start = start is PlayStart.FromSave fromSave
+                ? fromSave with { TestLayer = layer }
+                : throw new FormatException($"{TestLayerOption} needs {StartSaveOption}.");
+        }
+
         return new PlayArgs(
             profile ?? throw new FormatException($"The arguments have no {ProfileOption}."),
             mod,
             save ?? 0,
-            start ?? throw new FormatException($"The arguments have no start. Give {SpaceOption} or {BaseOption}."),
+            start ?? throw new FormatException(
+                $"The arguments have no start. Give {SpaceOption}, {BaseOption} or {StartSaveOption}."),
             package);
     }
 
@@ -136,5 +160,8 @@ public sealed record PlayArgs(string Profile, string? ActiveMod, int Save, PlayS
         current == null ? value : throw new FormatException($"The arguments give {option} two times.");
 
     private static PlayStart OneStart(PlayStart? current, PlayStart start) =>
-        current == null ? start : throw new FormatException($"The arguments give two starts. Give one {SpaceOption} or one {BaseOption}.");
+        current == null
+            ? start
+            : throw new FormatException(
+                $"The arguments give two starts. Give one {SpaceOption}, one {BaseOption} or one {StartSaveOption}.");
 }

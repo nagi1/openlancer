@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Strings;
 using OpenLancer.Runtime.Play;
@@ -61,6 +62,24 @@ public sealed class PlayViewTests
         Assert.Empty(overlay.Diagnostics);
         Assert.Equal(130, TestWorkspace.Sections(overlay, GoodsPath)[0]["price"]![0].ToInt32());
         Assert.Equal(20, TestWorkspace.Sections(overlay, WeaponsPath)[0]["damage"]![0].ToInt32());
+    }
+
+    /// <summary>A mission play adds its test layer after the mods of the play (section 5.4 of the M6c design). The
+    /// layer is not a mod of the profile.</summary>
+    [Fact]
+    public void TheTestLayerLoadsAfterTheModsOfThePlay()
+    {
+        using var ws = Workspace();
+        var layer = Path.Combine(ws.Root, "test.play", "start", "layer");
+        TestLayer.Write(layer, GoodsPath, "[Good]\r\nnickname = g9\r\nol.new = true\r\nprice = 5\r\n");
+        var profile = ModProfile.Load(ws.ProfilePath);
+
+        var overlay = PlayView.Build(profile, "act", layer);
+
+        Assert.Equal(["low", "act", TestLayer.ModId], overlay.Mods.Select(m => m.Id));
+        Assert.Contains(TestWorkspace.Sections(overlay, GoodsPath), s => s["nickname"]![0].ToString() == "g9");
+        Assert.Equal(["low", "act"], PlayView.Build(profile, "act").Mods.Select(m => m.Id));
+        Assert.DoesNotContain(profile.Mods, m => m.Id == TestLayer.ModId);
     }
 
     [Fact]

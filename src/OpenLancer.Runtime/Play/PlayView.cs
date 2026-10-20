@@ -14,7 +14,8 @@ namespace OpenLancer.Runtime.Play;
 
 /// <summary>
 /// The data that a play loads (decision D38): the base data with the mods through the active mod. This is the edit
-/// view of the editor, and the view that <c>oltool validate --active</c> checks.
+/// view of the editor, and the view that <c>oltool validate --active</c> checks. A mission play adds its test layer
+/// after these mods (section 5.4 of the M6c design). The layer is not a mod of the profile.
 /// </summary>
 /// <remarks>
 /// The editor can save a mod while the play reads it (decision D51). A save changes the files of a mod only while its
@@ -33,17 +34,21 @@ public static class PlayView
     private static readonly TimeSpan Poll = TimeSpan.FromMilliseconds(20);
 
     /// <param name="activeModId">The active mod, or null for all mods of the profile.</param>
+    /// <param name="testLayer">The folder of the test layer of a mission play, or null.</param>
     /// <exception cref="ArgumentException">The profile has no mod with the id.</exception>
     /// <exception cref="ModLoadException">The journal of a save of a mod of the view stays for
-    /// <see cref="SaveWait"/>, or a mod that loads again is not valid.</exception>
-    public static ModOverlay Build(ModProfile profile, string? activeModId) =>
-        Build(profile, activeModId, DllStringResourceWriter.Instance);
+    /// <see cref="SaveWait"/>, or a mod that loads again is not valid, or the test layer is not valid.</exception>
+    public static ModOverlay Build(ModProfile profile, string? activeModId, string? testLayer = null) =>
+        Build(profile, activeModId, DllStringResourceWriter.Instance, testLayer);
 
     /// <param name="stringWriter">Writes the text DLL. The tests give a writer that saves a mod during the
     /// build.</param>
-    internal static ModOverlay Build(ModProfile profile, string? activeModId, IStringResourceWriter stringWriter)
+    internal static ModOverlay Build(ModProfile profile, string? activeModId, IStringResourceWriter stringWriter,
+        string? testLayer = null)
     {
-        var mods = profile.ModsThrough(activeModId);
+        IReadOnlyList<Mod> mods = profile.ModsThrough(activeModId);
+        if (testLayer != null)
+            mods = [.. mods, Mod.Load(testLayer)];
         WaitForSaves(mods);
         while (true)
         {

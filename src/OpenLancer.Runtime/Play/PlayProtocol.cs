@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
@@ -17,10 +18,14 @@ public enum PlayCommandKind
 
     /// <summary>The game loads the files of a save again, at the same place (hot reload).</summary>
     Reload,
+
+    /// <summary>The game loads the files of a save again and starts the mission play again from its start save (section
+    /// 5.8 of the M6c design).</summary>
+    Restart,
 }
 
-/// <param name="Save">For <see cref="PlayCommandKind.Reload"/>: the number of the save. The other commands ignore
-/// it.</param>
+/// <param name="Save">For <see cref="PlayCommandKind.Reload"/> and <see cref="PlayCommandKind.Restart"/>: the number of
+/// the save. The other commands ignore it.</param>
 public sealed record PlayCommand(PlayCommandKind Kind, int Save = 0);
 
 /// <summary>An event of the play process to the editor.</summary>
@@ -29,6 +34,9 @@ public sealed record PlayCommand(PlayCommandKind Kind, int Save = 0);
 [JsonDerivedType(typeof(PlayEvent.Spawned), "spawned")]
 [JsonDerivedType(typeof(PlayEvent.Reloaded), "reloaded")]
 [JsonDerivedType(typeof(PlayEvent.ReloadFailed), "reload-failed")]
+[JsonDerivedType(typeof(PlayEvent.Restarted), "restarted")]
+[JsonDerivedType(typeof(PlayEvent.RestartFailed), "restart-failed")]
+[JsonDerivedType(typeof(PlayEvent.MissionChanges), "mission")]
 [JsonDerivedType(typeof(PlayEvent.Error), "error")]
 public abstract record PlayEvent
 {
@@ -59,10 +67,49 @@ public abstract record PlayEvent
     /// <summary>A reload failed. The game continues with the data of the last good save.</summary>
     public sealed record ReloadFailed(int Save, string Message) : PlayEvent;
 
+    /// <summary>A restart of a mission play completed (section 5.8 of the M6c design). The player is at the place of the
+    /// start save, and the mission starts again.</summary>
+    /// <param name="Ms">The time of the restart in the game.</param>
+    public sealed record Restarted(int Save, long Ms, string System, string? Base) : PlayEvent;
+
+    /// <summary>A restart failed. The game continues at the place of the player with the data of the last good
+    /// save.</summary>
+    public sealed record RestartFailed(int Save, string Message) : PlayEvent;
+
+    /// <summary>
+    /// The trigger changes of the mission of the play since the last line (section 6.2 of the M6c design). The game
+    /// writes at most one line each 100 ms, with at most 500 changes.
+    /// </summary>
+    /// <param name="Mission">The name of the mission, for example <c>Mission_02</c>, or the type of a random
+    /// mission.</param>
+    /// <param name="Reset">True in the first line after the game loaded the mission. The editor then clears the live
+    /// trace of the play.</param>
+    /// <param name="Dropped">The changes that the game dropped because its queue was full.</param>
+    public sealed record MissionChanges(string Mission, bool Reset, int Dropped, IReadOnlyList<MissionChange> Changes)
+        : PlayEvent;
+
     /// <summary>The play cannot continue. The game exits after this event.</summary>
     /// <param name="Crash">True when an unhandled exception ended the game.</param>
     public sealed record Error(string Message, bool Crash) : PlayEvent;
 }
+
+/// <summary>A change of a mission trigger in the game (section 6.1 of the M6c design).</summary>
+public enum MissionChangeKind
+{
+    /// <summary>The trigger became active.</summary>
+    Started,
+
+    /// <summary>The trigger ran its actions.</summary>
+    Ran,
+
+    /// <summary>A stop removed the trigger from the active triggers.</summary>
+    Stopped,
+}
+
+/// <summary>One trigger change of a <see cref="PlayEvent.MissionChanges"/> event.</summary>
+/// <param name="Ms">The time of the change since the game loaded the mission, in milliseconds.</param>
+/// <param name="Trigger">The nickname of the trigger.</param>
+public sealed record MissionChange(long Ms, string Trigger, MissionChangeKind Change);
 
 /// <summary>
 /// The channel between the editor and the play process (decision D42). The editor writes a command on the standard
@@ -76,6 +123,7 @@ public static class PlayProtocol
     private const string StartText = "start";
     private const string StopText = "stop";
     private const string ReloadText = "reload";
+    private const string RestartText = "restart";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -84,7 +132,7 @@ public static class PlayProtocol
         RespectNullableAnnotations = true,
         RespectRequiredConstructorParameters = true,
         AllowOutOfOrderMetadataProperties = true,
-        Converters = { new Vector3Converter() },
+        Converters = { new Vector3Converter(), new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) },
     };
 
     public static string Write(PlayCommand command) => command.Kind switch
@@ -92,6 +140,7 @@ public static class PlayProtocol
         PlayCommandKind.Start => StartText,
         PlayCommandKind.Stop => StopText,
         PlayCommandKind.Reload => $"{ReloadText} {command.Save.ToString(CultureInfo.InvariantCulture)}",
+        PlayCommandKind.Restart => $"{RestartText} {command.Save.ToString(CultureInfo.InvariantCulture)}",
         _ => throw new ArgumentOutOfRangeException(nameof(command), command.Kind, null),
     };
 
@@ -105,6 +154,8 @@ public static class PlayProtocol
             [StopText] => new PlayCommand(PlayCommandKind.Stop),
             [ReloadText, var save] when int.TryParse(save, NumberStyles.None, CultureInfo.InvariantCulture, out var n) =>
                 new PlayCommand(PlayCommandKind.Reload, n),
+            [RestartText, var save] when int.TryParse(save, NumberStyles.None, CultureInfo.InvariantCulture, out var n) =>
+                new PlayCommand(PlayCommandKind.Restart, n),
             _ => null,
         };
     }

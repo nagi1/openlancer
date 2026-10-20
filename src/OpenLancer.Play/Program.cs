@@ -80,7 +80,8 @@ internal static class Program
             var profile = ModProfile.Load(play.Profile);
             if (play.ActiveMod != null && profile.IndexOf(play.ActiveMod) < 0)
                 return Refuse($"The profile {profile.Name} has no mod '{play.ActiveMod}'.");
-            var overlay = PlayView.Build(profile, play.ActiveMod);
+            // A mission play adds its test layer after the mods of the play (section 5.4 of the M6c design).
+            var overlay = PlayView.Build(profile, play.ActiveMod, (play.Start as PlayStart.FromSave)?.TestLayer);
             if (PlayView.MergeErrors(overlay) is { } errors)
                 return Refuse(errors);
             return (profile, overlay);

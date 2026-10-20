@@ -13,6 +13,7 @@ public sealed class PlayProtocolTests
     [InlineData(PlayCommandKind.Stop, 0, "stop")]
     [InlineData(PlayCommandKind.Reload, 7, "reload 7")]
     [InlineData(PlayCommandKind.Reload, 0, "reload 0")]
+    [InlineData(PlayCommandKind.Restart, 3, "restart 3")]
     public void EachCommandIsWrittenAndRead(PlayCommandKind kind, int save, string line)
     {
         var command = new PlayCommand(kind, save);
@@ -31,6 +32,8 @@ public sealed class PlayProtocolTests
     [InlineData("reload x")]
     [InlineData("reload -1")]
     [InlineData("reload 1 2")]
+    [InlineData("restart")]
+    [InlineData("restart x")]
     public void AnUnknownLineIsNoCommand(string line)
     {
         Assert.Null(PlayProtocol.ReadCommand(line));
@@ -43,6 +46,8 @@ public sealed class PlayProtocolTests
         { "spawned at a base", """@ol {"event":"spawned","system":"li01","base":"li01_01_base","pos":null,"ship":"ge_fighter","shipName":"Starflier","startMs":640}""" },
         { "reloaded", """@ol {"event":"reloaded","save":3,"ms":2100,"system":"li01","base":null}""" },
         { "reload-failed", """@ol {"event":"reload-failed","save":4,"message":"Caf\u00E9 is not complete.\nOpen the profile.\u0022"}""" },
+        { "restarted", """@ol {"event":"restarted","save":5,"ms":1800,"system":"li01","base":"li01_01_base"}""" },
+        { "restart-failed", """@ol {"event":"restart-failed","save":6,"message":"The new data cannot start the mission."}""" },
         { "error with crash", """@ol {"event":"error","message":"No hull \u0027no_such_hull\u0027.","crash":true}""" },
         { "error", """@ol {"event":"error","message":"No package \u0027x\u0027.","crash":false}""" },
     };
@@ -55,6 +60,8 @@ public sealed class PlayProtocolTests
         "spawned at a base" => new PlayEvent.Spawned("li01", "li01_01_base", null, "ge_fighter", "Starflier", 640),
         "reloaded" => new PlayEvent.Reloaded(3, 2100, "li01", null),
         "reload-failed" => new PlayEvent.ReloadFailed(4, "Caf\u00e9 is not complete.\nOpen the profile.\""),
+        "restarted" => new PlayEvent.Restarted(5, 1800, "li01", "li01_01_base"),
+        "restart-failed" => new PlayEvent.RestartFailed(6, "The new data cannot start the mission."),
         "error with crash" => new PlayEvent.Error("No hull 'no_such_hull'.", true),
         "error" => new PlayEvent.Error("No package 'x'.", false),
         _ => throw new System.ArgumentException(name),
@@ -69,6 +76,33 @@ public sealed class PlayProtocolTests
 
         Assert.Equal(line, PlayProtocol.Write(e));
         Assert.Equal(e, PlayProtocol.ReadEvent(line));
+    }
+
+    /// <summary>The mission event of the live view (section 6.2 of the M6c design), with its dropped count.</summary>
+    [Fact]
+    public void TheMissionEventIsWrittenAndRead()
+    {
+        const string line = """@ol {"event":"mission","mission":"Mission_02","reset":true,"dropped":3,"changes":[{"ms":120,"trigger":"ol_play_setup","change":"ran"},{"ms":120,"trigger":"ol_wait_for_kill","change":"started"},{"ms":900,"trigger":"ol_timer","change":"stopped"}]}""";
+        var e = new PlayEvent.MissionChanges("Mission_02", true, 3,
+        [
+            new MissionChange(120, "ol_play_setup", MissionChangeKind.Ran),
+            new MissionChange(120, "ol_wait_for_kill", MissionChangeKind.Started),
+            new MissionChange(900, "ol_timer", MissionChangeKind.Stopped),
+        ]);
+
+        Assert.Equal(line, PlayProtocol.Write(e));
+        var read = Assert.IsType<PlayEvent.MissionChanges>(PlayProtocol.ReadEvent(line));
+        Assert.Equal((e.Mission, e.Reset, e.Dropped), (read.Mission, read.Reset, read.Dropped));
+        Assert.Equal(e.Changes, read.Changes);
+    }
+
+    [Theory]
+    [InlineData("""@ol {"event":"mission","mission":"Mission_02","reset":false,"dropped":0}""")]
+    [InlineData("""@ol {"event":"mission","mission":"Mission_02","reset":false,"dropped":0,"changes":[{"ms":1,"trigger":"t","change":"jumped"}]}""")]
+    [InlineData("""@ol {"event":"mission","mission":"Mission_02","reset":false,"dropped":0,"changes":[{"ms":1,"trigger":"t","change":1}]}""")]
+    public void AMissionLineWithoutItsChangesIsALogLine(string line)
+    {
+        Assert.Null(PlayProtocol.ReadEvent(line));
     }
 
     [Fact]

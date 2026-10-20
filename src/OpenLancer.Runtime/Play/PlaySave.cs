@@ -12,7 +12,8 @@ namespace OpenLancer.Runtime.Play;
 /// <summary>
 /// The save that starts a play (section 10.3 of the M4 design). It is the multiplayer new-character save of the server,
 /// with the start point of the editor. When the user selected a ship package, the save has the ship of that package
-/// (decision D15). The save has no <c>[StoryInfo]</c>, so the game starts in free roam.
+/// (decision D15). Without a start save, the save has no <c>[StoryInfo]</c>, so the game starts in free roam. A mission
+/// play copies the story, mission and trigger parts of its start save into the save (section 5.6 of the M6c design).
 /// </summary>
 public static class PlaySave
 {
@@ -29,10 +30,20 @@ public static class PlaySave
     /// <summary>Tells if the data can start the play. <see cref="Create"/> runs this check first.</summary>
     /// <param name="package">The nickname of the ship package, or null for the package of a new multiplayer
     /// character.</param>
-    /// <returns>Null when the data can start the play. Else the reason: an unknown system, base or package, or
-    /// new-character data that cannot make a character.</returns>
-    public static string? Check(GameItemDb items, PlayStart start, string? package) =>
-        StartProblem(items, start) ?? PackageProblem(items, package) ?? NewCharacterProblem(items, package == null);
+    /// <returns>Null when the data can start the play. Else the reason: an unknown system, base or package,
+    /// new-character data that cannot make a character, or a start save that the game cannot read or start.</returns>
+    public static string? Check(GameItemDb items, PlayStart start, string? package)
+    {
+        if (start is PlayStart.FromSave fromSave)
+        {
+            if (PlayStartSave.TryRead(fromSave.Save, out var problem) is not { } saved)
+                return problem;
+            return StartProblem(items, saved.Place) ?? MissionProblem(items, saved.Save) ?? PackageProblem(items, package) ??
+                   NewCharacterProblem(items, package == null);
+        }
+
+        return StartProblem(items, start) ?? PackageProblem(items, package) ?? NewCharacterProblem(items, package == null);
+    }
 
     /// <summary>
     /// The nickname of the ship of a play without a package: the ship of the package of the new-character faction. Null
@@ -60,6 +71,8 @@ public static class PlaySave
         var items = server.GameData.Items;
         if (Check(items, start, package) is { } problem)
             throw new ArgumentException(problem);
+        if (start is PlayStart.FromSave fromSave)
+            return FromStartSave(server, PlayStartSave.Read(fromSave.Save), package);
         var save = server.NewCharacter(CharacterName, Faction);
         var player = save.Player!;
         switch (start)
@@ -78,6 +91,30 @@ public static class PlaySave
         }
         Equip(player, package == null ? null : items.GetShipPackage(FLHash.CreateID(package))!, items.Equipment);
         return save;
+    }
+
+    /// <summary>
+    /// The save of a mission play (section 5.6 of the M6c design): the new character at the place of the start save,
+    /// with the <c>[StoryInfo]</c>, <c>[MissionState]</c> and <c>[TriggerSave]</c> parts of the start save. The server
+    /// then loads the mission of the story. Without a saved trigger, it starts the start triggers.
+    /// </summary>
+    private static SaveGame FromStartSave(GameServer server, PlayStartSave start, string? package)
+    {
+        var save = Create(server, start.Place, package);
+        save.StoryInfo = start.Save.StoryInfo;
+        save.MissionState = start.Save.MissionState;
+        save.TriggerSave = [.. start.Save.TriggerSave];
+        return save;
+    }
+
+    /// <summary>The reason when the storyline of the game data does not have the mission of a start save. The server
+    /// would load no mission.</summary>
+    internal static string? MissionProblem(GameItemDb items, SaveGame save)
+    {
+        var mission = save.StoryInfo?.Mission;
+        return items.Ini.Storyline.Missions.Any(m => m.Nickname.Equals(mission, StringComparison.OrdinalIgnoreCase))
+            ? null
+            : $"The start save names the mission '{mission}', which the storyline of the game data does not have.";
     }
 
     /// <summary>
@@ -131,7 +168,7 @@ public static class PlaySave
     internal static string? BaseProblem(GameItemDb items, string dock) =>
         items.Bases.Get(dock) == null ? $"The base '{dock}' is not in the game data." : null;
 
-    private static string? StartProblem(GameItemDb items, PlayStart start) => start switch
+    internal static string? StartProblem(GameItemDb items, PlayStart start) => start switch
     {
         PlayStart.InSpace space => SystemProblem(items, space.System),
         PlayStart.AtBase atBase => BaseProblem(items, atBase.Base),

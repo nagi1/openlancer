@@ -18,16 +18,22 @@ namespace OpenLancer.Play;
 /// <summary>
 /// Runs the game of a play (sections 10.1 to 10.4 and 12.2 of the M4 design). The game reads its data through the
 /// overlay of the play (OL-0020). After the load, it waits until the editor sends start. Then it starts the player
-/// from a save in code. A reload loads the data again and continues at the same place.
+/// from a save in code. A reload loads the data again and continues at the same place. A mission play starts from its
+/// start save, and a restart loads the data again and starts the mission again from the start save (section 5.8 of the
+/// M6c design).
 /// </summary>
 /// <remarks>
 /// A thread reads the commands of the editor from the standard input and gives each one to the UI thread. The end of
-/// the input exits the game, as stop does. The events go to the standard output.
+/// the input exits the game, as stop does. The events go to the standard output. A timer takes the trigger changes of
+/// the mission observer at most each 100 ms and writes them as mission events (section 6.2 of the M6c design).
 /// </remarks>
 internal sealed class PlayHost
 {
     /// <summary>The component of the lines that the play process writes to the game log.</summary>
     public const string LogComponent = "Play";
+
+    /// <summary>The time between two lines of trigger changes (section 6.2 of the M6c design).</summary>
+    private static readonly TimeSpan MissionLines = TimeSpan.FromMilliseconds(100);
 
     private readonly PlayArgs args;
     private readonly FreelancerGame game;
@@ -36,8 +42,18 @@ internal sealed class PlayHost
     /// files of the new overlay.</summary>
     private readonly FileSystem files;
 
+    /// <summary>Gets the trigger changes of each mission runtime of the plays of this process (OL-0070).</summary>
+    private readonly MissionObserver observer = new();
+
+    /// <summary>Keeps the order of the mission events when two calls of the timer meet.</summary>
+    private readonly object missionWrite = new();
+
     // Only the UI thread uses these fields.
     private bool startReceived;
+
+    /// <summary>The place of the current play: the start of the arguments, or the place of the start save of a mission
+    /// play.</summary>
+    private PlayStart place;
     private int exitCode = PlayExitCodes.Ok;
 
     /// <summary>The server of the current play: null before the start and during a reload.</summary>
@@ -54,6 +70,7 @@ internal sealed class PlayHost
     public PlayHost(PlayArgs args, ModProfile profile, ModOverlay overlay)
     {
         this.args = args;
+        place = args.Start;
         // The engine config and the save writer of the server make no folder.
         PlayFolder.Create(args.Profile);
         var config = GameConfig.Create(true, () => PlayFolder.ConfigPath(args.Profile));
@@ -103,8 +120,22 @@ internal sealed class PlayHost
             ProgramIcon.Apply(game);
             reader.Start();
         });
-        game.Run();
+        // The engine gives the host no update of each frame while a state of the game runs. So a timer writes the lines
+        // of trigger changes. Console.Out writes each line in one call from any thread.
+        using (new Timer(_ => WriteMissionLines(), null, MissionLines, MissionLines))
+            game.Run();
+        WriteMissionLines();
         return firstFrame ? exitCode : null;
+    }
+
+    /// <summary>Writes the trigger changes that the observer has as mission events.</summary>
+    private void WriteMissionLines()
+    {
+        lock (missionWrite)
+        {
+            foreach (var line in observer.Take())
+                Send(line);
+        }
     }
 
     /// <summary>Lets the game restore the display before the crash window shows, as lancer does.</summary>
@@ -144,6 +175,9 @@ internal sealed class PlayHost
                 break;
             case PlayCommandKind.Reload:
                 Reload(command.Save);
+                break;
+            case PlayCommandKind.Restart:
+                Restart(command.Save);
                 break;
         }
     }
@@ -191,7 +225,9 @@ internal sealed class PlayHost
     private void StartPlay()
     {
         var clock = Stopwatch.StartNew();
-        Begin(args.Start, gameServer =>
+        // The check of the first state read the start save, so it can be read.
+        place = args.Start is PlayStart.FromSave fromSave ? PlayStartSave.Read(fromSave.Save).Place : args.Start;
+        Begin(place, gameServer =>
         {
             var save = PlaySave.Create(gameServer, args.Start, args.Package);
             gameServer.Start();
@@ -263,8 +299,86 @@ internal sealed class PlayHost
     }
 
     /// <summary>
+    /// Starts the mission play again from its start save (section 5.8 of the M6c design). The steps are the steps of a
+    /// reload: the server saves the player and stops, and a task loads the data of the save again, with the test layer
+    /// that the editor wrote for the new start. Then a new server loads the start save, not the autosave. So the edit
+    /// shows, and the mission starts again at the same point.
+    /// </summary>
+    /// <remarks>When the game keeps its old data, it goes on at the place of the player with the autosave, as after a
+    /// reload that failed, and sends restart-failed. The cases of a reload that refuse, and its time limits, apply too
+    /// (<see cref="Reload"/>).</remarks>
+    private void Restart(int save)
+    {
+        if (args.Start is not PlayStart.FromSave start)
+        {
+            Send(new PlayEvent.RestartFailed(save, "This play has no start save. Only a mission play can start again."));
+            return;
+        }
+
+        if (server == null || !arrived)
+        {
+            Send(new PlayEvent.RestartFailed(save,
+                "The game can start the mission again only while the player is in space or at a base."));
+            return;
+        }
+
+        if (PlayReload.CheckLeave(server.Server) is { } refusal)
+        {
+            Send(new PlayEvent.RestartFailed(save, refusal));
+            return;
+        }
+
+        var clock = Stopwatch.StartNew();
+        PlayPlace left;
+        try
+        {
+            left = PlayReload.Leave(server.Server);
+        }
+        catch (TimeoutException e)
+        {
+            FLLog.Error(LogComponent, e.Message);
+            FLLog.Flush();
+            Send(new PlayEvent.Error(e.Message, Crash: false));
+            Environment.Exit(PlayExitCodes.Timeout);
+            return;
+        }
+
+        server = null;
+        arrived = false;
+        var target = new PlayGame(files, game.GameData, game.Ui.Data, game.Saves);
+        game.ChangeState(new PlayReloadState(game, () => PlayReload.Load(args.Profile, args.ActiveMod, start.TestLayer),
+            load => StartAgain(save, start, left, PlayReload.ApplyStart(load, start, args.Package, target), clock)));
+    }
+
+    /// <summary>Starts a new server from the start save and sends restarted. When the game kept its old data, the new
+    /// server goes on at the place of the player, and the host sends restart-failed.</summary>
+    /// <param name="left">The place of the player when the server stopped.</param>
+    /// <param name="failure">The failure of <see cref="PlayReload.ApplyStart"/>, or null when the game has the new
+    /// data.</param>
+    private void StartAgain(int save, PlayStart.FromSave start, PlayPlace left, Exception? failure, Stopwatch clock)
+    {
+        if (failure != null)
+        {
+            FLLog.Error(LogComponent, $"The restart of save {save} failed, so the game keeps its data: {failure}");
+            place = left.Start;
+            Begin(left.Start, gameServer => PlayReload.Resume(gameServer, left),
+                (_, _) => Send(new PlayEvent.RestartFailed(save, failure.Message)));
+            return;
+        }
+
+        place = PlayStartSave.Read(start.Save).Place;
+        Begin(place, gameServer =>
+        {
+            var restart = PlaySave.Create(gameServer, start, args.Package);
+            gameServer.Start();
+            gameServer.LoadSaveGame(restart);
+        }, (player, at) => Send(new PlayEvent.Restarted(save, clock.ElapsedMilliseconds, player.System, at)));
+    }
+
+    /// <summary>
     /// Makes the server and the session of a play, starts the server with a save and waits for the player. The new
-    /// server becomes the server of the current play.
+    /// server becomes the server of the current play. The mission observer of the host gets the trigger changes of the
+    /// new server.
     /// </summary>
     /// <param name="start">The place of the save. In space, the ship gets the heading of the start after the
     /// spawn.</param>
@@ -273,6 +387,8 @@ internal sealed class PlayHost
     private void Begin(PlayStart start, Action<GameServer> run, Action<Player, string?> arrival)
     {
         var play = new EmbeddedServer(game.GameData, game.ResourceManager, PlayFolder.SavesPath(args.Profile));
+        // Before the server starts, so the load of the mission reaches the observer.
+        play.Server.MissionObserver = observer;
         var session = new CGameSession(game, play);
         run(play.Server);
         server = play;
@@ -293,7 +409,7 @@ internal sealed class PlayHost
     {
         // The server loaded the character before it sent the spawn, and PlaySave.Check made sure of a ship.
         var ship = player.Character!.Ship!;
-        Vector3? position = dock == null && args.Start is PlayStart.InSpace space ? space.Position : null;
+        Vector3? position = dock == null && place is PlayStart.InSpace space ? space.Position : null;
         return new PlayEvent.Spawned(player.System, dock, position, ship.Nickname,
             game.GameData.GetString(ship.IdsName), startMs);
     }

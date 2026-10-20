@@ -46,6 +46,23 @@ public sealed class PlayArgsTests
             .ToArguments());
     }
 
+    /// <summary>A mission play gives its start save and its test layer (section 5.6 of the M6c design).</summary>
+    [Fact]
+    public void AStartSaveAndATestLayerRoundTrip()
+    {
+        const string save = @"D:\Game Data\my profiles\my.sample v2.play\start\start.fl";
+        const string layer = @"D:\Game Data\my profiles\my.sample v2.play\start\layer";
+        var args = new PlayArgs(Profile, "m6c", 2, new PlayStart.FromSave(save, layer), null);
+        var plain = args with { Start = new PlayStart.FromSave(save, null) };
+
+        Assert.Equal(["--profile", Profile, "--mod", "m6c", "--save", "2", "--start-save", save, "--test-layer", layer],
+            args.ToArguments());
+        Assert.Equal(args, PlayArgs.Parse(args.ToArguments()));
+        Assert.Equal(plain, PlayArgs.Parse(plain.ToArguments()));
+        Assert.Equal(args, PlayArgs.Parse(["--test-layer", layer, "--save", "2", "--profile", Profile, "--start-save", save,
+            "--mod", "m6c"]));
+    }
+
     [Fact]
     public void TheOptionsCanComeInAnyOrderAndTheSaveIsOptional()
     {
@@ -73,6 +90,12 @@ public sealed class PlayArgsTests
     [InlineData("--profile --base b", "--profile needs a value")]
     [InlineData("--profile p.json --base b --package", "--package needs a value")]
     [InlineData("--profile p.json --base b extra", "'extra' is not known")]
+    [InlineData("--profile p.json --start-save s.fl --space li01 0 0 0 0 0 0 1", "two starts")]
+    [InlineData("--profile p.json --base b --start-save s.fl", "two starts")]
+    [InlineData("--profile p.json --base b --test-layer l", "--test-layer needs --start-save")]
+    [InlineData("--profile p.json --test-layer l", "--test-layer needs --start-save")]
+    [InlineData("--profile p.json --start-save s.fl --test-layer a --test-layer b", "--test-layer two times")]
+    [InlineData("--profile p.json --start-save", "--start-save needs a value")]
     [InlineData("--profile p.json --base b --fullscreen", "'--fullscreen' is not known")]
     public void AWrongListGivesTheReason(string line, string reason)
     {

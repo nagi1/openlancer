@@ -111,13 +111,15 @@ public static class PlayReload
     /// items, and the navmap icons of the items. Call it on a task.
     /// </summary>
     /// <param name="activeModId">The active mod, or null for all mods of the profile.</param>
+    /// <param name="testLayer">The folder of the test layer of a mission play, or null. A restart reads the layer that
+    /// the editor wrote for the new start (section 5.8 of the M6c design).</param>
     /// <exception cref="ModLoadException">A mod is not valid, a save of a mod is not complete, or the mods have merge
     /// errors.</exception>
     /// <exception cref="ArgumentException">The profile has no mod with the id.</exception>
-    public static PlayData Load(string profilePath, string? activeModId)
+    public static PlayData Load(string profilePath, string? activeModId, string? testLayer = null)
     {
         var profile = ModProfile.Load(profilePath);
-        var overlay = PlayView.Build(profile, activeModId);
+        var overlay = PlayView.Build(profile, activeModId, testLayer);
         if (PlayView.MergeErrors(overlay) is { } errors)
             throw new ModLoadException(profile.FilePath, errors);
         var items = new GameItemDb(overlay.CreateFileSystem());
@@ -161,6 +163,38 @@ public static class PlayReload
         var data = load.Result;
         if (PlaceProblem(data.Items, place.Save) is { } problem)
             return new InvalidOperationException($"The new data cannot load the autosave of the player. {problem}");
+        if (Swap(data, game) is { } swapFailure)
+            return swapFailure;
+        // The new data can make a mounted good combinable, and the new server cannot mount such a good (decision D56).
+        PlaySave.Equip(place.Save.Player!, null, data.Items.Equipment);
+        return null;
+    }
+
+    /// <summary>
+    /// Gives the game the data of a restart of a mission play (section 5.8 of the M6c design), or keeps the old data.
+    /// Call it on the UI thread when the task of <see cref="Load"/> ended, while no server runs. The game keeps its old
+    /// data when the load failed, or when the new data cannot start the start save (<see cref="PlaySave.Check"/>), or
+    /// in the cases of <see cref="Apply"/> for the base folder. The new server then makes its save from the start save
+    /// with <see cref="PlaySave.Create"/>.
+    /// </summary>
+    /// <param name="start">The start of the mission play, with the start save that the editor wrote for the
+    /// restart.</param>
+    /// <param name="package">The ship package of the play, or null.</param>
+    /// <returns>Null when the game has the new data. Else the failure.</returns>
+    public static Exception? ApplyStart(Task<PlayData> load, PlayStart.FromSave start, string? package, PlayGame game)
+    {
+        if (load.Exception is { } failure)
+            return failure.GetBaseException();
+        var data = load.Result;
+        if (PlaySave.Check(data.Items, start, package) is { } problem)
+            return new InvalidOperationException($"The new data cannot start the mission. {problem}");
+        return Swap(data, game);
+    }
+
+    /// <summary>Gives the game the files and the items of new data, and the tables of the UI that copy the items.</summary>
+    /// <returns>Null, or the failure when the profile names another base folder now. Then nothing changed.</returns>
+    private static Exception? Swap(PlayData data, PlayGame game)
+    {
         try
         {
             data.Overlay.Replace(game.Files);
@@ -179,8 +213,6 @@ public static class PlayReload
         game.Ui.NavmapIcons = data.NavmapIcons;
         game.Ui.RolloverMap = ini.Rollover.Map;
         game.Saves.Infocards = ini.Infocards;
-        // The new data can make a mounted good combinable, and the new server cannot mount such a good (decision D56).
-        PlaySave.Equip(place.Save.Player!, null, data.Items.Equipment);
         return null;
     }
 
