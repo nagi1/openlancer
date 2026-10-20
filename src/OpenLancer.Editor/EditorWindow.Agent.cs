@@ -1,9 +1,12 @@
+using System.Numerics;
+using ImGuiNET;
 using LibreLancer;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Editor.Agent;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Ui;
 using OpenLancer.Studio.Agent;
 
 namespace OpenLancer.Editor;
@@ -16,10 +19,13 @@ internal sealed partial class EditorWindow : IAgentEditor
 {
     private AgentController agentController = null!;
     private AgentMenu agentMenu = null!;
+    private AgentRender agentRender = null!;
 
-    /// <summary>The agent server and its menu. The window makes them before its first frame.</summary>
+    /// <summary>The agent server, its menu and its render service. The window makes them before its first
+    /// frame.</summary>
     private void MakeAgent()
     {
+        agentRender = new AgentRender(this);
         agentController = new AgentController(this, this, Activity,
             AgentDiscovery.PathOf(AgentDiscovery.DefaultFolder, System.Environment.ProcessId),
             AppHandler.LogFolder(Product.Name));
@@ -41,6 +47,13 @@ internal sealed partial class EditorWindow : IAgentEditor
 
     /// <summary>True while the agent server runs.</summary>
     public bool AgentServerOn => agentController.State == AgentServerState.On;
+
+    /// <summary>The offscreen render service of the agent server (milestone MCP1-1b).</summary>
+    internal AgentRender AgentRender => agentRender;
+
+    /// <summary>The place of a panel on the screen in this frame, in pixels, or null when the panel does not show (see
+    /// <see cref="EditorLayout.PlaceOf"/>).</summary>
+    public (Vector2 Min, Vector2 Size)? PanelPlace(string panelId) => layout.PlaceOf(panelId, ImGui.GetFrameCount());
 
     /// <summary>Opens the menu "Agent" as a popup, for a click on the status bar.</summary>
     public void OpenAgentMenu() => agentMenu.OpenPopup();

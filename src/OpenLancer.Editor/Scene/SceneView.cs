@@ -17,6 +17,7 @@ using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Scene;
+using OpenLancer.Studio.Agent;
 using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Scene;
@@ -66,6 +67,10 @@ internal sealed class SceneView : IDisposable
     private ZoneRenderer? zoneRenderer;
     private SceneSync? sync;
 
+    // The cameras and the highlights of the draw that runs now: the draw of the panel or an image of the agent. The
+    // hooks of the renderer read them.
+    private DrawPass pass;
+
     // The item under the mouse in this frame. Its zone volume shows also when the Zones toggle is off.
     private object? hovered;
 
@@ -90,7 +95,16 @@ internal sealed class SceneView : IDisposable
             ? (GizmoTarget.Of(session.Edits, section, session.NoEditReason, out var reason), reason)
             : (null, null), GizmoSteps.System);
         grid = new GridRenderer(window.RenderContext);
+        pass = new DrawPass(camera, sky, false, null, null);
     }
+
+    /// <summary>What one draw of the world shows: the camera, the sky camera of the starsphere, the zone volumes and
+    /// the highlighted items.</summary>
+    /// <param name="Zones">The volumes of the fields, nebulae and zones and the patrol paths show (the Zones
+    /// toggle).</param>
+    /// <param name="Selected">The selected item, which shows in the accent color, or null.</param>
+    /// <param name="Hovered">The item under the mouse, whose zone volume shows, or null.</param>
+    private readonly record struct DrawPass(ICamera Camera, ICamera Sky, bool Zones, object? Selected, object? Hovered);
 
     /// <summary>The mouse and keyboard controls of the view and the gizmo, for the help popover and the status
     /// bar.</summary>
@@ -484,11 +498,18 @@ internal sealed class SceneView : IDisposable
         // Flush B: the changes of this frame so far, before the renderer starts its worker tasks. So a step of a drag
         // moves the item in the same frame.
         sync.Flush();
-        renderer.DrawNebulae = window.Settings.ShowNebulae;
-        renderer.DrawFog = window.Settings.ShowFog;
-        renderer.BackgroundOverride = System.BackgroundColor;
-        renderer.SystemLighting.Ambient = new Color4(System.AmbientColor, 1);
+        ApplyViewOptions();
         world.RenderUpdate(elapsed);
+    }
+
+    /// <summary>Gives the renderer the view toggles of the user and the background and the ambient light of the
+    /// system.</summary>
+    private void ApplyViewOptions()
+    {
+        renderer!.DrawNebulae = window.Settings.ShowNebulae;
+        renderer.DrawFog = window.Settings.ShowFog;
+        renderer.BackgroundOverride = System!.BackgroundColor;
+        renderer.SystemLighting.Ambient = new Color4(System.AmbientColor, 1);
     }
 
     /// <summary>
@@ -791,6 +812,7 @@ internal sealed class SceneView : IDisposable
 
         var context = window.RenderContext;
         var clearColor = context.ClearColor;
+        pass = new DrawPass(camera, sky, window.Settings.ShowZones, window.Selection, hovered);
         context.PushViewport(x, y, width, height);
         context.PushScissor(new Rectangle(x, y, width, height), false);
         context.Cull = true;
@@ -807,16 +829,119 @@ internal sealed class SceneView : IDisposable
     }
 
     /// <summary>
+    /// Renders the open system into a new texture from a camera of the agent (section 7.7 of the MCP1 design). The camera
+    /// of the user does not move. The image has the view toggles of the user, except the Zones toggle, which the call
+    /// gives. It shows no selection and no hover. The scene first applies the changes of W, so the image shows W. Call it
+    /// on the UI thread and never in the draw-list callback of the Scene, because the renderer shares the command buffer
+    /// of the window.
+    /// </summary>
+    /// <returns>The texture. The caller owns it. Its rows have the order of a render target, the bottom row
+    /// first.</returns>
+    /// <exception cref="InvalidOperationException">No system is open.</exception>
+    public Texture2D RenderShot(ShotCamera shot, int width, int height, bool zones)
+    {
+        if (world == null || renderer == null || System == null)
+        {
+            throw new InvalidOperationException("No system is open.");
+        }
+
+        sync!.Flush();
+        var context = window.RenderContext;
+        var restoreTarget = context.RenderTarget;
+        var clearColor = context.ClearColor;
+        var userPass = pass;
+        var lens = ShotLens.Of(shot, width, height);
+        var target = new RenderTarget2D(context, width, height);
+        var drawn = false;
+        pass = new DrawPass(lens, new ShotLens(shot, width, height, StarspherePass.SkyRange), zones, null, null);
+        renderer.Camera = lens;
+        context.RenderTarget = target;
+        context.PushViewport(0, 0, width, height);
+        try
+        {
+            ApplyViewOptions();
+            // The asteroid fields place their asteroids around the camera of the update, so the image updates the world
+            // with its own camera. The next draw of the panel updates the world again with the camera of the user.
+            world.RenderUpdate(0);
+            context.Cull = true;
+            context.DepthEnabled = true;
+            context.Wireframe = window.Settings.Wireframe;
+            renderer.Draw(width, height);
+            drawn = true;
+        }
+        finally
+        {
+            // The window draws on after a failed image, so the render state goes back in each case.
+            context.Wireframe = false;
+            context.PopViewport();
+            context.ClearColor = clearColor;
+            context.DepthEnabled = false;
+            context.BlendMode = BlendMode.Normal;
+            context.Cull = false;
+            context.RenderTarget = restoreTarget;
+            renderer.Camera = camera;
+            pass = userPass;
+            target.Dispose(keepTexture: drawn);
+        }
+
+        return target.Texture;
+    }
+
+    /// <summary>The items that an image of the agent can show, with their bounding spheres: each object of the open
+    /// system, and each zone when the zone volumes show.</summary>
+    public IEnumerable<(object Item, Vector3 Center, float Radius)> ShotItems(bool zones)
+    {
+        foreach (var obj in objects.Keys)
+        {
+            yield return (obj, obj.Position, Radius(obj));
+        }
+
+        if (zones && System != null)
+        {
+            foreach (var zone in System.Zones)
+            {
+                yield return (zone, zone.Position, ZoneRadius(zone));
+            }
+        }
+    }
+
+    /// <summary>The bounding sphere of an item of the open system, for a frame of an image of the agent, or null for an
+    /// item that the scene does not show. A light is a point, so it gets a small sphere.</summary>
+    public (Vector3 Center, float Radius)? SphereOf(object item) => item switch
+    {
+        SystemObject obj when objects.ContainsKey(obj) => (obj.Position, Radius(obj)),
+        Zone zone when Contains(zone) => (zone.Position, ZoneRadius(zone)),
+        LightSource light when Contains(light) => (light.Light.Position, LightRadius),
+        Nebula or AsteroidField when Contains(item) && SceneItems.ZoneOf(item) is { } area =>
+            (area.Position, ZoneRadius(area)),
+        _ => null,
+    };
+
+    /// <summary>The radius of the sphere of a light in a frame of the agent, in meters.</summary>
+    private const float LightRadius = 100;
+
+    /// <summary>The radius of the sphere that holds the volume of a zone, as the Scene draws the volume. A sphere and an
+    /// ellipsoid have the size as their radii, a box has the size as its full extent, and a cylinder and a ring have
+    /// (outer radius, height).</summary>
+    internal static float ZoneRadius(Zone zone) => zone.Shape switch
+    {
+        ShapeKind.Sphere => zone.Size.X,
+        ShapeKind.Ellipsoid => Math.Max(zone.Size.X, Math.Max(zone.Size.Y, zone.Size.Z)),
+        ShapeKind.Box => (zone.Size / 2).Length(),
+        _ => new Vector2(zone.Size.X, zone.Size.Y / 2).Length(),
+    };
+
+    /// <summary>
     /// Draws the starsphere, then the grid. The renderer calls this after the opaque objects and before the transparent
     /// objects, at the place of its own starsphere pass. So planets hide the grid and the starsphere, and nebulae tint
     /// them.
     /// </summary>
     private void DrawBackground()
     {
-        StarspherePass.Draw(renderer!, sky, window.Settings.ShowStarsphere);
+        StarspherePass.Draw(renderer!, pass.Sky, window.Settings.ShowStarsphere);
         if (window.Settings.ShowGrid)
         {
-            grid.Draw(window.RenderContext, camera, GridColor, AxisXColor, AxisZColor);
+            grid.Draw(window.RenderContext, pass.Camera, GridColor, AxisXColor, AxisZColor);
         }
     }
 
@@ -850,10 +975,10 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
-        zoneRenderer.Begin(camera.Position);
-        var selected = Highlight(window.Selection);
-        var hover = Highlight(hovered);
-        if (window.Settings.ShowZones)
+        zoneRenderer.Begin(pass.Camera.Position);
+        var selected = Highlight(pass.Selected);
+        var hover = Highlight(pass.Hovered);
+        if (pass.Zones)
         {
             foreach (var zone in Index.VolumeZones)
             {
@@ -867,7 +992,7 @@ internal sealed class SceneView : IDisposable
         if (selected is var (selectedZone, selectedKind))
         {
             // A selected volume that holds the camera keeps the normal opacity (decision D161 of the M22 design).
-            AddZone(selectedZone, selectedZone.ContainsPoint(camera.Position) ? VolumeAlpha : HighlightAlpha,
+            AddZone(selectedZone, selectedZone.ContainsPoint(pass.Camera.Position) ? VolumeAlpha : HighlightAlpha,
                 selectedKind);
         }
 
@@ -888,13 +1013,13 @@ internal sealed class SceneView : IDisposable
             ? (zone, kind)
             : null;
 
-    private bool IsHighlighted(Zone zone) => ReferenceEquals(zone, window.Selection) || ReferenceEquals(zone, hovered);
+    private bool IsHighlighted(Zone zone) => ReferenceEquals(zone, pass.Selected) || ReferenceEquals(zone, pass.Hovered);
 
     /// <summary>Adds the volume of a zone in the color of a kind.</summary>
     private void AddZone(Zone zone, float alpha, ObjectKind kind)
     {
         var color = new Color4(kind.Color with { W = alpha });
-        var inside = zone.ContainsPoint(camera.Position);
+        var inside = zone.ContainsPoint(pass.Camera.Position);
         var size = zone.Size;
         switch (zone.Shape)
         {
@@ -929,7 +1054,7 @@ internal sealed class SceneView : IDisposable
         }
 
         var lines = renderer.DebugRenderer;
-        var showZones = window.Settings.ShowZones;
+        var showZones = pass.Zones;
         foreach (var zone in Index.PatrolPaths)
         {
             var highlighted = IsHighlighted(zone);
@@ -948,7 +1073,7 @@ internal sealed class SceneView : IDisposable
             }
         }
 
-        if (window.Selection is LightSource light && Contains(light))
+        if (pass.Selected is LightSource light && Contains(light))
         {
             var color = new Color4(ObjectKinds.LightColor(light.Light.Color));
             var center = light.Light.Position;
@@ -979,8 +1104,8 @@ internal sealed class SceneView : IDisposable
     /// </summary>
     private void DrawSelection()
     {
-        if (renderer != null && Highlight(window.Selection) is var (zone, _) &&
-            !(window.Selection is Zone && Index!.PatrolPaths.Contains(zone)))
+        if (renderer != null && Highlight(pass.Selected) is var (zone, _) &&
+            !(pass.Selected is Zone && Index!.PatrolPaths.Contains(zone)))
         {
             foreach (var (a, b) in ZoneOutline.Lines(zone))
             {
@@ -990,7 +1115,7 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
-        if (window.Selection is not SystemObject selected || !objects.TryGetValue(selected, out var obj) ||
+        if (pass.Selected is not SystemObject selected || !objects.TryGetValue(selected, out var obj) ||
             obj.RenderComponent is not ModelRenderer { Model: { } model } || renderer == null)
         {
             return;

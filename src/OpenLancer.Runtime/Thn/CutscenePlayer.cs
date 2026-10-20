@@ -294,6 +294,22 @@ public sealed class CutscenePlayer : ICutscenePlayer
     }
 
     /// <summary>
+    /// Makes a CAMERA entity of the scene the THN camera, as a <c>SET_CAMERA</c> event does (Cutscene.cs:508-513). The
+    /// next draw shows its view with its lens and its planes. A later step can change the camera again, when an event
+    /// sets another camera. The names compare without letter case.
+    /// </summary>
+    /// <returns>False when the scene has no object with the name or the object is not a camera. The camera then stays
+    /// as it is.</returns>
+    public bool UseCamera(string name)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (cutscene.GetObject(name) is not { Camera: not null } camera)
+            return false;
+        cutscene.SetCamera(camera.Name);
+        return true;
+    }
+
+    /// <summary>
     /// Draws the scene into the current viewport of the render context: <c>Cutscene.UpdateViewport</c> and
     /// <c>Cutscene.Draw</c> (Cutscene.cs:126-129, :434-447). The camera takes the ratio of the viewport, so the view
     /// can change its size while the preview does not step.

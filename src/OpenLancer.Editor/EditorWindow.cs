@@ -331,8 +331,9 @@ internal sealed partial class EditorWindow : Game
 
     protected override void Cleanup()
     {
-        // The agent calls run on this thread, so the agent server stops first.
+        // The agent calls run on this thread, so the agent server stops first. Its images that wait end then.
         agentController.Dispose();
+        agentRender.Dispose();
         // The game shows the data of this window, so it ends with the window (decision D48).
         Play.SessionEnding(windowClose: true);
         Play.Dispose();
@@ -579,6 +580,8 @@ internal sealed partial class EditorWindow : Game
         // The game shows the data of one profile and one active mod, so it cannot follow another session (decision
         // D48). A change of the active mod and a new mod open the profile again, so they close it here too.
         Play.SessionEnding(windowClose: false);
+        // The images of the agent use the resources of the session, so they end before the panels close.
+        agentRender.Reset();
         // The panels forget the game data of the profile, so that it does not stay in memory while no profile is
         // open. The panels do not draw while the Welcome screen shows, so they cannot do this themselves.
         Scene.Close();
@@ -754,6 +757,7 @@ internal sealed partial class EditorWindow : Game
         ReopenAfterReload();
         // The session part of at most one agent call runs before the panels draw (decision D708 of the MCP1 design).
         agentController.Frame();
+        agentRender.Frame();
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;

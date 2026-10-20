@@ -203,7 +203,15 @@
     "wait_editing": "The user edits a field or drags an item now.",
     "wait_dialog": "A dialog of the editor is open.",
     "wait_loading": "The editor loads the game data now.",
-    "wait_user_edit": "An edit of the user runs now."
+    "wait_user_edit": "An edit of the user runs now.",
+    "render_closed": "The profile closed before the image was ready. Open the profile, then call the tool again.",
+    "render_data_changed": "The game data loaded again before the image was ready. Call the tool again.",
+    "render_preview_failed": "The preview of the cutscene stopped at {time} s, so no image rendered. {reason}",
+    "render_draw_failed": "The image of the cutscene at {time} s did not render. {reason}",
+    "render_camera_none": "The cutscene has no entity {camera}. Use get_cutscene to find the CAMERA entities.",
+    "render_camera_type": "The entity {camera} is not a CAMERA entity. Give the name of a CAMERA entity in the argument camera.",
+    "render_no_camera": "No camera of the cutscene is active at {time} s. Give the name of a CAMERA entity in the argument camera.",
+    "capture_hidden": "The panel {panel} does not show now. Ask the user to show the panel, then call the tool again."
   },
   "resources": {
     "openlancer://catalog/lists": {

@@ -19,6 +19,17 @@ public sealed record ToolOutcome(string Status, string? Code = null, string? Det
     public const string Error = "error";
 }
 
+/// <summary>A PNG image of a result, for example the image of <c>render_scene</c> (section 7.7 of the MCP1
+/// design).</summary>
+/// <param name="Png">The data of the PNG file.</param>
+/// <param name="Width">The width in pixels.</param>
+/// <param name="Height">The height in pixels.</param>
+public sealed record ToolImage(byte[] Png, int Width, int Height)
+{
+    /// <summary>The media type of the image.</summary>
+    public const string MimeType = "image/png";
+}
+
 /// <summary>
 /// The result of a call (section 5.7 of the MCP1 design): the JSON object in the snake case of the command layer, which
 /// the SDK binding gives as <c>structuredContent</c> and as one text block. A tool error has <see cref="IsError"/>,
