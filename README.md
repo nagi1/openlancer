@@ -100,3 +100,35 @@ Open the Cutscenes tab of the editor to browse the retail cutscenes and the cuts
 ![The cutscene editor: a free camera flies through the retail cutscene s002xe on Manhattan, with its cameras, markers, paths and timeline](docs/images/cutscene-editor.gif)
 
 ![The cutscene editor: the entities of the cutscene, the preview with cameras and markers, the timeline of events and the Inspector of a character](docs/images/cutscene-editor.png)
+
+## Agents
+
+An agent program, for example Claude Code, can read the data of a profile through the agent server of OpenLancer (an MCP server). This version has the read tools only: the systems and their items, the data lists, the assets, the missions, the cutscenes, the raw INI text and the checks. No tool changes a file.
+
+To connect an agent to the editor:
+
+1. Open a profile in the editor.
+2. Pick **Agent > Start agent server**. At the first start, a notice tells what the agent reads. The agent program can send that data to its model service.
+3. Pick **Agent > Connect an agent...** and click **Copy**.
+4. Paste the text into the file `.mcp.json` in the folder of your agent project.
+5. Start the agent program in that folder.
+
+The text names the server address `http://127.0.0.1:<port>/mcp` and the token helper `"<OpenLancer folder>\oltool.exe" mcp token`. The editor makes a new token at each start of the server, and the helper gives it only to the running server. The status bar shows the state of the server. **Agent > Show agent messages** shows the messages of the server in the Console. **Agent > Agent settings** has the port (47815 by default), the tool groups and the limits.
+
+The server accepts connections from this computer only. It listens on 127.0.0.1, and each request needs the token. Never put a proxy or a tunnel, for example a Tailscale Funnel, in front of the port of the agent server.
+
+To run the tools without the editor, add a server that starts oltool:
+
+```json
+{
+  "mcpServers": {
+    "openlancer-headless": {
+      "type": "stdio",
+      "command": "<OpenLancer folder>\\oltool.exe",
+      "args": ["mcp", "serve", "<workspace>\\profiles\\my-profile.json", "--mod", "my-mod", "--read-only"]
+    }
+  }
+}
+```
+
+`oltool mcp tools` lists the tools. The editor writes each call of an agent into an audit log in the log folder of OpenLancer, and `oltool mcp replay <profile.json> --mod <id> <log>` runs the calls of a log again and compares the results. The name of each read tool starts with `list_`, `get_`, `find_`, `search_`, `describe_` or `check`, or is `studio_status`. So a permission rule of the agent program, for example `mcp__openlancer__list_*`, can allow them.
