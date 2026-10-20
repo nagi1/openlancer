@@ -213,8 +213,8 @@ internal sealed class AgentRender : IDisposable
     /// finish the image. So the session part of a call holds the whole GPU time of its image, and the render bench
     /// measures it. The texture goes at once. The PNG encode runs on a worker.
     /// </summary>
-    /// <remarks>The read does not use <c>Texture2D.GetDataAsync</c>. That read of the engine never deletes its pixel
-    /// buffer. So each image would keep width by height by 4 bytes of the memory of the driver.</remarks>
+    /// <remarks>The read does not use <c>Texture2D.GetDataAsync</c>. That read ends in a later frame, so the session part
+    /// of the call and the bench would not hold the GPU time of the image.</remarks>
     internal static Task<ToolImage> ReadBack(Texture2D texture, int width, int height)
     {
         var pixels = new byte[4 * width * height];
