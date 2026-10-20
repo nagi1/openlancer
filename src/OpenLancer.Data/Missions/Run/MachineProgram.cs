@@ -220,16 +220,16 @@ internal sealed class MachineProgram
     {
         if (condition?.Name is not { Kind: MissionNameKind.Condition } name)
             return ConditionKind.None;
-        return name.Name.ToLowerInvariant() switch
-        {
-            "cnd_true" => ConditionKind.True,
-            "cnd_timer" => ConditionKind.Timer,
-            "cnd_watchtrigger" => ConditionKind.Watch,
-            "cnd_systementer" => ConditionKind.StartTest,
-            _ when name.Polls && name.Wake.Count > 0 => ConditionKind.PollAndEvent,
-            _ when name.Polls => ConditionKind.Poll,
-            _ => ConditionKind.Event,
-        };
+        var key = name.Name;
+        if (key.Equals("Cnd_True", StringComparison.OrdinalIgnoreCase))
+            return ConditionKind.True;
+        if (key.Equals("Cnd_Timer", StringComparison.OrdinalIgnoreCase))
+            return ConditionKind.Timer;
+        if (key.Equals("Cnd_WatchTrigger", StringComparison.OrdinalIgnoreCase))
+            return ConditionKind.Watch;
+        if (key.Equals("Cnd_SystemEnter", StringComparison.OrdinalIgnoreCase))
+            return ConditionKind.StartTest;
+        return name.Polls ? name.Wake.Count > 0 ? ConditionKind.PollAndEvent : ConditionKind.Poll : ConditionKind.Event;
     }
 
     /// <summary>

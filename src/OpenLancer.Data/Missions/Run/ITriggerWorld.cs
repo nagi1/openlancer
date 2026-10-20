@@ -4,8 +4,7 @@ namespace OpenLancer.Data.Missions.Run;
 /// One world event of a run: one distinct condition line that waits for an event of the world (section 4.3 of the M6c
 /// design). All active triggers whose condition has the same line react to it, in the order of the active list.
 /// </summary>
-/// <param name="Key">The key of the line: its condition name and its values, so two lines with the same key are one
-/// event.</param>
+/// <param name="Key">The key of the line (see <see cref="WorldEvents.KeyOf"/>).</param>
 public sealed record WorldEvent(string Key);
 
 /// <summary>

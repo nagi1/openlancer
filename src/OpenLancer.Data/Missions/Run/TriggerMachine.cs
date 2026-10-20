@@ -128,6 +128,8 @@ public sealed class MachinePass
 {
     internal static readonly MachinePass Refused = new([], refused: true);
 
+    internal static readonly MachinePass Empty = new([]);
+
     internal MachinePass(IReadOnlyList<MachineChange> changes, bool refused = false)
     {
         Changes = changes;
@@ -205,12 +207,14 @@ public sealed class TriggerMachine
     private readonly bool[] listed;
     private readonly List<int> active = [];
     private readonly SortedSet<uint> pending = [];
-    private readonly List<int> scratch = [];
+    private readonly List<int> polling = [];
+    private int[]? activeCopy;
+    private int[]? pollingCopy;
+    private IReadOnlyList<MissionTrigger>? activeView;
     private List<MachineChange>? changes;
     private MissionEnd? pendingEnd;
     private int pass;
     private int starts;
-    private int pollers;
     private bool started;
 
     /// <summary>A new machine for an index. No trigger is active until <see cref="StartMission"/> or
@@ -244,7 +248,7 @@ public sealed class TriggerMachine
     public MachineOptions Options { get; }
 
     /// <summary>The active list, in the order in which the triggers became active.</summary>
-    public IReadOnlyList<MissionTrigger> Active => active.Select(s => program.Triggers[s]).ToList();
+    public IReadOnlyList<MissionTrigger> Active => activeView ??= active.Select(s => program.Triggers[s]).ToArray();
 
     /// <summary>The pending starts in the order of the next drain: smallest id first.</summary>
     public IReadOnlyList<MissionTrigger> Pending => pending.Select(id => program.Triggers[program.SlotById(id)]).ToList();
@@ -267,7 +271,7 @@ public sealed class TriggerMachine
     /// <summary>True when a heartbeat can change the run: a trigger waits in the pending set, or an active trigger tests
     /// its condition at each heartbeat. A run without such work can skip heartbeats with
     /// <see cref="SkipIdle"/>.</summary>
-    public bool HeartbeatsMatter => pending.Count > 0 || pollers > 0;
+    public bool HeartbeatsMatter => pending.Count > 0 || polling.Count > 0;
 
     /// <summary>The state of a trigger. A trigger that the game does not keep (TR4) is always inactive.</summary>
     public TriggerRunState StateOf(MissionTrigger trigger) =>
@@ -317,7 +321,7 @@ public sealed class TriggerMachine
         if (IsOver)
             return MachinePass.Refused;
         Begin();
-        foreach (var slot in Listed())
+        foreach (var slot in activeCopy ??= active.ToArray())
         {
             if (!Waits(slot) || program.Kinds[slot] is not (ConditionKind.Event or ConditionKind.StartTest or
                     ConditionKind.PollAndEvent))
@@ -341,9 +345,10 @@ public sealed class TriggerMachine
             return MachinePass.Refused;
         Begin();
         Heartbeats++;
-        if (pollers > 0)
+        if (polling.Count > 0)
         {
-            foreach (var slot in Listed())
+            // Only the triggers that test at each heartbeat, in the order of the active list.
+            foreach (var slot in pollingCopy ??= polling.ToArray())
             {
                 if (Waits(slot) && Polls(slot))
                     Run(slot);
@@ -453,19 +458,13 @@ public sealed class TriggerMachine
             End = pendingEnd;
             Record(new MachineChange(MachineChangeKind.End, End.Trigger));
         }
-        var result = changes is { Count: > 0 } ? new MachinePass(changes) : new MachinePass([]);
+        var result = changes is { Count: > 0 } ? new MachinePass(changes) : MachinePass.Empty;
         changes = null;
         return result;
     }
 
-    /// <summary>The slots of the active list now, as a copy. A trigger that a run stops or completes during the pass
-    /// stays in the copy, so the caller checks <see cref="Waits"/>.</summary>
-    private List<int> Listed()
-    {
-        scratch.Clear();
-        scratch.AddRange(active);
-        return scratch;
-    }
+    // Dispatch and Heartbeat walk a copy of the active list, so a run that stops or completes a trigger in the pass
+    // does not change the walk. They check Waits for each trigger of the copy. The copies stay until the list changes.
 
     /// <summary>True for an active trigger in the list that did not re-arm in this pass (TR10).</summary>
     private bool Waits(int slot) =>
@@ -656,7 +655,8 @@ public sealed class TriggerMachine
         listed[slot] = true;
         active.Add(slot);
         if (program.PollsAt(slot))
-            pollers++;
+            polling.Add(slot);
+        Changed();
     }
 
     private void Leave(int slot)
@@ -664,7 +664,15 @@ public sealed class TriggerMachine
         listed[slot] = false;
         active.Remove(slot);
         if (program.PollsAt(slot))
-            pollers--;
+            polling.Remove(slot);
+        Changed();
+    }
+
+    private void Changed()
+    {
+        activeCopy = null;
+        pollingCopy = null;
+        activeView = null;
     }
 
     private void Record(MachineChange change) => (changes ??= []).Add(change);

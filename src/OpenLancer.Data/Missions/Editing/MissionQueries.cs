@@ -4,6 +4,7 @@ using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
+using OpenLancer.Data.Missions.Run;
 
 namespace OpenLancer.Data.Missions.Editing;
 
@@ -428,6 +429,23 @@ public sealed class MissionQueries
         {
             Core = instance.Core == null ? null : Ref(instance.Core),
         };
+    }
+
+    /// <summary>
+    /// The dry run query (section 7.2 of the M6c design): folds the inputs of a request over the model of a script now
+    /// and gives the steps with their changes and the full state after the last step. The query keeps no state: the
+    /// caller gives all inputs each time. It changes nothing.
+    /// </summary>
+    /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/>: the script, a trigger or a system does not
+    /// resolve. <see cref="EditErrorKind.InvalidArgument"/>: a line matches two waiting lines or no condition of the
+    /// script. <see cref="EditErrorKind.Limit"/>: the request has too many inputs or heartbeats.
+    /// <see cref="EditErrorKind.NotAvailable"/>: an input of a later version.</exception>
+    public DryRunView DryRun(DryRunRequest request, DryRunLimits? limits = null)
+    {
+        RunJson.CheckLimits(request.Inputs, limits ?? DryRunLimits.Default);
+        var model = editor.Model(request.Script);
+        var state = Run.DryRun.Fold(model.Index, request.Inputs, request.Timers, strict: true);
+        return RunJson.View(model.Script, model.Version, state, request.SinceStep);
     }
 
     /// <summary>The problems of a script that show, with their origin, rule and reference. A problem of the base game
