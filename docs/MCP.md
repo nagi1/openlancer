@@ -51,12 +51,13 @@ Each start of the server makes a new random token of 256 bits. Each request need
 
 The editor writes the port, the token and its process into a file in `%LOCALAPPDATA%\OpenLancer\agent`. That folder is in your user profile, so other users of the computer cannot read it. The editor deletes the file when the server stops.
 
-`oltool mcp token` prints the header as JSON, for the `headersHelper` of Claude Code. It gives the token only when all of these conditions are true:
+`oltool mcp token` prints the header as JSON, for the `headersHelper` of Claude Code. Claude Code gives the address of the server in the variable `CLAUDE_CODE_MCP_SERVER_URL`. The helper gives the token only when all of these conditions are true:
 
 - An editor with a running server has written the file, and that editor still runs.
-- The agent program connects to `127.0.0.1` and to the port of that server. Claude Code gives the address in the variable `CLAUDE_CODE_MCP_SERVER_URL`.
+- With an address, the address uses `127.0.0.1` and the port of that server.
+- Without an address, only one editor runs a server.
 
-Else the helper prints nothing and exits with the code 2. Use the address with `127.0.0.1`, not `localhost`. The helper gives no token for `localhost`, because another program can listen on the IPv6 address of `localhost`.
+Else the helper prints no token and exits with the code 2. It writes the reason to the standard error, for example "2 editors run an agent server". Read this reason when the agent program does not connect. Use the address with `127.0.0.1`, not `localhost`. The helper gives no token for `localhost`, because another program can listen on the IPv6 address of `localhost`.
 
 ### The Agent menu
 
@@ -78,7 +79,7 @@ When another program uses the port, the server does not start. The status bar th
 | Setting | Default | What it does |
 |---|---|---|
 | Agent server port | 47815 | The port of the server on this computer. Stop the server to change it. |
-| Agent tool groups | All groups | The agent can use the tools of the selected groups: Scene, Missions and Cutscenes. The other tools are always available: the status, the checks, the reads of all kinds of items and the views. A tool of a cleared group tells the agent that you cleared the group. |
+| Agent tool groups | All groups | The agent can use the tools of the selected groups: Scene, Missions and Cutscenes. `render_scene` is in the group Scene, and `render_cutscene` is in the group Cutscenes. These tools are always available: `studio_status`, `get_item`, `find_references`, `list_values`, `get_raw_ini`, `check`, `get_console`, `open_view`, `select_items` and `capture_panel`. A tool of a cleared group tells the agent that you cleared the group. |
 | Rows of a page without a limit | 50 | The rows of a list result when the agent gives no limit. |
 | Largest page limit | 200 | The largest limit that the agent can ask for in one list result. |
 | Size of a result (KB) | 256 | The most text of one result. A larger result asks the agent for pages. |
@@ -86,7 +87,7 @@ When another program uses the port, the server does not start. The status bar th
 | Wait for the editor (s) | 30 | How long a call waits while you edit a field or a dialog is open. |
 | Time of a check or an image (s) | 60 | How long a check of a retail target or an image can take. |
 | Size of a request (MB) | 4 | The largest request. The change applies at the next start of the server. |
-| Largest side of an image (pixels) | 2048 | The most pixels on each side of an image. A larger panel capture becomes smaller. |
+| Largest side of an image (pixels) | 2048 | The most pixels on each side of an image. A larger panel capture becomes smaller. A `render_scene` or `render_cutscene` call with a larger `width` or `height` gives the error `limit`. |
 
 ## The tools
 
@@ -124,7 +125,7 @@ These tools work only in the editor host.
 
 ### Images
 
-An image has at most 2048 pixels on each side, and a larger panel gives a smaller image. **Agent > Agent settings > Advanced** can set a smaller limit. The editor does not draw a frame while it renders an image. An image of a system that the Scene does not show also loads that system first.
+An image has at most 2048 pixels on each side, and a larger panel gives a smaller image. A `render_scene` or `render_cutscene` call with a larger `width` or `height` gives the error `limit`. **Agent > Agent settings > Advanced** can set a smaller limit. The editor does not draw a frame while it renders an image. An image of a system that the Scene does not show also loads that system first.
 
 The agent program can send each image to its model service. A capture of a panel can show the names of your folders.
 
@@ -193,7 +194,7 @@ The server accepts connections from this computer only:
 - It refuses a request with the forward header of a proxy or a tunnel.
 - Each request needs the token.
 
-Never put a proxy or a tunnel, for example a Tailscale Funnel, in front of the port of the agent server. The oltool host opens no port.
+Never put a proxy or a tunnel in front of the port of the agent server. A Tailscale Funnel is such a tunnel. The oltool host opens no port.
 
 ### The active mod only
 
