@@ -234,6 +234,31 @@ public sealed class McpServerTests
     }
 
     [Fact]
+    public void ATextDllThatDoesNotLoadGivesNoNames()
+    {
+        using var ws = SceneWorkspace.Create();
+        using var host = HeadlessHost.OpenReadOnly(ws.ProfilePath, "act");
+
+        // The synthetic base folder holds text that is not a DLL.
+        Assert.Equal("", host.NameText(65537));
+        Assert.Equal("", host.InfoText(65537));
+        Assert.Equal(2, (int)AgentCalls.Ok(host, "list_systems")["total"]!);
+    }
+
+    [Fact]
+    public async Task AClosedQueueCancelsEachNewCall()
+    {
+        var queue = new ToolQueue(new TestAgentHost(null));
+        var waiting = queue.CallAsync("studio_status", null, null, Token);
+
+        queue.Dispose();
+        var late = queue.CallAsync("studio_status", null, null, Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => late);
+    }
+
+    [Fact]
     public void TheHeadlessHostNeverEditsAModOfTheRepo()
     {
         using var ws = SceneWorkspace.Create();

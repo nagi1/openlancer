@@ -29,6 +29,7 @@ public sealed class ToolQueue : IDisposable
     private readonly AgentHost host;
     private readonly TimeProvider clock;
     private readonly AuditLog? audit;
+    private bool disposed;
 
     /// <param name="clock">The clock of the waits, the rate and the tails. The tests give a fake clock.</param>
     /// <param name="audit">The audit log, or null (decision D728).</param>
@@ -57,7 +58,7 @@ public sealed class ToolQueue : IDisposable
 
     /// <summary>
     /// Puts a call into the queue. It can run on any thread. The task ends with the result, or as cancelled when the
-    /// client cancels the call before its session part starts.
+    /// client cancels the call before its session part starts or the host closes the queue.
     /// </summary>
     /// <param name="tool">The name of a tool of <see cref="AgentTools.All"/>.</param>
     /// <param name="client">The name of the client program, for the status bar of the editor, or null.</param>
@@ -67,6 +68,8 @@ public sealed class ToolQueue : IDisposable
         Pending pending;
         lock (gate)
         {
+            if (disposed)
+                return Task.FromCanceled<ToolResult>(new CancellationToken(true));
             var now = clock.GetTimestamp();
             while (accepted.Count > 0 && clock.GetElapsedTime(accepted.Peek(), now) >= TimeSpan.FromSeconds(1))
                 accepted.Dequeue();
@@ -85,7 +88,11 @@ public sealed class ToolQueue : IDisposable
         }
         if (cancel.CanBeCanceled)
             pending.Registration = cancel.Register(() => Withdraw(pending));
-        queued.Release();
+        lock (gate)
+        {
+            if (!disposed)
+                queued.Release();
+        }
         return pending.Done.Task;
     }
 
@@ -146,15 +153,20 @@ public sealed class ToolQueue : IDisposable
         return true;
     }
 
+    /// <summary>Closes the queue: each call that waits ends as cancelled, and a new call ends as cancelled at once.
+    /// The session part that runs now ends first.</summary>
     public void Dispose()
     {
         lock (gate)
         {
+            if (disposed)
+                return;
+            disposed = true;
             foreach (var pending in waiting)
                 pending.Done.TrySetCanceled();
             waiting.Clear();
+            queued.Dispose();
         }
-        queued.Dispose();
     }
 
     /// <summary>Removes a call that did not start, after the client cancelled it.</summary>

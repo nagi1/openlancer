@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -70,7 +71,18 @@ public sealed class HeadlessHost : AgentHost, IDisposable
     public override ToolStep CheckTarget(string target)
     {
         var found = ExportTarget.Find(target)!;
-        var (problems, notes) = TargetValidation.Run(Session.Profile, found, gameFolder: null);
+        IReadOnlyList<OpenLancer.Data.Diagnostic> problems;
+        IReadOnlyList<string> notes;
+        try
+        {
+            (problems, notes) = TargetValidation.Run(Session.Profile, found, gameFolder: null);
+        }
+        catch (Exception e) when (e is ModLoadException or IOException or UnauthorizedAccessException)
+        {
+            return ToolResult.Failure(new OpenLancer.Data.Editing.Commands.EditError(
+                OpenLancer.Data.Editing.Commands.EditErrorKind.Refused, "TargetCheckFailed",
+                AgentTexts.Error("check_target_failed", ("reason", e.Message))));
+        }
         return ToolResult.Of(CheckQueries.Of("target",
             problems.Select(p => OpenLancer.Data.Editing.Commands.Problem.From(p, null)).ToList(),
             string.Join(" ", new[] { AgentTexts.Error("check_target_note") }.Concat(notes))));
@@ -80,14 +92,16 @@ public sealed class HeadlessHost : AgentHost, IDisposable
 
     /// <summary>The text DLLs that the <c>freelancer.ini</c> of the edit view names. A DLL that does not load gives no
     /// names, as an item without a name shows its nickname.</summary>
+    /// <remarks>The engine reader of <c>freelancer.ini</c> and of the DLLs throws the base exception type for some
+    /// problems of the data, for example a repeated entry. The names are only a help of the results, so each problem
+    /// of the read gives no names.</remarks>
     private static InfocardManager? Infocards(EditSession session)
     {
         try
         {
             return new InfocardManager(new FreelancerIni(session.EditView.CreateFileSystem()).Resources);
         }
-        catch (Exception e) when (e is IOException or InvalidDataException or FormatException or ArgumentException
-                                      or IndexOutOfRangeException or EndOfStreamException)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             return null;
         }
