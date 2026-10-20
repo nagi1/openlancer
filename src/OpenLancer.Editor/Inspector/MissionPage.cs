@@ -10,6 +10,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -557,8 +558,9 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             text = RawText.Canonical(sections[0].Ref.Path, sections.Select(s => s.Section).ToList(),
                 ids: sections.Select(s => s.Ref.Id).ToList());
             var refs = sections.Select(s => s.Ref).ToHashSet();
-            block = (result, key, showBaseGame, text,
-                IniLint.Marks(text, analysis.Problems.Where(p => p.Target != null && refs.Contains(p.Target)), showBaseGame));
+            block = (result, key, showBaseGame, text, IniLint.WithNotes(
+                IniLint.Marks(text, analysis.Problems.Where(p => p.Target != null && refs.Contains(p.Target)), showBaseGame),
+                PrefabLinks.MemberLines(text, analysis)));
         }
 
         var height = MathF.Min(IniHeight * ImGuiHelper.Scale * (sections.Count > 1 ? 2 : 1),

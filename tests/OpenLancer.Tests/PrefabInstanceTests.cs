@@ -131,7 +131,7 @@ public sealed class PrefabInstanceTests
         Assert.Equal(I("ol_w1").ToString(), result.Select);
         var instance = Instance(m, "ol_w1");
         Assert.Equal(("ol_w1", "Gate ambush", 2), (instance.Id, instance.Definition.Name, instance.Claimed.Count));
-        Assert.Empty(m.Missions.Model(Script).Problems.Where(p => p.Rule is "P01" or "P02" or "P03"));
+        Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule is "P01" or "P02" or "P03");
     }
 
     [Fact]
@@ -601,6 +601,6 @@ public sealed class PrefabInstanceTests
         var graph = reopened.Missions.Graph(Script);
         Assert.Equal(Record(m, "ol_w1"), graph.Instance("ol_w1"));
         Assert.NotNull(reopened.Missions.Prefab(PrefabRef.ModOf("ol_copy")));
-        Assert.Empty(reopened.Missions.Model(Script).Problems.Where(p => p.Rule is "P01" or "P02" or "P03"));
+        Assert.DoesNotContain(reopened.Missions.Model(Script).Problems, p => p.Rule is "P01" or "P02" or "P03");
     }
 }

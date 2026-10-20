@@ -111,13 +111,18 @@ public sealed partial class MissionEditor
             return null;
         if (document.ReadOnlyReasonAt(index) is { } why)
             return why.Length == 0 ? why : char.ToUpperInvariant(why[0]) + why[1..];
-        if (!SectionKeys.IsMissionFile(normal) || Graph(normal).Instances.Count == 0)
+        return LinkedInstanceOf(section) is { } linked ? PrefabLinks.MemberReason(PrefabLinks.PrefabNameOf(linked), linked.Record.Id) : null;
+    }
+
+    /// <summary>The linked prefab instance whose member is a section of a mission script, or null (section 5.1 of the M6b
+    /// design). A removed member is not a member.</summary>
+    public LinkedInstance? LinkedInstanceOf(SectionRef section)
+    {
+        if (InstallPaths.TryParse(section.Path) is not { } normal || !SectionKeys.IsMissionFile(normal) ||
+            Graph(normal).Instances.Count == 0)
             return null;
         return Model(normal).Analysis.Prefabs?.Instances.FirstOrDefault(i =>
-                i.Linked?.Sections.Values.Any(s => s.Ref.Equals(section)) == true)?.Linked is { } linked
-            ? PrefabLinks.MemberReason(linked.Asset?.Name ?? PrefabRef.TryParse(linked.Record.Prefab)?.Id ?? linked.Record.Prefab,
-                linked.Record.Id)
-            : null;
+            i.Linked?.Sections.Values.Any(s => s.Ref.Equals(section)) == true)?.Linked;
     }
 
     /// <summary>

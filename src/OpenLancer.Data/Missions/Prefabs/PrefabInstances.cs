@@ -115,6 +115,43 @@ public static class PrefabLinks
         $"This section comes from prefab '{prefab}' (instance '{instance}'). Change a field of the instance, open the " +
         "prefab, or unpack the instance.";
 
+    /// <summary>The tooltip of a line of a member of a linked instance in a raw INI view (section 8.11 of the M6b
+    /// design).</summary>
+    public static string LineNote(string prefab) => $"This line comes from prefab '{prefab}'.";
+
+    /// <summary>Why a raw INI edit cannot change a line of a member of a linked instance (section 8.8 of the M6b
+    /// design).</summary>
+    public static string LineEditMessage(string prefab) =>
+        $"{LineNote(prefab)} Change a field of the instance, open the prefab, or unpack the instance.";
+
+    /// <summary>The name of the prefab of a linked instance: the name of its asset, or the id in its record when no mod
+    /// has the prefab.</summary>
+    public static string PrefabNameOf(LinkedInstance linked) => linked.Asset?.Name ?? PrefabName(linked.Record.Prefab);
+
+    /// <summary>
+    /// The notes of the lines of the member sections of the linked instances in a raw text (section 8.8 of the M6b
+    /// design): the header and each line of a member get the note "This line comes from prefab '{name}'.". The raw
+    /// editor shows these lines dim, with the note as the tooltip. A raw edit of such a line stops.
+    /// </summary>
+    /// <param name="text">The raw text of the whole script, or of the INI block of a page.</param>
+    public static IEnumerable<(int Line, string Note)> MemberLines(RawText text, MissionAnalysis analysis)
+    {
+        foreach (var instance in analysis.Prefabs?.Instances ?? [])
+        {
+            if (instance.Linked is not { } linked)
+                continue;
+            var note = LineNote(PrefabNameOf(linked));
+            foreach (var section in linked.Sections.Values)
+            {
+                if (text.SectionOf(section.Ref.Id) is not (>= 0 and var k))
+                    continue;
+                yield return (text.HeaderLine(k), note);
+                for (var entry = 0; entry < text.EntryCount(k); entry++)
+                    yield return (text.EntryLine(k, entry), note);
+            }
+        }
+    }
+
     /// <summary>The text of P03.</summary>
     public static string OutdatedMessage(string prefab, string instance) =>
         $"Prefab '{prefab}' changed after the last compile of instance '{instance}'. The instance does not have the " +

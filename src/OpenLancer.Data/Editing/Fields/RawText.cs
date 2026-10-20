@@ -86,6 +86,9 @@ public sealed class RawText
     /// <summary>The line of an entry of a section.</summary>
     public int EntryLine(int section, int entry) => entries[section][entry];
 
+    /// <summary>The number of entries of a section.</summary>
+    public int EntryCount(int section) => entries[section].Length;
+
     /// <summary>The index of a section of the text, or -1.</summary>
     public int SectionOf(SectionIdentity id) => sectionIndex.GetValueOrDefault(id, -1);
 

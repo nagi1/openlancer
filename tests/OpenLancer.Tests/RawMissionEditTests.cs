@@ -2,7 +2,9 @@ using System.Linq;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
+using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Studio.Commands;
 using Xunit;
 using static OpenLancer.Tests.MissionEdits;
@@ -250,5 +252,52 @@ public sealed class RawMissionEditTests
         Assert.Contains(block.Checks!(), mark => mark.Line == 4 && mark.Problem.Rule == "M05");
         // The draft changes nothing.
         Assert.Equal(start, Text(m));
+    }
+
+    /// <summary>
+    /// The lines of a member of a linked prefab instance are read-only in both raw views (section 8.8 of the M6b design):
+    /// they show dim with the note of their prefab, and an edit of one stops with its line. A delete of the member passes,
+    /// because it is a removed-member override (decision D676 c).
+    /// </summary>
+    [Fact]
+    public void TheLinesOfAPrefabMemberAreReadOnly()
+    {
+        using var m = PrefabInstanceTests.Create();
+        PrefabInstanceTests.Place(m, "ol_w1");
+        var document = m.Session.OpenDocument(Script)!;
+        var start = Text(m);
+        var lines = start.Split('\n');
+        var raw = RawText.Canonical(Script, document.Working);
+        var analysis = m.Missions.Model(Script).Analysis;
+        var note = PrefabLinks.LineNote("Gate ambush");
+
+        var notes = PrefabLinks.MemberLines(raw, analysis).ToList();
+        var marks = IniLint.WithNotes(IniLint.Marks(raw, analysis.Problems, showBaseGame: false), notes);
+
+        Assert.Equal(["[Trigger]", "nickname = ol_w1_spawn", "Cnd_Timer = 5", "Act_SpawnFormation = ol_form", "Act_ActTrig = ol_w1_end",
+            "[Trigger]", "nickname = ol_w1_end", "Cnd_Destroyed = ol_form, -1"], notes.Select(n => lines[n.Line]));
+        Assert.All(notes, n => Assert.Equal(note, n.Note));
+        Assert.All(notes, n => Assert.Contains(note, Assert.Single(marks, mark => mark.Line == n.Line).Message));
+        Assert.Contains(marks, mark => mark is { Note: true } && mark.Message == note);
+        Assert.DoesNotContain(marks, mark => mark.Message.Contains(note) && !notes.Any(n => n.Line == mark.Line));
+
+        // The whole script and the block of the page stop with the line of the edit.
+        var edit = start.Replace("Cnd_Timer = 5", "Cnd_Timer = 9");
+        var stop = Plan(m, start, edit);
+        var problem = Assert.Single(stop.Problems);
+        Assert.Null(stop.Batch);
+        Assert.Equal(PrefabLinks.LineEditMessage("Gate ambush"), problem.Message);
+        Assert.Equal("This line comes from prefab 'Gate ambush'. Change a field of the instance, open the prefab, or unpack the " +
+                     "instance.", problem.Message);
+        Assert.Equal("Cnd_Timer = 9", edit.Split('\n')[problem.Line - 1]);
+        var spawn = new SectionIdentity("Trigger", "ol_w1_spawn");
+        var block = RawText.Canonical(Script, [document.Working[document.IndexOf(spawn)]], ids: [spawn]).Text;
+        var blockStop = RawMissionEdit.PlanBlock(m.Session, Script, [spawn], block, block + "\nAct_PlayMusic = ol_music");
+        Assert.Equal((null, 6), (blockStop.Batch, Assert.Single(blockStop.Problems).Line));
+
+        // A delete of the member in the raw text is a removed-member override.
+        var end = RawText.Canonical(Script, document.Working.Where(s => TriggerRules.Nickname(s) != "ol_w1_end").ToList()).Text;
+        Run(m, start, end);
+        Assert.Equal(["end"], m.Missions.Graph(Script).Instance("ol_w1")!.Removed);
     }
 }

@@ -9,6 +9,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -959,9 +960,9 @@ internal sealed class MissionWorkspace
         return task;
     }
 
-    /// <summary>The marks of the raw text of a script: the problems that show, and the reasons of the read-only sections.
-    /// The marks stay until the run, the text or the toggle changes, because the raw view reads them in each
-    /// frame.</summary>
+    /// <summary>The marks of the raw text of a script: the problems that show, the reasons of the read-only sections, and
+    /// the notes of the lines of prefab members. The marks stay until the run, the text or the toggle changes, because
+    /// the raw view reads them in each frame.</summary>
     public IReadOnlyList<RawMark> MarksOf(string path)
     {
         if (Result?.Of(path) is not { } analysis || RawTextOf(path) is not { } raw)
@@ -977,7 +978,9 @@ internal sealed class MissionWorkspace
 
         if (!marks.TryGetValue(analysis.Script.Path, out var known) || !ReferenceEquals(known.Text, raw))
         {
-            known = (raw, IniLint.Marks(raw, analysis.Problems, ShowBaseGame));
+            // The lines of the members of the linked prefab instances show dim, with their prefab (section 8.8 of the M6b
+            // design).
+            known = (raw, IniLint.WithNotes(IniLint.Marks(raw, analysis.Problems, ShowBaseGame), PrefabLinks.MemberLines(raw, analysis)));
             marks[analysis.Script.Path] = known;
         }
 
