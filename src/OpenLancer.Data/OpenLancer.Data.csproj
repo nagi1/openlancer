@@ -21,6 +21,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The shared command layer and the agent tools read the edit session as the commands of DA do: the system files,
+         the nicknames, the data lists and the documents (section 4.0.2 of the M6b design). -->
+    <InternalsVisibleTo Include="OpenLancer.Studio" />
     <InternalsVisibleTo Include="OpenLancer.Tests" />
     <!-- The retail proofs test the internal patch writer directly. -->
     <InternalsVisibleTo Include="OpenLancer.DataTests" />

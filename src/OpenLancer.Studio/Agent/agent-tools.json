@@ -1,0 +1,36 @@
+{
+  "// about": "The texts of the agent tools of milestone MCP1 (decision D726 of the MCP1 design): the server instructions, the title and the description of each tool, the help of each argument, the texts of the host errors and the resources. All texts use Simplified Technical English. A unit test checks them. The names in the examples are invented, for example my_system.",
+  "instructions": [
+    "Call studio_status first. It tells the profile, the active mod and the tool groups that you can use.",
+    "Use the list tools to find items. Then use the get tools to read them.",
+    "Pass the references of a result into the next call.",
+    "Use check to find the problems of the data.",
+    "This server only reads the data. It changes no file."
+  ],
+  "fields": {
+    "cursor": "The next_cursor of the previous page. Without it, the list starts at the first row.",
+    "limit": "The most rows of the page. studio_status gives the default and the largest value."
+  },
+  "tools": {
+    "studio_status": {
+      "title": "Get the status of the studio",
+      "description": "Gives the state of the agent server: the profile, the active mod, the revision, the undo and redo steps, the tool groups and the limits. This tool changes nothing. Call it first."
+    }
+  },
+  "errors": {
+    "argument_none": "The tool {tool} takes no arguments. Remove the argument '{name}'.",
+    "argument_unknown": "The tool {tool} has no argument '{name}'. Its arguments are: {names}.",
+    "argument_type": "The argument '{name}' needs {expected}.",
+    "argument_missing": "The argument '{name}' is necessary. Give it, then call the tool again.",
+    "limit_rows": "One call can give at most {max} rows. Use a smaller limit and the cursor of the result.",
+    "cursor_bad": "The cursor is not a cursor of this list. Use the next_cursor of the previous result.",
+    "no_profile": "No profile is open. Open a profile in the editor, then try again.",
+    "limit_calls": "The server takes at most {max} calls each second. Wait a moment, then try again.",
+    "busy": "{reason} The call waited {seconds} seconds. Try again in a few seconds.",
+    "limit_tail": "The call took more than {seconds} seconds, so the server stopped it.",
+    "limit_result": "The result has {size} KB of text, and one result can have at most {max} KB. Use a smaller limit, a filter or the reference of one section.",
+    "editor_only": "Only the editor host has the tool {tool}. Start the agent server in the editor.",
+    "group_hidden": "The user hid the tool group '{group}'. Ask the user to show it in the agent settings."
+  },
+  "resources": {}
+}

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using LibreLancer.Data.Schema.Missions;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
@@ -16,7 +15,7 @@ namespace OpenLancer.Tests;
 /// row, each help text passes the STE lint, each sentence names only values of its row, and the story slot table matches
 /// the storyline of the engine.
 /// </summary>
-public sealed partial class MissionSchemaTests
+public sealed class MissionSchemaTests
 {
     private static readonly MissionSchema Schema = MissionSchema.Retail;
 
@@ -327,37 +326,5 @@ public sealed partial class MissionSchemaTests
             yield return ($"event {e.Id}", e.Label);
     }
 
-    /// <summary>The words that STE replaces with a short common word, and the marketing words (AGENTS.md STE rules 6
-    /// and 8).</summary>
-    private static readonly string[] Banned =
-    [
-        "utilize", "leverage", "ensure", "prior to", "regarding", "obtain", "demonstrate", "additionally", "initiate",
-        "seamless", "robust", "powerful", "effortless",
-    ];
-
-    /// <summary>The STE problems of a text: semicolons, contractions, banned words and sentences of more than 25
-    /// words.</summary>
-    private static List<string> Lint(string text)
-    {
-        var problems = new List<string>();
-        if (text.Contains(';'))
-            problems.Add("a semicolon");
-        if (Contraction().Match(text) is { Success: true } contraction)
-            problems.Add($"the contraction '{contraction.Value}'");
-        problems.AddRange(Banned.Where(w => Regex.IsMatch(text, $@"\b{w}\b", RegexOptions.IgnoreCase))
-            .Select(w => $"the word '{w}'"));
-        foreach (var sentence in SentenceEnd().Split(text))
-        {
-            var words = sentence.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
-            if (words > 25)
-                problems.Add($"a sentence of {words} words");
-        }
-        return problems;
-    }
-
-    [GeneratedRegex(@"\b\w+n't\b|\w'(re|ve|ll|m|d)\b|\b(it|that|there|what|here|who|let)'s\b", RegexOptions.IgnoreCase)]
-    private static partial Regex Contraction();
-
-    [GeneratedRegex(@"(?<=[.!?])\s+")]
-    private static partial Regex SentenceEnd();
+    private static List<string> Lint(string text) => SteLint.Problems(text);
 }
