@@ -74,6 +74,10 @@ public static class RawMissionEdit
     /// <summary>The problems of a text that stop a raw edit, for the marks while the user types.</summary>
     public static IReadOnlyList<RawEditProblem> TextProblems(string file, string text) => Parse(file, text).Problems;
 
+    /// <summary>The sections of a text of mission sections as the engine text parser reads them, for example the text
+    /// of a paste of triggers (decision D689). None when the text has a problem of <see cref="TextProblems"/>.</summary>
+    public static IReadOnlyList<Section> Sections(string file, string text) => Parse(file, text).Sections;
+
     /// <summary>
     /// The checks of a draft text while the user types (section 8.8 of the M6b design, UI rule 11 of AGENTS.md). The
     /// text is the whole file or the INI block of a page. A text problem gives its problem at once. Else the checks run

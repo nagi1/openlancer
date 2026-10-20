@@ -206,6 +206,9 @@ public sealed class GraphNode : GraphBlock
     public string Title { get; }
 
     /// <summary>The trigger of a trigger node, or null.</summary>
+    /// <summary>The trigger name of a missing node, as the first line that names it writes it, or null.</summary>
+    public string? MissingName { get; internal init; }
+
     public MissionTrigger? Trigger { get; internal init; }
 
     /// <summary>The frame that a collapsed node stands for, or null.</summary>
@@ -1041,6 +1044,7 @@ public sealed class MissionGraph
             {
                 Sentence = message ?? "This script has no trigger with this name. The game ignores the line.",
                 BodyLines = 1,
+                MissingName = name.Trim(),
             };
             missing[name.Trim()] = node;
             nodes.Add(node);

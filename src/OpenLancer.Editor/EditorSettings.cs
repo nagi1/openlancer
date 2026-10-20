@@ -188,6 +188,10 @@ internal sealed class EditorSettings
     /// decision D523 of the M6a design).</summary>
     public bool MissionShowLines { get; set; }
 
+    /// <summary>True when the Mission tab shows the library strip at the left of the graph (section 8.3 of the M6b
+    /// design).</summary>
+    public bool MissionShowLibrary { get; set; } = true;
+
     /// <summary>True when the Scene shows the items of the open mission (the toggle "Mission items", section 7.2 of the
     /// M6a design).</summary>
     public bool ShowMissionItems { get; set; } = true;

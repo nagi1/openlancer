@@ -29,7 +29,7 @@ namespace OpenLancer.Editor.Missions;
 /// <para>The canvas is in unscaled points, so the node sizes of the model are canvas sizes. The view records the screen
 /// rectangles of the rows and chips, so the cross-links of the Mission tab start at them (section 7.3).</para>
 /// </remarks>
-internal sealed class GraphView : IDisposable
+internal sealed partial class GraphView : IDisposable
 {
     // Sizes in canvas points.
     private const float PinSize = 10;
@@ -287,6 +287,7 @@ internal sealed class GraphView : IDisposable
 
         placeNodes = true;
         syncedSelection = null;
+        BuildEdit();
     }
 
     private void Register(GraphBlock block)
@@ -311,6 +312,7 @@ internal sealed class GraphView : IDisposable
     public void Draw(MissionAnalysis analysis, Vector2 size)
     {
         Build(analysis);
+        editable = missions.NoEditReason(analysis.Script.Path) == null;
         var graph = Graph!;
         var layout = Layout!;
         var origin = ImGui.GetCursorScreenPos();
@@ -353,12 +355,18 @@ internal sealed class GraphView : IDisposable
             DrawNode(analysis.Script.Path, node, detail);
         }
 
+        EndLostRename();
         foreach (var link in graph.Links)
         {
             DrawLink(link);
         }
 
         DrawStateChips(graph, layout, scale);
+        if (editable)
+        {
+            CreateLinks();
+        }
+
         FollowEditorSelection(analysis.Script.Path, graph);
         Navigate(graph);
 
@@ -366,6 +374,7 @@ internal sealed class GraphView : IDisposable
         NodeEditor.Suspend();
         EditorTheme.Reapply(ImGuiHelper.Scale);
         Menus(analysis.Script.Path, graph);
+        EditMenus(analysis.Script.Path);
         if (pendingTooltip != null)
         {
             ImGui.SetTooltip(pendingTooltip);
@@ -379,6 +388,7 @@ internal sealed class GraphView : IDisposable
         EditorTheme.Reapply(ImGuiHelper.Scale);
         // The node editor takes the clicks of the user in its End, so the view reads them after it.
         TakeNodeEditorSelection(analysis.Script.Path);
+        CaptureSelection();
         DoubleClicks(analysis.Script.Path);
         // The engine method takes null to clear the current editor.
         NodeEditor.SetCurrentEditor(null!);
@@ -386,6 +396,7 @@ internal sealed class GraphView : IDisposable
         SearchResults(analysis.Script.Path);
         SideList(analysis.Script.Path, graph);
         Minimap(graph, layout);
+        EditOverlays();
         if (drags.Count > 0)
         {
             foreach (var (key, delta) in drags)
@@ -601,7 +612,19 @@ internal sealed class GraphView : IDisposable
             right -= ChipGap;
         }
 
+        if (editable && node.Kind == GraphNodeKind.Trigger)
+        {
+            right -= ChipHeight;
+            AddPin(node, new Vector2(right, y - 1));
+            right -= ChipGap;
+        }
+
         right = Marks(node, drawList, right, y);
+        if (RenameField(node, new Vector2(x, y - 3), right - x))
+        {
+            return;
+        }
+
         var titleWidth = TextFit.AddText(drawList, font, TextSize, new Vector2(x, y), EditorTheme.ToAbgr(EditorTheme.TextBright),
             node.Title, right - x);
         x += titleWidth + 6;
@@ -814,6 +837,7 @@ internal sealed class GraphView : IDisposable
                 window.Selection = rowRef;
             }
 
+            RowDragSource(graphRow);
             var hovered = ImGui.IsItemHovered();
             // A double-click on a row frames its world items in the Scene part (section 7.3 of the M6a design).
             if (hovered && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
@@ -1252,6 +1276,8 @@ internal sealed class GraphView : IDisposable
         {
             ImGui.SetClipboardText(trigger.Nickname);
         }
+
+        EditNodeMenu(node, trigger);
     }
 
     /// <summary>The focus sets of this frame: the nodes and links of the path view, or the nodes of the neighbor

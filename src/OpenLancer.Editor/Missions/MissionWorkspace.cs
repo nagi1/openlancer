@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
@@ -271,6 +272,13 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
         Result = result with { Analyses = analyses };
         window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
+        // A rename, also its Undo and its Redo, keeps the selection on the renamed trigger (section 8.10 of the M6b
+        // design).
+        if (Followed(window.Selection, change.Renames.Select(r => (r.From.ToString(), r.To.ToString())).ToList(), []) is
+            { } next)
+        {
+            window.Selection = next;
+        }
     }
 
     /// <summary>Starts a run after a change of a ship build file, because the run reads the ship builds of all
@@ -313,6 +321,141 @@ internal sealed class MissionWorkspace(EditorWindow window)
         if (plan.Batch != null)
         {
             window.Edits.Apply(plan.Batch);
+        }
+    }
+
+    /// <summary>
+    /// Runs the batch of a gesture of the studio through the mission editor of the session (section 4.0 of the M6b
+    /// design). After a gesture that adds an item, the studio selects the item. Else the selection follows the renames
+    /// and the row moves of the result (section 8.10 of the M6b design). A null batch does nothing.
+    /// </summary>
+    /// <returns>True when the batch changed W.</returns>
+    public bool Run(MissionBatch? batch)
+    {
+        if (batch == null || window.Edits.Apply(batch) is not { Status: EditStatus.Applied } result)
+        {
+            return false;
+        }
+
+        var selection = window.Selection;
+        var next = result.Select is { } select && Result?.Of(ScriptOf(select) ?? "") is { } analysis
+            ? SelectionOf(analysis, select)
+            : null;
+        next ??= Followed(selection, result.Renames.Select(r => (r.From, r.To)).ToList(), result.RowMoves);
+        if (next != null && !Equals(next, selection))
+        {
+            window.Selection = next;
+        }
+
+        return true;
+    }
+
+    /// <summary>The install path of a reference of a mission item, or null.</summary>
+    private static string? ScriptOf(string reference)
+    {
+        try
+        {
+            return ItemRefs.Parse(reference).Path;
+        }
+        catch (EditException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The selection of a reference of a result (section 4.0.7 of the M6b design) in an analysis: a trigger, a section,
+    /// a line of a trigger or the script. Null for a reference that the analysis does not have.
+    /// </summary>
+    internal static MissionRef? SelectionOf(MissionAnalysis analysis, string reference)
+    {
+        ItemReference parsed;
+        try
+        {
+            parsed = ItemRefs.Parse(reference);
+        }
+        catch (EditException)
+        {
+            return null;
+        }
+
+        var script = analysis.Script.Path;
+        if (parsed.Path is not { } path || !VfsPath.Comparer.Equals(path, script))
+        {
+            return null;
+        }
+
+        switch (parsed.Kind)
+        {
+            case ItemRefKind.Script:
+                return MissionRef.Of(script);
+            case ItemRefKind.Trigger when analysis.Index.Trigger(parsed.Name) is { } trigger:
+                return new MissionRef(script, MissionItemKind.Trigger, trigger.Section.Ref);
+            case ItemRefKind.Section or ItemRefKind.Line when parsed.Section is { } id &&
+                                                                analysis.Document.Find(new SectionRef(script, id)) is { } section:
+                return MissionRef.OfSection(section.Ref, parsed.Kind == ItemRefKind.Line ? parsed.Row ?? -1 : -1);
+            case ItemRefKind.Label:
+                return new MissionRef(script, MissionItemKind.Label, Key: parsed.Name);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// A selection after renames and row moves: a selected item that a rename renamed gets its new name, and a selected
+    /// line of a trigger keeps its line when the rows before it moved (section 8.10 of the M6b design). Null when nothing
+    /// changes it.
+    /// </summary>
+    /// <param name="renames">The old and the new references of each renamed item.</param>
+    internal static MissionRef? Followed(object? selection, IReadOnlyList<(string From, string To)> renames,
+        IReadOnlyList<RowMove> moves)
+    {
+        if (selection is not MissionRef { Section: { } section } item)
+        {
+            return null;
+        }
+
+        foreach (var (from, to) in renames)
+        {
+            if (Identity(from) is not { } old || Identity(to) is not { } renamed ||
+                !VfsPath.Comparer.Equals(old.Path, section.Path) || !old.Id.Equals(section.Id))
+            {
+                continue;
+            }
+
+            item = item with { Section = renamed };
+            section = renamed;
+        }
+
+        if (item.Kind == MissionItemKind.Row && item.Row >= 0)
+        {
+            var move = moves.FirstOrDefault(m => VfsPath.Comparer.Equals(m.Trigger.Script, section.Path) &&
+                                                 MissionIndex.Is(m.Trigger.Name, section.Id.Key ?? "") && m.From == item.Row);
+            if (move != null)
+            {
+                item = item with { Row = move.To };
+            }
+        }
+
+        return Equals(item, selection) ? null : item;
+    }
+
+    /// <summary>The section of a reference of a trigger or a section, or null.</summary>
+    private static SectionRef? Identity(string reference)
+    {
+        try
+        {
+            var parsed = ItemRefs.Parse(reference);
+            return parsed switch
+            {
+                { Kind: ItemRefKind.Trigger, Path: { } path } => new SectionRef(path, new SectionIdentity("Trigger", parsed.Name)),
+                { Kind: ItemRefKind.Section, Path: { } path, Section: { } id } => new SectionRef(path, id),
+                _ => null,
+            };
+        }
+        catch (EditException)
+        {
+            return null;
         }
     }
 
