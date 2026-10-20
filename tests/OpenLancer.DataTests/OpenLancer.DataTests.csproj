@@ -24,6 +24,8 @@
   <ItemGroup>
     <!-- The retail move proofs script ImGuizmo with the formulas of the unit tests. -->
     <Compile Include="..\OpenLancer.Tests\ImGuizmoResults.cs" Link="ImGuizmoResults.cs" />
+    <!-- The retail tests of the agent tools check each result with the schema check of the unit tests. -->
+    <Compile Include="..\OpenLancer.Tests\SchemaCheck.cs" Link="SchemaCheck.cs" />
   </ItemGroup>
 
   <ItemGroup>

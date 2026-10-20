@@ -43,6 +43,21 @@ The Librelancer build copies native libraries next to the programs. external/Lib
 
 Files that OpenLancer copies from Librelancer keep their MIT headers. docs/VENDORED.md lists them.
 
+The agent server of the editor and oltool (milestone MCP1) uses these NuGet packages:
+  ModelContextProtocol.Core, ModelContextProtocol, ModelContextProtocol.AspNetCore 2.2.0
+                             Apache License 2.0. Parts whose authors did not agree to the license change from
+                             the MIT License stay under the MIT License.
+                             Copyright (c) 2024-2026 Model Context Protocol a Series of LF Projects, LLC.
+                             https://github.com/modelcontextprotocol/csharp-sdk
+                             The SDK includes code of mcpdotnet (MIT License, Copyright (c) 2024
+                             Peder Holdgaard Pedersen) and Polyfills (MIT License, Copyright (c) .NET Foundation
+                             and Contributors), as its THIRD-PARTY-NOTICES.txt tells.
+  Microsoft.Extensions.AI.Abstractions        MIT License, Copyright (c) Microsoft Corporation
+  Microsoft.Extensions.Logging.Abstractions   MIT License, Copyright (c) Microsoft Corporation
+The editor gets Microsoft.Extensions.Caching.Abstractions and Microsoft.Extensions.Hosting.Abstractions from the
+ASP.NET Core shared framework (MIT License). The self-contained editor holds that framework as part of the .NET
+runtime.
+
 Binary releases
 ---------------
 A binary release (the zip on the Releases page) also contains the .NET runtime, the NuGet packages of the programs

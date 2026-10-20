@@ -34,7 +34,7 @@ internal static class Program
     private const int ExitProblems = 1;
     private const int ExitFailure = 2;
 
-    private const string Usage = """
+    private static readonly string Usage = """
         Usage: oltool <command> [arguments]
 
         Commands:
@@ -110,6 +110,8 @@ internal static class Program
                                             same tables, with exact numbers and key order, and that the text is a fixed
                                             point. Exit 1 on a difference. Each problem names the first different value.
 
+        Agent server (milestone MCP1):
+        """ + "\n" + McpCommands.Usage + "\n\n" + """
         Exit codes: 0 = OK, 1 = the data has problems, 2 = the command could not run (wrong arguments, files, folders).
         """;
 
@@ -144,6 +146,7 @@ internal static class Program
                 ["thn", "roundtrip", var source] => ThnRoundTrip(source, null),
                 ["thn", "roundtrip", var source, var path] => ThnRoundTrip(source, path),
                 ["thn", var source, var path] => PrintThn(source, path),
+                ["mcp", .. var mcp] => McpCommands.Run(mcp, Out, Err) ?? Fail(Usage),
                 _ => Fail(Usage),
             };
         }
@@ -312,12 +315,8 @@ internal static class Program
         return Summary(problems);
     }
 
-    /// <summary>
-    /// Merges all mods of a profile on the files of a retail target game (section 9.2 of the M11 design). Prints the
-    /// problems of the merge, of the format checks and of the content checks. When the target is HD Edition 0.7.1 and
-    /// the base of the profile is Freelancer 1.0 or 1.1, it also lists the changed lines of HD Edition that the mods
-    /// replace. The command only reads the game folder.
-    /// </summary>
+    /// <summary>Runs the checks of a profile on a retail target game (see <see cref="TargetValidation"/>) and prints
+    /// their problems and notes. The command only reads the game folder.</summary>
     private static int ValidateTarget(string profilePath, string targetId, string? game, bool json)
     {
         if (ExportTarget.Find(targetId) is not { } target)
@@ -327,23 +326,7 @@ internal static class Program
         if (game != null && !Directory.Exists(game))
             return Fail($"The folder {game} does not exist.");
 
-        var profile = ModProfile.Load(profilePath);
-        var profileBase = GameDetector.CheckRoot(profile.BaseFolder);
-        var report = game != null ? GameDetector.Detect(game) : profileBase;
-        var problems = new List<Diagnostic>();
-        var notes = new List<string>();
-        if ((target.BaseRefusal(report) ?? PlayBuild.Refusal(report, profile.Mods)) is { } refusal)
-            problems.Add(Diagnostic.Error(game ?? profile.BaseFolder, refusal));
-        else
-        {
-            var build = PlayBuild.Run(report, profile.Mods, DllStringResourceWriter.Instance, ThornEvaluator.Instance);
-            problems.AddRange(build.Problems);
-            if (target == ExportTarget.HdEdition && profileBase is { CanBeBase: true, Target: ModTargets.Vanilla, Base: { } retail })
-                problems.AddRange(TargetChecks.HdEditionLines(build.Files, retail));
-            if (TargetChecks.ChangesGameplay(build.Files))
-                notes.Add(TargetChecks.GameplayNote);
-        }
-
+        var (problems, notes) = TargetValidation.Run(ModProfile.Load(profilePath), target, game);
         if (json)
         {
             Out.WriteLine(ValidationJson.Write(problems));

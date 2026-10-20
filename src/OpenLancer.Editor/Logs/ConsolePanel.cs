@@ -116,6 +116,9 @@ internal sealed class ConsolePanel(EditorWindow window)
         return badges;
     }
 
+    /// <summary>Sets the search of the list, for example "Agent" to show the messages of the agent server.</summary>
+    public void Search(string text) => search = text;
+
     /// <summary>Selects an entry and scrolls to it. The filters change when they hide it.</summary>
     public void Select(ConsoleEntry entry)
     {

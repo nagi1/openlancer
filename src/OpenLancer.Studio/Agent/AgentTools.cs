@@ -1,0 +1,166 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Nodes;
+using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Assets;
+using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Editing.Lists;
+using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Studio.Commands;
+
+namespace OpenLancer.Studio.Agent;
+
+/// <summary>
+/// The agent tool table (section 5.3 of the MCP1 design): one row for each tool, in the fixed order of
+/// <c>tools/list</c>. Both hosts serve this table, so a tool behaves the same in both (decision D700). A tool that waits
+/// for another milestone is not in the table of this build (section 7.9).
+/// </summary>
+/// <remarks>This build has the query tools of section 7.1 (milestone MCP1-1a). Each of them changes nothing.</remarks>
+public static class AgentTools
+{
+    private static readonly ToolParam Cursor = new TextParam("cursor", false, null, null);
+    private static readonly ToolParam Limit = new WholeParam("limit", 1);
+    private static readonly ToolParam TextFilter = new TextParam("text", false, null, null);
+
+    /// <summary>The tools in the order of <c>tools/list</c>.</summary>
+    public static IReadOnlyList<StudioTool> All { get; } =
+    [
+        Query("studio_status", ToolGroup.Studio, ToolInput.None, typeof(StudioStatus), StatusQueries.Status),
+        Query("list_systems", ToolGroup.Scene, new ToolInput(TextFilter, Cursor, Limit), typeof(Page<SystemRow>),
+            SceneQueries.ListSystems),
+        Query("get_system", ToolGroup.Scene, new ToolInput(Text("system", true)), typeof(SystemView), SceneQueries.GetSystem),
+        Query("list_items", ToolGroup.Scene, new ToolInput(
+                Text("system", true),
+                new ChoicesParam("kinds", Names<SceneItemKind>()),
+                new ChoicesParam("object_kinds", Names<SceneObjectKind>()),
+                TextFilter,
+                new GroupParam("near", [new PointParam("point", true), new NumberParam("radius", true, 0)]),
+                new TextParam("origin", false, Names<ValueOrigin>(), null),
+                Cursor, Limit),
+            typeof(Page<SceneItemRow>), SceneQueries.ListItems),
+        Query("get_item", ToolGroup.Studio,
+            new ToolInput(Text("ref", true), new FlagParam("include_raw"), new FlagParam("include_used_by")),
+            typeof(ItemView), ItemQueries.GetItem),
+        Query("find_references", ToolGroup.Studio, new ToolInput(Text("ref"), Text("name"), Cursor, Limit),
+            typeof(ReferencesView), ItemQueries.FindReferences),
+        Query("list_values", ToolGroup.Studio, new ToolInput(
+                new TextParam("list", true, ListRules.Retail.Lists.Keys.Order(StringComparer.Ordinal).ToList(), null),
+                TextFilter, Text("system"), Text("script"), Cursor, Limit),
+            typeof(Page<ValueRow>), ItemQueries.ListValues),
+        Query("search_assets", ToolGroup.Scene, new ToolInput(
+                new TextParam("kind", false, Names<AssetKind>(), null),
+                Text("category"), TextFilter, Cursor, Limit),
+            typeof(Page<AssetItemRow>), ItemQueries.SearchAssets),
+        Query("list_prop_groups", ToolGroup.Scene, new ToolInput(TextFilter), typeof(PropGroupsView),
+            ItemQueries.ListPropGroups),
+        Query("list_missions", ToolGroup.Missions, ToolInput.None, typeof(MissionsView), MissionQueryTools.ListMissions),
+        Query("get_mission", ToolGroup.Missions, new ToolInput(
+                Text("script", true),
+                new TextParam("level", false, ["summary", "triggers"], "summary"),
+                new FlagParam("include_lines"),
+                Cursor, Limit),
+            typeof(MissionView), MissionQueryTools.GetMission),
+        Query("get_trigger", ToolGroup.Missions, new ToolInput(Text("ref", true), new FlagParam("include_lines")),
+            typeof(MissionTriggerView), MissionQueryTools.GetTrigger),
+        Query("describe_mission_name", ToolGroup.Missions, new ToolInput(Text("key", true)),
+            typeof(MissionPaletteName), MissionQueryTools.DescribeMissionName),
+        Query("list_cutscenes", ToolGroup.Cutscenes,
+            new ToolInput(new TextParam("category", false, Names<CutsceneFolder>(), null), TextFilter, Cursor, Limit),
+            typeof(Page<CutsceneRow>), CutsceneQueries.ListCutscenes),
+        Query("get_cutscene", ToolGroup.Cutscenes, new ToolInput(Text("ref", true)), typeof(CutsceneView),
+            CutsceneQueries.GetCutscene),
+        Query("get_raw_ini", ToolGroup.Studio, new ToolInput(Text("ref"), Text("file")), typeof(RawIniView),
+            ItemQueries.GetRawIni),
+        Query("check", ToolGroup.Studio, new ToolInput(
+                new TextParam("scope", false, Names<CheckScope>().Where(s => s != "target").ToList(), "all"),
+                Text("ref"),
+                new TextParam("target", false, ["vanilla-1.1", "hde-0.7.1"], null),
+                new FlagParam("include_base_game"),
+                Cursor, Limit),
+            typeof(CheckView), CheckQueries.Check),
+        Query("get_console", ToolGroup.Studio, new ToolInput(
+                Text("source"),
+                new TextParam("severity", false, Names<AgentSeverity>(), "info"),
+                new FlagParam("include_base_game"),
+                new WholeParam("since", 0),
+                Limit),
+            typeof(ConsoleView), CheckQueries.Console, ToolHosts.Editor),
+    ];
+
+    /// <summary>The tool with a name, or null.</summary>
+    public static StudioTool? Find(string name) => All.FirstOrDefault(t => t.Name == name);
+
+    /// <summary>
+    /// Runs the session part of a call on the thread that owns the session: the host and the group checks, the check
+    /// of the arguments, and the handler. A refusal is a tool error with its kind and its detail code. A result gives
+    /// the revision of the session part (section 8.6, item 3 of the MCP1 design).
+    /// </summary>
+    /// <remarks>An exception of a handler or of a tail that is not a refusal is a fault of the server. The call then
+    /// gives the error <c>step_failed</c> with the detail <c>ToolFailed</c>, so the agent reads a code and the audit log
+    /// has the call. A tool of this build changes nothing, so nothing changed.</remarks>
+    /// <exception cref="ArgumentException">The table has no tool with the name. The SDK binding refuses an unknown
+    /// tool before it queues the call.</exception>
+    public static ToolStep Run(AgentHost host, string name, JsonObject? arguments)
+    {
+        var tool = Find(name) ?? throw new ArgumentException($"The tool table has no tool {name}.", nameof(name));
+        var hosts = host.Kind == AgentHostKind.Editor ? ToolHosts.Editor : ToolHosts.Headless;
+        if ((tool.Hosts & hosts) == 0)
+            return ToolResult.Failure(EditErrorKind.NotAvailable, "EditorOnly", AgentTexts.Error("editor_only", ("tool", name)));
+        if (host.HiddenGroups.Contains(tool.Group))
+        {
+            return ToolResult.Failure(EditErrorKind.NotAvailable, "GroupHidden",
+                AgentTexts.Error("group_hidden", ("group", Snake(tool.Group.ToString()))));
+        }
+        ToolStep step;
+        try
+        {
+            step = tool.Run(new ToolCall(host, tool.Input.Read(name, arguments)));
+        }
+        catch (EditException e)
+        {
+            return ToolResult.Failure(e.Error);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            return Failed(name, e);
+        }
+        var revision = host.Session?.Revision;
+        if (step.Result is { } result)
+            return result.WithRevision(revision);
+        var tail = step.Tail!;
+        return ToolStep.Then(async cancel =>
+        {
+            try
+            {
+                return (await tail(cancel).ConfigureAwait(false)).WithRevision(revision);
+            }
+            catch (EditException e)
+            {
+                return ToolResult.Failure(e.Error);
+            }
+            catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+            {
+                return Failed(name, e);
+            }
+        });
+    }
+
+    /// <summary>The error of a call whose handler or tail failed with an exception (see <see cref="Run"/>).</summary>
+    internal static ToolResult Failed(string tool, Exception e) => ToolResult.Failure(EditErrorKind.StepFailed, "ToolFailed",
+        AgentTexts.Error("tool_failed", ("tool", tool), ("reason", e.Message)));
+
+    /// <summary>The snake case of an enum name, as the JSON of the results writes it, for example
+    /// <c>lower_mod</c>.</summary>
+    internal static string Snake(string name) => System.Text.Json.JsonNamingPolicy.SnakeCaseLower.ConvertName(name);
+
+    /// <summary>The JSON names of the values of an enum, in the order of the enum, for the words of an argument. The
+    /// results write the same names.</summary>
+    internal static IReadOnlyList<string> Names<T>() where T : struct, Enum =>
+        Enum.GetValues<T>().Select(v => Snake(v.ToString())).ToList();
+
+    private static TextParam Text(string name, bool required = false) => new(name, required, null, null);
+
+    private static StudioTool Query(string name, ToolGroup group, ToolInput input, Type output, Func<ToolCall, ToolStep> run,
+        ToolHosts hosts = ToolHosts.Both) => new(name, group, hosts, ToolHints.Query, input, output, run);
+}

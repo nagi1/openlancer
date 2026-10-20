@@ -10,6 +10,7 @@ using OpenLancer.Data.Missions;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Runtime.Scene;
+using OpenLancer.Studio.Agent;
 
 namespace OpenLancer.Editor;
 
@@ -89,6 +90,46 @@ internal sealed class ModsWindowSettings
     }
 }
 
+/// <summary>
+/// The settings of the agent server of the editor (section 10 of the MCP1 design): the start with the editor, the
+/// port, the data notice, the hidden tool groups and the limits of one agent call (decision D724).
+/// </summary>
+internal sealed class AgentSettings
+{
+    /// <summary>The default port of the agent server on 127.0.0.1 (decision D705).</summary>
+    public const int DefaultPort = 47815;
+
+    /// <summary>True when the editor starts the agent server at its start (decision D704).</summary>
+    public bool StartWithEditor { get; set; }
+
+    /// <summary>The one port of the server. The server never moves to another port.</summary>
+    public int Port { get; set; } = DefaultPort;
+
+    /// <summary>True after the user saw the data notice and started the server (decision D735).</summary>
+    public bool NoticeShown { get; set; }
+
+    /// <summary>The names of the tool groups that the user hides (decision D725).</summary>
+    public List<string> HiddenGroups { get; set; } = [];
+
+    public AgentLimits Limits { get; set; } = new();
+
+    /// <summary>The hidden tool groups. A name that this editor does not know is ignored.</summary>
+    [JsonIgnore]
+    public IReadOnlySet<ToolGroup> HiddenToolGroups =>
+        HiddenGroups.Select(n => Enum.TryParse<ToolGroup>(n, true, out var g) ? g : (ToolGroup?)null)
+            .OfType<ToolGroup>().Where(g => g != ToolGroup.Studio).ToHashSet();
+
+    /// <summary>Hides or shows a tool group.</summary>
+    public void SetHidden(ToolGroup group, bool hidden)
+    {
+        HiddenGroups.RemoveAll(n => n.Equals(group.ToString(), StringComparison.OrdinalIgnoreCase));
+        if (hidden)
+        {
+            HiddenGroups.Add(group.ToString());
+        }
+    }
+}
+
 /// <summary>How the Assets panel shows its tiles (decision D270 of the M23 design).</summary>
 internal enum ThumbnailMode
 {
@@ -102,7 +143,8 @@ internal enum ThumbnailMode
 /// <summary>
 /// Editor preferences that persist between sessions: the UI scale, the panel sizes, the view options, the gizmo tool
 /// and its snap, the Database category, the open Inspector sections, the ImGui table state, the recent profiles, the
-/// active mod and the Play ship of each profile, the linked games, the workspace folder and the Mods window.
+/// active mod and the Play ship of each profile, the linked games, the workspace folder, the Mods window and the agent
+/// server.
 /// </summary>
 internal sealed class EditorSettings
 {
@@ -256,6 +298,9 @@ internal sealed class EditorSettings
 
     /// <summary>The state of the Mods window (milestone M11c).</summary>
     public ModsWindowSettings ModsWindow { get; set; } = new();
+
+    /// <summary>The settings of the agent server (milestone MCP1).</summary>
+    public AgentSettings Agent { get; set; } = new();
 
     /// <summary>The root of the linked game of the last Play in the game, or null. Ctrl+F5 plays in it (decision
     /// D324).</summary>
@@ -412,6 +457,10 @@ internal sealed class EditorSettings
         {
             settings.RecentProfiles.Add(new RecentProfile(last, savedUtc));
         }
+
+        // A port outside the range of TCP gives the default port, and each limit goes into its allowed range.
+        settings.Agent.Port = settings.Agent.Port is > 0 and <= 65535 ? settings.Agent.Port : AgentSettings.DefaultPort;
+        settings.Agent.Limits = settings.Agent.Limits.Clamped();
 
         settings.LegacyLastProfile = null;
         // The serializer makes the dictionaries without the comparer of the paths.

@@ -8,6 +8,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The texts of the agent tools (milestone MCP1, decision D726). -->
+    <EmbeddedResource Include="Agent/agent-tools.json" LogicalName="OpenLancer.Studio.Agent.agent-tools.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The editor calls the commands and the helpers of the layer. -->
     <InternalsVisibleTo Include="OpenLancer.Editor" />
     <InternalsVisibleTo Include="OpenLancer.Tests" />
