@@ -73,6 +73,7 @@ dotnet test external\Librelancer\src\LibreLancer.Tests\LibreLancer.Tests.csproj
 - Name the milestone, for example `Milestone: M23`.
 - Write the title as a commit subject: imperative and in STE. Example: "Add prop groups to the asset browser (M23)". The owner squashes the pull request into one commit with this title.
 - Add a test for each change. A bug fix starts with a test that fails without the fix.
+- A raw string literal takes the line ends of its source file. When a test compares a literal with text that the code writes, call `.ReplaceLineEndings("\n")` on the literal. Then the test passes with LF and with CRLF line ends.
 - Update the docs that describe the changed behavior.
 - Write prose in Simplified Technical English (STE): short sentences, active voice, no semicolons and no contractions. This rule applies to docs, comments, UI text, error messages, commit messages and pull request text. The full checklist is in the section "Writing style" of AGENTS.md.
 - When Unity has an equivalent behavior, follow Unity.
