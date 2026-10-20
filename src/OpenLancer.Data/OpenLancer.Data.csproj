@@ -15,6 +15,9 @@
     <!-- The argument schema and the behavior prefabs of mission scripts (milestone M6a, decisions D524 and D525). -->
     <EmbeddedResource Include="Missions\mission-schema.json" LogicalName="OpenLancer.Data.Missions.mission-schema.json" />
     <EmbeddedResource Include="Missions\mission-prefabs.json" LogicalName="OpenLancer.Data.Missions.mission-prefabs.json" />
+    <!-- The templates of the built-in behavior prefabs (milestone M6b-3, decision D672). The file name is the prefab
+         id. -->
+    <EmbeddedResource Include="Missions\Prefabs\*.ini" LogicalName="OpenLancer.Data.Missions.Prefabs.%(Filename).ini" />
     <!-- The file lists of the known game builds (milestone M11a). The file name is the build id. They hold paths, sizes
          and hashes only. -->
     <EmbeddedResource Include="..\..\data-manifest\*.tsv" LogicalName="OpenLancer.Data.Games.%(Filename).tsv" />
