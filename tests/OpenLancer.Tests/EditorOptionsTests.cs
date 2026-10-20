@@ -74,6 +74,33 @@ public sealed class EditorOptionsTests
         Assert.Throws<ArgumentException>(() => EditorOptions.Parse(args));
     }
 
+    /// <summary>The render bench of the agent server (section 13.4 of the MCP1 design) takes the nickname of one star
+    /// system.</summary>
+    [Fact]
+    public void TheRenderBenchTakesOneSystem()
+    {
+        var options = EditorOptions.Parse(["retail.json", "--bench-agent-render", "Li01"]);
+
+        Assert.Equal("retail.json", options.Profile);
+        Assert.Equal("Li01", options.BenchAgentRender);
+        Assert.Empty(options.BenchCutscenes);
+        Assert.Empty(options.BenchMissions);
+        Assert.True(options.Bench);
+        Assert.Null(EditorOptions.Parse(["a.json"]).BenchAgentRender);
+    }
+
+    [Theory]
+    [InlineData("a.json", "--bench-agent-render")]
+    [InlineData("a.json", "--bench-agent-render", "Li01", "Li02")]
+    [InlineData("a.json", "--bench-agent-render", "Li01", "--bench-cutscene", @"DATA.thn")]
+    [InlineData("a.json", "--bench-mission", @"DATA.ini", "--bench-agent-render", "Li01")]
+    public void AWrongCommandLineOfTheRenderBenchThrows(params string[] args)
+    {
+        var error = Assert.Throws<ArgumentException>(() => EditorOptions.Parse(args));
+
+        Assert.Contains("--bench-agent-render", error.Message);
+    }
+
     [Fact]
     public void AGoodCommandLineHasNoProblem()
     {

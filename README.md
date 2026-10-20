@@ -125,6 +125,8 @@ The view tools work only in the editor:
 
 The agent program can send each image to its model service, and a capture of a panel can show the names of your folders. An image of the Scene or of a cutscene has at most 2048 pixels on each side. **Agent > Agent settings > Advanced** changes this limit.
 
+To measure the images, start the editor with `OpenLancer.Editor <profile.json> --bench-agent-render <system>`, with the nickname of a system of the profile. The bench opens the profile without an active mod and opens the system. It renders one image of 1024 by 640 to warm up, then one image from each of 10 directions, as `render_scene` does. For each image, it writes the time on the UI thread and the time until the PNG is ready to the engine log of the editor. Then it closes. The gate is a median under 100 ms. A median above the gate, or an image that fails, gives the exit code 1. The bench needs no agent server and does not change the editor settings.
+
 The server accepts connections from this computer only. It listens on 127.0.0.1, and each request needs the token. Use the address with `127.0.0.1`, not `localhost`. The helper gives no token for `localhost`, because another program can listen on the IPv6 address of `localhost`. Never put a proxy or a tunnel, for example a Tailscale Funnel, in front of the port of the agent server.
 
 To run the tools without the editor, add a server that starts oltool:

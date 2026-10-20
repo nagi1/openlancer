@@ -218,6 +218,26 @@ public sealed class AgentRenderTests
             SceneView.ZoneRadius(Zone(ShapeKind.Ring, new Vector3(5000, 200, 3000))), 2);
     }
 
+    /// <summary>The render bench turns the frame of the system about the vertical axis, one step for each image, and
+    /// gates the median time (section 13.4 of the MCP1 design).</summary>
+    [Fact]
+    public void TheRenderBenchLooksAtTheSystemFromTenDirections()
+    {
+        var framed = new ShotCamera(new Vector3(0, 500, 1000), new Vector3(0, 0, 0), 80);
+
+        var half = AgentRenderBench.Camera(framed, AgentRenderBench.Images / 2);
+        var full = AgentRenderBench.Camera(framed, AgentRenderBench.Images);
+
+        Assert.Equal(framed, AgentRenderBench.Camera(framed, 0));
+        Assert.Equal(framed.LookAt, half.LookAt);
+        Assert.Equal(framed.Distance, half.Distance, 2);
+        Assert.Equal(-1000, half.Position.Z, 2);
+        Assert.Equal(500, half.Position.Y, 2);
+        Assert.Equal(framed.Position.Z, full.Position.Z, 2);
+        Assert.Equal(2, AgentRenderBench.Median([3, 1, 2]));
+        Assert.Equal(2.5, AgentRenderBench.Median([4, 1, 3, 2]));
+    }
+
     /// <summary>The preview clock steps whole steps of 1/60 s, so an image shows the last step at or before the time of
     /// the call.</summary>
     [Fact]

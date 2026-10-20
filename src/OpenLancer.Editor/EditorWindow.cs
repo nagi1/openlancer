@@ -20,6 +20,7 @@ using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Agent;
 using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Database;
@@ -75,6 +76,7 @@ internal sealed partial class EditorWindow : Game
     private MissionView missionView = null!;
     private CutsceneBench? bench;
     private MissionBench? missionBench;
+    private AgentRenderBench? agentBench;
     private readonly PlayMenu playMenu;
 
     // The base run of the Console: the engine lines of the base folder without mods (decision D516 of the console
@@ -304,12 +306,16 @@ internal sealed partial class EditorWindow : Game
     }
 
     /// <summary>
-    /// Starts the preview bench: it opens the profile of the command line without an active mod, so the bench takes no
-    /// lock and writes no file of a mod.
+    /// Starts a bench: it opens the profile of the command line without an active mod, so the bench takes no lock and
+    /// writes no file of a mod.
     /// </summary>
     private void StartBench()
     {
-        if (options.BenchMissions.Count > 0)
+        if (options.BenchAgentRender is { } system)
+        {
+            agentBench = new AgentRenderBench(this, agentViews, system);
+        }
+        else if (options.BenchMissions.Count > 0)
         {
             missionBench = new MissionBench(this, missionView, options.BenchMissions);
         }
@@ -670,7 +676,8 @@ internal sealed partial class EditorWindow : Game
         Log.Add(ConsoleSeverity.Info, EditorSource,
             $"Game data loaded: {data.Items.Systems.Count()} systems, {data.Items.Ships.Count()} ships, " +
             $"{data.Items.Equipment.Count()} equipment.");
-        // The bench measures the preview alone, so it opens no system.
+        // A bench opens no system of its own choice: the preview bench and the mission bench measure their views
+        // alone, and the render bench opens the system of its command line.
         if (!options.Bench && data.Items.Systems.Get(DefaultSystem) is { } system)
         {
             OpenSystem(system);
@@ -758,6 +765,7 @@ internal sealed partial class EditorWindow : Game
         // The session part of at most one agent call runs before the panels draw (decision D708 of the MCP1 design).
         agentController.Frame();
         agentRender.Frame();
+        agentBench?.Update();
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;
