@@ -60,6 +60,9 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
     /// <summary>The bound of the first catch-up of each system in the loop of proof (6), after the code is warm.</summary>
     private const double FirstCatchUpMilliseconds = 100;
 
+    /// <summary>The bound of the cold first catch-up of proof (6): the first catch-up of the test, measured once.</summary>
+    private const double ColdCatchUpMilliseconds = 250;
+
     static SceneApplierRetailTests() => AppHandler.ConsoleInit(silent: true);
 
     /// <summary>
@@ -230,12 +233,16 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
     /// <remarks>
     /// <para>The first catch-ups of a process are slower. The runtime first compiles the code without optimization (tier
     /// 0) and optimizes it later (tiered compilation). The first catch-up of the test holds the compile when no test
-    /// before ran the code. So its time depends on the order of the tests. Alone, the catch-up of Li01 took 138 ms,
-    /// over the bound of 100 ms of the other systems. The test measures this catch-up once, on the first system, and
-    /// writes its time with no gate.</para>
-    /// <para>The loop then bounds the first catch-up of each other system in a new scene, with warm code. The test also
-    /// bounds the first runs of Br01 after the loop, once, and the runs after a warm-up. The gates measure as
-    /// <see cref="Timing"/> tells.</para>
+    /// before ran the code. So its time depends on the order of the tests. Alone, the catch-up of Li01 took 138 ms to
+    /// 162 ms, over the bound of 100 ms of the other systems. So the test has two bounds for a first catch-up:</para>
+    /// <list type="bullet">
+    /// <item>The cold first catch-up is the first catch-up of the test, on the first system. No warm-up runs before
+    /// it. The test measures it once, with no retry, and its bound is 250 ms.</item>
+    /// <item>The loop bounds the first catch-up of each other system in a new scene, with warm code. Its bound is
+    /// 100 ms, and its gate can try again.</item>
+    /// </list>
+    /// <para>The test also bounds the first runs of Br01 after the loop, once, and the runs after a warm-up. The gates
+    /// measure as <see cref="Timing"/> tells.</para>
     /// </remarks>
     [Fact]
     [Trait(Timing.Category, Timing.Performance)]
@@ -262,9 +269,9 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
             return time;
         }
 
-        // The first catch-up of the test warms up the code. It runs once, with no gate, and the loop does not measure
-        // its system again.
-        var compile = FirstCatchUp(systems[0], count: true);
+        // The cold first catch-up runs before each other catch-up of the test. Its gate measures one run, with no
+        // retry, and the loop does not measure its system again.
+        var coldCatchUp = FirstCatchUp(systems[0], count: true);
         // Each try of a gate makes a new scene of the system.
         var gates = new TimingGates();
         foreach (var nickname in systems.Skip(1))
@@ -310,7 +317,7 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
             return TimeSpan.FromMilliseconds(Median(warm[^1]));
         });
         output.WriteLine($"systems {systems.Count}, differences {differences}, systems with deferred effects {pending}, " +
-                         $"first catch-up of the test (no gate) {systems[0]} {compile.TotalMilliseconds:0.0} ms, " +
+                         $"cold first catch-up {systems[0]} {coldCatchUp.TotalMilliseconds:0.0} ms, " +
                          $"slowest first catch-up {slowest.System} {slowest.Milliseconds:0.0} ms. Br01 ({sections} " +
                          $"sections) first runs: {Times(cold)}. Br01 after the warm-up: " +
                          $"{string.Join("; ", warm.Select(Times))}.");
@@ -322,6 +329,8 @@ public sealed class SceneApplierRetailTests(ITestOutputHelper output)
         Assert.True(warmBest.TotalMilliseconds < WarmBrMilliseconds,
             $"The catch-up of Br01 took {warmBest.TotalMilliseconds} ms.");
         Assert.True(Median(cold) < ColdBrMilliseconds, $"The first catch-ups of Br01 took {Median(cold)} ms.");
+        Assert.True(coldCatchUp.TotalMilliseconds < ColdCatchUpMilliseconds,
+            $"The cold first catch-up of {systems[0]} took {coldCatchUp.TotalMilliseconds} ms.");
         Assert.True(slowest.Milliseconds < FirstCatchUpMilliseconds,
             $"The first catch-up of {slowest.System} took {slowest.Milliseconds} ms.");
     }

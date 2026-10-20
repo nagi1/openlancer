@@ -66,7 +66,12 @@ Some retail tests have a timing gate, for example "the run of the 14 story scrip
 - A gate on a first run measures one run. Examples are the first run of the story scripts and the first build of an index. A second run is faster, because the runtime compiled the code and filled the caches. So the gate does not try again. A gate on a step that the test cannot run again, for example a delete, also measures one run.
 - A gate on a step that runs often takes the best of its tries. While the best try is over the limit, the gate tries again. All gates of one test try again for up to 60 s in total. So a short burst of other work, for example the unit tests or another build, does not fail these gates.
 
-A burst of other work can fail a gate of the first kind. A long build can also slow the computer for longer than 60 s. When a gate fails on a busy computer, run the gates alone:
+A first run with cold code is slower than a first run with warm code, so the two runs have different limits. For example, the catch-up test of the retail systems (P06 in `SceneApplierRetailTests`) has two limits for the first catch-up of a system:
+
+- The cold first catch-up is the first catch-up of the test. No warm-up runs before it. The gate measures one run with no retry, and the limit is 250 ms.
+- The first catch-up of each other system runs with warm code. The limit is 100 ms, and the gate can try again.
+
+A burst of other work can fail a gate that measures one run. A long build can also slow the computer for longer than 60 s. When a gate fails on a busy computer, run the gates alone:
 
 ```
 dotnet test tests/OpenLancer.DataTests --filter Category=Performance
