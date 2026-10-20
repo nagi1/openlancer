@@ -15,7 +15,7 @@ namespace OpenLancer.Tests;
 public sealed class ThnPatchTests
 {
     /// <summary>Two entities repeat a name in another letter case, and two events repeat a key.</summary>
-    private const string BaseText = """
+    private static readonly string BaseText = """
         duration = 10
         entities = {
             { entity_name = "Cam_A", type = CAMERA, cameraprops = { fovh = 10, hvaspect = 1.5 }, spatialprops = { pos = { 0, 0, 0 } } },
@@ -31,7 +31,7 @@ public sealed class ThnPatchTests
             { 5, START_PSYS, { "Fx" }, { duration = 2 } },
             { 5, START_PSYS, { "Fx" }, { duration = 3 } }
         }
-        """;
+        """.ReplaceLineEndings("\n");
 
     private const string FxKey = "{ 5, START_PSYS, { \"Fx\" } }";
 
@@ -240,7 +240,7 @@ public sealed class ThnPatchTests
             	{ ol_new = { 5, START_PSYS, { "Fx" }, { duration = 2 } } }
             }
 
-            """, patch.Write());
+            """.ReplaceLineEndings("\n"), patch.Write());
         AssertScript(Changed(("{ 5, START_PSYS, { \"Fx\" }, { duration = 2 } },\n    { 5, START_PSYS, { \"Fx\" }, { duration = 3 } }",
                 "{ 5, START_PSYS, { \"Fx\" }, { duration = 3 } },\n    { 5, START_PSYS, { \"Fx\" }, { duration = 2 } }")),
             Applied(Read(patch.Write()).Apply(lower, Evaluator.Symbols, ids)).Model);
@@ -402,7 +402,7 @@ public sealed class ThnPatchTests
             	{ ol_match = "Cam_A", ol_set = { ["cameraprops.fovh"] = 20 } }
             }
 
-            """, patch.Write());
+            """.ReplaceLineEndings("\n"), patch.Write());
         Assert.Equal("", Read("ol_thn_patch = 1").Header);
         Assert.Throws<ArgumentException>(() => new ThnPatch("not a comment", null, [], []));
     }
@@ -439,7 +439,7 @@ public sealed class ThnPatchTests
             	{ ol_match = { 5, SET_CAMERA, { "Monitor", "Cam_B" } }, ol_set = { time = 6 } }
             }
 
-            """, patch.Write());
+            """.ReplaceLineEndings("\n"), patch.Write());
         Assert.True(ThnPatch.Make(lower, lower, Evaluator.Symbols).IsEmpty);
         Assert.Equal("ol_thn_patch = 1\nduration = 12\n", ThnPatch.Make(lower, lower with { Duration = 12 }, Evaluator.Symbols).Write());
     }
@@ -467,7 +467,7 @@ public sealed class ThnPatchTests
             	{ ol_match = "Cam_B", ol_set = { entity_name = "Cam_B", cameraprops = { fovh = 30 } }, ol_remove = { "entity_name", "cameraprops" } }
             }
 
-            """, patch.Write());
+            """.ReplaceLineEndings("\n"), patch.Write());
         Assert.Equal(working.ToGlobals(), merged!.ToGlobals());
     }
 
