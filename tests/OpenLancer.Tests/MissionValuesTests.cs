@@ -49,6 +49,23 @@ public sealed class MissionValuesTests
             m.Refuse(new SetActionValue(Row("ol_end", 3), "state", "WIN"), MissionErrors.WordNotInSet).Message);
     }
 
+    /// <summary>An attitude is a number from -1 to 1, or a REP_ word of the game, as retail writes it.</summary>
+    [Fact]
+    public void AnAttitudeTakesANumberOrAWord()
+    {
+        using var m = Create();
+
+        m.Apply(new AddAction(T("ol_wave"), LineSpec.Of("Act_SetVibe", ("from", "ol_ship_1"), ("to", "Player"),
+            ("attitude", "rep_hostile_maximum"))));
+        m.Apply(new SetActionValue(Row("ol_wave", 6), "attitude", -0.5));
+
+        Assert.Equal("Act_SetVibe = ol_ship_1, Player, -0.5", m.Lines("ol_wave")![^1]);
+        Assert.Equal("'friendly' is not a number. Attitude needs a number.",
+            m.Refuse(new SetActionValue(Row("ol_wave", 6), "attitude", "friendly"), MissionErrors.ValueKind).Message);
+        m.Apply(new SetActionValue(Row("ol_wave", 6), "attitude", "REP_FRIEND_MAXIMUM"));
+        Assert.Equal("Act_SetVibe = ol_ship_1, Player, REP_FRIEND_MAXIMUM", m.Lines("ol_wave")![^1]);
+    }
+
     [Fact]
     public void AWholeNumberANumberAndAPositionCheckTheirKind()
     {

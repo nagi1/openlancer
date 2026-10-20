@@ -178,6 +178,13 @@ internal static class MissionValues
         string result;
         switch (spec.Kind)
         {
+            // An attitude is a number from -1 to 1, or a REP_ word of the game (the word set 'attitude').
+            case MissionValueKind.Attitude when value.Type == MissionValueType.Text &&
+                                                schema.Tokens.GetValueOrDefault("attitude")?.Find(text) is { } word:
+                if (!string.Equals(word, text, StringComparison.Ordinal))
+                    notes.Add($"'{text}' became '{word}', the letter case that the game reads.");
+                result = word;
+                break;
             case MissionValueKind.Number or MissionValueKind.Attitude:
                 result = Number(spec, value, whole: spec.Whole);
                 break;

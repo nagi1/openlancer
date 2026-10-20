@@ -271,6 +271,10 @@ public static class PrefabValues
         var schema = MissionSchema.Retail;
         switch (field.Kind)
         {
+            case PrefabFieldKind.Lines when schema.Directive(row.Key ?? "") is { } order:
+                return field.Keys.Count > 0 && !field.Keys.Contains(order.Name, StringComparer.OrdinalIgnoreCase)
+                    ? $"{field.Label} takes only these lines: {string.Join(", ", field.Keys)}."
+                    : LineProblem("ObjList", order.Name, row.Texts);
             case PrefabFieldKind.Condition or PrefabFieldKind.Lines:
             {
                 var key = row.Key ?? "";

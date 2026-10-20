@@ -573,12 +573,14 @@ internal sealed class TemplateReader(string text)
                 case "key":
                     if (field.Kind is not (PrefabFieldKind.Lines or PrefabFieldKind.Condition))
                         Problem(line, "Only a condition field or a lines field has 'key' lines.");
+                    else if (field.Kind == PrefabFieldKind.Lines && schema.Directive(value) is { } order)
+                        field = field with { Keys = [.. field.Keys, order.Name] };
                     else if (schema.Name(value) is not { } name)
-                        Problem(line, $"'{value}' is not an action or a condition of the game.");
+                        Problem(line, $"'{value}' is not an action, a condition or an order of the game.");
                     else if (name.Kind != (field.Kind == PrefabFieldKind.Condition ? MissionNameKind.Condition : MissionNameKind.Action))
                         Problem(line, field.Kind == PrefabFieldKind.Condition
                             ? $"{name.Name} is an action. A condition field takes conditions."
-                            : $"{name.Name} is a condition. A lines field takes actions.");
+                            : $"{name.Name} is a condition. A lines field takes actions and orders.");
                     else
                         field = field with { Keys = [.. field.Keys, name.Name] };
                     break;

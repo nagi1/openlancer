@@ -88,6 +88,29 @@ public enum PrefabListCodec
     Triggers,
 }
 
+/// <summary>
+/// The write rule of a field of a matched instance (section 5.8 of the M6b design): the lines that the field writes. A
+/// field without a rule shows structure, for example the triggers of a role, and is read-only.
+/// </summary>
+public enum PrefabWrite
+{
+    /// <summary>The field is read-only.</summary>
+    None,
+
+    /// <summary>A value of an action of the role: <c>SetActionValue</c>, or the lines of the action keys for a list
+    /// field.</summary>
+    Value,
+
+    /// <summary>The condition of the role trigger: <c>SetCondition</c>, one for each trigger of a list field.</summary>
+    Condition,
+
+    /// <summary>A value of a key of the core section: <c>SetLineValue</c>, or <c>SetItemKey</c> for a new line.</summary>
+    Key,
+
+    /// <summary>The lines of an action group, of each action, or of keys of the core section.</summary>
+    Lines,
+}
+
 /// <summary>The list data of a list field of a prefab.</summary>
 /// <param name="Items">The plural word of the rows, for example "ships".</param>
 public sealed record PrefabList(PrefabListCodec Codec, string Items);
@@ -97,6 +120,10 @@ public sealed record PrefabList(PrefabListCodec Codec, string Items);
 /// <param name="Help">What the field holds, in one or two sentences, for its tooltip (AGENTS.md UI rule 9).</param>
 public sealed record PrefabField(string Id, string Label, PrefabSource From, PrefabList? List, string Help)
 {
+    /// <summary>The write rule of the field for a matched instance, or <see cref="PrefabWrite.None"/> for a read-only
+    /// field (section 5.8 of the M6b design).</summary>
+    public PrefabWrite Write { get; init; }
+
     /// <summary>
     /// The keys of the lines of a <see cref="PrefabListCodec.Lines"/> list field. They are its action keys, the actions of
     /// its group, each action, or its keys of the core section.
@@ -348,6 +375,8 @@ public sealed class MissionPrefabs
                     throw new FormatException($"A field of the prefab {definition.Id} reads the unknown role '{field.From.Role}'.");
                 foreach (var step in definition.Steps.Where(s => s.Requires != null && !roles.Contains(s.Requires)))
                     throw new FormatException($"A step of the prefab {definition.Id} requires the unknown role '{step.Requires}'.");
+                foreach (var field in definition.Fields.Where(f => !WriteFits(f)))
+                    throw new FormatException($"The write rule of field {field.Id} of the prefab {definition.Id} does not fit its source.");
             }
             var ordered = definitions.Where(d => d.Kind == MissionPrefabKind.Beat).OrderBy(d => d.Order)
                 .Concat(definitions.Where(d => d.Kind == MissionPrefabKind.Order)).ToList();
@@ -359,6 +388,16 @@ public sealed class MissionPrefabs
             throw new InvalidDataException("The mission prefabs are not valid: " + e.Message, e);
         }
     }
+
+    /// <summary>True when the write rule of a field fits the lines that the field reads.</summary>
+    private static bool WriteFits(PrefabField field) => field.Write switch
+    {
+        PrefabWrite.Value => field.From.Actions.Count > 0 && !field.From.Trigger,
+        PrefabWrite.Condition => field.From.Condition,
+        PrefabWrite.Key => field.From.Key != null,
+        PrefabWrite.Lines => field.From.Group != null || field.From.AllActions || field.From.Keys.Count > 0,
+        _ => true,
+    };
 
     /// <summary>The member rules that the matcher knows.</summary>
     private static readonly HashSet<string> KnownRules =
@@ -690,7 +729,18 @@ public sealed class MissionPrefabs
         return new PrefabField(Text(e, "id"), Text(e, "label"), new PrefabSource(Text(from, "role"), Bool(from, "trigger"),
             Bool(from, "condition"), Strings(from, "actions"), from.TryGetProperty("value", out var v) ? v.GetInt32() : 0,
             Optional(from, "key"), Optional(from, "group"), Bool(from, "allActions"), Strings(from, "keys")),
-            e.TryGetProperty("list", out var list) ? ReadList(list) : null, Text(e, "help"));
+            e.TryGetProperty("list", out var list) ? ReadList(list) : null, Text(e, "help"))
+        {
+            Write = Optional(e, "write") switch
+            {
+                null => PrefabWrite.None,
+                "value" => PrefabWrite.Value,
+                "condition" => PrefabWrite.Condition,
+                "key" => PrefabWrite.Key,
+                "lines" => PrefabWrite.Lines,
+                var other => throw new FormatException($"The write rule '{other}' is not known."),
+            },
+        };
     }
 
     private static PrefabList ReadList(JsonElement e) => new(Text(e, "codec") switch
