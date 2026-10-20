@@ -49,13 +49,16 @@ public sealed class RawMissionEditTests
             .Replace("[ObjList]\nnickname = ol_orders\nGotoVec = goto_cruise, 0, 0, 1000, 100\n\n", "")
             .Replace("[Trigger]\nnickname = ol_end", "[Trigger]\nnickname = ol_extra\nCnd_True = no_params\n\n[Trigger]\nnickname = ol_end");
 
+        Assert.Equal([MissionDraft.NewPlaceNote("Trigger")], Plan(m, start, end).Notes);
         var result = Run(m, start, end);
 
         Assert.Equal(["system = ol_system", "nickname = ol_wave", "Cnd_Timer = 8", "Act_SpawnShip = ol_ship_1",
             "Act_DeactTrig = ol_end", "Act_ActTrig = ol_end"], m.Lines("ol_wave"));
         Assert.False(m.Has(Item("ObjList", "ol_orders")));
+        // A new trigger of a patched file goes to the end of the file, where the patch adds it (section 6.6 of the M6b
+        // design). So the patch moves no other section.
         var document = m.Session.OpenDocument(Script)!;
-        Assert.Equal(MissionDraftLines.TriggerIndex(document, "ol_wave") + 1, MissionDraftLines.TriggerIndex(document, "ol_extra"));
+        Assert.Equal(document.Working.Count - 1, MissionDraftLines.TriggerIndex(document, "ol_extra"));
         Assert.Equal("Edit INI of ol_test.ini", result.Label);
         Assert.Equal("Edit INI of ol_test.ini", m.Session.UndoLabel);
         m.Session.Undo();
@@ -186,5 +189,66 @@ public sealed class RawMissionEditTests
 
         var command = Assert.IsType<ReplaceSectionBody>(Assert.Single(plan.Batch!.Commands));
         Assert.Equal(Item("NPC", "ol_npc_1"), command.Section);
+    }
+
+    [Fact]
+    public void ANewTriggerInTheMiddleOfTheTextSavesAsOneNewSectionBesideTheChangedOne()
+    {
+        using var m = Create();
+        var start = Text(m);
+        var end = start.Replace("Act_ActTrig = ol_wave\n", "Act_ActTrig = ol_delay\n")
+            .Replace("[Trigger]\nsystem = ol_system", "[Trigger]\nnickname = ol_delay\nCnd_Timer = 3\nAct_ActTrig = ol_wave\n\n" +
+                                                    "[Trigger]\nsystem = ol_system");
+
+        Run(m, start, end);
+        var saved = m.Session.Save();
+
+        Assert.True(saved.Saved, string.Join("\n", saved.Problems));
+        var patch = m.Ws.ReadModPatch(Script);
+        Assert.Equal(1, patch.Split("ol.replace = true").Length - 1);
+        Assert.Equal(1, patch.Split("ol.new = true").Length - 1);
+        Assert.DoesNotContain("ol.delete", patch);
+    }
+
+    [Fact]
+    public void ABlockOfAPageKeepsItsSectionsAndTheirTypes()
+    {
+        using var m = Create();
+        var wave = new SectionIdentity("Trigger", "ol_wave");
+        var start = "[Trigger]\nsystem = ol_system\nnickname = ol_wave\nCnd_Timer = 3\nAct_SpawnShip = ol_ship_1\n" +
+                    "Act_DeactTrig = ol_end\nAct_ActTrig = ol_end";
+
+        var second = RawMissionEdit.PlanBlock(m.Session, Script, [wave], start, start + "\n\n[Trigger]\nnickname = ol_more\nCnd_True = no_params");
+        var type = RawMissionEdit.PlanBlock(m.Session, Script, [wave], start, start.Replace("[Trigger]", "[ObjList]"));
+
+        Assert.Null(second.Batch);
+        Assert.Equal("Line 9: This block holds one section, so a header cannot go in or out of it. Add or remove a section " +
+                     "in the Raw INI view of the whole script.", Assert.Single(second.Problems).ToString());
+        Assert.Null(type.Batch);
+        Assert.Equal("Line 1: The header of this section must stay [Trigger]. Make a section of another type in the Raw INI " +
+                     "view of the whole script.", Assert.Single(type.Problems).ToString());
+    }
+
+    [Fact]
+    public void TheMarksOfADraftFollowTheChecksOfTheParsedText()
+    {
+        using var m = Create();
+        var start = Text(m);
+        var draft = start.Replace("Act_SpawnShip = ol_ship_1", "Act_SpawnShip = ol_ship_1\nAct_ActTrig = ol_nowhere");
+        var lineOfNew = draft.Split('\n').ToList().FindIndex(l => l == "Act_ActTrig = ol_nowhere") + 1;
+
+        var text = RawMissionEdit.Draft(m.Session, Script, null, "[Trigger]\nnickname = ol_a\nCnd_True no\n[Rocket]");
+        var checks = RawMissionEdit.Draft(m.Session, Script, null, draft);
+        var marks = checks.Checks!();
+        var block = RawMissionEdit.Draft(m.Session, Script, [new SectionIdentity("Trigger", "ol_end")],
+            "[Trigger]\nnickname = ol_end\nCnd_True = no_params\nAct_ActTrig = ol_nowhere");
+
+        Assert.Null(text.Checks);
+        Assert.Equal([3, 4], text.Problems.Select(p => p.Line));
+        Assert.Empty(checks.Problems);
+        Assert.Contains(marks, mark => mark.Line == lineOfNew && mark.Problem.Rule == "M05");
+        Assert.Contains(block.Checks!(), mark => mark.Line == 4 && mark.Problem.Rule == "M05");
+        // The draft changes nothing.
+        Assert.Equal(start, Text(m));
     }
 }

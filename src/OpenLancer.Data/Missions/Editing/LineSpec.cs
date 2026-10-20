@@ -162,6 +162,6 @@ public sealed class MissionValueConverter : JsonConverter<MissionValue>
         JsonValueKind.True => MissionValue.Of(true),
         JsonValueKind.False => MissionValue.Of(false),
         JsonValueKind.Array => MissionValue.List(e.EnumerateArray().Select(From)),
-        _ => throw new JsonException("A value is a number, a text, true, false or a list of values."),
+        _ => throw new MissionJsonException(MissionErrors.BadJsonError("A value is a number, a text, true, false or a list of values.")),
     };
 }

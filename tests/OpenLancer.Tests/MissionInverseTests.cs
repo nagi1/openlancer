@@ -4,6 +4,7 @@ using System.Linq;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Missions.Editing;
 using Xunit;
+using OpenLancer.Data.Editing;
 using static OpenLancer.Tests.MissionEdits;
 
 namespace OpenLancer.Tests;
@@ -209,5 +210,41 @@ public sealed class MissionInverseTests
             _ => new SetCondition(T(trigger), random.Next(2) == 0 ? LineSpec.Of("Cnd_True")
                 : LineSpec.Of("Cnd_Timer", ("seconds", random.Next(1, 9)))),
         };
+    }
+
+    [Fact]
+    public void TheInverseOfARenameLeavesNoFalseMissingLineSoAnAgentRevertsItWithoutAConfirmation()
+    {
+        using var m = Create();
+        var before = m.State();
+
+        var trigger = m.Apply(new RenameTrigger(T("ol_end"), "ol_finish"));
+        var item = m.Apply(new RenameItem(Item("MsnShip", "ol_ship_1"), "ol_ship_9"));
+        var revertItem = m.Missions.Apply(new MissionBatch("Revert", [item.Inverse!]) { Origin = EditOrigin.Agent });
+        var revertTrigger = m.Missions.Apply(new MissionBatch("Revert", [trigger.Inverse!]) { Origin = EditOrigin.Agent });
+
+        Assert.Equal(EditStatus.Applied, revertItem.Status);
+        Assert.Empty(revertItem.Missing);
+        Assert.Equal(EditStatus.Applied, revertTrigger.Status);
+        Assert.Empty(revertTrigger.Missing);
+        Assert.Equal(before, m.State());
+    }
+
+    [Fact]
+    public void TheInverseOfARenameSkipsTheFormRuleOfNames()
+    {
+        // A raw edit can give a new trigger a name that the form rule refuses, as retail has trigger names with more than
+        // 47 characters (review finding RB4).
+        var longName = "ol_" + new string('a', 50);
+        using var m = Create();
+        m.Apply(new RestoreSection(TestScript, 99, new RawSection("Trigger",
+            [new RawEntry("nickname", [longName]), new RawEntry("Cnd_True", [])])));
+        var before = m.State();
+
+        var result = m.Apply(new RenameTrigger(T(longName), "ol_short"));
+        var back = m.Apply(result.Inverse!);
+
+        Assert.Equal(EditStatus.Applied, back.Status);
+        Assert.Equal(before, m.State());
     }
 }

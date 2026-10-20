@@ -34,10 +34,48 @@ public static class MissionJson
     public static string KindOf(Type type) => JsonNamingPolicy.SnakeCaseLower.ConvertName(type.Name);
 
     /// <summary>Reads a batch.</summary>
-    /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/>: the JSON is not a batch, a command
-    /// has an unknown kind (<c>UnknownCommand</c>) or an unknown field (<c>UnknownField</c>), or a reference is not
-    /// valid.</exception>
-    public static MissionBatch ReadBatch(string json) => Read<MissionBatch>(json);
+    /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/>: the JSON is not a batch, the batch,
+    /// its options or a command has an unknown field (<c>UnknownField</c>), a command has an unknown kind
+    /// (<c>UnknownCommand</c>), or a reference is not valid.</exception>
+    public static MissionBatch ReadBatch(string json)
+    {
+        CheckBatchFields(json);
+        return Read<MissionBatch>(json);
+    }
+
+    /// <summary>Refuses a field that the batch or its options do not have, so that a typo, for example in
+    /// <c>reject_new_errors</c>, does not turn off a guard without an error.</summary>
+    private static void CheckBatchFields(string json)
+    {
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(json);
+        }
+        catch (JsonException e)
+        {
+            throw new EditException(MissionErrors.BadJsonError(Where(e)));
+        }
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return;
+            Check(root, typeof(MissionBatch), options: false);
+            if (root.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Object)
+                Check(options, typeof(MissionEditOptions), options: true);
+        }
+
+        static void Check(JsonElement element, Type type, bool options)
+        {
+            var fields = FieldsOf(type, SchemaOptions.Value);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!fields.Contains(property.Name))
+                    throw new EditException(MissionErrors.UnknownBatchFieldError(property.Name, options));
+            }
+        }
+    }
 
     /// <summary>Reads one command.</summary>
     /// <exception cref="EditException">See <see cref="ReadBatch"/>.</exception>
@@ -66,8 +104,16 @@ public static class MissionJson
         }
         catch (JsonException e)
         {
-            throw new EditException(MissionErrors.BadJsonError(e.Message));
+            throw new EditException(MissionErrors.BadJsonError(Where(e)));
         }
+    }
+
+    /// <summary>The place of a JSON error as a sentence. The text of the exception is not for users.</summary>
+    private static string Where(JsonException e)
+    {
+        var place = e.Path is { Length: > 0 } path && path != "$" ? $"The value at {path}" : "The JSON";
+        var line = e.LineNumber is { } number ? $" on line {(number + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)}" : "";
+        return $"{place}{line} does not have the form of a mission batch.";
     }
 
     /// <summary>
@@ -262,9 +308,12 @@ public static class MissionJson
     private static JsonObject OneOf(IEnumerable<string> definitions) =>
         new() { ["oneOf"] = new JsonArray([.. definitions.Select(Ref)]) };
 
-    /// <summary>The JSON names of the fields of a command type.</summary>
+    /// <summary>The JSON names of the fields of a type of the command layer. A field that JSON ignores, for example the
+    /// origin of a batch, is not a field.</summary>
     internal static IReadOnlySet<string> FieldsOf(Type type, JsonSerializerOptions options) =>
-        options.GetTypeInfo(type).Properties.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
+        options.GetTypeInfo(type).Properties
+            .Where(p => p.AttributeProvider?.IsDefined(typeof(JsonIgnoreAttribute), inherit: true) != true)
+            .Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
 }
 
 /// <summary>Reads and writes a <see cref="MissionCommand"/> with its <c>kind</c> (section 4.13 of the M6b design). An
@@ -277,7 +326,7 @@ public sealed class MissionCommandConverter : JsonConverter<MissionCommand>
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("kind", out var kindElement) ||
             kindElement.ValueKind != JsonValueKind.String)
-            throw new JsonException("A mission command is an object with a 'kind'.");
+            throw new MissionJsonException(MissionErrors.BadJsonError("A mission command is an object with a 'kind'."));
         var kind = kindElement.GetString()!;
         if (!MissionJson.Kinds.TryGetValue(kind, out var type))
             throw new MissionJsonException(MissionErrors.UnknownCommandError(kind));

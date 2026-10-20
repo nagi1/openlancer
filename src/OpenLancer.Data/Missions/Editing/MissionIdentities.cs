@@ -157,6 +157,13 @@ internal static class MissionRefs
         new(new EditError(EditErrorKind.InvalidArgument, ItemRefs.BadReference,
             $"'{text}' is not a reference of {what}.") { Target = text });
 
+    /// <summary>An example of the reference text of a type of the mission commands.</summary>
+    public static string Example(Type type) =>
+        type == typeof(ScriptRef) ? @"msn:DATA\MISSIONS\M02\m02.ini"
+        : type == typeof(TriggerRef) ? @"trg:DATA\MISSIONS\M02\m02.ini#ol_trigger"
+        : type == typeof(LabelRef) ? @"label:DATA\MISSIONS\M02\m02.ini#ol_wing"
+        : @"sec:DATA\MISSIONS\M02\m02.ini#MsnShip/ol_ship";
+
     /// <summary>The reference of a text as a type of the mission commands.</summary>
     public static object Parse(Type type, string text) =>
         type == typeof(ScriptRef) ? ScriptRef.Parse(text)
@@ -173,7 +180,8 @@ public sealed class MissionRefConverter<T> : JsonConverter<T> where T : class, I
     public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         if (reader.TokenType != JsonTokenType.String)
-            throw new JsonException($"A {typeof(T).Name} is a reference string.");
+            throw new MissionJsonException(MissionErrors.BadJsonError(
+                $"An item of a mission command is a reference text, for example {MissionRefs.Example(typeof(T))}."));
         var text = reader.GetString()!;
         try
         {
@@ -201,7 +209,7 @@ public sealed class RowRefConverter : JsonConverter<RowRef>
             return Parse(root.GetString()!);
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("ref", out var reference) ||
             reference.ValueKind != JsonValueKind.String)
-            throw new JsonException("A row is an object with the line reference in 'ref'.");
+            throw new MissionJsonException(MissionErrors.BadJsonError("A row is an object with the line reference in 'ref'."));
         var row = Parse(reference.GetString()!);
         if (root.TryGetProperty("expect_key", out var key) && key.ValueKind == JsonValueKind.String)
             row = row with { ExpectKey = key.GetString() };

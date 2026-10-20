@@ -95,6 +95,7 @@ public sealed record AddMissionShip(ScriptRef Script) : MissionCommand
         var script = d.Script(Script);
         var stem = global::System.IO.Path.GetFileNameWithoutExtension(script.Path).ToLowerInvariant();
         var created = new List<(EditDocument Document, string Type, string Name)>();
+        IEnumerable<MissionCommand> deleteFile = [];
         // An existing [NPC] names its build, so only a new [NPC] needs a build.
         var buildName = Build?.Trim();
         if (buildName == null && Npc == null)
@@ -121,6 +122,7 @@ public sealed record AddMissionShip(ScriptRef Script) : MissionCommand
                 lines.Add(LineSpec.Of("npc_class", ("npc_class", MissionValue.List(spec.NpcClasses.Select(MissionValue.Of)))));
             d.AddSectionAt(file, "NPCShipArch", lines);
             created.Add((file, "NPCShipArch", buildName));
+            deleteFile = d.DeleteIfCreated(file).ToList();
         }
         var npcName = Npc?.Trim();
         if (npcName == null)
@@ -166,13 +168,13 @@ public sealed record AddMissionShip(ScriptRef Script) : MissionCommand
             ship.Add(LineSpec.Of("init_objectives", ("init_objectives", Orders)));
         d.AddSectionAt(script, "MsnShip", ship);
         created.Add((script, "MsnShip", shipName));
-        var shipRef = ItemRef.Of(script.Path, "MsnShip", shipName);
         d.Select = d.RefOf(script, script.Working.Count - 1);
-        // The inverse removes the new parts only, the ship first.
+        // The inverse removes the new parts only, the ship first. Then it deletes a ship build file that the command
+        // made.
         var inverse = created.AsEnumerable().Reverse()
-            .Select(c => (MissionCommand)new RemoveSection(ItemRef.Of(c.Document.Path, c.Type, c.Name))).ToList();
+            .Select(c => (MissionCommand)new RemoveSection(ItemRef.Of(c.Document.Path, c.Type, c.Name))).Concat(deleteFile)
+            .ToList();
         d.Inverse(new CommandGroup(inverse));
-        _ = shipRef;
     }
 }
 
@@ -282,12 +284,12 @@ public sealed record SetShipLoadout(ItemRef Ship, string Loadout, LoadoutScope S
             throw d.Refuse(MissionErrors.ItemNotFoundError(script.Path, "NPC", npcName));
         var buildName = RemoveMissionShip.ItemFirst(script.Working[npcIndex], "npc_ship_arch") ??
                         throw d.Refuse(MissionErrors.ItemNotFoundError(script.Path, "ship build", "(none)"));
-        var (buildFile, buildIndex, shared) = d.FindBuild(script, buildName);
+        var (buildFile, buildIndex, _) = d.FindBuild(script, buildName);
         var loadout = d.Build("NPCShipArch", LinePlace.Section, LineSpec.Of("loadout", ("loadout", Loadout)));
         if (Scope == LoadoutScope.Shared)
         {
-            if (shared)
-                d.Confirmations.Add(MissionErrors.SharedBuildChangeError(buildName));
+            // A build of a shared file needs a confirmation (SharedBuildChange).
+            (buildFile, buildIndex) = d.Item(MissionDraft.ItemOf(buildFile, buildIndex), lines: true);
             d.Editable(buildFile, buildIndex);
             var entries = d.WithKey(buildFile, buildIndex, buildFile.Working[buildIndex].ToList(), "loadout",
                 [LineSpec.Raw(loadout.Key, [.. loadout.Texts])]);
@@ -303,6 +305,8 @@ public sealed record SetShipLoadout(ItemRef Ship, string Loadout, LoadoutScope S
         copy = d.WithKey(buildFile, buildIndex, copy, "loadout", [LineSpec.Raw(loadout.Key, [.. loadout.Texts])]);
         d.Insert(file, file.Working.Count, MissionDraft.NewSection(buildFile.Working[buildIndex].Name, copy));
         d.Adds.Add(d.RefOf(file, file.Working.Count - 1));
+        // The inverse removes the copy, then deletes a ship build file that the command made.
+        inverses.AddRange(d.DeleteIfCreated(file));
         inverses.Add(new RemoveSection(ItemRef.Of(file.Path, "NPCShipArch", copyName)));
         var users = script.Working.Count(s => (MissionIndex.Is(s.Name, "MsnShip") || MissionIndex.Is(s.Name, "MsnFormation")) &&
                                               MissionIndex.Is(RemoveMissionShip.ItemFirst(s, "npc"), npcName));
@@ -364,7 +368,9 @@ public sealed record AddItem(ScriptRef Script, string ItemKind) : MissionCommand
         d.AddSectionAt(file, type, lines);
         var item = ItemRef.Of(file.Path, type, name);
         d.Select = d.RefOf(file, file.Working.Count - 1);
-        d.Inverse(new RemoveItem(item));
+        // The inverse also deletes a ship build file that the command made.
+        var inverse = d.DeleteIfCreated(file).Prepend(new RemoveItem(item)).ToList();
+        d.Inverse(inverse.Count == 1 ? inverse[0] : new CommandGroup(inverse));
     }
 }
 
@@ -436,6 +442,9 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
 
     internal override void Run(MissionDraft d)
     {
+        // Random encounters can use a build of a shared file, so a mission cannot rename it (review finding RB2).
+        if (MissionIndex.Is(Item.Section.Type, "NPCShipArch") && d.IsSharedBuildFile(Item.Script))
+            throw d.Refuse(MissionErrors.SharedBuildRenameError(Item.Section.Key ?? Item.Section.ToString()));
         var (document, index) = d.Item(Item);
         d.Editable(document, index);
         var section = document.Working[index];
@@ -455,8 +464,6 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
         if (string.Equals(old, name, StringComparison.Ordinal))
             return;
         var isBuild = MissionIndex.Is(section.Name, "NPCShipArch");
-        if (isBuild && !d.Session.IsGuardedMissionFile(document.Path))
-            throw d.Refuse(MissionErrors.SharedBuildRenameError(old));
         var baseName = document.BaseSection(document.IdentityAt(index)) is { } b ? SectionIdentity.KeyOf(b) : null;
         d.CheckRename(document, index, section.Name, name, skipForm: !ChangeReferences ||
                                                                     string.Equals(baseName, name, StringComparison.OrdinalIgnoreCase));
@@ -486,11 +493,13 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
         var entries = d.WithKey(document, index, section.ToList(), keyEntry, [LineSpec.Raw(keyEntry, name)], key: true);
         d.SetLines(document, index, entries, inverse: false);
         var renamed = MissionDraft.ItemOf(document, index);
-        inverse.Add(new RenameItem(renamed, old) { ChangeReferences = false });
         d.Renames.Add(new ResultRename(before, d.RefOf(document, index)));
         d.GoneNames.Add(old);
         d.Select = d.RefOf(document, index);
+        // The inverse gives the lines that the rename changed their old name first, then the item its old name. So the
+        // rename back finds no line that names the old name, and reports no false "Missing" line.
         inverse.Reverse();
+        inverse.Add(new RenameItem(renamed, old) { ChangeReferences = false });
         d.Inverse(inverse.Count == 1 ? inverse[0] : new CommandGroup(inverse));
     }
 }
@@ -503,7 +512,7 @@ public sealed record SetItemKey(ItemRef Item, string Key, IReadOnlyList<LineSpec
 
     internal override void Run(MissionDraft d)
     {
-        var (document, index) = d.Item(Item);
+        var (document, index) = d.Item(Item, lines: true);
         d.Editable(document, index);
         var section = document.Working[index];
         var (key, _) = d.KeyOf(section.Name, Key);
@@ -630,7 +639,7 @@ public sealed record AddOrder(ItemRef OrderList, LineSpec Line) : MissionCommand
         var line = d.Build("ObjList", LinePlace.Order, Line);
         var entries = document.Working[index].ToList();
         var at = d.Place(document, index, Before, entries.Count);
-        if (at <= TriggerPlaces.NicknameLine(entries))
+        if (at <= TriggerRules.NicknameLine(entries))
             throw d.Refuse(MissionErrors.BadPlaceError() with
             {
                 Message = "An order cannot go before the nickname line. Pick a place after the nickname line.",

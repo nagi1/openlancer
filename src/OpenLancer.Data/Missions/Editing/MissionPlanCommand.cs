@@ -12,9 +12,8 @@ namespace OpenLancer.Data.Missions.Editing;
 /// </summary>
 internal sealed class MissionPlanCommand : EditCommand
 {
-    private readonly MissionEditor? editor;
+    private readonly MissionEditor editor;
     private readonly IReadOnlyList<MissionCommand> commands;
-    private readonly EditCommand? inner;
 
     /// <param name="label">The label of the history entry.</param>
     public MissionPlanCommand(string label, MissionEditor editor, IReadOnlyList<MissionCommand> commands) : base(label)
@@ -22,18 +21,6 @@ internal sealed class MissionPlanCommand : EditCommand
         this.editor = editor;
         this.commands = commands;
     }
-
-    private MissionPlanCommand(string label, EditCommand inner) : base(label)
-    {
-        commands = [];
-        this.inner = inner;
-    }
-
-    /// <summary>
-    /// A session command that runs another session command with the guard open. The reference provider of the M3
-    /// rename and delete uses it for the mission lines that the layer planned (section 4.10 of the M6b design).
-    /// </summary>
-    internal static MissionPlanCommand Wrap(EditCommand inner) => new(inner.Label, inner);
 
     /// <summary>The draft of the last run, or null before the first run or after a refusal.</summary>
     public MissionDraft? Draft { get; private set; }
@@ -46,14 +33,9 @@ internal sealed class MissionPlanCommand : EditCommand
         scope.MissionDepth++;
         try
         {
-            if (inner != null)
-            {
-                inner.Run(scope);
-                return;
-            }
             Draft = null;
             FailedIndex = -1;
-            var draft = new MissionDraft(editor!, scope);
+            var draft = new MissionDraft(editor, scope);
             for (var i = 0; i < commands.Count; i++)
             {
                 draft.BeginCommand(i);

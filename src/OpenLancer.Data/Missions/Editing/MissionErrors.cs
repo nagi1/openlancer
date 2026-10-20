@@ -61,9 +61,15 @@ public static class MissionErrors
     public const string NotADirective = "NotADirective";
     public const string BadJson = "BadJson";
     public const string UnknownField = "UnknownField";
+    public const string ReplacesLowerFile = "ReplacesLowerFile";
+    public const string WorldFile = "WorldFile";
+    public const string BadPath = "BadPath";
 
-    internal static EditError NotEditableError(string reason) =>
-        new(EditErrorKind.ReadOnly, NotEditable, $"The editor cannot change missions now. {reason}");
+    internal static EditError NotEditableError(string reason) => new(EditErrorKind.ReadOnly, NotEditable, NotEditableMessage(reason));
+
+    /// <summary>The text of <see cref="NotEditable"/>. The Mission tab and the mission pages show it as their read-only
+    /// note (section 8.11 of the M6b design).</summary>
+    public static string NotEditableMessage(string reason) => $"The editor cannot change missions now. {reason}";
 
     internal static EditError BusyError() =>
         new(EditErrorKind.Busy, Busy, "A drag or a text edit is not complete. Complete it, then try again.");
@@ -156,10 +162,16 @@ public static class MissionErrors
         new(EditErrorKind.Refused, NoShipBuildFile,
             "The mission has no ship build file. Set \"Ship build file\" on the Mission page first.");
 
-    internal static EditError NewErrorsError(int count, string first) =>
-        new(EditErrorKind.NewErrors, NewErrors, count == 1
-            ? $"The edit adds 1 error, so the editor did not apply it. {first}"
-            : $"The edit adds {Number(count)} errors, so the editor did not apply it. {first}");
+    /// <summary>Strict mode refuses a batch (section 4.0.5 of the M6b design). With <c>RejectNewWarnings</c>, the new
+    /// warnings count too.</summary>
+    internal static EditError NewErrorsError(int errors, int warnings, string first)
+    {
+        static string Count(int n, string word) => n == 1 ? $"1 {word}" : $"{Number(n)} {word}s";
+        var what = errors > 0 && warnings > 0 ? $"{Count(errors, "error")} and {Count(warnings, "warning")}"
+            : warnings > 0 ? Count(warnings, "warning")
+            : Count(errors, "error");
+        return new(EditErrorKind.NewErrors, NewErrors, $"The edit adds {what}, so the editor did not apply it. {first}");
+    }
 
     internal static EditError SectionChangedError(string section) =>
         new(EditErrorKind.StaleRevision, SectionChanged,
@@ -183,7 +195,12 @@ public static class MissionErrors
         new(EditErrorKind.InvalidArgument, UnknownCommand, $"'{kind}' is not a mission command.");
 
     internal static EditError BadJsonError(string reason) =>
-        new(EditErrorKind.InvalidArgument, BadJson, $"The request is not a valid mission batch: {reason} Correct the JSON.");
+        new(EditErrorKind.InvalidArgument, BadJson, $"The request is not a valid mission batch. {reason} Correct the JSON.");
+
+    internal static EditError UnknownBatchFieldError(string field, bool options) =>
+        new(EditErrorKind.InvalidArgument, UnknownField,
+            $"{(options ? "The options of the batch have" : "The batch has")} no field '{field}'. Remove the field, or " +
+            "correct its name.") { Field = field };
 
     internal static EditError UnknownFieldError(string kind, string field) =>
         new(EditErrorKind.InvalidArgument, UnknownField,
@@ -216,7 +233,7 @@ public static class MissionErrors
 
     internal static EditError NotInBaseError(string section) =>
         new(EditErrorKind.Refused, NotInBase,
-            $"The active mod adds {section}, so the game data has no lines to go back to. Remove the section instead.");
+            $"The active mod adds {section}, so the game data has no lines for it. Remove the section instead.");
 
     internal static EditError NoBaseDifferenceError(string section) =>
         new(EditErrorKind.Refused, NoBaseDifference,
@@ -227,11 +244,29 @@ public static class MissionErrors
             $"Script {script} is not a whole file of the active mod. The editor cannot delete a script of the game data " +
             "or of another mod.");
 
-    internal static EditError PathInUseError(string path, string reason) =>
-        new(EditErrorKind.Refused, PathInUse, $"The editor cannot make a script at {path}. {reason}");
+    internal static EditError ReplacesLowerFileError(string path) =>
+        new(EditErrorKind.Refused, ReplacesLowerFile,
+            $"The active mod replaces {path} of the game data or of a lower mod with this file. Without this file, the " +
+            "game uses that file again, so the editor cannot delete it. Change the lines of the file instead.");
+
+    internal static EditError WorldFileError(string path) =>
+        new(EditErrorKind.Refused, WorldFile,
+            $"The mission commands cannot change {path}. Encounters and bases use the data of this file too. Change the " +
+            "file in the Inspector.");
+
+    internal static EditError PathInUseError(string path) =>
+        new(EditErrorKind.NameTaken, PathInUse,
+            $"The editor cannot make a script at {path}, because the edit view already has a file at this path. Pick " +
+            "another path.");
+
+    internal static EditError BadPathError(string path) =>
+        new(EditErrorKind.InvalidArgument, BadPath,
+            $"The editor cannot make a script at {path}. The game reads a mission script only from a folder under " +
+            "DATA\\MISSIONS outside the encounters folder, with the extension .ini. Pick such a path.");
 
     internal static EditError NotTextIdError(string label) =>
-        new(EditErrorKind.InvalidArgument, NotTextId, $"{label} is not a text id. Only a text id can take own text.");
+        new(EditErrorKind.InvalidArgument, NotTextId,
+            $"{label} is not a text id, so it cannot have text of the mod. Pick a value that is a text id.");
 
     internal static EditError MissingLinesError(int count) =>
         new(EditErrorKind.NeedsConfirmation, MissingLines, count == 1

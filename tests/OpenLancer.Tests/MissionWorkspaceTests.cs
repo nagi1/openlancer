@@ -1,5 +1,6 @@
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Missions;
 using Xunit;
 using static OpenLancer.Tests.MissionTestData;
@@ -48,5 +49,42 @@ public sealed class MissionWorkspaceTests
         Assert.Null(MissionWorkspace.Valid(result, new object()));
         // Before the first run, each mission selection stays.
         Assert.Equal(gone, MissionWorkspace.Valid(null, gone));
+    }
+
+    /// <summary>A run that ran while a script changed takes the newer model of the script. A new script needs a new
+    /// run (section 6.11 of the M6b design).</summary>
+    [Fact]
+    public void ARunTakesTheNewerModelOfAScriptThatChangedWhileItRan()
+    {
+        using var m = MissionEdits.Create();
+        var run = MissionRun.Execute(m.Missions.RunInputs());
+        m.Apply(new SetTriggerStart(MissionEdits.T("ol_wave"), true));
+        var scripts = m.Missions.ScriptPaths();
+
+        var newer = MissionWorkspace.WithNewerModels(run, [MissionEdits.Script], scripts, p => m.Missions.Model(p).Analysis);
+        var unchanged = MissionWorkspace.WithNewerModels(run, [], scripts, p => m.Missions.Model(p).Analysis);
+        var added = MissionWorkspace.WithNewerModels(run, [@"DATA\MISSIONS\OL_NEW\ol_new.ini"],
+            [.. scripts, @"DATA\MISSIONS\OL_NEW\ol_new.ini"], p => m.Missions.Model(p).Analysis);
+
+        Assert.Same(m.Missions.Model(MissionEdits.Script).Analysis, newer!.Of(MissionEdits.Script));
+        Assert.Same(run.Of(MissionEdits.Script), unchanged!.Of(MissionEdits.Script));
+        Assert.Null(added);
+    }
+
+    /// <summary>The raw block of each file and the raw view of a script give one Console text for a refused edit, with
+    /// the whole text of the user (decision D114).</summary>
+    [Fact]
+    public void ARefusedRawEditKeepsTheTextOfTheUser()
+    {
+        Assert.Equal("Line 2: The game reads no such key. The editor kept the lines before the edit. Your text:\n[Trigger]\nx",
+            MissionWorkspace.RawRefusal(["Line 2: The game reads no such key."], "[Trigger]\nx"));
+    }
+
+    /// <summary>The note of the Mission tab while the session takes no edits (section 8.11 of the M6b design).</summary>
+    [Fact]
+    public void TheReadOnlyNoteGivesTheReason()
+    {
+        Assert.Equal("The editor cannot change missions now. There is no active mod. Select a mod to edit.",
+            MissionErrors.NotEditableMessage("There is no active mod. Select a mod to edit."));
     }
 }

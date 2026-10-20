@@ -32,9 +32,12 @@ public sealed partial class EditSession
     internal IReadOnlyList<string> MissionScriptPaths => missionScripts ??= SlotScriptPaths();
 
     /// <summary>The files of the NPC ship builds for the role <c>mission_ships</c>: the files of the last run, or the
-    /// files of the folder rules before the first run.</summary>
-    internal IReadOnlyList<string> MissionShipPaths => missionShipFiles ??= NpcShipFiles.Find(
-        relative => DataPaths.Resolve(FreelancerIni, relative), EditViewFolders, []);
+    /// files of the folder rules before the first run, and the ship build file that each script of W names. So a new
+    /// ship build file of a script gives its names before the next run, also in a session without a worker, for example
+    /// of an agent host.</summary>
+    internal IReadOnlyList<string> MissionShipPaths =>
+        (missionShipFiles ??= NpcShipFiles.Find(relative => DataPaths.Resolve(FreelancerIni, relative), EditViewFolders, []))
+        .Concat(ShipBuildFilesOfScripts()).Distinct(VfsPath.Comparer).ToList();
 
     /// <summary>
     /// Makes the snapshot of a run of the mission checks (section 12.3 of the M6a design). Call it on the UI thread: it
@@ -137,10 +140,17 @@ public sealed partial class EditSession
                      throw new ArgumentException($"{path} is not an install path.", nameof(path));
         if (TryDocument(normal, out var known))
             return known!;
+        normal = LetterCaseOfFiles(normal);
         var document = EditDocument.NewWhole(normal);
         documents[normal] = document;
         return document;
     }
+
+    /// <summary>True when the lower layer has a file at an install path: the base data or a lower mod. A whole file of
+    /// the active mod at that path takes its place.</summary>
+    /// <param name="path">An install path in normal form.</param>
+    internal bool LowerLayerHas(string path) =>
+        lowerView.MergedDocument(path) != null || lowerView.CreateFileSystem().FileExists(path);
 
     /// <summary>The install paths of the mission scripts that the session opened and that exist in W.</summary>
     internal IEnumerable<string> OpenMissionScripts() =>

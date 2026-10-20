@@ -47,8 +47,12 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
     private readonly Dictionary<string, Task<RawText>> rawTexts = new(VfsPath.Comparer);
     private readonly Dictionary<string, (RawText Text, IReadOnlyList<RawMark> Marks)> marks = new(VfsPath.Comparer);
+    private readonly Dictionary<string, MissionRawDraft> drafts = new(StringComparer.OrdinalIgnoreCase);
     private bool marksShowBaseGame;
     private int latestRun;
+
+    // The scripts that changed while the last run of the checks ran. Its result is older for them.
+    private readonly HashSet<string> changedDuringRun = new(VfsPath.Comparer);
 
     // The edit session whose changes the workspace follows.
     private EditSession? followed;
@@ -137,6 +141,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
         }
 
         latestRun = inputs.Generation;
+        changedDuringRun.Clear();
         Task.Run(() =>
         {
             MissionRunResult? result = null;
@@ -174,11 +179,44 @@ internal sealed class MissionWorkspace(EditorWindow window)
             return;
         }
 
-        current.Edits.Missions.TakeRun(inputs, result);
-        Result = result;
+        var missions = current.Edits.Missions;
+        missions.TakeRun(inputs, result);
+        if (WithNewerModels(result, changedDuringRun, missions.ScriptPaths(), p => missions.Model(p).Analysis) is not { } newer)
+        {
+            // A new or deleted script needs the rows of a new run.
+            Run();
+            return;
+        }
+
+        changedDuringRun.Clear();
+        Result = newer;
         rawTexts.Clear();
         marks.Clear();
-        window.Log.ReplaceSet(MissionChecks.Source, result.Problems.ToList());
+        window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
+    }
+
+    /// <summary>
+    /// The result of a run with the model of each script that changed while the run ran (section 6.11 of the M6b
+    /// design). That model is newer than the analysis of the run. Null when such a script was added or deleted: then a
+    /// new run must give the rows of the Missions browser.
+    /// </summary>
+    /// <param name="scripts">The scripts of W now.</param>
+    /// <param name="model">Gives the analysis of the model of a script now.</param>
+    internal static MissionRunResult? WithNewerModels(MissionRunResult result, IReadOnlyCollection<string> changed,
+        IReadOnlyList<string> scripts, Func<string, MissionAnalysis> model)
+    {
+        if (changed.Any(p => result.IsScript(p) != scripts.Contains(p, VfsPath.Comparer)))
+        {
+            return null;
+        }
+
+        var analyses = new Dictionary<string, MissionAnalysis>(result.Analyses, VfsPath.Comparer);
+        foreach (var path in changed.Where(result.IsScript))
+        {
+            analyses[path] = model(path);
+        }
+
+        return result with { Analyses = analyses };
     }
 
     /// <summary>Follows the changes of the mission scripts of a session.</summary>
@@ -209,6 +247,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// again.</summary>
     private void ScriptsChanged(MissionScriptsChange change)
     {
+        changedDuringRun.UnionWith(change.Versions.Keys);
         if (Result is not { } result || followed is not { } edits)
         {
             return;
@@ -262,8 +301,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
             : RawMissionEdit.PlanBlock(edits, path, sections, start, end);
         if (plan.Problems.Count > 0)
         {
-            window.Log.Add(ConsoleSeverity.Error, MissionChecks.Source,
-                $"{string.Join(" ", plan.Problems)} The editor kept the lines before the edit. Your text:\n{end}");
+            window.Log.Add(ConsoleSeverity.Error, MissionChecks.Source, RawRefusal(plan.Problems.Select(p => p.ToString()), end));
             return;
         }
 
@@ -278,17 +316,36 @@ internal sealed class MissionWorkspace(EditorWindow window)
         }
     }
 
-    /// <summary>The marks of the problems of a draft text while the user types.</summary>
-    public static IReadOnlyList<RawMark> DraftMarks(string path, string text) =>
-    [
-        .. RawMissionEdit.TextProblems(path, text).Select(p =>
-            new RawMark(Math.Max(0, p.Line - 1), DiagnosticSeverity.Error, p.Message, false)),
-    ];
+    /// <summary>The Console text of a raw edit that the editor refused. It keeps the whole text of the user, so the user
+    /// can copy it back (decision D114). The raw blocks of all files use it.</summary>
+    public static string RawRefusal(IEnumerable<string> problems, string text) =>
+        $"{string.Join(" ", problems)} The editor kept the lines before the edit. Your text:\n{text}";
+
+    /// <summary>The marks of a draft text of a mission file while the user types: one object for each file or block,
+    /// so its marks stay from frame to frame.</summary>
+    /// <param name="block">The sections of the INI block of a page, or null for the whole file.</param>
+    public IRawDraft Draft(string path, IReadOnlyList<SectionIdentity>? block)
+    {
+        var key = block == null ? path : $"{path}#{string.Join("|", block)}";
+        if (!drafts.TryGetValue(key, out var draft))
+        {
+            drafts[key] = draft = new MissionRawDraft(window, path, block);
+        }
+
+        return draft;
+    }
 
     /// <summary>Why the user cannot edit a mission file, or null.</summary>
     public string? NoEditReason(string path) =>
         window.Session is not { } session ? "No profile is open."
         : session.NoEditReason ?? session.Edits.Missions.ReadOnlyReason(path);
+
+    /// <summary>The note of the Mission tab and the mission pages while the session takes no edits, or null (section
+    /// 8.1 of the M6b design).</summary>
+    public string? ReadOnlyNote =>
+        window.Session is { } session && (session.NoEditReason ?? session.Edits.ReadOnlyReason) is { } reason
+            ? MissionErrors.NotEditableMessage(reason)
+            : null;
 
     /// <summary>Forgets the result and the open mission, for example when the profile closes.</summary>
     public void Reset()
@@ -303,6 +360,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();
+        drafts.Clear();
+        changedDuringRun.Clear();
     }
 
     /// <summary>True when the path is a mission script of the last run (section 12.4 of the M6a design).</summary>

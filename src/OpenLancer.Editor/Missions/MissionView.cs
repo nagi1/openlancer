@@ -129,6 +129,12 @@ internal sealed class MissionView : IDisposable
 
         ImGui.SameLine();
         MissionsBrowser.BaseGameToggle(window, missions);
+        if (missions.ReadOnlyNote is { } note)
+        {
+            ImGui.SameLine();
+            Chip.Flow([new ChipItem("Read-only", ChipLook.Grey, note)]);
+        }
+
         ImGui.SameLine();
         InfoIcon.Draw("help", MissionSchema.Retail.Help[missions.ShowRaw ? "rawIni" : "missionGraph"]);
     }
@@ -430,7 +436,7 @@ internal sealed class MissionView : IDisposable
         missions.PendingGraphFrame = false;
         Follow(path, text);
         raw.DrawEditable("##raw", path, text, missions.MarksOf(path), ImGui.GetContentRegionAvail(), missions.NoEditReason(path),
-            (start, end) => missions.CommitRaw(path, null, start, end), draft => MissionWorkspace.DraftMarks(path, draft));
+            (start, end) => missions.CommitRaw(path, null, start, end), missions.Draft(path, null));
         // While the user types, the lines of the text do not match the sections of the analysis.
         if (!raw.IsEditing)
         {

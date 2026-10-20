@@ -65,6 +65,9 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
 
     private readonly RawIniEditorState state = new();
     private readonly RawIniEdit edit = new();
+
+    // The draft marks that the editor shows while the user types, or null.
+    private IReadOnlyList<RawMark>? draftMarks;
     private ColorTextEdit? editor;
     private bool? readOnly;
     // The content and the commit of the open edit, or of the last draw when no edit is open.
@@ -116,9 +119,9 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
     /// commit of the content at the start of the edit.</param>
     /// <param name="readOnlyReason">Why the user cannot edit the text, or null.</param>
     /// <param name="commit">Gets the start text and the end text of an edit at its end.</param>
-    /// <param name="draft">Gives the marks of the text of the editor while the user types, or null.</param>
+    /// <param name="draft">The marks of the text of the editor while the user types, or null.</param>
     public void DrawEditable(string id, string key, RawText text, IReadOnlyList<RawMark> marks, Vector2 size,
-        string? readOnlyReason, Action<string, string> commit, Func<string, IReadOnlyList<RawMark>>? draft = null)
+        string? readOnlyReason, Action<string, string> commit, IRawDraft? draft = null)
     {
         if (!NativeReady)
         {
@@ -150,14 +153,31 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
         }
 
         var changed = native.TextChanged();
+        var wasOpen = edit.IsOpen;
         var ended = edit.Frame(text.Text, changed, native.GetText, focused);
         if (ended is var (start, end))
         {
             Commit(start, end);
         }
-        else if (edit.IsOpen && changed && draft != null)
+        else if (edit.IsOpen && draft != null)
         {
-            SetMarks(native, draft(native.GetText()));
+            // The marks of an earlier edit do not show at the start of this edit.
+            if (!wasOpen)
+            {
+                draftMarks = draft.Marks;
+            }
+
+            if (changed)
+            {
+                draft.Changed(native.GetText());
+            }
+
+            // A worker can give the marks of the checks some frames after the change.
+            if (!ReferenceEquals(draft.Marks, draftMarks))
+            {
+                draftMarks = draft.Marks;
+                SetMarks(native, draftMarks);
+            }
         }
     }
 
@@ -174,6 +194,7 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
     {
         // The next draw shows the text of the arguments again: the text after the edit, or the text before a refusal.
         state.Reset();
+        draftMarks = null;
         target?.Commit(start, end);
     }
 
@@ -328,5 +349,6 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
         readOnly = null;
         state.Reset();
         edit.Reset();
+        draftMarks = null;
     }
 }

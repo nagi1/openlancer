@@ -92,7 +92,7 @@ public sealed class MissionJsonTests
         Assert.Equal(EditErrorKind.InvalidArgument, Assert.Throws<EditException>(() => MissionJson.ReadBatch("[1, 2")).Error.Kind);
     }
 
-    /// <summary>The batch example of section 4.13 reads and runs. The host sets the origin, so a request cannot.</summary>
+    /// <summary>The batch example of section 4.13 reads and runs.</summary>
     [Fact]
     public void TheBatchExampleOfTheDesignReadsAndRuns()
     {
@@ -102,7 +102,6 @@ public sealed class MissionJsonTests
               "label": "Add a delay before the escort starts",
               "expect_versions": { "DATA\\MISSIONS\\OL_TEST\\ol_test.ini": 1 },
               "options": { "reject_new_errors": true },
-              "origin": "recovery",
               "commands": [
                 {
                   "kind": "insert_trigger_on_link",
@@ -173,5 +172,38 @@ public sealed class MissionJsonTests
         Assert.DoesNotContain("origin", schema["properties"]!.AsObject().Select(p => p.Key));
         Assert.DoesNotContain(typeof(MissionJson).Assembly.GetReferencedAssemblies(),
             a => a.Name!.Contains("Schema", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>A field that the batch or its options do not have refuses, so a typo cannot turn off a guard. The host
+    /// sets the origin, so a request cannot.</summary>
+    [Fact]
+    public void AnUnknownFieldOfTheBatchOrOfItsOptionsRefuses()
+    {
+        var origin = Assert.Throws<EditException>(() =>
+            MissionJson.ReadBatch("""{ "label": "x", "origin": "recovery", "commands": [] }""")).Error;
+        var typo = Assert.Throws<EditException>(() =>
+            MissionJson.ReadBatch("""{ "label": "x", "options": { "reject_new_error": true }, "commands": [] }""")).Error;
+
+        Assert.Equal((EditErrorKind.InvalidArgument, MissionErrors.UnknownField, "origin"), (origin.Kind, origin.Detail, origin.Field));
+        Assert.Equal("The batch has no field 'origin'. Remove the field, or correct its name.", origin.Message);
+        Assert.Equal((MissionErrors.UnknownField, "reject_new_error"), (typo.Detail, typo.Field));
+        Assert.Equal("The options of the batch have no field 'reject_new_error'. Remove the field, or correct its name.",
+            typo.Message);
+    }
+
+    /// <summary>A JSON error tells the place of the value in plain words, without the text of the exception.</summary>
+    [Fact]
+    public void AJsonErrorTellsThePlaceInPlainWords()
+    {
+        var type = Assert.Throws<EditException>(() => MissionJson.ReadBatch("""{ "label": 5, "commands": [] }""")).Error;
+        var reference = Assert.Throws<EditException>(() =>
+            MissionJson.ReadCommand("""{ "kind": "set_trigger_start", "trigger": 5, "starts": true }""")).Error;
+
+        Assert.Equal(MissionErrors.BadJson, type.Detail);
+        Assert.Equal("The request is not a valid mission batch. The value at $.label on line 1 does not have the form of a " +
+                     "mission batch. Correct the JSON.", type.Message);
+        Assert.DoesNotContain("LineNumber", type.Message);
+        Assert.Equal("The request is not a valid mission batch. An item of a mission command is a reference text, for " +
+                     @"example trg:DATA\MISSIONS\M02\m02.ini#ol_trigger. Correct the JSON.", reference.Message);
     }
 }

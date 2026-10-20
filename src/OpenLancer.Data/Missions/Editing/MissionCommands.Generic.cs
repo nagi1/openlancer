@@ -21,7 +21,7 @@ public sealed record InsertLine(ItemRef Section, LineSpec Line) : MissionCommand
 
     internal override void Run(MissionDraft d)
     {
-        var (document, index) = d.Item(Section);
+        var (document, index) = d.Item(Section, lines: true);
         d.Editable(document, index);
         var section = document.Working[index];
         var line = d.Build(section.Name, LinePlace.Section, Line, null);
@@ -127,11 +127,9 @@ public sealed record SetLineValue(RowRef Row, MissionValue Value) : MissionComma
         var entries = document.Working[index].ToList();
         var texts = MissionValues.TextsOf(entries[row]).ToList();
         if (at < 0 || at > texts.Count)
-            throw d.Refuse(MissionErrors.RowNotFoundError(MissionDraft.Owner(document, index), row) with
-            {
-                Message = $"Line {row} of {MissionDraft.Owner(document, index)} has {texts.Count} values, so value {at} " +
-                          "cannot change. Read the line again, then try again.",
-            });
+            throw d.Refuse(new EditError(EditErrorKind.InvalidArgument, MissionErrors.NoSuchValue,
+                $"Line {row} of {MissionDraft.Owner(document, index)} has {texts.Count} values, so value {at} cannot " +
+                "change. Read the line again, then try again."));
         var text = Value.Scalar ?? throw d.Refuse(MissionErrors.ValueKindError(Value.ToString(), "one value", "The value",
             "one value"));
         MissionValues.CheckText(text);
@@ -172,7 +170,7 @@ public sealed record AddSection(ScriptRef Script, string Type, IReadOnlyList<Lin
                 entries.Count(e => e.Name.Equals(line.Key, StringComparison.OrdinalIgnoreCase))));
         }
         var at = Before == null ? document.Working.Count : d.Item(Before).Index;
-        d.Insert(document, at, MissionDraft.NewSection(type, entries));
+        at = d.Insert(document, at, MissionDraft.NewSection(type, entries));
         var reference = d.RefOf(document, at);
         d.Adds.Add(reference);
         d.Select = reference;
@@ -213,7 +211,7 @@ public sealed record RestoreSection(ScriptRef Script, int Index, RawSection Sect
         var at = Math.Clamp(Index, 0, document.Working.Count);
         // A deleted section of B that comes back with the lines of B is the section of B again, so the writer writes
         // no change for it.
-        d.InsertRestored(document, at, section);
+        at = d.InsertRestored(document, at, section);
         var reference = d.RefOf(document, at);
         d.Adds.Add(reference);
         d.Inverse(new RemoveSection(MissionDraft.ItemOf(document, at)));
@@ -228,7 +226,7 @@ public sealed record ReplaceSectionBody(ItemRef Section, IReadOnlyList<RawEntry>
 
     internal override void Run(MissionDraft d)
     {
-        var (document, index) = d.Item(Section);
+        var (document, index) = d.Item(Section, lines: true);
         d.Editable(document, index);
         var old = document.Working[index];
         var entries = d.Entries(document, document.BaseSection(document.IdentityAt(index)), Entries);
@@ -297,6 +295,9 @@ public sealed record RevertSection(ItemRef Section) : MissionCommand
 /// 6.3 of the M6b design). W does not change.</summary>
 public sealed record AcceptBase(ItemRef Section) : MissionCommand
 {
+    /// <summary>The hash to write, or null for the hash of B now. The inverse gives the old hash with it.</summary>
+    public string? Hash { get; init; }
+
     protected override string Describe() => $"Keep my lines of {Section.Section}";
 
     internal override void Run(MissionDraft d)
@@ -304,13 +305,15 @@ public sealed record AcceptBase(ItemRef Section) : MissionCommand
         var (document, index) = d.Item(Section);
         d.Editable(document, index);
         var id = document.IdentityAt(index);
-        if (document.BaseHashOfPatch(id) is not { } hash || document.BaseSection(id) is not { } lower ||
-            SectionHash.Matches(lower, hash))
+        var old = document.WrittenBaseHash(id);
+        var hash = Hash?.Trim().ToLowerInvariant() ?? (document.BaseSection(id) is { } lower ? SectionHash.Of(lower) : null);
+        if (old == null || hash == null || SectionHash.Same(old, hash))
             throw d.Refuse(MissionErrors.NoBaseDifferenceError(id.ToString()));
-        var old = document.Working[index];
-        d.Replace(document, index, MissionDraft.WithEntries(old, old), old.Select(e => e.Name));
+        if (!SectionHash.IsHash(hash))
+            throw d.Refuse(MissionErrors.ValueKindError(hash, "a hash", "The hash", "16 hex digits"));
+        d.SetBaseHash(document, index, hash);
         d.Changes.Add(d.RefOf(document, index));
-        d.Inverse(new ReplaceSectionBody(MissionDraft.ItemOf(document, index), MissionDraft.RawOf(old)));
+        d.Inverse(new AcceptBase(MissionDraft.ItemOf(document, index)) { Hash = old });
     }
 }
 

@@ -3,6 +3,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using Xunit;
+using OpenLancer.Data.Editing.Commands;
 using static OpenLancer.Tests.MissionEdits;
 
 namespace OpenLancer.Tests;
@@ -88,4 +89,23 @@ public sealed class MissionModelCacheTests
     }
 
     private static string Key(Diagnostic d) => $"{d.Severity}|{d.Rule}|{d.Subject}|{d.Origin?.Kind}";
+
+    /// <summary>A file of the world that a command only reads, a preview and a refusal change no names. So the editor
+    /// keeps its mission world and its models (section 7 of the M6b design).</summary>
+    [Fact]
+    public void OnlyAChangeOfAFileOfTheWorldMakesANewMissionWorld()
+    {
+        using var m = Create();
+        var world = m.Session.WorldRevision;
+
+        m.Apply(new SetShipLoadout(Item("MsnShip", "ol_ship_3"), "ol_loadout_2", LoadoutScope.ThisShip));
+        var afterChange = m.Session.WorldRevision;
+        m.Missions.Preview(new MissionBatch("Preview", [new SetShipLoadout(Item("MsnShip", "ol_ship_1"), "ol_loadout", LoadoutScope.Shared)]));
+        m.Missions.Apply(new SetShipLoadout(Item("MsnShip", "ol_ship_1"), "ol_nothing", LoadoutScope.ThisShip) with { Ship = Item("MsnShip", "ol_none") });
+        m.Missions.Apply(new SetTriggerStart(T("ol_wave"), true));
+
+        // The copy of the build changes the ship build file once: the commit does not count it again.
+        Assert.Equal(world + 1, afterChange);
+        Assert.Equal(afterChange, m.Session.WorldRevision);
+    }
 }

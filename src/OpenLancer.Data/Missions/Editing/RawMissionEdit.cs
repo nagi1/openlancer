@@ -19,6 +19,18 @@ public sealed record RawEditProblem(int Line, string Message)
 /// Console. No batch and no problem: nothing changed.</summary>
 public sealed record RawMissionPlan(MissionBatch? Batch, IReadOnlyList<RawEditProblem> Problems, IReadOnlyList<string> Notes);
 
+/// <summary>A problem of the mission checks of a draft text, with its line in the text.</summary>
+/// <param name="Line">The line of the text, from 1, or 0 for the whole text.</param>
+public sealed record RawDraftMark(int Line, Diagnostic Problem);
+
+/// <summary>
+/// The checks of a draft text while the user types (section 8.8 of the M6b design). They are the problems of the text,
+/// or a function that runs the mission checks on the parsed text. The function reads only data that does not change, so
+/// a worker can run it.
+/// </summary>
+/// <param name="Checks">The function, or null when the text has a problem or the file is not a mission script.</param>
+public sealed record RawMissionDraft(IReadOnlyList<RawEditProblem> Problems, Func<IReadOnlyList<RawDraftMark>>? Checks);
+
 /// <summary>
 /// The plan of a raw INI edit of a mission file (section 8.8 of the M6b design, decision D678): the "Raw INI" view of a
 /// whole script, or the INI block of a page. The plan compares the text at the start of the edit with the text at its
@@ -62,6 +74,91 @@ public static class RawMissionEdit
     /// <summary>The problems of a text that stop a raw edit, for the marks while the user types.</summary>
     public static IReadOnlyList<RawEditProblem> TextProblems(string file, string text) => Parse(file, text).Problems;
 
+    /// <summary>
+    /// The checks of a draft text while the user types (section 8.8 of the M6b design, UI rule 11 of AGENTS.md). The
+    /// text is the whole file or the INI block of a page. A text problem gives its problem at once. Else the checks run
+    /// on W with the parsed sections in place of the sections of the text. Each problem of a section of the text maps
+    /// to its line.
+    /// </summary>
+    /// <param name="block">The identities in the file of the sections of the block, in text order, or null for the
+    /// whole file.</param>
+    public static RawMissionDraft Draft(EditSession session, string file, IReadOnlyList<SectionIdentity>? block, string text)
+    {
+        var parsed = Parse(file, text);
+        if (parsed.Problems.Count > 0)
+            return new RawMissionDraft(parsed.Problems, null);
+        if (block != null && BlockProblem(block, parsed) is { } problem)
+            return new RawMissionDraft([problem], null);
+        if (session.OpenDocument(file) is not { HoldsScript: true, State.Exists: true } document)
+            return new RawMissionDraft([], null);
+        // The index in the sections of the draft of each section of the text.
+        List<Section> sections;
+        var places = new int[parsed.Sections.Count];
+        if (block == null)
+        {
+            sections = parsed.Sections;
+            for (var k = 0; k < places.Length; k++)
+                places[k] = k;
+        }
+        else
+        {
+            sections = document.Working.ToList();
+            for (var k = 0; k < places.Length; k++)
+            {
+                if (document.IndexOf(block[k]) is not (>= 0 and var at))
+                    return new RawMissionDraft([], null);
+                sections[at] = parsed.Sections[k];
+                places[k] = at;
+            }
+        }
+        var work = session.Missions.DraftWork(document, sections);
+        return new RawMissionDraft([], () =>
+        {
+            var analysis = work();
+            var ids = SectionIdentity.Identify(sections);
+            var result = new List<RawDraftMark>();
+            foreach (var diagnostic in analysis.Problems)
+            {
+                var at = diagnostic.Target is { } target ? Array.IndexOf(ids, target.Id) : -1;
+                var k = Array.IndexOf(places, at);
+                if (k < 0)
+                {
+                    // A problem of the whole file shows on the first line of the whole text.
+                    if (block == null && diagnostic.Target == null)
+                        result.Add(new RawDraftMark(0, diagnostic));
+                    continue;
+                }
+                var entry = diagnostic.EntryIndex >= 0 && diagnostic.EntryIndex < parsed.Sections[k].Count ? diagnostic.EntryIndex : -1;
+                result.Add(new RawDraftMark(parsed.Line(k, entry), diagnostic));
+            }
+            return result;
+        });
+    }
+
+    /// <summary>
+    /// Why the end text of the INI block of a page cannot be planned, or null (section 8.8 of the M6b design). The block
+    /// holds the sections of the page. A header cannot go in or out of it, and the type of each section stays, as in the
+    /// raw block of other files (MOD_FORMAT "Raw INI blocks").
+    /// </summary>
+    private static RawEditProblem? BlockProblem(IReadOnlyList<SectionIdentity> block, ParsedText end)
+    {
+        if (end.Sections.Count != block.Count)
+        {
+            var count = block.Count == 1 ? "one section" : $"{block.Count} sections";
+            return new RawEditProblem(end.Sections.Count > block.Count ? end.Line(block.Count, -1) : 0,
+                $"This block holds {count}, so a header cannot go in or out of it. Add or remove a section in the Raw INI " +
+                "view of the whole script.");
+        }
+        for (var k = 0; k < block.Count; k++)
+        {
+            if (!end.Sections[k].Name.Equals(block[k].Type, StringComparison.OrdinalIgnoreCase))
+                return new RawEditProblem(end.Line(k, -1),
+                    $"The header of this section must stay [{block[k].Type}]. Make a section of another type in the Raw INI " +
+                    "view of the whole script.");
+        }
+        return null;
+    }
+
     private static RawMissionPlan Plan(EditSession session, string file, IReadOnlyList<SectionIdentity>? block,
         string startText, string endText)
     {
@@ -80,6 +177,8 @@ public static class RawMissionEdit
         var startIds = Identify(start.Sections);
         if (block != null && block.Count != startIds.Length)
             return Stop(0, ChangedWhileTyping);
+        if (block != null && BlockProblem(block, end) is { } blockProblem)
+            return new RawMissionPlan(null, [blockProblem], []);
         var fileIdOf = new Dictionary<SectionIdentity, SectionIdentity>();
         for (var k = 0; k < startIds.Length; k++)
             fileIdOf[startIds[k]] = block?[k] ?? startIds[k];
@@ -149,13 +248,22 @@ public static class RawMissionEdit
             order.Remove(fileIdOf[id]);
         }
 
-        // New sections at their places: after the section before them in the text.
+        // New sections at their places: after the section before them in the text. A new section of a patched file
+        // whose place has no effect goes to the end of the file, as the command does (section 6.6 of the M6b design).
         var places = order.Cast<object>().ToList();
+        var news = new HashSet<object>(ReferenceEqualityComparer.Instance);
         foreach (var id in added)
         {
             var k = endIndex[id];
             var index = PlaceOf(places, endIds, k, fileIdOf, block, order);
+            if (MissionDraft.MovesBaseSections(document, end.Sections[k],
+                    places.Skip(index).Where(p => !news.Contains(p)).Cast<SectionIdentity>()))
+            {
+                index = places.Count;
+                Note(notes, MissionDraft.NewPlaceNote(end.Sections[k].Name));
+            }
             places.Insert(index, id);
+            news.Add(id);
             commands.Add(new RestoreSection(new ScriptRef(document.Path), index,
                 new RawSection(end.Sections[k].Name, MissionDraft.RawOf(end.Sections[k]))));
             if (end.HasComment[k])
@@ -220,25 +328,8 @@ public static class RawMissionEdit
     /// <summary>The sections of the longest common order of two lists of the same sections.</summary>
     private static HashSet<SectionIdentity> LongestCommonOrder(List<SectionIdentity> a, List<SectionIdentity> b)
     {
-        var table = new int[a.Count + 1, b.Count + 1];
-        for (var i = a.Count - 1; i >= 0; i--)
-        for (var j = b.Count - 1; j >= 0; j--)
-            table[i, j] = a[i].Equals(b[j]) ? table[i + 1, j + 1] + 1 : Math.Max(table[i + 1, j], table[i, j + 1]);
-        var result = new HashSet<SectionIdentity>();
-        for (int i = 0, j = 0; i < a.Count && j < b.Count;)
-        {
-            if (a[i].Equals(b[j]))
-            {
-                result.Add(a[i]);
-                i++;
-                j++;
-            }
-            else if (table[i + 1, j] >= table[i, j + 1])
-                i++;
-            else
-                j++;
-        }
-        return result;
+        var (kept, _) = CommonOrder.Kept(a, b, EqualityComparer<SectionIdentity>.Default);
+        return a.Where((_, i) => kept[i]).ToHashSet();
     }
 
     /// <summary>True when two sections have the same type and the same lines, by the text of their values in the raw
@@ -320,7 +411,8 @@ public static class RawMissionEdit
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
-            return new ParsedText([], [], [], [new RawEditProblem(0, $"The game cannot read the text: {e.Message}")]);
+            return new ParsedText([], [], [], [new RawEditProblem(0,
+                "The game cannot read the text. Correct the section headers and the lines, then edit again.")]);
         }
         var map = RawIni.Scan(IniDocument.TextEncoding.GetBytes(string.Join("\n", lines)), out _);
         if (sections.Count != headers.Count)

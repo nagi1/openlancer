@@ -23,11 +23,15 @@ public static class ItemEdits
     /// fails when it runs after the edit view changed. It also fails when it runs if a section that it renames is not
     /// a section that the active mod adds (see <see cref="EditCommand.RenameAdded"/>).</remarks>
     /// <param name="item">A section of an item file with a nickname.</param>
+    /// <param name="warnings">Gets a warning for each mission line that names the item and that the edit cannot change,
+    /// for example a line of a section that the active mod cannot patch. The save stops at such a line (rule M23), so
+    /// the caller shows the warnings at once. Null drops them.</param>
     /// <exception cref="ArgumentException">The section is not a section of an item file with a nickname, or the new
     /// nickname cannot be the value of a patch line.</exception>
     /// <exception cref="InvalidOperationException">Another section of the same kind of file has the new
     /// nickname.</exception>
-    public static EditCommand Rename(EditSession session, SectionRef item, string newNickname)
+    public static EditCommand Rename(EditSession session, SectionRef item, string newNickname,
+        List<Diagnostic>? warnings = null)
     {
         var index = session.Items;
         var kind = index.KindOf(item.Path);
@@ -71,7 +75,7 @@ public static class ItemEdits
             _ => null,
         }).OfType<Missions.MissionValueKind>().Distinct().ToList();
         if (missionKinds.Count > 0 &&
-            session.Missions.References.Rename(missionKinds, oldNickname, newNickname, []) is { } mission)
+            session.Missions.References.Rename(missionKinds, oldNickname, newNickname, warnings ?? []) is { } mission)
             commands.Add(mission);
         // The new nickname goes into the key lines and the links, so each of their files must take it.
         foreach (var binary in renamed.Select(r => r.Section).Concat(relinked).Select(index.IsBinary).Distinct())

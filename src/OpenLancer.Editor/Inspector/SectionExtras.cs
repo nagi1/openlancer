@@ -210,7 +210,7 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
         var plan = RawSectionEdit.Plan(session.Edits, section, start, end);
         if (plan.Problems.Count > 0)
         {
-            return $"{string.Join(" ", plan.Problems)} The draft text:\n{end}";
+            return Missions.MissionWorkspace.RawRefusal(plan.Problems.Select(p => p.ToString()), end);
         }
 
         foreach (var note in plan.Notes)

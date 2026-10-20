@@ -106,7 +106,7 @@ internal sealed partial class MissionDraft
     /// <summary>Refuses a row that is not an action of a trigger.</summary>
     public void RequireAction(EditDocument document, int index, IReadOnlyList<Entry> entries, int row)
     {
-        if (row <= TriggerPlaces.NicknameLine(entries) || !TriggerRules.IsAction(entries[row].Name))
+        if (row <= TriggerRules.NicknameLine(entries) || !TriggerRules.IsAction(entries[row].Name))
             throw Refuse(MissionErrors.NotAnActionError(Owner(document, index), row));
     }
 
@@ -366,7 +366,7 @@ internal sealed partial class MissionDraft
         var line = entries[row];
         entries.RemoveAt(row);
         var to = at > row ? at - 1 : at;
-        if (actionsOnly && !TriggerPlaces.ActionPlace(entries, to))
+        if (actionsOnly && !TriggerRules.ActionPlace(entries, to))
             throw Refuse(MissionErrors.BadPlaceError());
         entries.Insert(to, line);
         if (!SetLines(document, index, entries, inverse: false))
@@ -384,16 +384,22 @@ internal sealed partial class MissionDraft
     /// <summary>The raw form of a section: its type and each line with its value texts.</summary>
     public static RawSection RawSection(Section section) => new(section.Name, RawOf(section));
 
-    /// <summary>Puts a section back at an index (see <see cref="EditDocument.InsertRestored"/>).</summary>
-    public void InsertRestored(EditDocument document, int at, Section section)
+    /// <summary>Puts a section back at an index (see <see cref="EditDocument.InsertRestored"/>), or at the end of the
+    /// file by the rule of <see cref="MovesBaseSections"/>.</summary>
+    /// <returns>The index of the section in the file.</returns>
+    public int InsertRestored(EditDocument document, int at, Section section)
     {
+        at = PlaceOfNew(document, at, section);
         document.InsertRestored(at, section);
         Scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
+        return at;
     }
 
     /// <summary>
-    /// Removes a section of a mission file. The lines of the file that name it stay and show "Missing", or go with
-    /// <see cref="ReferencesMode.Remove"/>. A name that another section of the type still gives is not missing.
+    /// Removes a section of a mission file. The lines that name it stay and show "Missing", or go with
+    /// <see cref="ReferencesMode.Remove"/>. The lines are the lines of the file, and for a ship build also the
+    /// <c>[NPC]</c> lines of each script that names it. A name that another section of the type in the file still gives
+    /// is not missing.
     /// </summary>
     public void RemoveSection(EditDocument document, int index, ReferencesMode references, DeleteReason why, string? cause)
     {
@@ -404,17 +410,41 @@ internal sealed partial class MissionDraft
         if (name != null && !document.Working.Where((s, i) => i != index && s.Name.Equals(section.Name, StringComparison.OrdinalIgnoreCase))
                 .Any(s => string.Equals(SectionIdentity.KeyOf(s), name, StringComparison.OrdinalIgnoreCase)))
         {
-            var lines = MissionLinks.Naming(Schema, document.Working, MissionLinks.KindsOf(section.Name), name)
-                .Where(l => l.Section != index).Select(l => (l.Section, l.Row)).Distinct().ToList();
-            if (references == ReferencesMode.Remove)
-                RemoveLines(document, lines, inverse);
-            else
-                MarkMissing(document, lines, name, "The game ignores this line, because the script has no item with this name.");
+            var kinds = MissionLinks.KindsOf(section.Name);
+            var files = MissionIndex.Is(section.Name, "NPCShipArch")
+                ? MissionScripts().Where(d => !ReferenceEquals(d, document) && FindsBuildIn(d, document, name))
+                    .Prepend(document).ToList()
+                : [document];
+            foreach (var file in files)
+            {
+                var lines = MissionLinks.Naming(Schema, file.Working, kinds, name)
+                    .Where(l => !(ReferenceEquals(file, document) && l.Section == index)).Select(l => (l.Section, l.Row))
+                    .Distinct().ToList();
+                if (lines.Count == 0)
+                    continue;
+                if (references == ReferencesMode.Remove)
+                    RemoveLines(ReferenceEquals(file, document) ? file : Script(file.Path), lines, inverse);
+                else
+                    MarkMissing(file, lines, name, "The game ignores this line, because no item has this name now.");
+            }
         }
         var removed = Remove(document, index);
         inverse.Insert(0, new RestoreSection(new ScriptRef(document.Path), index, RawSection(removed)));
         Deletes.Add(new ResultDelete(reference, why, cause));
         Inverse(inverse.Count == 1 ? inverse[0] : new CommandGroup(inverse));
+    }
+
+    /// <summary>True when a script finds a ship build of a name in a file. The file is the ship build file of the
+    /// script. Or it is a shared file, and the ship build file of the script has no build of the name.</summary>
+    private bool FindsBuildIn(EditDocument script, EditDocument file, string name)
+    {
+        var own = Session.ShipBuildFileOf(script.Path);
+        if (own != null && VfsPath.Comparer.Equals(own, file.Path))
+            return true;
+        if (IsMissionFile(file.Path))
+            return false;
+        return own == null || Session.OpenDocument(own) is not { State.Exists: true } ownFile ||
+               IndexOfKey(ownFile, "NPCShipArch", name) < 0;
     }
 
     /// <summary>The command that gives a section its old key back, without a change of the lines that name it.</summary>
@@ -560,7 +590,8 @@ internal sealed partial class MissionDraft
     /// <summary>
     /// The ship build file of a script (the <c>[Mission] npc_ship_file</c> line), to change it, or null when the script
     /// names none. With <paramref name="create"/>, a file that does not exist becomes a new whole file of the active
-    /// mod.
+    /// mod. The file then exists in W, and the inverse of the command deletes it again (see
+    /// <see cref="CreatedFiles"/>).
     /// </summary>
     public EditDocument? ShipBuildFile(EditDocument script, bool create)
     {
@@ -568,23 +599,37 @@ internal sealed partial class MissionDraft
             return null;
         if (Session.OpenDocument(path) is { State.Exists: true })
             return File(path);
-        return create ? NewFile(NewFilePath(path, allowExisting: true)) : null;
+        if (!create)
+            return null;
+        var file = NewFile(NewFilePath(path, allowExisting: true));
+        if (!file.State.Exists)
+        {
+            SetFile(file, [], exists: true);
+            CreatedFiles.Add(file.Path);
+        }
+        return file;
     }
 
+    /// <summary>The ship build files that <see cref="ShipBuildFile"/> made in this batch and that no inverse deletes
+    /// yet.</summary>
+    private HashSet<string> CreatedFiles { get; } = new(VfsPath.Comparer);
+
+    /// <summary>The inverse command that deletes a ship build file that <see cref="ShipBuildFile"/> made for the command
+    /// that runs now, or none. The inverse runs it after it removes the sections of the file.</summary>
+    public IEnumerable<MissionCommand> DeleteIfCreated(EditDocument file) =>
+        CreatedFiles.Remove(file.Path) ? [new DeleteScript(new ScriptRef(file.Path))] : [];
+
     /// <summary>The file and the index of a ship build: in the ship build file of the script first, then in the shared
-    /// files of the missions. True for a build of a shared file.</summary>
+    /// ship build files. True for a build of a shared file. The command only reads the file: a change of a build of a
+    /// shared file goes through <see cref="Item"/>, with its confirmation.</summary>
     public (EditDocument File, int Index, bool Shared) FindBuild(EditDocument script, string name)
     {
         if (ShipBuildFile(script, create: false) is { } own && IndexOfKey(own, "NPCShipArch", name) is >= 0 and var at)
             return (own, at, false);
-        string[] files = [@"MISSIONS\npcships.ini", @"MISSIONS\npcships_test.ini"];
-        foreach (var shared in files.Select(Session.DataPath))
+        foreach (var file in SharedBuildFiles())
         {
-            if (shared == null || Session.OpenDocument(shared) is not { State.Exists: true })
-                continue;
-            var file = File(shared);
             if (IndexOfKey(file, "NPCShipArch", name) is >= 0 and var index)
-                return (file, index, !Session.IsGuardedMissionFile(file.Path));
+                return (file, index, true);
         }
         throw Refuse(MissionErrors.ItemNotFoundError(script.Path, "ship build", name));
     }
@@ -641,10 +686,9 @@ internal sealed partial class MissionDraft
             throw Refuse(MissionErrors.NotEditableError("There is no active mod. Select a mod to edit."));
         if (!SectionKeys.IsMissionFile(normal) || !normal.EndsWith(".ini", StringComparison.OrdinalIgnoreCase) ||
             Session.DataPath("MISSIONS") is { } missions && !MissionFiles.IsScanned(normal, missions))
-            throw Refuse(MissionErrors.PathInUseError(normal,
-                "The path must be under DATA\\MISSIONS, outside the encounters folder, and end with .ini."));
+            throw Refuse(MissionErrors.BadPathError(normal));
         if (!allowExisting && Session.OpenDocument(normal) is { State.Exists: true })
-            throw Refuse(MissionErrors.PathInUseError(normal, "The edit view already has a file at this path."));
+            throw Refuse(MissionErrors.PathInUseError(normal));
         return normal;
     }
 

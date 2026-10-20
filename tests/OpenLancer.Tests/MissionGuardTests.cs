@@ -78,4 +78,61 @@ public sealed class MissionGuardTests
         Assert.True(m.Session.IsGuardedMissionFile(Ships));
         Assert.False(m.Session.IsGuardedMissionFile(SharedShips));
     }
+
+    [Fact]
+    public void OnlyTheRestoreOfUnsavedEditsHasTheOriginRecovery()
+    {
+        using var m = Create();
+        var before = m.State();
+
+        Assert.Throws<ArgumentException>(() => m.Session.BeginBatch("Restore", EditOrigin.Recovery));
+        var result = m.Missions.Apply(new MissionBatch("Restore", [new SetTriggerStart(T("ol_wave"), true)])
+        {
+            Origin = EditOrigin.Recovery,
+        });
+
+        Assert.Equal((EditStatus.Refused, EditErrorKind.InvalidArgument), (result.Status, result.Errors[0].Kind));
+        Assert.Null(m.Session.OpenBatch);
+        Assert.Equal(before, m.State());
+        Assert.False(m.Session.CanUndo);
+    }
+
+    [Fact]
+    public void TheCommandsOnlyReadTheWorldFilesOfTheMissions()
+    {
+        const string pilots = @"DATA\MISSIONS\pilots_population.ini";
+        const string encounter = @"DATA\MISSIONS\ENCOUNTERS\ol_encounter.ini";
+        using var m = Create(setup: ws =>
+        {
+            ws.WriteBase(pilots, "[Pilot]\nnickname = ol_pilot\n");
+            ws.WriteBase(encounter, "[EncounterFormation]\nnickname = ol_encounter\n");
+        });
+
+        m.Refuse(new RemoveSection(ItemRef.Of(pilots, "Pilot", "ol_pilot")), MissionErrors.WorldFile);
+        var error = m.Refuse(new AddSection(new ScriptRef(encounter), "Trigger", [LineSpec.Of("Cnd_True")]), MissionErrors.WorldFile);
+
+        Assert.Equal($"The mission commands cannot change {encounter}. Encounters and bases use the data of this file too. " +
+                     "Change the file in the Inspector.", error.Message);
+    }
+
+    [Fact]
+    public void ALineOfABuildOfTheSharedShipBuildFileNeedsAConfirmation()
+    {
+        using var m = Create();
+        var shared = ItemRef.Of(SharedShips, "NPCShipArch", "ol_shared_build");
+        var before = m.State();
+        SetItemKey Loadout() => new(shared, "loadout", [LineSpec.Raw("loadout", "ol_loadout_2")]);
+
+        var unconfirmed = m.Missions.Apply(Loadout());
+        Assert.Equal((EditStatus.Refused, MissionErrors.SharedBuildChange), (unconfirmed.Status, unconfirmed.Errors[0].Detail));
+        Assert.Equal(before, m.State());
+        var confirmed = m.Missions.Apply(new MissionBatch("Shared loadout", [Loadout()]) { Confirm = true });
+        Assert.Equal(EditStatus.Applied, confirmed.Status);
+        Assert.Equal("loadout = ol_loadout_2", m.Lines(shared)[2]);
+
+        // The inverse is a change of the shared file too, so it needs the confirmation, and it gives the line back.
+        var back = m.Missions.Apply(new MissionBatch("Back", [confirmed.Inverse!]) { Confirm = true });
+        Assert.Equal(EditStatus.Applied, back.Status);
+        Assert.Equal(before, m.State());
+    }
 }

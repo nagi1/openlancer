@@ -264,4 +264,167 @@ public sealed class MissionBatchTests
         m.Session.Undo();
         Assert.Equal("Cnd_Timer = 3", m.Lines("ol_wave")![2]);
     }
+
+    [Fact]
+    public void CommandsThatCancelEachOtherGiveNoChangeAndNoEntry()
+    {
+        using var m = Create();
+        var revision = m.Session.Revision;
+        var changes = new List<MissionScriptsChange>();
+        m.Missions.ScriptsChanged += changes.Add;
+
+        var result = m.Missions.Apply(new MissionBatch("Add and remove",
+        [
+            new AddAction(T("ol_wave"), LineSpec.Of("Act_ActTrig", ("trigger", "ol_end"))),
+            new RemoveAction(Row("ol_wave", 6)),
+        ]));
+
+        Assert.Equal(EditStatus.NoChange, result.Status);
+        Assert.Null(result.Inverse);
+        Assert.False(m.Session.CanUndo);
+        Assert.False(m.Session.IsDirty);
+        Assert.Equal(revision, m.Session.Revision);
+        Assert.Equal(1, m.Missions.Version(Script));
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public void ARefusalBeforeTheRunCancelsTheOpenBatchOfTheCaller()
+    {
+        using var m = Create();
+        var before = m.State();
+
+        var batch = m.Session.BeginBatch("Caller");
+        m.Missions.Apply(new SetTriggerStart(T("ol_wave"), true));
+        var stale = m.Missions.Apply(new MissionBatch("Stale", [new SetTriggerStart(T("ol_end"), true)]) { IfRevision = 99 });
+
+        Assert.Equal(EditSession.RevisionChanged, stale.Errors[0].Detail);
+        Assert.False(batch.IsOpen);
+        Assert.Null(m.Session.OpenBatch);
+        Assert.Equal(before, m.State());
+        Assert.False(m.Session.CanUndo);
+
+        var second = m.Session.BeginBatch("Caller 2");
+        m.Missions.Apply(new SetTriggerStart(T("ol_wave"), true));
+        var preview = m.Missions.Preview(new MissionBatch("Preview", [new SetTriggerStart(T("ol_end"), true)]));
+
+        Assert.Equal(MissionErrors.Busy, preview.Errors[0].Detail);
+        Assert.False(second.IsOpen);
+        Assert.Equal(before, m.State());
+    }
+
+    [Fact]
+    public void AnAgentPreviewOfADeleteTellsTheConfirmationAndDoesNotRefuse()
+    {
+        using var m = Create();
+        var before = m.State();
+
+        var result = m.Missions.Preview(new MissionBatch("Remove the end", [new RemoveTrigger(T("ol_end"))])
+        {
+            Origin = EditOrigin.Agent,
+        });
+
+        Assert.Equal(EditStatus.Previewed, result.Status);
+        Assert.True(result.NeedsConfirmation);
+        Assert.Empty(result.Errors);
+        Assert.Equal(3, result.Missing.Count);
+        Assert.Contains(result.Warnings, w => w.Message.StartsWith("After this edit, 3 lines name an item that is gone."));
+        Assert.Equal(before, m.State());
+    }
+
+    [Fact]
+    public void TheConfirmationFollowsTheOriginOfTheBatchOfTheCallerAndGivesThePlan()
+    {
+        using var m = Create();
+        var before = m.State();
+
+        // The step does not set an origin. The batch of the caller is an agent batch.
+        var batch = m.Session.BeginBatch("Agent call", EditOrigin.Agent);
+        var result = m.Missions.Apply(new RemoveTrigger(T("ol_end")));
+
+        Assert.Equal(EditStatus.Refused, result.Status);
+        Assert.True(result.NeedsConfirmation);
+        Assert.Equal((EditErrorKind.NeedsConfirmation, MissionErrors.MissingLines), (result.Errors[0].Kind, result.Errors[0].Detail));
+        Assert.Single(result.Deletes);
+        Assert.Equal(3, result.Missing.Count);
+        Assert.False(batch.IsOpen);
+        Assert.Equal(before, m.State());
+    }
+
+    [Fact]
+    public void StrictModeCountsANewLineThatNamesADeletedName()
+    {
+        using var m = Create();
+
+        var refused = m.Missions.Apply(new MissionBatch("Remove and name",
+        [
+            new RemoveTrigger(T("ol_end")),
+            new AddAction(T("ol_wave"), LineSpec.Of("Act_ActTrig", ("trigger", "ol_end"))),
+        ]) { Options = MissionEditOptions.Strict });
+        // The lines that named the trigger before the batch are "Missing" lines, so strict mode does not count them.
+        var applied = m.Missions.Apply(new MissionBatch("Remove", [new RemoveTrigger(T("ol_end"))]) { Options = MissionEditOptions.Strict });
+
+        Assert.Equal(EditStatus.Refused, refused.Status);
+        Assert.Equal(MissionErrors.NewErrors, refused.Errors[0].Detail);
+        Assert.StartsWith("The edit adds 1 error, so the editor did not apply it.", refused.Errors[0].Message);
+        Assert.Equal(EditStatus.Applied, applied.Status);
+    }
+
+    [Fact]
+    public void RejectNewWarningsCountsTheWarningsAsWarnings()
+    {
+        using var m = Create();
+
+        var result = m.Missions.Apply(new MissionBatch("Lonely", [new AddTrigger(TestScript) { Condition = LineSpec.Of("Cnd_True") }])
+        {
+            Options = new MissionEditOptions(RejectNewWarnings: true),
+        });
+
+        Assert.StartsWith("The edit adds 1 warning, so the editor did not apply it.", result.Errors[0].Message);
+    }
+
+    [Fact]
+    public void TheKeysOfTheExpectedVersionsAreInstallPathsOfScripts()
+    {
+        using var m = Create();
+
+        var bad = m.Missions.Apply(new MissionBatch("A", [new SetTriggerStart(T("ol_end"), true)])
+        {
+            ExpectVersions = new Dictionary<string, long> { [@"C:\x.ini"] = 1 },
+        });
+        var unknown = m.Missions.Apply(new MissionBatch("B", [new SetTriggerStart(T("ol_end"), true)])
+        {
+            ExpectVersions = new Dictionary<string, long> { [@"DATA\MISSIONS\OL_NONE\none.ini"] = 1 },
+        });
+        var model = Assert.Throws<EditException>(() => m.Missions.Model(@"C:\x"));
+
+        Assert.Equal((EditErrorKind.InvalidArgument, InstallPaths.NotInstallPath), (bad.Errors[0].Kind, bad.Errors[0].Detail));
+        Assert.Equal((EditErrorKind.NotFound, MissionErrors.ScriptNotFound), (unknown.Errors[0].Kind, unknown.Errors[0].Detail));
+        Assert.Equal(EditErrorKind.InvalidArgument, model.Error.Kind);
+        Assert.False(m.Session.CanUndo);
+    }
+
+    [Fact]
+    public void ATransactionKeepsTheGuardsAndTheConfirmationsAndItsCommitGivesTheInverse()
+    {
+        using var m = Create();
+        var before = m.State();
+        var shared = ItemRef.Of(SharedShips, "NPCShipArch", "ol_shared_build");
+
+        using var transaction = m.Missions.Begin("Drag the delay");
+        var stale = transaction.Apply(new MissionBatch("Drag", [new SetConditionValue(T("ol_wave"), "seconds", 4)]) { IfRevision = 9 });
+        var shared1 = transaction.Apply(new MissionBatch("Drag",
+            [new SetItemKey(shared, "loadout", [LineSpec.Raw("loadout", "ol_loadout_2")])]));
+        Assert.Equal(EditSession.RevisionChanged, stale.Errors[0].Detail);
+        Assert.True(shared1.NeedsConfirmation);
+        Assert.Equal(MissionErrors.SharedBuildChange, shared1.Errors[0].Detail);
+        Assert.Equal(before, m.State());
+        transaction.Apply(new MissionBatch("Drag", [new SetConditionValue(T("ol_wave"), "seconds", 7)]));
+        var result = transaction.Commit();
+
+        Assert.Equal(EditStatus.Applied, result.Status);
+        Assert.NotNull(result.Inverse);
+        m.Apply(result.Inverse!);
+        Assert.Equal(before, m.State());
+    }
 }

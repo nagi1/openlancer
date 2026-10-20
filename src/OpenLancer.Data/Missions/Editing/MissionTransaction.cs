@@ -20,26 +20,37 @@ public sealed class MissionTransaction : IDisposable
     private readonly EditTransaction transaction;
     private readonly MissionEditOptions options;
     private readonly string label;
+
+    /// <summary>The names of the game data before the transaction, for the problems before it.</summary>
+    private readonly MissionInputs names;
+
     private MissionDraft? draft;
     private bool ended;
 
-    internal MissionTransaction(MissionEditor editor, EditTransaction transaction, string label, MissionEditOptions options)
+    internal MissionTransaction(MissionEditor editor, EditTransaction transaction, string label, MissionEditOptions options,
+        MissionInputs names)
     {
         this.editor = editor;
         this.transaction = transaction;
         this.label = label;
         this.options = options;
+        this.names = names;
     }
 
     /// <summary>True until the commit or the cancel.</summary>
     public bool IsOpen => !ended;
 
-    /// <summary>Puts back the state before the transaction and runs the batch. A refusal leaves the state before the
-    /// transaction, and the transaction stays open.</summary>
+    /// <summary>
+    /// Puts back the state before the transaction and runs the batch. The batch keeps the rules of
+    /// <see cref="MissionEditor.Apply(MissionBatch)"/>: the expected revision and versions, and the confirmations of the
+    /// plan. A refusal leaves the state before the transaction, and the transaction stays open.
+    /// </summary>
     /// <exception cref="InvalidOperationException">The transaction has ended.</exception>
     public MissionEditResult Apply(MissionBatch batch)
     {
         ThrowIfEnded();
+        if (editor.Refusal(batch) is { } refusal)
+            return Refuse([refusal]);
         var plan = new MissionPlanCommand(label, editor, batch.Commands);
         try
         {
@@ -48,21 +59,29 @@ public sealed class MissionTransaction : IDisposable
         catch (EditException e)
         {
             draft = null;
-            return new MissionEditResult(EditStatus.Refused) { Label = label, Errors = [e.Error], Summary = e.Message };
+            return Refused([e.Error]);
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException)
         {
             draft = null;
-            return new MissionEditResult(EditStatus.Refused)
-            {
-                Label = label,
-                Errors = [new EditError(EditErrorKind.Refused, EditPlan.PlanRefused, e.Message)],
-                Summary = e.Message,
-            };
+            return Refused([new EditError(EditErrorKind.Refused, EditPlan.PlanRefused, e.Message)]);
         }
         draft = plan.Draft;
-        return new MissionEditResult(EditStatus.Applied) { Label = label, Changes = draft!.Changes, Notes = draft.Notes };
+        if (draft!.Confirmations.Count > 0 && !batch.Confirm)
+            return Refuse(draft.Confirmations.DistinctBy(c => (c.Detail, c.Message)).ToList()) with { NeedsConfirmation = true };
+        return new MissionEditResult(EditStatus.Applied) { Label = label, Changes = draft.Changes, Notes = draft.Notes };
     }
+
+    /// <summary>Puts back the state before the transaction, and gives a refusal.</summary>
+    private MissionEditResult Refuse(IReadOnlyList<EditError> errors)
+    {
+        transaction.Apply(new MissionPlanCommand(label, editor, []));
+        draft = null;
+        return Refused(errors);
+    }
+
+    private MissionEditResult Refused(IReadOnlyList<EditError> errors) =>
+        new(EditStatus.Refused) { Label = label, Errors = errors, Summary = errors[0].Message, Revision = editor.Session.Revision };
 
     /// <summary>
     /// A function that analyzes the touched scripts of the last step over a snapshot of W. The function reads only
@@ -86,7 +105,7 @@ public sealed class MissionTransaction : IDisposable
         EditResult part = new(EditStatus.Applied);
         if (draft != null)
         {
-            part = editor.CheckTransaction(draft, options);
+            part = editor.CheckTransaction(draft, options, names);
             if (part.Errors.Count > 0)
             {
                 Cancel();
@@ -103,6 +122,8 @@ public sealed class MissionTransaction : IDisposable
         var result = MissionEditResult.From(part) with
         {
             Status = applied ? EditStatus.Applied : EditStatus.NoChange,
+            Inverse = applied && draft != null ? editor.InverseOf(draft) : null,
+            RowMoves = applied && draft != null ? draft.RowMoves : [],
             Label = label,
             UndoLabel = applied ? label : null,
             Revision = editor.Session.Revision,
@@ -149,17 +170,19 @@ public sealed partial class MissionEditor
             throw new EditException(MissionErrors.NotEditableError(reason));
         if (session.InTransaction || session.OpenBatch != null)
             throw new EditException(MissionErrors.BusyError());
-        return new MissionTransaction(this, session.Begin(label), label, options ?? MissionEditOptions.Default);
+        var names = WorldNow();
+        return new MissionTransaction(this, session.Begin(label), label, options ?? MissionEditOptions.Default, names);
     }
 
     /// <summary>The check of the last step of a transaction: the new and the fixed problems, and the errors of strict
     /// mode.</summary>
-    internal EditResult CheckTransaction(MissionDraft draft, MissionEditOptions options)
+    /// <param name="names">The names of the game data before the transaction.</param>
+    internal EditResult CheckTransaction(MissionDraft draft, MissionEditOptions options, MissionInputs names)
     {
-        var check = new BatchCheck(this);
+        var check = new BatchCheck(this, names);
         check.Join(options);
         check.Add(draft);
-        return check.Check(null!);
+        return check.Check();
     }
 
     /// <summary>Raises <see cref="Applied"/> for a request that the editor did not run as a batch.</summary>
@@ -184,5 +207,26 @@ public sealed partial class MissionEditor
         }
         inputs = snapshot.WithOverlay(overlay);
         return () => work.Select(w => MissionRun.AnalyzeScript(inputs, w.Path, w.Sections, w.Binary, _ => w.Base)).ToList();
+    }
+
+    /// <summary>
+    /// A function that analyzes a script with other sections in place of W, for example the parsed text of a raw edit
+    /// while the user types (section 8.8 of the M6b design). The overlay and the base-game run come from the thread of
+    /// the session, so the function reads only immutable data.
+    /// </summary>
+    internal Func<MissionAnalysis> DraftWork(EditDocument document, IReadOnlyList<LibreLancer.Data.Ini.Section> sections)
+    {
+        var snapshot = world.Inputs();
+        cache.Use(snapshot);
+        var overlay = new Dictionary<string, MissionOverlayFile>(session.MissionOverlay(), VfsPath.Comparer)
+        {
+            [document.Path] = session.OverlayOf(document,
+                document.State with { Working = System.Collections.Immutable.ImmutableList.CreateRange(sections) }),
+        };
+        var inputs = snapshot.WithOverlay(overlay);
+        var baseRun = cache.BaseRun(MissionRun.Info(inputs, document.Path));
+        var path = document.Path;
+        var binary = document.IsBinary;
+        return () => MissionRun.AnalyzeScript(inputs, path, sections, binary, _ => baseRun);
     }
 }

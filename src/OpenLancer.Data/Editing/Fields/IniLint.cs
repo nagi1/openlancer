@@ -28,22 +28,14 @@ public static class IniLint
     /// (decision D527).</param>
     public static IReadOnlyList<RawMark> Marks(RawText text, IEnumerable<Diagnostic> diagnostics, bool showBaseGame)
     {
-        var byLine = new SortedDictionary<int, List<Diagnostic>>();
+        var lines = new List<(int, Diagnostic)>();
         foreach (var diagnostic in diagnostics)
         {
-            if (!BaseGameMessages.Shows(diagnostic, showBaseGame))
-                continue;
             var line = diagnostic.Target is { } target ? text.LineOf(target.Id, diagnostic.EntryIndex) : 0;
-            if (line is not { } at || at >= text.Lines.Count)
-                continue;
-            if (!byLine.TryGetValue(at, out var list))
-                byLine[at] = list = [];
-            list.Add(diagnostic);
+            if (line is { } at && at < text.Lines.Count)
+                lines.Add((at, diagnostic));
         }
-        var marks = byLine.ToDictionary(p => p.Key, p => new RawMark(p.Key,
-            p.Value.Any(d => d.Severity == DiagnosticSeverity.Error) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
-            string.Join("\n", p.Value.Select(d => d.Message).Distinct()),
-            p.Value.All(d => d.Origin?.IsBaseGame == true)));
+        var marks = ByLine(lines, showBaseGame);
         foreach (var (section, reason) in text.ReadOnlySections)
         {
             var header = text.HeaderLine(section);
@@ -53,4 +45,21 @@ public static class IniLint
         }
         return marks.Values.OrderBy(m => m.Line).ToList();
     }
+
+    /// <summary>The marks of problems with their lines from 0, one mark for each line, in line order. The raw editor of
+    /// a mission file gives the problems of a draft text in this way while the user types (section 8.8 of the M6b
+    /// design).</summary>
+    /// <param name="showBaseGame">True while the base-game messages show. Else base-game problems give no mark
+    /// (decision D527).</param>
+    public static IReadOnlyList<RawMark> Marks(IEnumerable<(int Line, Diagnostic Problem)> problems, bool showBaseGame) =>
+        ByLine(problems, showBaseGame).Values.OrderBy(m => m.Line).ToList();
+
+    /// <summary>One mark for each line: an error when a problem of the line is an error, with the messages of the
+    /// problems of the line.</summary>
+    private static Dictionary<int, RawMark> ByLine(IEnumerable<(int Line, Diagnostic Problem)> problems, bool showBaseGame) =>
+        problems.Where(p => BaseGameMessages.Shows(p.Problem, showBaseGame)).GroupBy(p => p.Line).ToDictionary(g => g.Key,
+            g => new RawMark(g.Key,
+                g.Any(p => p.Problem.Severity == DiagnosticSeverity.Error) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning,
+                string.Join("\n", g.Select(p => p.Problem.Message).Distinct()),
+                g.All(p => p.Problem.Origin?.IsBaseGame == true)));
 }

@@ -252,4 +252,24 @@ public sealed class ItemEditsTests
                      "<PARA/><TEXT>Line 2</TEXT><PARA/><POP/></RDL>",
             ItemEdits.ToInfocard("Fast & <cheap>.\r\n\nLine 2"));
     }
+
+    /// <summary>A mission line that names the item and that the edit cannot change gives a warning at once. Else the user
+    /// learns about it only at the save (rule M23).</summary>
+    [Fact]
+    public void ARenameWarnsAboutAMissionLineThatItCannotChange()
+    {
+        using var ws = Create();
+        ws.WriteBase(@"DATA\MISSIONS\OL_TEST\ol_test.ini", "[Mission]\nnpc_ship_file = missions\\ol_test\\npcships.ini\n");
+        // Two builds with one nickname: a patch cannot find one of them, so the session cannot change them.
+        ws.WriteBase(@"DATA\MISSIONS\OL_TEST\npcships.ini",
+            "[NPCShipArch]\nnickname = ol_twin\nship_archetype = s2\n\n[NPCShipArch]\nnickname = ol_twin\nship_archetype = s2\n");
+        var session = ws.Session("act");
+        session.Execute(ItemTemplates.Build(ItemTemplates.Plan(session, Ship("s1"), "s2")));
+        var warnings = new System.Collections.Generic.List<OpenLancer.Data.Diagnostic>();
+
+        session.Execute(ItemEdits.Rename(session, Ship("s2"), "s3", warnings));
+
+        Assert.Equal(2, warnings.Count);
+        Assert.All(warnings, w => Assert.Contains("the editor cannot change the 'ship_archetype' line", w.Message));
+    }
 }

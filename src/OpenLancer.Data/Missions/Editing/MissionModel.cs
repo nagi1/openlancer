@@ -48,12 +48,6 @@ public interface IMissionWorldSource
     MissionInputs Inputs();
 }
 
-/// <summary>A world source that always gives the same inputs, for example in a test.</summary>
-public sealed class FixedMissionWorld(MissionInputs inputs) : IMissionWorldSource
-{
-    public MissionInputs Inputs() => inputs;
-}
-
 /// <summary>
 /// The world source of an edit session: the snapshot of the session (see <see cref="EditSession.MissionInputs"/>). A
 /// new snapshot comes when the edit view changes, for example after a save, and when W of a file outside the mission

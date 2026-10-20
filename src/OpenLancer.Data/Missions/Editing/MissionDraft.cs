@@ -4,6 +4,7 @@ using System.Linq;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Ini;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Strings;
 
@@ -76,16 +77,41 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         return Edit(document.Path);
     }
 
-    /// <summary>The document of a file of the missions: a script or a ship build file, to change it.</summary>
-    /// <exception cref="EditException">The edit view has no such file, or it is read-only.</exception>
+    /// <summary>
+    /// The document of a mission file, to change it: a script, or the ship build file of a script (section 4.1 of the
+    /// M6b design). The shared files under <c>DATA\MISSIONS</c>, for example the pilot files and the encounters, are
+    /// world data. The commands only read them.
+    /// </summary>
+    /// <exception cref="EditException">The edit view has no such file, the file is world data, or it is
+    /// read-only.</exception>
     public EditDocument File(string path)
     {
-        if (Session.OpenDocument(path) is not { State.Exists: true } document || !SectionKeysIsMission(document.Path))
+        if (Session.OpenDocument(path) is not { State.Exists: true } document || !SectionKeys.IsMissionFile(document.Path))
             throw new EditException(MissionErrors.ScriptNotFoundError(path) with { Index = Index });
+        if (!IsMissionFile(document.Path))
+            throw new EditException(MissionErrors.WorldFileError(document.Path) with { Index = Index });
         return Edit(document.Path);
     }
 
-    private static bool SectionKeysIsMission(string path) => OpenLancer.Data.Ini.SectionKeys.IsMissionFile(path);
+    /// <summary>True for a mission file: a script or the ship build file of a script, also of a script that an earlier
+    /// command of the batch changed.</summary>
+    private bool IsMissionFile(string path) =>
+        Session.IsGuardedMissionFile(path) ||
+        Touched.Values.Any(d => d.HoldsScript && VfsPath.Comparer.Equals(Session.ShipBuildFileOf(d.Path), path));
+
+    /// <summary>True for a shared ship build file of the missions (see <see cref="SharedBuildFiles"/>).</summary>
+    public bool IsSharedBuildFile(string path) =>
+        Session.OpenDocument(path) is { } document && SharedBuildFiles().Any(f => ReferenceEquals(f, document));
+
+    /// <summary>The shared ship build files of the missions: the files of the role <c>mission_ships</c> directly in
+    /// <c>DATA\MISSIONS</c> that no script names. Encounters and bases use their builds too (review finding
+    /// RB2).</summary>
+    public IEnumerable<EditDocument> SharedBuildFiles() =>
+        Session.MissionShipPaths
+            .Where(p => Session.DataPath("MISSIONS") is { } missions &&
+                        VfsPath.Comparer.Equals(VfsPath.Normalize(System.IO.Path.GetDirectoryName(p) ?? ""), missions) &&
+                        !IsMissionFile(p))
+            .Select(Session.OpenDocument).OfType<EditDocument>().Where(d => d.State.Exists);
 
     /// <summary>The document of a path through the scope, with its state before the batch.</summary>
     private EditDocument Edit(string path)
@@ -131,15 +157,18 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         var index = TriggerIndex(document, trigger.Name);
         if (index < 0)
             throw new EditException(MissionErrors.TriggerNotFoundError(document.Path, trigger.Name,
-                Hint(trigger.Name, TriggerNames(document))) with { Index = Index, Target = trigger.ToString() });
+                ItemRefs.Hint(trigger.Name, TriggerNames(document))) with { Index = Index, Target = trigger.ToString() });
         return (document, index);
     }
 
     /// <summary>The file and the index of an item. A trigger also resolves by its first nickname line.</summary>
+    /// <param name="lines">True for a command that changes only the lines of the item. Such a command can also change
+    /// a ship build of a shared ship build file, after a confirmation (<c>SharedBuildChange</c>, review finding RB2). The
+    /// inverse of "Shared" of <see cref="SetShipLoadout"/> needs it.</param>
     /// <exception cref="EditException"><c>ItemNotFound</c> or <c>TriggerNotFound</c>.</exception>
-    public (EditDocument Document, int Index) Item(ItemRef item)
+    public (EditDocument Document, int Index) Item(ItemRef item, bool lines = false)
     {
-        var document = File(item.Script);
+        var document = lines && SharedBuild(item) is { } shared ? shared : File(item.Script);
         var index = document.IndexOf(item.Section);
         if (index < 0 && MissionIndex.Is(item.Section.Type, "Trigger") && item.Section is { Key: { } name, Ordinal: 0 })
             index = TriggerIndex(document, name);
@@ -150,18 +179,31 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         var names = document.Working.Where(s => s.Name.Equals(item.Section.Type, StringComparison.OrdinalIgnoreCase))
             .Select(SectionIdentity.KeyOf).OfType<string>();
         throw new EditException((MissionIndex.Is(item.Section.Type, "Trigger")
-            ? MissionErrors.TriggerNotFoundError(document.Path, key, Hint(key, names))
-            : MissionErrors.ItemNotFoundError(document.Path, kind, key, Hint(key, names))) with
+            ? MissionErrors.TriggerNotFoundError(document.Path, key, ItemRefs.Hint(key, names))
+            : MissionErrors.ItemNotFoundError(document.Path, kind, key, ItemRefs.Hint(key, names))) with
         {
             Index = Index, Target = item.ToString(),
         });
     }
 
-    /// <summary>The file, the section and the line of a row, after its guards.</summary>
+    /// <summary>The shared ship build file of a ship build, to change it, with the confirmation of the change. Null
+    /// when the item is not a ship build of a shared ship build file.</summary>
+    private EditDocument? SharedBuild(ItemRef item)
+    {
+        if (!MissionIndex.Is(item.Section.Type, "NPCShipArch") ||
+            Session.OpenDocument(item.Script) is not { State.Exists: true } document ||
+            !SharedBuildFiles().Any(f => ReferenceEquals(f, document)))
+            return null;
+        Confirmations.Add(MissionErrors.SharedBuildChangeError(item.Section.Key ?? item.Section.ToString()));
+        return Edit(document.Path);
+    }
+
+    /// <summary>The file, the section and the line of a row, after its guards. A line of a ship build of a shared
+    /// ship build file needs a confirmation (see <see cref="Item"/>).</summary>
     /// <exception cref="EditException"><c>RowNotFound</c> or <c>RowChanged</c>.</exception>
     public (EditDocument Document, int Index, int Row) Row(RowRef row)
     {
-        var (document, index) = Item(row.Item);
+        var (document, index) = Item(row.Item, lines: true);
         var section = document.Working[index];
         var owner = Owner(document, index);
         if (row.Row < 0 || row.Row >= section.Count)
@@ -250,12 +292,51 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         Replace(document, index, section, old.Select(e => e.Name).Concat(entries.Select(e => e.Name)));
     }
 
-    /// <summary>Puts a new section into a file.</summary>
-    public void Insert(EditDocument document, int at, Section section)
+    /// <summary>Puts a new section into a file at a place, or at the end of the file by the rule of
+    /// <see cref="MovesBaseSections"/>.</summary>
+    /// <returns>The index of the section in the file.</returns>
+    public int Insert(EditDocument document, int at, Section section)
     {
+        at = PlaceOfNew(document, at, section);
         document.Insert(at, section);
         scope.Changed(new SectionRef(document.Path, document.IdentityAt(at)), structural: true);
+        return at;
     }
+
+    /// <summary>The place of a new section: the place, or the end of the file with a note when the section there would
+    /// make the patch move the sections of B after it.</summary>
+    private int PlaceOfNew(EditDocument document, int at, Section section)
+    {
+        var after = Enumerable.Range(at, Math.Max(0, document.Working.Count - at)).Select(document.IdentityAt);
+        if (!MovesBaseSections(document, section, after))
+            return at;
+        if (NewPlaceNote(section.Name) is var note && !Notes.Contains(note))
+            Notes.Add(note);
+        return document.Working.Count;
+    }
+
+    /// <summary>
+    /// True when a new section at a place of a patched mission file makes the patch move the sections of B after it
+    /// (section 6.6 of the M6b design). The merge adds a new section at the end of the file, and the game finds a
+    /// trigger and the other items by their name, not by their place. So such a section goes to the end of the file. A
+    /// ship or a formation section keeps its place, because the writer gives it <c>ol.before</c> (rule M08). A section
+    /// that B has, for example a deleted section that comes back, keeps its place too. A whole file keeps each place.
+    /// </summary>
+    /// <param name="after">The sections of the file after the place, by their identity.</param>
+    internal static bool MovesBaseSections(EditDocument document, Section section, IEnumerable<SectionIdentity> after)
+    {
+        if (document.IsWholeFile || MissionIndex.Is(section.Name, "MsnShip") || MissionIndex.Is(section.Name, "MsnFormation") ||
+            SectionIdentity.KeyOf(section) is not { } key ||
+            document.Base.Any(s => s.Name.Equals(section.Name, StringComparison.OrdinalIgnoreCase) &&
+                                   string.Equals(SectionIdentity.KeyOf(s), key, StringComparison.OrdinalIgnoreCase)))
+            return false;
+        return after.Any(id => document.BaseIdOf(id) != null);
+    }
+
+    /// <summary>The note of a new section that goes to the end of its file.</summary>
+    public static string NewPlaceNote(string type) =>
+        $"The place of a [{type}] section in the file has no effect in the game. A patch adds a new section at the end " +
+        "of the file, so the editor put it there.";
 
     /// <summary>Removes the section at an index, and gives it.</summary>
     public Section Remove(EditDocument document, int index)
@@ -265,6 +346,14 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         document.Remove(index, 1);
         scope.Changed(reference, structural: true);
         return old;
+    }
+
+    /// <summary>Gives the patch of a section another <c>ol.base</c> hash (see
+    /// <see cref="EditDocument.SetBaseHash"/>).</summary>
+    public void SetBaseHash(EditDocument document, int index, string hash)
+    {
+        document.SetBaseHash(document.IdentityAt(index), hash);
+        scope.Changed(new SectionRef(document.Path, document.IdentityAt(index)), structural: false);
     }
 
     /// <summary>Sets the state of a whole file: its sections, and whether it exists (section 6.7 of the M6b
@@ -401,12 +490,6 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
     /// <summary>The nicknames of the triggers of a file.</summary>
     public static IEnumerable<string> TriggerNames(EditDocument document) =>
         document.Working.Where(s => MissionIndex.Is(s.Name, "Trigger")).Select(TriggerRules.Nickname).OfType<string>();
-
-    /// <summary>The sentence with the closest names, with a space before it, or an empty text.</summary>
-    public static string Hint(string name, IEnumerable<string> candidates) =>
-        ItemRefs.Closest(name, candidates) is { Count: > 0 } closest
-            ? " The closest names are: " + string.Join(", ", closest) + "."
-            : "";
 
     /// <summary>Adds the notes of a line.</summary>
     public void Note(BuiltLine line) => Notes.AddRange(line.Notes);

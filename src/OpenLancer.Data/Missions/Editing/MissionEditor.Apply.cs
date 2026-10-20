@@ -41,11 +41,18 @@ public sealed partial class MissionEditor
 
     private MissionEditResult Run(MissionBatch batch, bool preview)
     {
-        if (Refusal(batch) is { } refusal)
-            return Refused(batch, [refusal]);
         var open = session.OpenBatch;
+        // A refusal in any step cancels the whole batch of the caller (section 4.0.4 of the M6b design, item 8).
+        MissionEditResult Refuse(IReadOnlyList<EditError> errors)
+        {
+            open?.Cancel();
+            return Refused(batch, errors);
+        }
+
+        if ((StateRefusal() ?? Refusal(batch)) is { } refusal)
+            return Refuse([refusal]);
         if (open != null && preview)
-            return Refused(batch, [MissionErrors.BusyError() with
+            return Refuse([MissionErrors.BusyError() with
             {
                 Message = "A batch is open, so the editor cannot show a preview now. Complete the batch, then try again.",
             }]);
@@ -53,6 +60,10 @@ public sealed partial class MissionEditor
         try
         {
             editBatch = open ?? session.BeginBatch(batch.EntryLabel, batch.Origin);
+        }
+        catch (ArgumentException e)
+        {
+            return Refused(batch, [new EditError(EditErrorKind.InvalidArgument, EditPlan.PlanRefused, e.Message)]);
         }
         catch (InvalidOperationException e)
         {
@@ -78,13 +89,19 @@ public sealed partial class MissionEditor
         }
         var draft = plan.Draft!;
         check.Add(draft);
-        var confirmations = draft.Confirmations.ToList();
-        if (batch.Origin == EditOrigin.Agent && draft.Missing.Count > 0)
-            confirmations.Add(MissionErrors.MissingLinesError(draft.Missing.Count));
-        if (confirmations.Count > 0 && !batch.Confirm)
+        var confirmations = Confirmations(draft, editBatch.Origin);
+        if (confirmations.Count > 0 && !batch.Confirm && !preview)
         {
             editBatch.Cancel();
-            return Refused(batch, confirmations) with { NeedsConfirmation = true, Missing = draft.Missing };
+            return MissionEditResult.From(Part(draft)) with
+            {
+                Status = EditStatus.Refused,
+                Label = batch.EntryLabel,
+                Errors = confirmations,
+                NeedsConfirmation = true,
+                Revision = session.Revision,
+                Summary = confirmations[0].Message,
+            };
         }
         var inverse = InverseOf(draft);
         editBatch.Report(Part(draft));
@@ -107,26 +124,60 @@ public sealed partial class MissionEditor
             };
         }
         var final = Final(preview ? editBatch.Preview() : editBatch.Commit(), draft, inverse);
+        // A preview reports the result of the request (section 4.0.1 of the M6b design). So a preview of a batch that
+        // needs a confirmation tells it, and why, and does not refuse.
+        if (preview && confirmations.Count > 0 && !batch.Confirm && final.Status == EditStatus.Previewed)
+            final = final with
+            {
+                NeedsConfirmation = true,
+                Warnings = [.. final.Warnings, .. confirmations.Select(c => new Problem(DiagnosticSeverity.Warning, c.Message)
+                {
+                    Ref = c.Target,
+                })],
+            };
         if (final.Status == EditStatus.Applied)
             Applied?.Invoke(final);
         return final;
     }
 
-    /// <summary>The refusals before a batch runs: the session takes no edits, a transaction is open, or an expected
-    /// version or the expected revision differs (section 4.5 of the M6b design).</summary>
-    private EditError? Refusal(MissionBatch batch)
+    /// <summary>The confirmations that a batch needs (section 4.0.5 of the M6b design): those of its plan. An agent
+    /// also confirms a delete or a rename that leaves "Missing" lines (decision D712 of the MCP1 design). The origin is
+    /// the origin of the history entry, so an agent step in the batch of a caller asks too.</summary>
+    private static List<EditError> Confirmations(MissionDraft draft, EditOrigin origin)
     {
-        if (session.ReadOnlyReason is { } reason)
-            return MissionErrors.NotEditableError(reason);
-        if (session.InTransaction)
-            return MissionErrors.BusyError();
+        var result = draft.Confirmations.DistinctBy(c => (c.Detail, c.Message)).ToList();
+        if (origin == EditOrigin.Agent && draft.Missing.Count > 0)
+            result.Add(MissionErrors.MissingLinesError(draft.Missing.Count));
+        return result;
+    }
+
+    /// <summary>The refusals of the state of the session before a batch runs: the session takes no edits, or a
+    /// transaction is open (section 4.5 of the M6b design).</summary>
+    private EditError? StateRefusal() =>
+        session.ReadOnlyReason is { } reason ? MissionErrors.NotEditableError(reason)
+        : session.InTransaction ? MissionErrors.BusyError()
+        : null;
+
+    /// <summary>The refusals of the guards of a batch: the expected revision or an expected script version differs
+    /// (section 4.5 of the M6b design). A key of the versions that is not an install path refuses with
+    /// <c>invalid_argument</c>, and a script that the edit view does not have with <c>not_found</c> (decision D763 of the
+    /// MCP1 design).</summary>
+    internal EditError? Refusal(MissionBatch batch)
+    {
         if (session.RevisionGuard(batch.IfRevision) is { } stale)
             return stale;
         foreach (var (script, expected) in batch.ExpectVersions)
         {
-            var path = InstallPaths.TryParse(script) ?? script;
-            if (Version(path) != expected)
-                return MissionErrors.ScriptChangedError(path);
+            if (InstallPaths.Problem(script) is { } problem)
+                return new EditError(EditErrorKind.InvalidArgument, InstallPaths.NotInstallPath, problem)
+                {
+                    Field = "expect_versions",
+                };
+            var path = InstallPaths.Parse(script);
+            if (session.OpenDocument(path) is not { HoldsScript: true } document)
+                return MissionErrors.ScriptNotFoundError(path) with { Field = "expect_versions" };
+            if (Version(document.Path) != expected)
+                return MissionErrors.ScriptChangedError(document.Path);
         }
         return null;
     }
@@ -144,7 +195,7 @@ public sealed partial class MissionEditor
     /// scripts.</summary>
     private MissionEditResult Final(EditResult result, MissionDraft draft, MissionCommand? inverse)
     {
-        var scripts = draft.Touched.Values.Where(d => d.HoldsScript).Select(d => d.Path);
+        var scripts = draft.Touched.Values.Where(IsScript).Select(d => d.Path);
         return MissionEditResult.From(result) with
         {
             Inverse = result.Status is EditStatus.Applied or EditStatus.Previewed ? inverse : null,
@@ -180,7 +231,7 @@ public sealed partial class MissionEditor
     /// after the batch (decision D666). The inverse holds no script version, so an edit of another section does not
     /// stop it.
     /// </summary>
-    private MissionCommand? InverseOf(MissionDraft draft)
+    internal MissionCommand? InverseOf(MissionDraft draft)
     {
         if (draft.Inverses.Count == 0)
             return null;
@@ -208,11 +259,15 @@ public sealed partial class MissionEditor
     {
         if (current is var (known, check) && ReferenceEquals(known, batch) && batch.IsOpen)
             return check;
-        var made = new BatchCheck(this);
+        var made = new BatchCheck(this, WorldNow());
         batch.AddCommitCheck(made);
         current = (batch, made);
         return made;
     }
+
+    /// <summary>True for a document that is a mission script now, or that was one in this session. A new script has
+    /// no sections after an undo of its create or after its delete, but its version still changes.</summary>
+    private bool IsScript(EditDocument document) => document.HoldsScript || versions.ContainsKey(document.Path);
 
     /// <summary>Gives the new versions and the trigger renames of each change of the history (section 4.2 of the M6b
     /// design). A step of a transaction, a preview and a cancel do not change the revision, so they change no
@@ -225,10 +280,10 @@ public sealed partial class MissionEditor
         var changed = new Dictionary<string, long>(VfsPath.Comparer);
         foreach (var path in change.Files)
         {
-            if (session.OpenedDocument(path) is { HoldsScript: true })
+            if (session.OpenedDocument(path) is { } document && IsScript(document))
             {
-                versions[path] = Version(path) + 1;
-                changed[path] = versions[path];
+                versions[document.Path] = Version(document.Path) + 1;
+                changed[document.Path] = versions[document.Path];
             }
         }
         if (changed.Count == 0)
@@ -240,14 +295,21 @@ public sealed partial class MissionEditor
         ScriptsChanged?.Invoke(new MissionScriptsChange(changed, renames));
     }
 
+    /// <summary>The names of the game data now, for the problems before a batch or a transaction.</summary>
+    internal MissionInputs WorldNow() => world.Inputs();
+
     /// <summary>
     /// The commit check of the mission part of a batch (section 4.5 of the M6b design): it builds the model of each
     /// touched script once, compares the problems with the problems before the batch by their subject with counts, and
     /// refuses a batch that adds an error in strict mode. A "Missing" line of a delete or a rename does not count.
     /// </summary>
-    private sealed class BatchCheck(MissionEditor editor) : IBatchCheck
+    /// <param name="before">The names of the game data before the batch. The problems before the batch use them, so a
+    /// step that changes a file of the world does not make the editor analyze the states before again.</param>
+    internal sealed class BatchCheck(MissionEditor editor, MissionInputs before) : IBatchCheck
     {
-        private readonly Dictionary<string, (EditDocument Document, DocumentState Before)> scripts = new(VfsPath.Comparer);
+        private readonly Dictionary<string, (EditDocument Document, DocumentState Before, IReadOnlyList<Diagnostic> Old)>
+            scripts = new(VfsPath.Comparer);
+
         private readonly HashSet<string> gone = new(StringComparer.OrdinalIgnoreCase);
         private MissionEditOptions options = MissionEditOptions.Default;
 
@@ -256,31 +318,37 @@ public sealed partial class MissionEditor
 
         public void Add(MissionDraft draft)
         {
-            foreach (var (path, before) in draft.Before)
+            foreach (var (path, state) in draft.Before)
             {
                 var document = draft.Touched[path];
-                if (document.HoldsScript)
-                    scripts.TryAdd(path, (document, before));
+                if (!editor.IsScript(document) || scripts.ContainsKey(path))
+                    continue;
+                var old = state.Exists ? editor.ModelOf(document, state, before).Problems : [];
+                scripts[path] = (document, state, old);
             }
             gone.UnionWith(draft.GoneNames);
         }
 
-        public EditResult Check(EditBatch batch)
+        public EditResult Check(EditBatch batch) => Check();
+
+        /// <summary>The new and the fixed problems of the touched scripts, and the errors of strict mode.</summary>
+        public EditResult Check()
         {
             var added = new List<Problem>();
             var fixedProblems = new List<Problem>();
-            var newErrors = new List<Problem>();
-            foreach (var (path, (document, before)) in scripts)
+            var refusing = new List<Problem>();
+            var exempted = new Dictionary<(string, SectionIdentity, string), int>();
+            foreach (var (path, (document, _, old)) in scripts)
             {
-                var old = before.Exists ? editor.ModelOf(document, before).Problems : [];
                 var now = document.State.Exists ? editor.ModelOf(document, document.State).Problems : [];
                 var (plus, minus) = Compare(old, now);
                 added.AddRange(plus.Select(p => ProblemOf(path, p)));
                 fixedProblems.AddRange(minus.Select(p => ProblemOf(path, p)));
-                newErrors.AddRange(plus.Where(p => Counts(p)).Select(p => ProblemOf(path, p)));
+                refusing.AddRange(plus.Where(p => Counts(path, p, exempted)).Select(p => ProblemOf(path, p)));
             }
-            var errors = newErrors.Count > 0
-                ? [MissionErrors.NewErrorsError(newErrors.Count, newErrors[0].Message)]
+            var errors = refusing.Count > 0
+                ? [MissionErrors.NewErrorsError(refusing.Count(p => p.Severity == DiagnosticSeverity.Error),
+                    refusing.Count(p => p.Severity == DiagnosticSeverity.Warning), refusing[0].Message)]
                 : new List<EditError>();
             return new EditResult(EditStatus.Applied)
             {
@@ -291,15 +359,38 @@ public sealed partial class MissionEditor
         }
 
         /// <summary>True when a new problem refuses the batch in strict mode.</summary>
-        private bool Counts(Diagnostic problem)
+        /// <param name="exempted">The number of "Missing" lines that the check let through, by script, section and
+        /// line.</param>
+        private bool Counts(string path, Diagnostic problem, Dictionary<(string, SectionIdentity, string), int> exempted)
         {
             var refuses = problem.Severity == DiagnosticSeverity.Error && options.RejectNewErrors ||
                           problem.Severity == DiagnosticSeverity.Warning && options.RejectNewWarnings;
             if (!refuses)
                 return false;
-            // A "Missing" line of a delete or a rename names a name that the batch took away (decision D81).
+            // A "Missing" line of a delete or a rename is a line that was there before the batch and that names a name
+            // that the batch took away (decision D81). A new line that names such a name counts.
             return !(problem.Rule is "M05" or "M06" or "M21" or "M22" or "M23" && problem.Subject is { } subject &&
-                     gone.Any(n => subject.EndsWith("|" + n, StringComparison.OrdinalIgnoreCase)));
+                     gone.Any(n => subject.EndsWith("|" + n, StringComparison.OrdinalIgnoreCase)) &&
+                     WasThere(path, problem, exempted));
+        }
+
+        /// <summary>True when the line of a problem was in its section before the batch. The section had more lines with
+        /// the same key and values than the check let through until now.</summary>
+        private bool WasThere(string path, Diagnostic problem, Dictionary<(string, SectionIdentity, string), int> exempted)
+        {
+            var (document, state, _) = scripts[path];
+            if (problem.Target is not { } target || problem.EntryIndex < 0 ||
+                document.IndexOf(target.Id) is not (>= 0 and var at) || problem.EntryIndex >= document.Working[at].Count)
+                return false;
+            var line = LineDiff.Text(document.Working[at][problem.EntryIndex]);
+            var old = Array.IndexOf(SectionIdentity.Identify(state.Working), target.Id);
+            var before = old < 0 ? 0 : state.Working[old].Count(e => LineDiff.Text(e) == line);
+            var key = (path, target.Id, line);
+            var used = exempted.GetValueOrDefault(key);
+            if (used >= before)
+                return false;
+            exempted[key] = used + 1;
+            return true;
         }
 
         /// <summary>The problems that are new and the problems that went, by their subject with counts, as

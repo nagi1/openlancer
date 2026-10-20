@@ -945,10 +945,11 @@ The "Raw INI" view of a mission script and the INI block of a mission page take 
 
 - A changed section gets all lines of your text, in your order.
 - A new section goes in at its place in your text. A removed section goes, and each line that names it shows "Missing" until you fix the line or undo.
+- The merge adds a new section of a patch at the end of the file. The game finds a trigger and the other mission items by their names, so their place has no effect. So in a patch, a new section of such a type goes to the end of the file, and the Console tells it. A new ship or formation section keeps its place with `ol.before`. A whole file of the mod keeps each place.
 - A ship or a formation section in another place moves, because a formation reads the ships before it. A section of another type keeps its place, and the Console tells it.
 - All changes of one raw edit are one entry of the edit history.
 
-The edit stops and keeps nothing when a first nickname line changes, because the lines that name the item would not follow. Use Rename (F2). It also stops when the section changed while you typed, and for a problem of the text: a header of an unknown section type, a line before the first header, or a line without `=` whose key the game does not know. The Console line then holds the problem and your whole text. A comment inside a changed mission section does not stay in the patch, and the Console tells it once.
+The edit stops and keeps nothing when a first nickname line changes, because the lines that name the item would not follow. Use Rename (F2). It also stops when the section changed while you typed, and for a problem of the text: a header of an unknown section type, a line before the first header, or a line without `=` whose key the game does not know. The INI block of a page holds only the sections of the page, so the edit of a block also stops when a header goes in or out of the block, or when the type of a header changes. Add or remove a section in the "Raw INI" view of the whole script. The Console line then holds the problem and your whole text. A comment inside a changed mission section does not stay in the patch, and the Console tells it once. While you type, the marks of the text show its problems at once, and the problems of the mission checks of your text a moment later.
 
 ### The save gate
 

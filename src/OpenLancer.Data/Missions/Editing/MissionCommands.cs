@@ -133,48 +133,6 @@ public sealed record MissionScriptsChange(IReadOnlyDictionary<string, long> Vers
 /// <param name="Type">The section type, for example <c>MsnShip</c>.</param>
 public sealed record RawSection(string Type, IReadOnlyList<RawEntry> Entries);
 
-/// <summary>The rules of the lines of a trigger (section 4.1 of the M6b design). <see cref="TriggerRules"/> gives the
-/// rules of the game, and these helpers give the places of new lines.</summary>
-internal static class TriggerPlaces
-{
-    /// <summary>The place of a new state line: after the nickname line and the state lines that follow it.</summary>
-    public static int StatePlace(IReadOnlyList<Entry> entries)
-    {
-        var at = NicknameLine(entries) + 1;
-        while (at < entries.Count && !TriggerRules.IsCondition(entries[at].Name) && !TriggerRules.IsAction(entries[at].Name))
-            at++;
-        return at;
-    }
-
-    /// <summary>The index of the first <c>nickname</c> line, or -1.</summary>
-    public static int NicknameLine(IReadOnlyList<Entry> entries)
-    {
-        for (var i = 0; i < entries.Count; i++)
-        {
-            if (entries[i].Name.Equals("nickname", StringComparison.OrdinalIgnoreCase))
-                return i;
-        }
-        return -1;
-    }
-
-    /// <summary>The index of the condition that the game uses: the last condition after the nickname line, or
-    /// -1.</summary>
-    public static int Condition(IReadOnlyList<Entry> entries)
-    {
-        var nickname = NicknameLine(entries);
-        for (var i = entries.Count - 1; i > nickname && nickname >= 0; i--)
-        {
-            if (TriggerRules.IsCondition(entries[i].Name))
-                return i;
-        }
-        return -1;
-    }
-
-    /// <summary>True when a new action can go at a place: after the nickname line and after the condition.</summary>
-    public static bool ActionPlace(IReadOnlyList<Entry> entries, int at) =>
-        at > NicknameLine(entries) && at > Condition(entries);
-}
-
 /// <summary>The lines of a script that name an item, by the reference kinds of the schema (section 4.10 of the M6b
 /// design).</summary>
 internal static class MissionLinks
@@ -252,35 +210,15 @@ internal static class LineDiff
     /// <param name="item">The section after the change.</param>
     public static MissionCommand Inverse(ItemRef item, IReadOnlyList<Entry> before, IReadOnlyList<Entry> after)
     {
-        var a = before.Select(Key).ToArray();
-        var b = after.Select(Key).ToArray();
-        var lengths = new int[a.Length + 1, b.Length + 1];
-        for (var i = a.Length - 1; i >= 0; i--)
-        {
-            for (var j = b.Length - 1; j >= 0; j--)
-                lengths[i, j] = a[i] == b[j] ? lengths[i + 1, j + 1] + 1 : Math.Max(lengths[i + 1, j], lengths[i, j + 1]);
-        }
-        var keptOld = new bool[a.Length];
-        var keptNew = new bool[b.Length];
-        for (int i = 0, j = 0; i < a.Length && j < b.Length;)
-        {
-            if (a[i] == b[j])
-            {
-                keptOld[i++] = true;
-                keptNew[j++] = true;
-            }
-            else if (lengths[i + 1, j] >= lengths[i, j + 1])
-                i++;
-            else
-                j++;
-        }
+        var (keptOld, keptNew) = CommonOrder.Kept(before.Select(Text).ToList(), after.Select(Text).ToList(),
+            StringComparer.Ordinal);
         var commands = new List<MissionCommand>();
-        for (var j = b.Length - 1; j >= 0; j--)
+        for (var j = after.Count - 1; j >= 0; j--)
         {
             if (!keptNew[j])
                 commands.Add(new RemoveLine(new RowRef(item, j) { ExpectKey = after[j].Name }));
         }
-        for (var i = 0; i < a.Length; i++)
+        for (var i = 0; i < before.Count; i++)
         {
             if (!keptOld[i])
                 commands.Add(new InsertLine(item, MissionDraft.RawLine(before[i])) { Before = i });
@@ -290,10 +228,43 @@ internal static class LineDiff
 
     /// <summary>True when two lists of lines have the same keys and value texts.</summary>
     public static bool Same(IReadOnlyList<Entry> a, IReadOnlyList<Entry> b) =>
-        a.Count == b.Count && a.Select(Key).SequenceEqual(b.Select(Key));
+        a.Count == b.Count && a.Select(Text).SequenceEqual(b.Select(Text));
 
-    private static string Key(Entry entry) =>
+    /// <summary>The key and the value texts of a line as one text. Two lines with the same text are the same
+    /// line.</summary>
+    public static string Text(Entry entry) =>
         entry.Name.ToLowerInvariant() + "\u001f" + string.Join("\u001f", MissionValues.TextsOf(entry));
+}
+
+/// <summary>The longest common order of two lists: the items of each list that a longest common subsequence keeps.
+/// The inverse of a change of lines and the plan of a raw edit use it.</summary>
+internal static class CommonOrder
+{
+    /// <returns>For each item of each list, true when the common order keeps it.</returns>
+    public static (bool[] KeptA, bool[] KeptB) Kept<T>(IReadOnlyList<T> a, IReadOnlyList<T> b, IEqualityComparer<T> comparer)
+    {
+        var lengths = new int[a.Count + 1, b.Count + 1];
+        for (var i = a.Count - 1; i >= 0; i--)
+        {
+            for (var j = b.Count - 1; j >= 0; j--)
+                lengths[i, j] = comparer.Equals(a[i], b[j]) ? lengths[i + 1, j + 1] + 1 : Math.Max(lengths[i + 1, j], lengths[i, j + 1]);
+        }
+        var keptA = new bool[a.Count];
+        var keptB = new bool[b.Count];
+        for (int i = 0, j = 0; i < a.Count && j < b.Count;)
+        {
+            if (comparer.Equals(a[i], b[j]))
+            {
+                keptA[i++] = true;
+                keptB[j++] = true;
+            }
+            else if (lengths[i + 1, j] >= lengths[i, j + 1])
+                i++;
+            else
+                j++;
+        }
+        return (keptA, keptB);
+    }
 }
 
 /// <summary>The revision as JSON text, or null.</summary>

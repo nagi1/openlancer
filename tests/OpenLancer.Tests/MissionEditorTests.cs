@@ -7,6 +7,7 @@ using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Strings;
 using Xunit;
+using OpenLancer.Data.Ini;
 using static OpenLancer.Tests.MissionEdits;
 
 namespace OpenLancer.Tests;
@@ -346,8 +347,8 @@ public sealed class MissionEditorTests
         Assert.Equal(Item("MsnSolar", "ol_test_solar_1").ToString(), Assert.Single(added.Adds));
         Assert.Equal(["nickname = ol_form", "formation = ol_shape"], m.Lines(form));
         m.Refuse(new ReplaceSectionBody(form, [new RawEntry("nickname", ["ol_other"])]), MissionErrors.KeyLine);
-        Assert.Equal("The active mod adds [MsnSolar] nickname = ol_test_solar_1, so the game data has no lines to go back " +
-                     "to. Remove the section instead.",
+        Assert.Equal("The active mod adds [MsnSolar] nickname = ol_test_solar_1, so the game data has no lines for it. " +
+                     "Remove the section instead.",
             m.Refuse(new RevertSection(Item("MsnSolar", "ol_test_solar_1")), MissionErrors.NotInBase).Message);
         m.Apply(new RevertSection(form));
         Assert.Equal(["nickname = ol_form", "position = 0, 0, 0", "formation = ol_shape", "ship = ol_ship_2"], m.Lines(form));
@@ -380,9 +381,12 @@ public sealed class MissionEditorTests
         Assert.Equal([new ScriptRef(path).ToString(), new ScriptRef(@"DATA\MISSIONS\OL_NEW\npcships.ini").ToString()],
             created.Adds);
         Assert.Contains(path, m.Missions.ScriptPaths());
-        Assert.Equal("The editor cannot make a script at DATA\\MISSIONS\\OL_NEW\\ol_new.ini. The edit view already has a file " +
-                     "at this path.", m.Refuse(new CreateScript(path), MissionErrors.PathInUse).Message);
-        m.Refuse(new CreateScript(@"DATA\SHIPS\x.ini"), MissionErrors.PathInUse);
+        var taken = m.Refuse(new CreateScript(path), MissionErrors.PathInUse);
+        Assert.Equal("The editor cannot make a script at DATA\\MISSIONS\\OL_NEW\\ol_new.ini, because the edit view already " +
+                     "has a file at this path. Pick another path.", taken.Message);
+        // MCP1 section 7.5 gives the kind name_taken to a path in use. A path outside the missions is not valid.
+        Assert.Equal(EditErrorKind.NameTaken, taken.Kind);
+        Assert.Equal(EditErrorKind.InvalidArgument, m.Refuse(new CreateScript(@"DATA\SHIPS\x.ini"), MissionErrors.BadPath).Kind);
         var saved = m.Session.Save();
         Assert.True(saved.Saved, string.Join("\n", saved.Problems));
         Assert.Contains("[Mission]", m.Ws.ReadModFile(@"files\DATA\MISSIONS\OL_NEW\ol_new.ini"));
@@ -409,7 +413,7 @@ public sealed class MissionEditorTests
         m.Apply(result.Inverse!);
         Assert.Equal("Act_ChangeState = SUCCEED", m.Lines("ol_end")![3]);
         Assert.Null(m.Session.Text(new StringPlaceholder(StringKind.String, "ol_test.ol_end.act_changestate")));
-        Assert.Equal("Result is not a text id. Only a text id can take own text.",
+        Assert.Equal("Result is not a text id, so it cannot have text of the mod. Pick a value that is a text id.",
             m.Refuse(new SetLineText(Row("ol_end", 3), "state", "x"), MissionErrors.NotTextId).Message);
     }
 
@@ -444,5 +448,189 @@ public sealed class MissionEditorTests
     {
         var document = session.OpenDocument(Script)!;
         return document.Working[MissionDraftLines.TriggerIndex(document, trigger)].Select(MissionEdits.Line).ToArray();
+    }
+
+    [Fact]
+    public void ANewSectionGoesToTheEndOfAPatchedFileSoThePatchMovesNoSection()
+    {
+        using var m = Create();
+
+        var added = m.Apply(new AddSection(TestScript, "MsnSolar", [LineSpec.Of("system", ("system", "ol_system"))])
+        {
+            Before = Item("Trigger", "ol_wave"),
+        });
+        var restored = m.Apply(new RestoreSection(TestScript, 0, new RawSection("ObjList", [new RawEntry("nickname", ["ol_new_orders"])])));
+        // A ship keeps its place, because the writer gives it ol.before.
+        m.Apply(new RestoreSection(TestScript, 3, new RawSection("MsnShip",
+            [new RawEntry("nickname", ["ol_new_ship"]), new RawEntry("npc", ["ol_npc_1"])])));
+        var document = m.Session.OpenDocument(Script)!;
+        var saved = m.Session.Save();
+
+        Assert.Equal(MissionDraft.NewPlaceNote("MsnSolar"), Assert.Single(added.Notes));
+        Assert.Equal(MissionDraft.NewPlaceNote("ObjList"), Assert.Single(restored.Notes));
+        Assert.Equal(["MsnSolar", "ObjList"], document.Working.TakeLast(2).Select(s => s.Name));
+        Assert.Equal("MsnShip", document.Working[3].Name);
+        Assert.True(saved.Saved, string.Join("\n", saved.Problems));
+        var patch = m.Ws.ReadModPatch(Script);
+        Assert.DoesNotContain("ol.delete", patch);
+        Assert.Equal(3, patch.Split("ol.new = true").Length - 1);
+        Assert.Contains("ol.before = MsnShip, ol_ship_1", patch);
+    }
+
+    [Fact]
+    public void ANewBuildMakesTheMissingShipBuildFileAndTheInverseDeletesItAgain()
+    {
+        const string newShips = @"DATA\MISSIONS\OL_TEST\ol_new_ships.ini";
+        using var m = Create(text: MissionEdits.Text.Replace(@"missions\ol_test\npcships.ini", @"missions\ol_test\ol_new_ships.ini"));
+        var before = m.State();
+
+        var result = m.Apply(new AddMissionShip(TestScript) { Nickname = "ol_ship_9", NewBuild = new ShipBuildSpec("ol_arch", "ol_loadout") });
+
+        Assert.True(m.Session.OpenDocument(newShips)!.State.Exists);
+        Assert.Equal("NPCShipArch", Assert.Single(m.Session.OpenDocument(newShips)!.Working).Name);
+        var inverse = m.Apply(result.Inverse!);
+        Assert.Equal(EditStatus.Applied, inverse.Status);
+        Assert.False(m.Session.OpenDocument(newShips)!.State.Exists);
+        Assert.Equal(before, m.State());
+        m.Session.Undo();
+        var saved = m.Session.Save();
+        Assert.True(saved.Saved, string.Join("\n", saved.Problems));
+        Assert.Contains("[NPCShipArch]", m.Ws.ReadModFile(@"files\" + newShips));
+    }
+
+    [Fact]
+    public void AWholeFileThatTakesThePlaceOfAFileOfTheGameDataCannotGo()
+    {
+        using var m = Create(modFiles: new() { [@"files\" + Script] = MissionEdits.Text });
+
+        var error = m.Refuse(new DeleteScript(TestScript), MissionErrors.ReplacesLowerFile);
+
+        Assert.StartsWith($"The active mod replaces {Script} of the game data or of a lower mod with this file.", error.Message);
+    }
+
+    [Fact]
+    public void ARemovedBuildLeavesMissingLinesInEachScriptThatNamesIt()
+    {
+        using var m = Create();
+
+        var result = m.Missions.Apply(new RemoveSection(Item("NPCShipArch", "ol_build_1", Ships)));
+
+        Assert.Equal(EditStatus.Applied, result.Status);
+        Assert.Equal("npc_ship_arch", Assert.Single(result.Missing).Key);
+    }
+
+    [Fact]
+    public void AValueIndexOutsideTheLineIsNotAValueOfTheLine()
+    {
+        using var m = Create();
+
+        var error = m.Refuse(new SetLineValue(Row("ol_wave", 2), MissionValue.Of("5")) { Index = 9 }, MissionErrors.NoSuchValue);
+
+        Assert.Equal(EditErrorKind.InvalidArgument, error.Kind);
+    }
+
+    [Fact]
+    public void AcceptBaseWritesTheHashOfTheBaseNowAndItsInverseTheOldHash()
+    {
+        const string oldHash = "0123456789abcdef";
+        using var m = Create(modFiles: new()
+        {
+            [@"patches\" + Script] = $"[Trigger]\nnickname = ol_end\nol.replace = true\nol.base = {oldHash}\nCnd_True = no_params\n",
+        });
+        var end = Item("Trigger", "ol_end");
+        var document = m.Session.OpenDocument(Script)!;
+        var hash = SectionHash.Of(document.Base[document.IndexOf(end.Section)]);
+
+        var accepted = m.Apply(new AcceptBase(end));
+        Assert.True(m.Session.Save().Saved);
+        Assert.Contains($"ol.base = {hash}\r\n", m.Ws.ReadModPatch(Script));
+        m.Refuse(new AcceptBase(end), MissionErrors.NoBaseDifference);
+        m.Apply(accepted.Inverse!);
+        Assert.True(m.Session.Save().Saved);
+
+        Assert.Contains($"ol.base = {oldHash}\r\n", m.Ws.ReadModPatch(Script));
+    }
+
+    [Fact]
+    public void AnUndoOfANewScriptChangesItsVersion()
+    {
+        using var m = Create();
+        const string path = @"DATA\MISSIONS\OL_NEW\ol_new.ini";
+        var changes = new List<MissionScriptsChange>();
+        m.Missions.ScriptsChanged += changes.Add;
+
+        m.Apply(new CreateScript(path));
+        m.Session.Undo();
+        m.Session.Redo();
+        m.Apply(new DeleteScript(new ScriptRef(path)));
+
+        Assert.Equal([2L, 3L, 4L, 5L], changes.Select(c => c.Versions[path]));
+        Assert.DoesNotContain(path, m.Missions.ScriptPaths());
+    }
+
+    [Fact]
+    public void AFileThatACommandOnlyReadsKeepsItsVersion()
+    {
+        using var m = Create();
+        var changes = new List<MissionScriptsChange>();
+        m.Missions.ScriptsChanged += changes.Add;
+
+        // The loadout of a build of the ship build file of the script reads the script and changes only the build file.
+        m.Apply(new SetShipLoadout(Item("MsnShip", "ol_ship_1"), "ol_loadout_2", LoadoutScope.Shared));
+
+        Assert.Equal(1, m.Missions.Version(Script));
+        Assert.DoesNotContain(changes, c => c.Versions.ContainsKey(Script));
+    }
+
+    [Fact]
+    public void ARequestInAnotherLetterCaseKeepsTheLetterCaseOfTheFiles()
+    {
+        using var m = Create();
+
+        var model = m.Missions.Model(Script.ToLowerInvariant().Replace('\\', '/'));
+
+        Assert.Equal(Script, model.Script);
+        Assert.Equal(Script, m.Session.OpenDocument(Script)!.Path);
+    }
+
+    [Fact]
+    public void EachRefusalHasItsCode()
+    {
+        using var m = Create(text: MissionEdits.Text + "\n\n[MsnSolar]\nnickname = ol_twin\n\n[MsnSolar]\nnickname = ol_twin\n\n" +
+                                   "[ObjList]\nGotoVec = goto_cruise, 0, 0, 1000, 100\n");
+
+        m.Refuse(new SetTriggerStart(T("ol_wave", @"DATA\MISSIONS\OL_NONE\none.ini"), true), MissionErrors.ScriptNotFound);
+        m.Refuse(new RemoveItem(Item("MsnShip", "ol_nobody")), MissionErrors.ItemNotFound);
+        m.Refuse(new InsertLine(Item("ObjList", null), LineSpec.Raw("Delay", "1")), MissionErrors.ReadOnlySection);
+        Assert.Equal("Two [MsnSolar] sections have the nickname 'ol_twin'. A patch cannot find one of them. Change the " +
+                     "script in a whole file of the mod.",
+            m.Refuse(new SetItemKey(Item("MsnSolar", "ol_twin"), "system", [LineSpec.Raw("system", "ol_system")]),
+                MissionErrors.RepeatedNickname).Message);
+        m.Refuse(new AcceptBase(Item("Trigger", "ol_start")), MissionErrors.NoBaseDifference);
+        m.Refuse(new RemoveMissionShip(Item("MsnFormation", "ol_form")), MissionErrors.NotAnItem);
+        m.Apply(new RemoveLine(Row("ol_wave", 2)));
+        m.Refuse(new SetConditionValue(T("ol_wave"), "seconds", 3), MissionErrors.NoCondition);
+        Assert.Equal(MissionErrors.BadJson, Assert.Throws<EditException>(() => MissionJson.ReadBatch("{")).Error.Detail);
+    }
+
+    /// <summary>The places of new lines come from the one class of the trigger rules (section 4.1 of the M6b design,
+    /// decision D549 b). The dry run of M6c uses it too.</summary>
+    [Fact]
+    public void TheTriggerRulesGiveThePlacesOfNewLines()
+    {
+        using var m = Create();
+        var document = m.Session.OpenDocument(Script)!;
+        // system, nickname, Cnd_Timer, Act_SpawnShip, Act_DeactTrig, Act_ActTrig
+        var wave = document.Working[MissionDraftLines.TriggerIndex(document, "ol_wave")].ToList();
+        var noCondition = wave.Where(e => !OpenLancer.Data.Missions.TriggerRules.IsCondition(e.Name)).ToList();
+
+        Assert.Equal(1, OpenLancer.Data.Missions.TriggerRules.NicknameLine(wave));
+        Assert.Equal(2, OpenLancer.Data.Missions.TriggerRules.EffectiveCondition(wave));
+        Assert.Equal(2, OpenLancer.Data.Missions.TriggerRules.StatePlace(wave));
+        Assert.Equal(2, OpenLancer.Data.Missions.TriggerRules.ConditionPlace(wave));
+        Assert.False(OpenLancer.Data.Missions.TriggerRules.ActionPlace(wave, 2));
+        Assert.True(OpenLancer.Data.Missions.TriggerRules.ActionPlace(wave, 3));
+        Assert.Equal(-1, OpenLancer.Data.Missions.TriggerRules.EffectiveCondition(noCondition));
+        Assert.Equal(2, OpenLancer.Data.Missions.TriggerRules.ConditionPlace(noCondition));
     }
 }

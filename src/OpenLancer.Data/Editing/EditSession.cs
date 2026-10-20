@@ -424,11 +424,15 @@ public sealed partial class EditSession : IDisposable
     /// <see cref="EditBatch"/>). Only one batch is open at a time.
     /// </summary>
     /// <param name="label">The label of the request, or null for the label of the first step.</param>
-    /// <param name="origin">Who makes the batch. A host sets it. A request cannot set it.</param>
+    /// <param name="origin">Who makes the batch: the user or an agent. A host sets it. A request cannot set it.</param>
+    /// <exception cref="ArgumentException">The origin is <see cref="EditOrigin.Recovery"/>. Only the restore of the
+    /// unsaved edits has that origin, because the guard of the mission files lets it through (decision D660).</exception>
     /// <exception cref="InvalidOperationException">A transaction or a batch is open, or the session takes no
     /// edits.</exception>
     public EditBatch BeginBatch(string? label = null, EditOrigin origin = EditOrigin.User)
     {
+        if (origin == EditOrigin.Recovery)
+            throw new ArgumentException("Only the restore of the unsaved edits has the edit origin Recovery.", nameof(origin));
         ThrowIfBusy();
         ThrowIfNoEdits();
         batch = new EditBatch(this, new ChangeSet(label ?? "", origin), label, origin);
@@ -484,7 +488,10 @@ public sealed partial class EditSession : IDisposable
             // Also when the command throws: the edit view is then back at its state before the transaction, not at
             // the state of the step before.
             if (!change.IsEmpty)
+            {
+                change.Finish(FileAt, text);
                 Changed?.Invoke(change.Change);
+            }
         }
     }
 
@@ -498,7 +505,9 @@ public sealed partial class EditSession : IDisposable
             Push(change);
             return;
         }
+        change.Finish(FileAt, text);
         text = change.Undo(FileAt) ?? text;
+        NoteWorld(change);
         if (!change.IsEmpty)
             Changed?.Invoke(change.UndoChange);
     }
@@ -550,22 +559,31 @@ public sealed partial class EditSession : IDisposable
     /// <summary>
     /// A number that grows at each change of W of a file that can give names to the mission checks: each INI file
     /// except the mission scripts. The mission editor makes a new mission world when it changed (section 7 of the M6b
-    /// design).
+    /// design). A file that a command only reads through the scope does not change it.
     /// </summary>
     internal long WorldRevision { get; private set; }
 
-    /// <summary>Grows <see cref="WorldRevision"/> when a change set holds an INI file that is not a mission
-    /// script.</summary>
+    /// <summary>The state of each such file at the last growth of <see cref="WorldRevision"/>. A file that is not in it
+    /// has its state of the open.</summary>
+    private readonly Dictionary<string, DocumentState> worldStates = new(VfsPath.Comparer);
+
+    /// <summary>Grows <see cref="WorldRevision"/> when W of an INI file of a change set that is not a mission script
+    /// has another state than at the last growth.</summary>
     private void NoteWorld(ChangeSet change)
     {
+        var grew = false;
         foreach (var path in change.Paths)
         {
-            if (documents.TryGetValue(path, out var document) && !document.HoldsScript)
-            {
-                WorldRevision++;
-                return;
-            }
+            if (!documents.TryGetValue(path, out var document) || document.HoldsScript)
+                continue;
+            var seen = worldStates.GetValueOrDefault(path) ?? document.Initial;
+            if (ReferenceEquals(seen, document.State))
+                continue;
+            worldStates[path] = document.State;
+            grew = true;
         }
+        if (grew)
+            WorldRevision++;
     }
 
     /// <summary>Adds a change set to the history, also the change set of a committed batch, when it changed
@@ -631,6 +649,9 @@ public sealed partial class EditSession : IDisposable
             return false;
         if (documents.TryGetValue(normal, out document))
             return true;
+        // The session keeps the path in the letter case of the files (section 4.0.7 of the M6b design). So the first
+        // request does not decide the letter case of the results and of the patch file.
+        normal = LetterCaseOfFiles(normal);
         // The fingerprint first: a change after it shows at the save.
         inputs.Remember(normal, lower);
         var b = lowerView.Document(normal);
@@ -641,6 +662,48 @@ public sealed partial class EditSession : IDisposable
         documents[normal] = document;
         return true;
     }
+
+    /// <summary>The file system of the edit view for <see cref="LetterCaseOfFiles"/>, made once for each edit
+    /// view.</summary>
+    private (ModOverlay View, LibreLancer.Data.IO.FileSystem Files)? caseFiles;
+
+    /// <summary>
+    /// An install path with the letter case of the folders and the file of the edit view. A part that the edit view does
+    /// not have keeps its letter case, for example the file of a new script.
+    /// </summary>
+    /// <param name="normal">An install path in normal form.</param>
+    internal string LetterCaseOfFiles(string normal)
+    {
+        if (caseFiles is not var (view, files) || !ReferenceEquals(view, EditView))
+        {
+            files = EditView.CreateFileSystem();
+            caseFiles = (EditView, files);
+        }
+        var parts = normal.Split(Separator);
+        var folder = "";
+        for (var i = 0; i < parts.Length; i++)
+        {
+            string[] names;
+            try
+            {
+                names = i == parts.Length - 1 ? files.GetFiles(folder) : files.GetDirectories(folder);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                return normal;
+            }
+            var part = parts[i];
+            if (names.Select(n => n.Split(Separator, '/')[^1])
+                    .FirstOrDefault(n => n.Equals(part, StringComparison.OrdinalIgnoreCase)) is not { } found)
+                return normal;
+            parts[i] = found;
+            folder = folder.Length == 0 ? found : folder + Separator + found;
+        }
+        return string.Join(Separator, parts);
+    }
+
+    /// <summary>The separator of the parts of an install path.</summary>
+    private const char Separator = '\\';
 
     private ModOverlay BuildEditView(Mod active) => ModOverlay.Build(Profile.BaseFolder, [.. lower, active], stringWriter, thn);
 

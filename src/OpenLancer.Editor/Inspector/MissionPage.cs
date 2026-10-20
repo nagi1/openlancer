@@ -74,6 +74,12 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         {
             var padding = MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale);
             ImGui.Indent(padding);
+            // The read-only note shows only while the session takes no edits (section 8.1 of the M6b design).
+            if (missions.ReadOnlyNote is { } note)
+            {
+                ImGui.TextDisabled(note);
+            }
+
             foreach (var field in model.Lead)
             {
                 LeadLine(field);
@@ -230,7 +236,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             }
 
             // The list field has its own label and rows, so it spans both columns of the section.
-            grid.FullRow(() => widget.Draw(key, list, null, MissionPageModel.FieldNote));
+            grid.FullRow(() => widget.Draw(key, list, null, window.Missions.ReadOnlyNote ?? MissionPageModel.FieldNote));
         }
         else if (field.Chips.Count > 0)
         {
@@ -389,7 +395,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         var ids = sections.Select(s => s.Ref.Id).ToList();
         ini.DrawEditable("##ini", key, text, block.Marks, new Vector2(ImGui.GetContentRegionAvail().X, height),
             window.Missions.NoEditReason(path), (start, end) => window.Missions.CommitRaw(path, ids, start, end),
-            draft => MissionWorkspace.DraftMarks(path, draft));
+            window.Missions.Draft(path, ids));
         if (wholeScript && ImGui.Button("Open the whole script"))
         {
             window.Missions.ShowRaw = true;

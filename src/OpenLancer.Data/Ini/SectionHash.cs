@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using LibreLancer.Data.Ini;
@@ -43,14 +44,19 @@ internal static class SectionHash
     /// hash with only decimal digits, or with the form of a float, as a number. So the hash of the section goes through
     /// the parser too, and the two texts compare without letter case.
     /// </summary>
-    public static bool Matches(Section section, string patchText)
-    {
-        var hash = Of(section);
-        var text = IniDocument.ParseTextLine($"{IniPatcher.DirectiveBase} = {hash}") is { Count: 1 } line
-            ? TextOf(line[0])
-            : hash;
-        return string.Equals(text, patchText, StringComparison.OrdinalIgnoreCase);
-    }
+    public static bool Matches(Section section, string patchText) =>
+        string.Equals(Read(Of(section)), patchText, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True when two hash texts give the same hash as the merge reads them (see <see cref="Matches"/>).</summary>
+    public static bool Same(string a, string b) => string.Equals(Read(a), Read(b), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True for a text that an <c>ol.base</c> line can hold as a hash: at most 16 hex digits. The text parser
+    /// can read a hash as a number and drop its first zeros.</summary>
+    public static bool IsHash(string text) => text.Length is > 0 and <= Length && text.All(Uri.IsHexDigit);
+
+    /// <summary>The text of a hash as the text parser reads it from an <c>ol.base</c> line.</summary>
+    private static string Read(string hash) =>
+        IniDocument.ParseTextLine($"{IniPatcher.DirectiveBase} = {hash}") is { Count: 1 } line ? TextOf(line[0]) : hash;
 
     /// <summary>The text of the value of an <c>ol.base</c> line: the exact number of a large integer, else the
     /// text of the value.</summary>

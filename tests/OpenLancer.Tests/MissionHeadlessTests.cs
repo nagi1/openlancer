@@ -109,4 +109,29 @@ public sealed class MissionHeadlessTests
         var error = JsonNode.Parse(reply.Json)!["errors"]![0]!;
         return ((string)error["code"]!, (string)error["detail"]!);
     }
+
+    [Fact]
+    public void TheHostRunsEachEditInStrictModeAndGivesTheRevisionInAnError()
+    {
+        using var m = Create();
+        var host = new MissionJsonHost(m.Session);
+        var script = Script.Replace(@"\", @"\\");
+        m.Apply(new SetTriggerStart(T("ol_wave"), true));
+
+        // The request does not ask for strict mode, and it asks to turn it off. The host keeps it on (decision D681).
+        var plain = host.Edit($$"""
+            { "label": "Start nothing", "commands": [
+              { "kind": "add_action", "trigger": "trg:{{script}}#ol_wave", "line": { "key": "Act_ActTrig", "values": { "trigger": "ol_nowhere" } } } ] }
+            """);
+        var off = host.Edit($$"""
+            { "label": "Start nothing", "options": { "reject_new_errors": false }, "commands": [
+              { "kind": "add_action", "trigger": "trg:{{script}}#ol_wave", "line": { "key": "Act_ActTrig", "values": { "trigger": "ol_nowhere" } } } ] }
+            """);
+        var missing = host.Get($"trg:{Script}#ol_none");
+
+        Assert.Equal(("new_errors", "NewErrors"), Error(plain));
+        Assert.Equal(("new_errors", "NewErrors"), Error(off));
+        Assert.Equal("1", (string?)JsonNode.Parse(missing.Json)!["rev"]);
+        Assert.Equal(1, m.Session.Revision);
+    }
 }

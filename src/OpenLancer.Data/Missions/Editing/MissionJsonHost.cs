@@ -12,12 +12,13 @@ public sealed record MissionHostReply(string Json, bool IsError);
 
 /// <summary>
 /// A host of the mission layer without UI (sections 4.13 and 11.3 of the M6b design). It reads the JSON requests,
-/// runs them on the session with the edit origin Agent, and writes the JSON replies. The query tools and the edit tool
-/// of MCP1 use the same calls. The headless test runs the layer through it.
+/// runs them on the session with the edit origin Agent and in strict mode, and writes the JSON replies. The query tools
+/// and the edit tool of MCP1 can use the same calls. The headless test runs the layer through it.
 /// </summary>
 /// <remarks>
 /// <para>Each edit is one batch and one entry of the history (section 4.0.4). The host runs on the thread of the
-/// session (section 4.0.3).</para>
+/// session (section 4.0.3). Each edit runs in strict mode: a batch that adds an error refuses (section 4.0.5, decision
+/// D681). A request can also ask to refuse new warnings, but it cannot turn strict mode off.</para>
 /// <para>A refusal gives a reply with <see cref="MissionHostReply.IsError"/>. The JSON then has the status
 /// <c>refused</c> and the errors with their <c>code</c>, <c>detail</c> and message. A problem is data in a result, not an
 /// error.</para>
@@ -72,8 +73,13 @@ public sealed class MissionJsonHost(EditSession session)
     {
         try
         {
-            // The host sets the origin. A request cannot set it (section 4.13 of the M6b design).
-            var batch = MissionJson.ReadBatch(json) with { Origin = EditOrigin.Agent };
+            // The host sets the origin and strict mode. A request cannot change them (section 4.13 of the M6b design).
+            var read = MissionJson.ReadBatch(json);
+            var batch = read with
+            {
+                Origin = EditOrigin.Agent,
+                Options = read.Options with { RejectNewErrors = true },
+            };
             var result = preview ? session.Missions.Preview(batch) : session.Missions.Apply(batch);
             return new MissionHostReply(MissionJson.Write(result), result.Status == EditStatus.Refused);
         }
@@ -83,7 +89,7 @@ public sealed class MissionJsonHost(EditSession session)
         }
     }
 
-    private static MissionHostReply Read<T>(Func<T> query)
+    private MissionHostReply Read<T>(Func<T> query)
     {
         try
         {
@@ -95,6 +101,12 @@ public sealed class MissionJsonHost(EditSession session)
         }
     }
 
-    private static MissionHostReply Error(EditError error) =>
-        new(MissionJson.Write(new EditResult(EditStatus.Refused) { Errors = [error] }), true);
+    /// <summary>The reply of a refusal, with the revision of the session (section 4.0.6 of the M6b design).</summary>
+    private MissionHostReply Error(EditError error) =>
+        new(MissionJson.Write(new EditResult(EditStatus.Refused)
+        {
+            Errors = [error],
+            Revision = session.Revision,
+            Summary = error.Message,
+        }), true);
 }

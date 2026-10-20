@@ -284,12 +284,12 @@ public sealed class ItemRefsTests
 
         var trigger = Assert.Throws<EditException>(() =>
             ItemRefs.ResolveSection(session, ItemRefs.Parse($"trg:{path}#ol_wav"))).Error;
-        Assert.Equal((EditErrorKind.NotFound, ItemRefs.TriggerNotFound), (trigger.Kind, trigger.Detail));
+        Assert.Equal((EditErrorKind.NotFound, OpenLancer.Data.Missions.Editing.MissionErrors.TriggerNotFound), (trigger.Kind, trigger.Detail));
         Assert.Equal($"Script {path} has no trigger 'ol_wav'. Pick a trigger of this script. The closest names are: " +
                      "ol_wave.", trigger.Message);
         var script = Assert.Throws<EditException>(() =>
             ItemRefs.ResolveSection(session, ItemRefs.Parse(@"trg:DATA\MISSIONS\OL_NONE\ol_none.ini#ol_wave"))).Error;
-        Assert.Equal((EditErrorKind.NotFound, ItemRefs.ScriptNotFound), (script.Kind, script.Detail));
+        Assert.Equal((EditErrorKind.NotFound, OpenLancer.Data.Missions.Editing.MissionErrors.ScriptNotFound), (script.Kind, script.Detail));
         Assert.Equal(@"The game data and the mods have no mission script DATA\MISSIONS\OL_NONE\ol_none.ini. Pick a " +
                      "script from the Missions tab.", script.Message);
     }

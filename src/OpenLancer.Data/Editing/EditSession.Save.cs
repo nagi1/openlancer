@@ -502,6 +502,8 @@ public sealed partial class EditSession
         savedText = text;
         history.MarkSaved();
         CacheRevision++;
+        // The reopened documents start at their saved states.
+        worldStates.Clear();
 
         if (plan.Any(p => !p.SameAsDisk))
         {

@@ -125,13 +125,17 @@ internal static class PatchWriter
     /// a section of B again, the patch can delete it and add it again.</param>
     /// <param name="renamed">The sections of B that W has under a new key: the identity in W to the identity in B, or
     /// null for none.</param>
+    /// <param name="baseHashes">The <c>ol.base</c> hash of sections of B, by their identity in B, in place of the hash
+    /// of the loaded patch (command <c>AcceptBase</c>), or null for none.</param>
     public static PatchText Write(string path, IniDocument b, IReadOnlyList<Section> w,
         Func<SectionIdentity, IReadOnlyCollection<string>> pins, PatchSource? source = null,
         IReadOnlySet<SectionIdentity>? deleted = null,
-        IReadOnlyDictionary<SectionIdentity, SectionIdentity>? renamed = null)
+        IReadOnlyDictionary<SectionIdentity, SectionIdentity>? renamed = null,
+        IReadOnlyDictionary<SectionIdentity, string>? baseHashes = null)
     {
         var plan = new Plan(path, b, w, pins, source, deleted ?? new HashSet<SectionIdentity>(),
-            renamed ?? new Dictionary<SectionIdentity, SectionIdentity>());
+            renamed ?? new Dictionary<SectionIdentity, SectionIdentity>(),
+            baseHashes ?? new Dictionary<SectionIdentity, string>());
         var rewritten = new HashSet<SectionIdentity>();
         for (var pass = 1; ; pass++)
         {
@@ -229,6 +233,10 @@ internal static class PatchWriter
         private readonly Lazy<KeyCounts> bCounts;
         private readonly Lazy<KeyCounts> wCounts;
 
+        /// <summary>The <c>ol.base</c> hash of sections of B in place of the hash of the loaded patch (command
+        /// <c>AcceptBase</c>).</summary>
+        private readonly IReadOnlyDictionary<SectionIdentity, string> baseHashes;
+
         /// <summary>The sections of B that the patch deletes and adds again (see <see cref="Moved"/>), by their identity
         /// in B.</summary>
         private readonly HashSet<SectionIdentity> moved;
@@ -255,9 +263,10 @@ internal static class PatchWriter
 
         public Plan(string path, IniDocument b, IReadOnlyList<Section> w,
             Func<SectionIdentity, IReadOnlyCollection<string>> pins, PatchSource? source, IReadOnlySet<SectionIdentity> deleted,
-            IReadOnlyDictionary<SectionIdentity, SectionIdentity> renamed)
+            IReadOnlyDictionary<SectionIdentity, SectionIdentity> renamed, IReadOnlyDictionary<SectionIdentity, string> baseHashes)
         {
             this.path = path;
+            this.baseHashes = baseHashes;
             this.b = b;
             this.w = w;
             this.pins = pins;
@@ -501,7 +510,7 @@ internal static class PatchWriter
             // The delete of a moved section holds the hash of its base, so the merge finds a base that changed after
             // the edit (section 6.4 of the M6b design).
             if (error == null && WIndexOfB(i) >= 0 && SectionKeys.IsMissionFile(path))
-                error = lines.Base(BaseHash(original, loadedSection));
+                error = lines.Base(BaseHash(i, loadedSection));
             return error != null ? Problem(id, error) : Built(id, lines);
         }
 
@@ -569,19 +578,21 @@ internal static class PatchWriter
             PatchWriter.NotPatchable(section, kept, bCounts.Value, wCounts.Value, path);
 
         /// <summary>
-        /// The hash of the <c>ol.base</c> line of a section of B: the hash of the first loaded section that changes or
-        /// deletes it, when that section has one. Else the hash of the section in B now.
+        /// The hash of the <c>ol.base</c> line of the section of B at <paramref name="i"/>. It is the hash that an edit
+        /// gave the section (command <c>AcceptBase</c>), or else the hash of the first loaded section that changes or
+        /// deletes it. When that section has no hash, it is the hash of the section in B now.
         /// </summary>
         /// <remarks>Rule P2 of section 6.3 of the M6b design: a save keeps the old hash, also when B changed after the
         /// edit, and also when an edit changed the section. So the merge warns until the user accepts the new base, and
         /// a save never drops the changes of a lower mod without a message.</remarks>
-        private static string BaseHash(Section original, SourceSection? loadedSection) =>
-            loadedSection?.Lines
+        private string BaseHash(int i, SourceSection? loadedSection) =>
+            baseHashes.GetValueOrDefault(bIds[i])
+            ?? loadedSection?.Lines
                 .Where(l => l.Part == 0 && l.Parsed.Count == 1 &&
                             l.Parsed.Name.Equals(IniPatcher.DirectiveBase, StringComparison.OrdinalIgnoreCase))
                 .Select(l => SectionHash.TextOf(l.Parsed[0]))
                 .FirstOrDefault(h => h.Length > 0)
-            ?? SectionHash.Of(original);
+            ?? SectionHash.Of(b.Sections[i]);
 
         /// <summary>
         /// A changed section of a mission type whose line order counts, in a mission file (section 6.2 of the M6b
@@ -624,7 +635,7 @@ internal static class PatchWriter
                                   lines.Directive(IniPatcher.DirectiveRename, [newKey])
                                 : null) ??
                             lines.Directive(IniPatcher.DirectiveReplace, TrueValue) ??
-                            lines.Base(BaseHash(original, loadedSection));
+                            lines.Base(BaseHash(i, loadedSection));
                 }
                 else
                 {

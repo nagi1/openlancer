@@ -68,16 +68,19 @@ internal sealed class ChangeSet(string label, EditOrigin origin = EditOrigin.Use
     public bool ChangesState =>
         files.Values.Any(s => !s.Before.Equals(s.After)) || text is { } t && !t.Before.SameAs(t.After);
 
-    /// <summary>What the entry changes, for the change and its redo.</summary>
+    /// <summary>What the entry changes, for the change and its redo. Call <see cref="Finish"/> first, so the change
+    /// knows the states after.</summary>
     public EditChange Change =>
         new(sections.Distinct().ToList(), Structural, ChangesText, cutscenes.Distinct(VfsPath.Comparer).ToList())
         {
             Renames = renames.ToList(),
             ModFiles = files.Keys.Where(ModFileDocument.IsKey).Select(k => k[ModFileDocument.KeyPrefix.Length..])
                 .Order(StringComparer.OrdinalIgnoreCase).ToList(),
-            Files = files.Keys.Where(k => !ModFileDocument.IsKey(k) && !cutscenes.Contains(k, VfsPath.Comparer) &&
-                                          k.EndsWith(".ini", StringComparison.OrdinalIgnoreCase))
-                .Order(StringComparer.OrdinalIgnoreCase).ToList(),
+            // A file that a command only read through the scope has the same state before and after.
+            Files = files.Where(f => !ModFileDocument.IsKey(f.Key) && !cutscenes.Contains(f.Key, VfsPath.Comparer) &&
+                                     f.Key.EndsWith(".ini", StringComparison.OrdinalIgnoreCase) &&
+                                     !f.Value.Before.Equals(f.Value.After))
+                .Select(f => f.Key).Order(StringComparer.OrdinalIgnoreCase).ToList(),
         };
 
     /// <summary>What an undo of the entry changes: the same sections, and each rename in the other direction, in
@@ -111,12 +114,26 @@ internal sealed class ChangeSet(string label, EditOrigin origin = EditOrigin.Use
     /// <summary>Records a change of sections that the change set does not list one by one.</summary>
     public void NoteStructural() => Structural = true;
 
-    /// <summary>Records the states after the change.</summary>
+    /// <summary>
+    /// Records the states after the change. A file whose state after has the content of its state before gets its state
+    /// before again. So commands that cancel each other change no state (section 4.5 of the M6b design, item 6).
+    /// </summary>
     /// <param name="file">Gives the file of an install path.</param>
     public void Finish(Func<string, IEditFile> file, ModText currentText)
     {
         foreach (var path in files.Keys.ToList())
-            files[path] = (files[path].Before, file(path).State);
+        {
+            var before = files[path].Before;
+            var edited = file(path);
+            var after = edited.State;
+            if (!ReferenceEquals(before, after) && before is DocumentState old && after is DocumentState now &&
+                old.SameAs(now))
+            {
+                edited.Restore(before);
+                after = before;
+            }
+            files[path] = (before, after);
+        }
         if (text is { } t)
             text = (t.Before, currentText);
     }

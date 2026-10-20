@@ -110,7 +110,10 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
         if (string.Equals(old, name, StringComparison.Ordinal))
             return;
         var baseName = document.BaseSection(document.IdentityAt(index)) is { } b ? TriggerRules.Nickname(b) : null;
-        d.CheckRename(document, index, "Trigger", name, skipForm: string.Equals(baseName, name, StringComparison.OrdinalIgnoreCase));
+        // A rename back to the name of B, and an inverse, skip the form rule (section 4.3 of the M6b design). An inverse
+        // gives the name back without a change of the lines, as RenameItem does.
+        d.CheckRename(document, index, "Trigger", name, skipForm: !ChangeReferences ||
+                                                                 string.Equals(baseName, name, StringComparison.OrdinalIgnoreCase));
         var before = d.RefOf(document, index);
         var inverse = new List<MissionCommand>();
         var lines = MissionLinks.Naming(d.Schema, document.Working, [MissionValueKind.Trigger], old);
@@ -125,7 +128,7 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
                 old, "The game ignores this line, because the script has no trigger with this name now.");
         // The trigger itself: its nickname line and its own lines that name it.
         var entries = section.ToList();
-        var nickname = TriggerPlaces.NicknameLine(entries);
+        var nickname = TriggerRules.NicknameLine(entries);
         var own = ChangeReferences ? lines.Where(l => l.Section == index).ToList() : [];
         var changed = new List<Entry>();
         for (var r = 0; r < entries.Count; r++)
@@ -145,13 +148,14 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
         }
         d.SetBody(document, index, changed);
         var renamed = new TriggerRef(document.Path, name);
-        // The inverse gives the own lines that named the trigger their old text first, then the old nickname, then the
-        // lines of the other sections, in reverse order.
+        // The inverse gives the own lines that named the trigger their old text first, then the lines of the other
+        // sections in reverse order, then the old nickname. So the rename back finds no line that names the new name
+        // only because of the rename, and reports no false "Missing" line.
         var back = own.Select(l => l.Row).Distinct().Where(r => r != nickname)
             .Select(row => (MissionCommand)new SetLine(new RowRef(renamed.Item, row) { ExpectKey = entries[row].Name },
                 MissionDraft.RawLine(entries[row])))
-            .Append(new RenameTrigger(renamed, old) { ChangeReferences = false })
             .Concat(inverse.AsEnumerable().Reverse())
+            .Append(new RenameTrigger(renamed, old) { ChangeReferences = false })
             .ToList();
         d.Renames.Add(new ResultRename(before, d.RefOf(document, index)));
         d.GoneNames.Add(old);
@@ -196,11 +200,11 @@ public sealed record SetTriggerStart(TriggerRef Trigger, bool Starts) : MissionC
         var (document, index) = d.Trigger(Trigger);
         d.Editable(document, index);
         var entries = document.Working[index].ToList();
-        var nickname = TriggerPlaces.NicknameLine(entries);
+        var nickname = TriggerRules.NicknameLine(entries);
         var kept = entries.Where((e, i) => i <= nickname || !MissionIndex.Is(e.Name, "InitState")).ToList();
         if (Starts)
-            kept.Insert(TriggerPlaces.StatePlace(kept), d.NewEntry(document, index, "InitState", ["ACTIVE"],
-                kept.Take(TriggerPlaces.StatePlace(kept))));
+            kept.Insert(TriggerRules.StatePlace(kept), d.NewEntry(document, index, "InitState", ["ACTIVE"],
+                kept.Take(TriggerRules.StatePlace(kept))));
         d.SetLines(document, index, kept);
     }
 }
@@ -216,11 +220,11 @@ public sealed record SetTriggerRepeats(TriggerRef Trigger, bool Repeats) : Missi
         var (document, index) = d.Trigger(Trigger);
         d.Editable(document, index);
         var entries = document.Working[index].ToList();
-        var nickname = TriggerPlaces.NicknameLine(entries);
+        var nickname = TriggerRules.NicknameLine(entries);
         var kept = entries.Where((e, i) => i <= nickname || !MissionIndex.Is(e.Name, "repeatable")).ToList();
         if (Repeats)
-            kept.Insert(TriggerPlaces.StatePlace(kept), d.NewEntry(document, index, "repeatable", ["true"],
-                kept.Take(TriggerPlaces.StatePlace(kept))));
+            kept.Insert(TriggerRules.StatePlace(kept), d.NewEntry(document, index, "repeatable", ["true"],
+                kept.Take(TriggerRules.StatePlace(kept))));
         d.SetLines(document, index, kept);
     }
 }
@@ -238,7 +242,7 @@ public sealed record SetTriggerSystem(TriggerRef Trigger) : MissionCommand
         var (document, index) = d.Trigger(Trigger);
         d.Editable(document, index);
         var entries = document.Working[index].ToList();
-        var nickname = TriggerPlaces.NicknameLine(entries);
+        var nickname = TriggerRules.NicknameLine(entries);
         var at = entries.FindIndex(nickname + 1, e => MissionIndex.Is(e.Name, "system"));
         if (System is not { } system)
         {
@@ -252,7 +256,7 @@ public sealed record SetTriggerSystem(TriggerRef Trigger) : MissionCommand
                 entries[at] = d.NewEntry(document, index, entries[at].Name, [system.Trim()], entries.Take(at));
             else
             {
-                var place = TriggerPlaces.StatePlace(entries);
+                var place = TriggerRules.StatePlace(entries);
                 entries.Insert(place, d.NewEntry(document, index, "system", [system.Trim()], entries.Take(place)));
             }
         }
@@ -272,13 +276,10 @@ public sealed record SetCondition(TriggerRef Trigger, LineSpec Line) : MissionCo
         d.Editable(document, index);
         var line = d.Build("Trigger", LinePlace.Condition, Line, null);
         var entries = document.Working[index].ToList();
-        var at = TriggerPlaces.Condition(entries);
-        var replaced = at >= 0 ? entries[at] : null;
+        var replaced = TriggerRules.EffectiveCondition(entries) is >= 0 and var effective ? entries[effective] : null;
+        var at = TriggerRules.ConditionPlace(entries);
         if (replaced == null)
-        {
-            at = TriggerPlaces.StatePlace(entries);
             entries.Insert(at, d.NewEntry(document, index, line.Key, line.Texts, entries.Take(at)));
-        }
         else
             entries[at] = d.NewEntry(document, index, line.Key, line.Texts, entries.Take(at));
         if (!d.SetLines(document, index, entries, inverse: false))
@@ -300,7 +301,7 @@ public sealed record SetConditionValue(TriggerRef Trigger, string Name, MissionV
     {
         var (document, index) = d.Trigger(Trigger);
         d.Editable(document, index);
-        var at = TriggerPlaces.Condition(document.Working[index].ToList());
+        var at = TriggerRules.EffectiveCondition(document.Working[index].ToList());
         if (at < 0)
             throw d.Refuse(MissionErrors.NoConditionError(Trigger.Name));
         d.SetValue(document, index, at, Name, Value);
@@ -323,7 +324,7 @@ public sealed record AddAction(TriggerRef Trigger, LineSpec Line) : MissionComma
         var line = d.Build("Trigger", LinePlace.Action, Line, null);
         var entries = document.Working[index].ToList();
         var at = d.Place(document, index, Before, entries.Count);
-        if (!TriggerPlaces.ActionPlace(entries, at))
+        if (!TriggerRules.ActionPlace(entries, at))
             throw d.Refuse(MissionErrors.BadPlaceError());
         entries.Insert(at, d.NewEntry(document, index, line.Key, line.Texts, entries.Take(at)));
         d.SetLines(document, index, entries, inverse: false);
@@ -433,7 +434,7 @@ public sealed record LinkTriggers(TriggerRef Source, string Target, LinkKind Lin
         };
         var entries = document.Working[index].ToList();
         var at = d.Place(document, index, Before, entries.Count);
-        if (!TriggerPlaces.ActionPlace(entries, at))
+        if (!TriggerRules.ActionPlace(entries, at))
             throw d.Refuse(MissionErrors.BadPlaceError());
         var rows = new List<int>();
         foreach (var key in keys)
@@ -461,7 +462,7 @@ public sealed record UnlinkTriggers(TriggerRef Source, string Target, LinkKind L
         var (document, index) = d.Trigger(Source);
         d.Editable(document, index);
         var entries = document.Working[index].ToList();
-        var nickname = TriggerPlaces.NicknameLine(entries);
+        var nickname = TriggerRules.NicknameLine(entries);
         var keys = LinkKind switch
         {
             LinkKind.Start => new[] { "Act_ActTrig" },

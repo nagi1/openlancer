@@ -23,10 +23,26 @@ internal static class MissionTestData
     /// <summary>
     /// A session command that passes the guard of the mission files (decision D660 of the M6b design). The tests of the
     /// writer, the save and the recovery of mission files use it to make a raw edit. The editor and the agent tools
-    /// change mission files only with the mission commands.
+    /// change mission files only with the mission commands, and the product code has no such bypass.
     /// </summary>
-    internal static EditCommand Raw(EditCommand command) =>
-        OpenLancer.Data.Missions.Editing.MissionPlanCommand.Wrap(command);
+    internal static EditCommand Raw(EditCommand command) => new Unguarded(command);
+
+    /// <summary>Runs a session command as a mission plan command runs its steps: with the guard open.</summary>
+    private sealed class Unguarded(EditCommand inner) : EditCommand(inner.Label)
+    {
+        internal override void Run(EditSession.CommandScope scope)
+        {
+            scope.MissionDepth++;
+            try
+            {
+                inner.Run(scope);
+            }
+            finally
+            {
+                scope.MissionDepth--;
+            }
+        }
+    }
 
     /// <summary>The document of a script text.</summary>
     public static MissionDocument Document(string text, string path = Path) =>

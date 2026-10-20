@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Data.Editing.Commands;
@@ -122,14 +123,6 @@ public static class ItemRefs
 
     /// <summary>The detail code of a text that is not a reference.</summary>
     public const string BadReference = "BadReference";
-
-    /// <summary>The detail code of a <c>trg:</c> reference whose script the edit view does not have (section 4.7 of
-    /// the M6b design).</summary>
-    public const string ScriptNotFound = "ScriptNotFound";
-
-    /// <summary>The detail code of a <c>trg:</c> reference whose script has no such trigger (section 4.7 of the M6b
-    /// design).</summary>
-    public const string TriggerNotFound = "TriggerNotFound";
 
     private static readonly (string Prefix, ItemRefKind Kind)[] Prefixes =
     [
@@ -328,16 +321,12 @@ public static class ItemRefs
             case ItemRefKind.Trigger when !reference.Path!.StartsWith(PrefabScript, StringComparison.Ordinal):
             {
                 var path = reference.Path!;
+                // The codes and the texts of the mission commands (section 4.7 of the M6b design).
                 if (session.OpenDocument(path) == null)
-                {
-                    throw new EditException(new EditError(EditErrorKind.NotFound, ScriptNotFound,
-                        $"The game data and the mods have no mission script {path}. Pick a script from the Missions " +
-                        "tab.") { Target = text });
-                }
-                return Existing(session, path, "Trigger", reference.Name) ?? throw new EditException(new EditError(
-                    EditErrorKind.NotFound, TriggerNotFound,
-                    $"Script {path} has no trigger '{reference.Name}'. Pick a trigger of this script." +
-                    Hint(reference.Name, Keys(session, path, "Trigger"))) { Target = text });
+                    throw new EditException(MissionErrors.ScriptNotFoundError(path) with { Target = text });
+                return Existing(session, path, "Trigger", reference.Name) ?? throw new EditException(
+                    MissionErrors.TriggerNotFoundError(path, reference.Name, Hint(reference.Name, Keys(session, path, "Trigger")))
+                        with { Target = text });
             }
             default:
                 throw new EditException(new EditError(EditErrorKind.InvalidArgument, BadReference,
@@ -476,7 +465,7 @@ public static class ItemRefs
 
     /// <summary>The sentence with the closest names of a name, with a space before it, or an empty text when no name
     /// is close.</summary>
-    private static string Hint(string name, IEnumerable<string> candidates) =>
+    internal static string Hint(string name, IEnumerable<string> candidates) =>
         Closest(name, candidates) is { Count: > 0 } closest
             ? " The closest names are: " + string.Join(", ", closest) + "."
             : "";

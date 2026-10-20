@@ -1,6 +1,3 @@
-using System.Linq;
-using OpenLancer.Data;
-using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui.Fields;
 using Xunit;
 
@@ -46,13 +43,5 @@ public sealed class RawIniEditTests
 
         Assert.Equal((Shown, Shown + "\nrepeatable = true"), edit.End(() => Shown + "\nrepeatable = true"));
         Assert.Null(edit.End(() => Shown));
-    }
-
-    [Fact]
-    public void TheDraftMarksAreTheProblemsOfTheText()
-    {
-        var marks = MissionWorkspace.DraftMarks(MissionEdits.Script, "[Trigger]\nnickname = ol_a\nCnd_True no\n[Rocket]");
-
-        Assert.Equal([(2, DiagnosticSeverity.Error), (3, DiagnosticSeverity.Error)], marks.Select(m => (m.Line, m.Severity)));
     }
 }

@@ -1,6 +1,22 @@
 using System;
+using System.Collections.Generic;
+using OpenLancer.Data.Editing.Fields;
 
 namespace OpenLancer.Editor.Ui.Fields;
+
+/// <summary>
+/// The marks of the text of an editable raw INI editor while the user types (UI rule 11 of AGENTS.md). They show the
+/// problems of the text and the problems of the checks of the parsed text. The checks can run on a worker, so the marks
+/// can come some frames after the change.
+/// </summary>
+internal interface IRawDraft
+{
+    /// <summary>Takes the text of the editor after a change.</summary>
+    void Changed(string text);
+
+    /// <summary>The marks of the last text. The list is a new list each time the marks change.</summary>
+    IReadOnlyList<RawMark> Marks { get; }
+}
 
 /// <summary>
 /// The open edit of an editable raw INI editor (section 8.8 of the M6b design): the shown text at the start of the

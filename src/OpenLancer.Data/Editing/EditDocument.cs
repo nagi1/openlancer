@@ -32,6 +32,67 @@ internal sealed record DocumentState(
     /// <summary>False when W has no such file: a new whole file of the active mod before its create, or a whole file
     /// after its delete (section 6.7 of the M6b design). Each other file exists.</summary>
     public bool Exists { get; init; } = true;
+
+    /// <summary>The <c>ol.base</c> hash of sections of B by their identity in B. It replaces the hash of the loaded
+    /// patch. An example is the hash of B now, after the user kept the lines of the section (command <c>AcceptBase</c>,
+    /// decision D429).</summary>
+    public ImmutableDictionary<SectionIdentity, string> BaseHashes { get; init; } =
+        ImmutableDictionary<SectionIdentity, string>.Empty;
+
+    /// <summary>
+    /// True when the state has the same content as another state. The sections, their lines and values, the pins, the
+    /// deletes, the renames, the base hashes and the existence are the same. A value compares by its type and its value,
+    /// so a binary file keeps the type of each value.
+    /// </summary>
+    public bool SameAs(DocumentState other)
+    {
+        if (ReferenceEquals(this, other))
+            return true;
+        if (Exists != other.Exists || Working.Count != other.Working.Count || !Deleted.SetEquals(other.Deleted) ||
+            BaseHashes.Count != other.BaseHashes.Count ||
+            BaseHashes.Any(h => !other.BaseHashes.TryGetValue(h.Key, out var hash) || hash != h.Value) ||
+            Renamed.Count != other.Renamed.Count ||
+            Renamed.Any(r => !other.Renamed.TryGetValue(r.Key, out var b) || !b.Equals(r.Value)) || !SamePins(Pins, other.Pins))
+            return false;
+        for (var i = 0; i < Working.Count; i++)
+        {
+            if (!SameSection(Working[i], other.Working[i]))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool SamePins(ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>> a,
+        ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>> b)
+    {
+        static IEnumerable<KeyValuePair<SectionIdentity, ImmutableHashSet<string>>> Set(
+            ImmutableDictionary<SectionIdentity, ImmutableHashSet<string>> pins) => pins.Where(p => p.Value.Count > 0);
+        return Set(a).Count() == Set(b).Count() &&
+               Set(a).All(p => b.TryGetValue(p.Key, out var names) && names.SetEquals(p.Value));
+    }
+
+    private static bool SameSection(Section a, Section b)
+    {
+        if (ReferenceEquals(a, b))
+            return true;
+        if (!string.Equals(a.Name, b.Name, StringComparison.Ordinal) || a.Count != b.Count)
+            return false;
+        for (var i = 0; i < a.Count; i++)
+        {
+            Entry x = a[i], y = b[i];
+            if (ReferenceEquals(x, y))
+                continue;
+            if (!string.Equals(x.Name, y.Name, StringComparison.Ordinal) || x.Count != y.Count)
+                return false;
+            for (var v = 0; v < x.Count; v++)
+            {
+                if (!ReferenceEquals(x[v], y[v]) &&
+                    (x[v].GetType() != y[v].GetType() || !IniValueComparer.StrictEqual(x[v], y[v], binary: true)))
+                    return false;
+            }
+        }
+        return true;
+    }
 }
 
 /// <summary>
@@ -354,6 +415,23 @@ internal sealed class EditDocument : IEditFile
     public string? BaseHashOfPatch(SectionIdentity id) =>
         BaseIdOf(id) is { } before ? source?.BaseHash(before) : null;
 
+    /// <summary>The <c>ol.base</c> hash that the patch gives a section of W now: the hash of
+    /// <see cref="DocumentState.BaseHashes"/>, else the hash of the loaded patch, else the hash of B. Null for a section
+    /// that B does not have.</summary>
+    public string? WrittenBaseHash(SectionIdentity id) =>
+        BaseIdOf(id) is not { } before ? null
+        : state.BaseHashes.TryGetValue(before, out var hash) ? hash
+        : source?.BaseHash(before) ?? (BaseSection(id) is { } lower ? SectionHash.Of(lower) : null);
+
+    /// <summary>Gives the patch of a section of W another <c>ol.base</c> hash (command <c>AcceptBase</c>, decision
+    /// D429). W does not change.</summary>
+    /// <exception cref="InvalidOperationException">B does not have the section.</exception>
+    public void SetBaseHash(SectionIdentity id, string hash)
+    {
+        var before = BaseIdOf(id) ?? throw new InvalidOperationException($"{Path}: B has no section {id}.");
+        Change(state with { BaseHashes = state.BaseHashes.SetItem(before, hash) });
+    }
+
     /// <summary>Removes <paramref name="count"/> sections from <paramref name="index"/>, and their pins. A removed
     /// section that has a new key counts as a deleted section of B under its old key.</summary>
     public void Remove(int index, int count)
@@ -424,7 +502,7 @@ internal sealed class EditDocument : IEditFile
     private PatchText Write(DocumentState s) =>
         refusal == null && whole == null
             ? PatchWriter.Write(Path, b, s.Working, id => s.Pins.GetValueOrDefault(id, NoPins), source, s.Deleted,
-                s.Renamed)
+                s.Renamed, s.BaseHashes)
             : new PatchText([], [refusal ?? Diagnostic.Error(Path, $"{Path} is a whole file of the mod, not a patch.")]);
 
     /// <summary>

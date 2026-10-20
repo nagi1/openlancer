@@ -62,8 +62,12 @@ public sealed record CreateScript(string Path) : MissionCommand
     }
 }
 
-/// <summary>Deletes a whole mission file of the active mod. A script of the game data or of a lower mod cannot go. Its
-/// ship build file goes with it when that file is a whole file of the active mod that no other script names.</summary>
+/// <summary>
+/// Deletes a whole mission file of the active mod: a script, or the ship build file of a script. A file of the game
+/// data or of a lower mod cannot go. A whole file of the active mod that takes the place of a file of the lower layer
+/// cannot go either, because the game then uses that file again. The ship build file of a deleted script goes with it
+/// when that file is a whole file of the active mod that no other script names.
+/// </summary>
 public sealed record DeleteScript(ScriptRef Script) : MissionCommand
 {
     protected override string Describe() => $"Delete script {MissionFiles.Display(Script.Path)}";
@@ -71,16 +75,18 @@ public sealed record DeleteScript(ScriptRef Script) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var document = d.Session.OpenDocument(Script.Path);
-        if (document is not { HoldsScript: true, State.Exists: true })
+        if (document is not { State.Exists: true } || !document.HoldsScript && !d.Session.IsGuardedMissionFile(document.Path))
             throw d.Refuse(MissionErrors.ScriptNotFoundError(Script.Path));
         if (!document.IsWholeFile)
             throw d.Refuse(MissionErrors.NotWholeFileError(document.Path));
-        var script = d.Script(document.Path);
+        if (d.Session.LowerLayerHas(document.Path))
+            throw d.Refuse(MissionErrors.ReplacesLowerFileError(document.Path));
+        var script = document.HoldsScript ? d.Script(document.Path) : d.File(document.Path);
         var sections = script.Working.Select(MissionDraft.RawSection).ToList();
-        var shipPath = d.Session.ShipBuildFileOf(script.Path);
+        var shipPath = script.HoldsScript ? d.Session.ShipBuildFileOf(script.Path) : null;
         IReadOnlyList<RawSection>? shipSections = null;
         if (shipPath != null && d.Session.OpenDocument(shipPath) is { IsWholeFile: true, State.Exists: true } ships &&
-            !d.OtherScriptNames(script.Path, shipPath))
+            !d.OtherScriptNames(script.Path, shipPath) && !d.Session.LowerLayerHas(ships.Path))
         {
             var file = d.File(ships.Path);
             shipSections = file.Working.Select(MissionDraft.RawSection).ToList();

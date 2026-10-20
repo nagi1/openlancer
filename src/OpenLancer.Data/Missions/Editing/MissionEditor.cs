@@ -127,9 +127,10 @@ public sealed partial class MissionEditor
     }
 
     /// <summary>The model of a state of a script, from the cache or a new analysis.</summary>
-    internal MissionModel ModelOf(EditDocument document, DocumentState state)
+    /// <param name="names">The names of the game data, or null for the names now.</param>
+    internal MissionModel ModelOf(EditDocument document, DocumentState state, MissionInputs? names = null)
     {
-        var snapshot = world.Inputs();
+        var snapshot = names ?? world.Inputs();
         cache.Use(snapshot);
         var path = document.Path;
         var analysis = cache.Find(path, state);
@@ -173,18 +174,20 @@ public sealed partial class MissionEditor
 
     /// <summary>The version of a script (section 4.2 of the M6b design). It starts at 1 and grows when the history
     /// changes W of the script: a commit, an undo, a redo or a restore.</summary>
+    /// <param name="script">The install path of the script, in any letter case.</param>
     public long Version(string script) =>
-        versions.GetValueOrDefault(VfsPath.Normalize(script) ?? script, 1);
+        versions.GetValueOrDefault(InstallPaths.TryParse(script) ?? script, 1);
 
     /// <summary>The document of a mission script of the edit view.</summary>
-    /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/> with the detail
-    /// <see cref="MissionErrors.ScriptNotFound"/>.</exception>
+    /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/>: the text is not an install path
+    /// (decision D763 of the MCP1 design). <see cref="EditErrorKind.NotFound"/> with the detail
+    /// <see cref="MissionErrors.ScriptNotFound"/>: the edit view has no such script.</exception>
     internal EditDocument Script(string script)
     {
-        var path = InstallPaths.TryParse(script);
-        if (path != null && session.OpenDocument(path) is { HoldsScript: true, State.Exists: true } document)
+        var path = InstallPaths.Parse(script);
+        if (session.OpenDocument(path) is { HoldsScript: true, State.Exists: true } document)
             return document;
-        throw new EditException(MissionErrors.ScriptNotFoundError(path ?? script));
+        throw new EditException(MissionErrors.ScriptNotFoundError(path));
     }
 
     /// <summary>The analysis of a state of a script. A state that the session did not change since the open or the

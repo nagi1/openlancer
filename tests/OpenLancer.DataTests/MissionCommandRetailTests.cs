@@ -53,14 +53,26 @@ public sealed class MissionCommandRetailTests(ITestOutputHelper output)
         // The first edit runs the base-game analysis of M10 once (section 7 of the M6b design).
         Apply(missions, new SetTriggerSystem(new TriggerRef(m10, triggers[0])) { System = "ol_first" });
 
-        var one = Stopwatch.StartNew();
-        var result = Apply(missions, new AddAction(new TriggerRef(m10, triggers[1]),
-            LineSpec.Of("Act_ActTrig", ("trigger", triggers[2]))));
-        one.Stop();
-        var undo = Stopwatch.StartNew();
-        session.Undo();
-        var model = missions.Model(m10);
-        undo.Stop();
+        // The gates take the median of five runs, so that one pause of a busy machine does not fail them.
+        var ones = new List<long>();
+        var undos = new List<long>();
+        MissionEditResult? result = null;
+        MissionModel? model = null;
+        for (var i = 0; i < 5; i++)
+        {
+            var one = Stopwatch.StartNew();
+            result = Apply(missions, new AddAction(new TriggerRef(m10, triggers[1 + i]),
+                LineSpec.Of("Act_ActTrig", ("trigger", triggers[2 + i]))));
+            one.Stop();
+            ones.Add(one.ElapsedMilliseconds);
+            var undo = Stopwatch.StartNew();
+            session.Undo();
+            model = missions.Model(m10);
+            undo.Stop();
+            undos.Add(undo.ElapsedMilliseconds);
+        }
+        var oneTime = Median(ones);
+        var undoTime = Median(undos);
 
         var commands = Enumerable.Range(0, 500).Select(i => (MissionCommand)new AddAction(
             new TriggerRef(m10, triggers[i % triggers.Count]),
@@ -68,14 +80,14 @@ public sealed class MissionCommandRetailTests(ITestOutputHelper output)
         var batch = Stopwatch.StartNew();
         var many = missions.Apply(new MissionBatch("500 actions", commands));
         batch.Stop();
-        output.WriteLine($"One command: {one.ElapsedMilliseconds} ms. Undo: {undo.ElapsedMilliseconds} ms. 500 commands: " +
+        output.WriteLine($"One command: {string.Join(", ", ones)} ms. Undo: {string.Join(", ", undos)} ms. 500 commands: " +
                          $"{batch.ElapsedMilliseconds} ms.");
 
-        Assert.NotNull(result.Inverse);
-        Assert.NotNull(model.Index);
+        Assert.NotNull(result!.Inverse);
+        Assert.NotNull(model!.Index);
         Assert.Equal(EditStatus.Applied, many.Status);
-        Assert.True(one.ElapsedMilliseconds < 50, $"One command took {one.ElapsedMilliseconds} ms.");
-        Assert.True(undo.ElapsedMilliseconds < 50, $"The undo took {undo.ElapsedMilliseconds} ms.");
+        Assert.True(oneTime < 50, $"One command took {oneTime} ms (median of {string.Join(", ", ones)}).");
+        Assert.True(undoTime < 50, $"The undo took {undoTime} ms (median of {string.Join(", ", undos)}).");
         Assert.True(batch.ElapsedMilliseconds < 2000, $"The batch took {batch.ElapsedMilliseconds} ms.");
 
         // A step of a drag runs no analysis on the thread of the session.
@@ -88,6 +100,8 @@ public sealed class MissionCommandRetailTests(ITestOutputHelper output)
         transaction.Cancel();
         output.WriteLine($"One step of a drag: {step.ElapsedMilliseconds} ms.");
     }
+
+    private static long Median(List<long> times) => times.Order().ElementAt(times.Count / 2);
 
     [Fact]
     public void ASameValueGivesNoChangeAndARealChangeWithItsInverseGivesNoPatchFile()
