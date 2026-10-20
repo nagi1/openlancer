@@ -301,10 +301,11 @@ public sealed class MissionEditorTests
         Assert.Equal(["nickname = ol_launch_delay", "Cnd_Timer = 3", "Act_ActTrig = ol_wave"], m.Lines("ol_launch_delay"));
         Assert.Equal([T("ol_launch_delay").ToString()], result.Adds);
         Assert.Equal([Row("ol_start", 3).Reference], result.Changes);
+        // The group of the command joins the group of the batch, as in the result example of the design.
         var inverse = (CommandGroup)result.Inverse!;
-        var group = Assert.IsType<CommandGroup>(Assert.Single(inverse.Commands));
-        Assert.Equal(new RetargetLink(Row("ol_start", 3) with { ExpectKey = "Act_ActTrig" }, "ol_wave"), group.Commands[0]);
-        Assert.Equal(new RemoveTrigger(T("ol_launch_delay")), group.Commands[1]);
+        Assert.Equal(2, inverse.Commands.Count);
+        Assert.Equal(new RetargetLink(Row("ol_start", 3) with { ExpectKey = "Act_ActTrig" }, "ol_wave"), inverse.Commands[0]);
+        Assert.Equal(new RemoveTrigger(T("ol_launch_delay")), inverse.Commands[1]);
         Assert.Equal([T("ol_launch_delay").ToString(), T("ol_start").ToString()], inverse.ExpectBodies.Keys.Order());
     }
 

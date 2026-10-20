@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Schema;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using OpenLancer.Data.Editing.Commands;
 
 namespace OpenLancer.Data.Missions.Editing;
@@ -11,6 +15,8 @@ namespace OpenLancer.Data.Missions.Editing;
 /// The JSON form of the mission commands for MCP1 (section 4.13 of the M6b design): snake case property names and
 /// <c>kind</c> names, the reference strings of section 4.0.7, and named values of lines.
 /// </summary>
+/// <remarks>A line also takes <c>texts</c>: its value texts by position. The inverses use them to give back a line
+/// exactly as it was, so an inverse in a result can go into the next request.</remarks>
 public static class MissionJson
 {
     private static readonly Lazy<IReadOnlyDictionary<string, Type>> KindTable = new(() =>
@@ -29,23 +35,26 @@ public static class MissionJson
 
     /// <summary>Reads a batch.</summary>
     /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/>: the JSON is not a batch, a command
-    /// has an unknown kind (<c>UnknownCommand</c>), or a reference is not valid.</exception>
+    /// has an unknown kind (<c>UnknownCommand</c>) or an unknown field (<c>UnknownField</c>), or a reference is not
+    /// valid.</exception>
     public static MissionBatch ReadBatch(string json) => Read<MissionBatch>(json);
 
     /// <summary>Reads one command.</summary>
     /// <exception cref="EditException">See <see cref="ReadBatch"/>.</exception>
     public static MissionCommand ReadCommand(string json) => Read<MissionCommand>(json);
 
-    /// <summary>Writes a value of the command layer: a batch, a command or a result.</summary>
-    public static string Write<T>(T value) => JsonSerializer.Serialize(value, Options);
+    /// <summary>Writes a value of the command layer: a batch, a command, a result or a query result. A command gets its
+    /// <c>kind</c> also when its static type is the type of the command.</summary>
+    public static string Write<T>(T value) => value is MissionCommand command
+        ? JsonSerializer.Serialize(command, Options)
+        : JsonSerializer.Serialize(value, Options);
 
     private static T Read<T>(string json)
     {
         try
         {
             return JsonSerializer.Deserialize<T>(json, Options) ??
-                   throw new EditException(new EditError(EditErrorKind.InvalidArgument, "BadJson",
-                       "The request is empty. Send a JSON object."));
+                   throw new EditException(MissionErrors.BadJsonError("The request is empty."));
         }
         catch (MissionJsonException e)
         {
@@ -57,14 +66,209 @@ public static class MissionJson
         }
         catch (JsonException e)
         {
-            throw new EditException(new EditError(EditErrorKind.InvalidArgument, "BadJson",
-                $"The request is not valid JSON of a mission batch: {e.Message}"));
+            throw new EditException(MissionErrors.BadJsonError(e.Message));
         }
     }
+
+    /// <summary>
+    /// The JSON Schema of a batch (section 4.13 of the M6b design): the batch fields, a definition for each command
+    /// kind, and a definition for each line key with its named values from <c>mission-schema.json</c>. MCP1 gives it as
+    /// the input schema of its tool <c>mission_edit</c>. The schema comes from the command types, so it follows them.
+    /// </summary>
+    public static JsonObject Schema()
+    {
+        var schema = MissionSchema.Retail;
+        var definitions = new JsonObject();
+        foreach (var (kind, type) in Kinds.OrderBy(k => k.Key, StringComparer.Ordinal))
+            definitions[kind] = CommandSchema(kind, type);
+        definitions["command"] = OneOf(Kinds.Keys.Order(StringComparer.Ordinal));
+
+        var lines = new List<string>();
+        foreach (var name in schema.Conditions.Concat(schema.Actions).Concat(schema.Directives)
+                     .DistinctBy(n => n.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            lines.Add("line:" + name.Name);
+            definitions["line:" + name.Name] = LineSchema(name.Name, name.Plain, name.Values, schema);
+        }
+        foreach (var section in schema.Sections.Append(schema.ShipBuild))
+        {
+            foreach (var key in section.Keys)
+            {
+                lines.Add($"key:{section.Type}/{key.Key}");
+                definitions[$"key:{section.Type}/{key.Key}"] = LineSchema(key.Key, key.Label, key.ValueSpecs, schema);
+            }
+        }
+        definitions["line"] = new JsonObject
+        {
+            ["description"] = "A line: its key, and its values by name. A key can be in more than one section type, so " +
+                              "each definition of a key fits.",
+            ["anyOf"] = new JsonArray([.. lines.Select(Ref)]),
+        };
+
+        var batch = Export(typeof(MissionBatch));
+        batch["$schema"] = "https://json-schema.org/draft/2020-12/schema";
+        batch["title"] = "Mission batch";
+        batch["description"] = "Mission commands that give one history entry and one validation.";
+        batch["properties"]!["commands"] = new JsonObject { ["type"] = "array", ["items"] = Ref("command") };
+        batch["required"] = new JsonArray("label", "commands");
+        batch["additionalProperties"] = false;
+        batch["$defs"] = definitions;
+        return batch;
+    }
+
+    /// <summary>The schema of a command: its <c>kind</c>, its fields, and the fields of its constructor as the
+    /// required fields.</summary>
+    private static JsonObject CommandSchema(string kind, Type type)
+    {
+        var exported = Export(type);
+        var properties = new JsonObject { ["kind"] = new JsonObject { ["const"] = kind } };
+        foreach (var (name, value) in exported["properties"]?.AsObject().ToList() ?? [])
+            properties[name] = value?.DeepClone();
+        // The exporter gives no items for a list of commands, because a command has its own converter.
+        foreach (var property in SchemaOptions.Value.GetTypeInfo(type).Properties
+                     .Where(p => typeof(IEnumerable<MissionCommand>).IsAssignableFrom(p.PropertyType)))
+            properties[property.Name] = new JsonObject { ["type"] = "array", ["items"] = Ref("command") };
+        var required = new JsonArray("kind");
+        foreach (var parameter in type.GetConstructors().OrderByDescending(c => c.GetParameters().Length).First()
+                     .GetParameters().Where(p => !p.HasDefaultValue))
+            required.Add(JsonNamingPolicy.SnakeCaseLower.ConvertName(parameter.Name!));
+        return new JsonObject
+        {
+            ["type"] = "object",
+            ["properties"] = properties,
+            ["required"] = required,
+            ["additionalProperties"] = false,
+        };
+    }
+
+    /// <summary>The schema of a line key with its named values.</summary>
+    private static JsonObject LineSchema(string key, string title, IEnumerable<MissionValueSpec> specs, MissionSchema schema)
+    {
+        var values = new JsonObject();
+        foreach (var spec in specs)
+            values[spec.Name] = ValueSchema(spec, schema);
+        return new JsonObject
+        {
+            ["type"] = "object",
+            ["title"] = title,
+            ["properties"] = new JsonObject
+            {
+                ["key"] = new JsonObject { ["const"] = key },
+                ["values"] = new JsonObject { ["type"] = "object", ["properties"] = values, ["additionalProperties"] = false },
+                ["texts"] = new JsonObject
+                {
+                    ["description"] = "The value texts by position, in place of the values by name. An inverse writes them.",
+                    ["type"] = "array",
+                    ["items"] = new JsonObject { ["type"] = "string" },
+                },
+            },
+            ["required"] = new JsonArray("key"),
+            ["additionalProperties"] = false,
+        };
+    }
+
+    /// <summary>The schema of a named value by its kind (section 4.3 of the M6b design).</summary>
+    private static JsonObject ValueSchema(MissionValueSpec spec, MissionSchema schema)
+    {
+        JsonObject one = spec.Kind switch
+        {
+            MissionValueKind.Position or MissionValueKind.Rotation => new JsonObject
+            {
+                ["type"] = "array",
+                ["items"] = new JsonObject { ["type"] = "number" },
+                ["minItems"] = spec.Width,
+                ["maxItems"] = spec.Width,
+            },
+            // A string that holds a number is also valid for a number kind. A text id is also $str:<key>.
+            MissionValueKind.Number or MissionValueKind.WholeNumber or MissionValueKind.TextId =>
+                new JsonObject { ["type"] = new JsonArray("number", "string") },
+            MissionValueKind.Bool => new JsonObject { ["type"] = "boolean" },
+            _ => new JsonObject { ["type"] = "string" },
+        };
+        var words = new[] { spec.Tokens, spec.Also }.OfType<string>()
+            .SelectMany(id => schema.Tokens.TryGetValue(id, out var set) ? set.Values : []).ToList();
+        if (words.Count > 0)
+            one["examples"] = new JsonArray([.. words.Select(w => (JsonNode)w)]);
+        var value = spec.Rest ? new JsonObject { ["type"] = "array", ["items"] = one } : one;
+        value["title"] = spec.Label;
+        if (spec.Help != null)
+            value["description"] = spec.Help;
+        return value;
+    }
+
+    /// <summary>The settings of the command layer with the resolver that the schema exporter needs.</summary>
+    private static readonly Lazy<JsonSerializerOptions> SchemaOptions = new(() =>
+        new JsonSerializerOptions(Options) { TypeInfoResolver = new DefaultJsonTypeInfoResolver() });
+
+    /// <summary>The schema of a type of the command layer, with the reference strings in place of the records.</summary>
+    private static JsonObject Export(Type type)
+    {
+        var node = JsonSchemaExporter.GetJsonSchemaAsNode(SchemaOptions.Value, type, new JsonSchemaExporterOptions
+        {
+            TreatNullObliviousAsNonNullable = true,
+            TransformSchemaNode = (context, node) => ReferenceSchema(context.TypeInfo.Type) ??
+                                                     (context.PropertyInfo?.CustomConverter is NullableLongAsText
+                                                         ? new JsonObject { ["type"] = "string", ["pattern"] = "^[0-9]+$" }
+                                                         : node),
+        });
+        return node.AsObject();
+    }
+
+    /// <summary>The schema of a type that JSON writes in its own form, or null.</summary>
+    private static JsonNode? ReferenceSchema(Type type)
+    {
+        static JsonObject Text(string prefix, string example) => new()
+        {
+            ["type"] = "string",
+            ["pattern"] = $"^({prefix}):",
+            ["examples"] = new JsonArray(example),
+        };
+        if (type == typeof(ScriptRef))
+            return Text("msn", @"msn:DATA\MISSIONS\M02\m02.ini");
+        if (type == typeof(TriggerRef))
+            return Text("trg", @"trg:DATA\MISSIONS\M02\m02.ini#ol_trigger");
+        if (type == typeof(ItemRef))
+            return Text("sec|trg", @"sec:DATA\MISSIONS\M02\m02.ini#MsnShip/ol_ship");
+        if (type == typeof(LabelRef))
+            return Text("label", @"label:DATA\MISSIONS\M02\m02.ini#ol_wing");
+        if (type == typeof(RowRef))
+            return new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["ref"] = Text("line", @"line:DATA\MISSIONS\M02\m02.ini#Trigger/ol_trigger/2"),
+                    ["expect_key"] = new JsonObject { ["type"] = "string" },
+                    ["expect_values"] = new JsonObject { ["type"] = "array", ["items"] = new JsonObject { ["type"] = "string" } },
+                },
+                ["required"] = new JsonArray("ref"),
+                ["additionalProperties"] = false,
+            };
+        if (type == typeof(LineSpec))
+            return Ref("line");
+        if (type == typeof(MissionCommand))
+            return Ref("command");
+        if (type == typeof(MissionValue))
+            return new JsonObject
+            {
+                ["type"] = new JsonArray("number", "string", "boolean", "array"),
+                ["items"] = new JsonObject { ["type"] = new JsonArray("number", "string", "boolean") },
+            };
+        return null;
+    }
+
+    private static JsonObject Ref(string definition) => new() { ["$ref"] = "#/$defs/" + definition };
+
+    private static JsonObject OneOf(IEnumerable<string> definitions) =>
+        new() { ["oneOf"] = new JsonArray([.. definitions.Select(Ref)]) };
+
+    /// <summary>The JSON names of the fields of a command type.</summary>
+    internal static IReadOnlySet<string> FieldsOf(Type type, JsonSerializerOptions options) =>
+        options.GetTypeInfo(type).Properties.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
 }
 
 /// <summary>Reads and writes a <see cref="MissionCommand"/> with its <c>kind</c> (section 4.13 of the M6b design). An
-/// unknown kind gives <c>UnknownCommand</c>.</summary>
+/// unknown kind gives <c>UnknownCommand</c>, and an unknown field gives <c>UnknownField</c>.</summary>
 public sealed class MissionCommandConverter : JsonConverter<MissionCommand>
 {
     public override MissionCommand? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -77,6 +281,12 @@ public sealed class MissionCommandConverter : JsonConverter<MissionCommand>
         var kind = kindElement.GetString()!;
         if (!MissionJson.Kinds.TryGetValue(kind, out var type))
             throw new MissionJsonException(MissionErrors.UnknownCommandError(kind));
+        var fields = MissionJson.FieldsOf(type, options);
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Name != "kind" && !fields.Contains(property.Name))
+                throw new MissionJsonException(MissionErrors.UnknownFieldError(kind, property.Name));
+        }
         return (MissionCommand?)root.Deserialize(type, options);
     }
 

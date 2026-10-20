@@ -38,6 +38,11 @@ public sealed partial class MissionEditor
     /// design).</summary>
     public MissionReferences References { get; }
 
+    /// <summary>The read queries in the vocabulary of the commands (section 4.12 of the M6b design).</summary>
+    public MissionQueries Queries => queries ??= new MissionQueries(session, this);
+
+    private MissionQueries? queries;
+
     /// <summary>The OpenLancer marks of the checks, when the world source is the source of the session. The editor
     /// gives the marks of the engine. Other sources keep their own marks.</summary>
     public IEngineCoverage Coverage
@@ -71,8 +76,10 @@ public sealed partial class MissionEditor
             paths = session.DataPath("MISSIONS") is { } missions ? MissionFiles.Scan(files, missions) : [];
             scanned = (session.EditView, paths);
         }
+        // A result gives the path as the session stores it (section 4.0.7 of the M6b design).
         return paths.Concat(session.OpenMissionScripts()).Distinct(VfsPath.Comparer)
-            .Where(p => session.OpenDocument(p) is { HoldsScript: true, State.Exists: true }).ToList();
+            .Select(p => session.OpenDocument(p)).OfType<EditDocument>()
+            .Where(d => d is { HoldsScript: true, State.Exists: true }).Select(d => d.Path).ToList();
     }
 
     /// <summary>The model cache, for the tests.</summary>

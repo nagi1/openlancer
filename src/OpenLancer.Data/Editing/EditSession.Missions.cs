@@ -208,6 +208,11 @@ public sealed partial class EditSession
         (MissionValueKind.CommLine, "comm_line"), (MissionValueKind.Fuse, "fuse"),
     ];
 
+    /// <summary>The kind of the mission values whose names come from a data list, or null.</summary>
+    internal static MissionValueKind? MissionKindOfList(string list) =>
+        WorldLists.Where(l => l.List.Equals(list, StringComparison.OrdinalIgnoreCase)).Select(l => (MissionValueKind?)l.Kind)
+            .FirstOrDefault();
+
     /// <summary>
     /// The names that the base folder without mods (B) has and the edit view does not have, by kind, each with the last
     /// mod that changes its file (decision D551 of the M6a design). A mod removes or renames such a name, so a mission

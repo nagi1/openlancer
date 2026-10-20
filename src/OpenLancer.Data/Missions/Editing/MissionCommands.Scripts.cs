@@ -30,7 +30,7 @@ public sealed record CreateScript(string Path) : MissionCommand
     /// <summary>The sections of a new ship build file, or null for none. The inverse of a delete gives them.</summary>
     public IReadOnlyList<RawSection>? ShipBuildSections { get; init; }
 
-    public override string HistoryLabel => $"New script {Path}";
+    protected override string Describe() => $"New script {Path}";
 
     internal override void Run(MissionDraft d)
     {
@@ -66,7 +66,7 @@ public sealed record CreateScript(string Path) : MissionCommand
 /// ship build file goes with it when that file is a whole file of the active mod that no other script names.</summary>
 public sealed record DeleteScript(ScriptRef Script) : MissionCommand
 {
-    public override string HistoryLabel => $"Delete script {MissionFiles.Display(Script.Path)}";
+    protected override string Describe() => $"Delete script {MissionFiles.Display(Script.Path)}";
 
     internal override void Run(MissionDraft d)
     {
@@ -107,7 +107,7 @@ public sealed record DeleteScript(ScriptRef Script) : MissionCommand
 /// <param name="Name">The name of the text id value in the schema.</param>
 public sealed record SetLineText(RowRef Row, string Name, string Text) : MissionCommand
 {
-    public override string HistoryLabel => $"Set the text of {Name}";
+    protected override string Describe() => $"Set the text of {Name}";
 
     internal override void Run(MissionDraft d)
     {

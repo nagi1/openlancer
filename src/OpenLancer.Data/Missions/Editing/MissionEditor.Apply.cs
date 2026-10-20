@@ -198,7 +198,9 @@ public sealed partial class MissionEditor
                         SectionHash.Of(document.Working[i]);
             }
         }
-        var commands = draft.Inverses.AsEnumerable().Reverse().ToList();
+        // A group of one command without body guards runs as its commands, so the inverse holds them directly.
+        var commands = draft.Inverses.AsEnumerable().Reverse()
+            .SelectMany(c => c is CommandGroup { ExpectBodies.Count: 0 } group ? group.Commands : [c]).ToList();
         return new CommandGroup(commands) { ExpectBodies = bodies };
     }
 
@@ -322,14 +324,6 @@ public sealed partial class MissionEditor
             return result;
         }
 
-        private Problem ProblemOf(string path, Diagnostic problem)
-        {
-            string? reference = null;
-            if (problem.Target is { } target)
-                reference = problem.EntryIndex >= 0
-                    ? new RowRef(new ItemRef(target.Path, target.Id), problem.EntryIndex).Reference
-                    : ItemRefs.Canonical(editor.session, target);
-            return Problem.From(problem, reference ?? new ScriptRef(path).ToString());
-        }
+        private Problem ProblemOf(string path, Diagnostic problem) => MissionQueries.ProblemOf(editor.session, path, problem);
     }
 }

@@ -18,7 +18,7 @@ public sealed class MissionInverseTests
     public static IEnumerable<object[]> Kinds() => Commands.Keys.Select(k => new object[] { k });
 
     /// <summary>One sample of each command kind on the test script.</summary>
-    private static readonly Dictionary<string, Func<MissionCommand>> Commands = new()
+    internal static readonly Dictionary<string, Func<MissionCommand>> Commands = new()
     {
         ["add_trigger"] = () => new AddTrigger(TestScript)
         {

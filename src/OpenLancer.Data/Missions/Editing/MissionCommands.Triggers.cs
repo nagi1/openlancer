@@ -27,7 +27,7 @@ public sealed record AddTrigger(ScriptRef Script) : MissionCommand
     /// <summary>The system hint of the trigger, or null. The game does not read it (TR3).</summary>
     public string? System { get; init; }
 
-    public override string HistoryLabel => $"Add trigger {Nickname}".TrimEnd();
+    protected override string Describe() => $"Add trigger {Nickname}".TrimEnd();
 
     internal override void Run(MissionDraft d)
     {
@@ -69,7 +69,7 @@ public sealed record RemoveTrigger(TriggerRef Trigger) : MissionCommand
 {
     public ReferencesMode References { get; init; } = ReferencesMode.Keep;
 
-    public override string HistoryLabel => $"Delete trigger {Trigger.Name}";
+    protected override string Describe() => $"Delete trigger {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -98,7 +98,7 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
 {
     public bool ChangeReferences { get; init; } = true;
 
-    public override string HistoryLabel => $"Rename {Trigger.Name} to {NewName}";
+    protected override string Describe() => $"Rename {Trigger.Name} to {NewName}";
 
     internal override void Run(MissionDraft d)
     {
@@ -166,7 +166,7 @@ public sealed record DuplicateTrigger(TriggerRef Trigger) : MissionCommand
 {
     public string? NewName { get; init; }
 
-    public override string HistoryLabel => $"Duplicate trigger {Trigger.Name}";
+    protected override string Describe() => $"Duplicate trigger {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -189,7 +189,7 @@ public sealed record DuplicateTrigger(TriggerRef Trigger) : MissionCommand
 /// state lines that follow it.</summary>
 public sealed record SetTriggerStart(TriggerRef Trigger, bool Starts) : MissionCommand
 {
-    public override string HistoryLabel => Starts ? $"Start {Trigger.Name} with the mission" : $"Do not start {Trigger.Name} with the mission";
+    protected override string Describe() => Starts ? $"Start {Trigger.Name} with the mission" : $"Do not start {Trigger.Name} with the mission";
 
     internal override void Run(MissionDraft d)
     {
@@ -209,7 +209,7 @@ public sealed record SetTriggerStart(TriggerRef Trigger, bool Starts) : MissionC
 /// <c>repeatable</c> line after the nickname line, also one after an action (TR10).</summary>
 public sealed record SetTriggerRepeats(TriggerRef Trigger, bool Repeats) : MissionCommand
 {
-    public override string HistoryLabel => Repeats ? $"Repeat {Trigger.Name}" : $"Do not repeat {Trigger.Name}";
+    protected override string Describe() => Repeats ? $"Repeat {Trigger.Name}" : $"Do not repeat {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -231,7 +231,7 @@ public sealed record SetTriggerSystem(TriggerRef Trigger) : MissionCommand
 {
     public string? System { get; init; }
 
-    public override string HistoryLabel => $"Set the system of {Trigger.Name}";
+    protected override string Describe() => $"Set the system of {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -264,7 +264,7 @@ public sealed record SetTriggerSystem(TriggerRef Trigger) : MissionCommand
 /// condition gets the line after the state lines.</summary>
 public sealed record SetCondition(TriggerRef Trigger, LineSpec Line) : MissionCommand
 {
-    public override string HistoryLabel => $"Set the condition of {Trigger.Name}";
+    protected override string Describe() => $"Set the condition of {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -294,7 +294,7 @@ public sealed record SetCondition(TriggerRef Trigger, LineSpec Line) : MissionCo
 /// <summary>Sets one named value of the effective condition of a trigger.</summary>
 public sealed record SetConditionValue(TriggerRef Trigger, string Name, MissionValue Value) : MissionCommand
 {
-    public override string HistoryLabel => $"Set {Name} of the condition of {Trigger.Name}";
+    protected override string Describe() => $"Set {Name} of the condition of {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -314,7 +314,7 @@ public sealed record AddAction(TriggerRef Trigger, LineSpec Line) : MissionComma
     /// <summary>The row that the action goes before, or null for the end.</summary>
     public int? Before { get; init; }
 
-    public override string HistoryLabel => $"Add {Line.Key} to {Trigger.Name}";
+    protected override string Describe() => $"Add {Line.Key} to {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -337,7 +337,7 @@ public sealed record AddAction(TriggerRef Trigger, LineSpec Line) : MissionComma
 /// <summary>Removes an action line of a trigger.</summary>
 public sealed record RemoveAction(RowRef Row) : MissionCommand
 {
-    public override string HistoryLabel => "Remove action";
+    protected override string Describe() => "Remove action";
 
     internal override void Run(MissionDraft d)
     {
@@ -359,7 +359,7 @@ public sealed record ReorderAction(RowRef Row) : MissionCommand
     /// <summary>The row in the trigger before the move that the action goes before, or null for the end.</summary>
     public int? Before { get; init; }
 
-    public override string HistoryLabel => "Move action";
+    protected override string Describe() => "Move action";
 
     internal override void Run(MissionDraft d)
     {
@@ -376,7 +376,7 @@ public sealed record ReorderAction(RowRef Row) : MissionCommand
 /// <summary>Sets one named value of an action line, or a run of values such as a position.</summary>
 public sealed record SetActionValue(RowRef Row, string Name, MissionValue Value) : MissionCommand
 {
-    public override string HistoryLabel => $"Set {Name}";
+    protected override string Describe() => $"Set {Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -390,7 +390,7 @@ public sealed record SetActionValue(RowRef Row, string Name, MissionValue Value)
 /// <summary>Sets a whole action line, also with a new key.</summary>
 public sealed record SetActionLine(RowRef Row, LineSpec Line) : MissionCommand
 {
-    public override string HistoryLabel => $"Set {Line.Key}";
+    protected override string Describe() => $"Set {Line.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -413,19 +413,19 @@ public sealed record SetActionLine(RowRef Row, LineSpec Line) : MissionCommand
 /// <c>Act_DeactTrig</c>, and Restart writes both in the order of TR9.</summary>
 /// <param name="Target">The nickname of the target trigger in the same script. A name that does not resolve gives the
 /// problem M05.</param>
-public sealed record LinkTriggers(TriggerRef Source, string Target, LinkKind Kind) : MissionCommand
+public sealed record LinkTriggers(TriggerRef Source, string Target, LinkKind LinkKind) : MissionCommand
 {
     /// <summary>The row that the lines go before, or null for the end.</summary>
     public int? Before { get; init; }
 
-    public override string HistoryLabel => $"Link {Source.Name} to {Target}";
+    protected override string Describe() => $"Link {Source.Name} to {Target}";
 
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Trigger(Source);
         d.Editable(document, index);
         var target = d.TriggerName(Target);
-        var keys = Kind switch
+        var keys = LinkKind switch
         {
             LinkKind.Start => new[] { "Act_ActTrig" },
             LinkKind.Stop => ["Act_DeactTrig"],
@@ -452,9 +452,9 @@ public sealed record LinkTriggers(TriggerRef Source, string Target, LinkKind Kin
 
 /// <summary>Removes the lines of a link: the <c>Act_ActTrig</c> lines of Start, the <c>Act_DeactTrig</c> lines of Stop,
 /// and both of Restart.</summary>
-public sealed record UnlinkTriggers(TriggerRef Source, string Target, LinkKind Kind) : MissionCommand
+public sealed record UnlinkTriggers(TriggerRef Source, string Target, LinkKind LinkKind) : MissionCommand
 {
-    public override string HistoryLabel => $"Unlink {Source.Name} from {Target}";
+    protected override string Describe() => $"Unlink {Source.Name} from {Target}";
 
     internal override void Run(MissionDraft d)
     {
@@ -462,7 +462,7 @@ public sealed record UnlinkTriggers(TriggerRef Source, string Target, LinkKind K
         d.Editable(document, index);
         var entries = document.Working[index].ToList();
         var nickname = TriggerPlaces.NicknameLine(entries);
-        var keys = Kind switch
+        var keys = LinkKind switch
         {
             LinkKind.Start => new[] { "Act_ActTrig" },
             LinkKind.Stop => ["Act_DeactTrig"],
@@ -473,7 +473,7 @@ public sealed record UnlinkTriggers(TriggerRef Source, string Target, LinkKind K
                         MissionIndex.Text(entries[r][0]).Equals(Target.Trim(), StringComparison.OrdinalIgnoreCase))
             .ToList();
         if (rows.Count == 0)
-            throw d.Refuse(MissionErrors.LinkNotFoundError(Source.Name, Target, Kind.ToString().ToLowerInvariant()));
+            throw d.Refuse(MissionErrors.LinkNotFoundError(Source.Name, Target, LinkKind.ToString().ToLowerInvariant()));
         var inverse = new List<MissionCommand>();
         d.RemoveLines(document, rows.Select(r => (index, r)).ToList(), inverse);
         d.Inverse(inverse.Count == 1 ? inverse[0] : new CommandGroup(inverse));
@@ -486,7 +486,7 @@ public sealed record RetargetLink(RowRef Row, string Target) : MissionCommand
 {
     private static readonly string[] Keys = ["Act_ActTrig", "Act_DeactTrig", "Act_Save", "Cnd_WatchTrigger"];
 
-    public override string HistoryLabel => $"Link to {Target}";
+    protected override string Describe() => $"Link to {Target}";
 
     internal override void Run(MissionDraft d)
     {
@@ -515,7 +515,7 @@ public sealed record InsertTriggerOnLink(RowRef Row, LineSpec Condition) : Missi
 {
     public string? Nickname { get; init; }
 
-    public override string HistoryLabel => "Insert trigger";
+    protected override string Describe() => "Insert trigger";
 
     internal override void Run(MissionDraft d)
     {

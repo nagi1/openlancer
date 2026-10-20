@@ -17,8 +17,12 @@ namespace OpenLancer.Data.Missions.Editing;
 public abstract record MissionCommand
 {
     /// <summary>The label of a history entry of the command alone.</summary>
+    /// <remarks>The property is not virtual, so the JSON form of each command leaves it out.</remarks>
     [JsonIgnore]
-    public abstract string HistoryLabel { get; }
+    public string HistoryLabel => Describe();
+
+    /// <summary>The label of a history entry of the command alone.</summary>
+    protected abstract string Describe();
 
     /// <summary>Runs the command on the draft. A refusal throws an <see cref="EditException"/>.</summary>
     internal abstract void Run(MissionDraft draft);

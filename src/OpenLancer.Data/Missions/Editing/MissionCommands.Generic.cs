@@ -17,7 +17,7 @@ public sealed record InsertLine(ItemRef Section, LineSpec Line) : MissionCommand
     /// <summary>The row that the line goes before, or null for the end.</summary>
     public int? Before { get; init; }
 
-    public override string HistoryLabel => $"Add {Line.Key}";
+    protected override string Describe() => $"Add {Line.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -41,7 +41,7 @@ public sealed record InsertLine(ItemRef Section, LineSpec Line) : MissionCommand
 /// <summary>Removes any line of a section of a mission file, except the first key line.</summary>
 public sealed record RemoveLine(RowRef Row) : MissionCommand
 {
-    public override string HistoryLabel => "Remove line";
+    protected override string Describe() => "Remove line";
 
     internal override void Run(MissionDraft d)
     {
@@ -64,7 +64,7 @@ public sealed record MoveLine(RowRef Row) : MissionCommand
     /// <summary>The row before the move that the line goes before, or null for the end.</summary>
     public int? Before { get; init; }
 
-    public override string HistoryLabel => "Move line";
+    protected override string Describe() => "Move line";
 
     internal override void Run(MissionDraft d)
     {
@@ -79,7 +79,7 @@ public sealed record MoveLine(RowRef Row) : MissionCommand
 /// rename.</summary>
 public sealed record SetLine(RowRef Row, LineSpec Line) : MissionCommand
 {
-    public override string HistoryLabel => $"Set {Line.Key}";
+    protected override string Describe() => $"Set {Line.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -110,7 +110,7 @@ public sealed record SetLineValue(RowRef Row, MissionValue Value) : MissionComma
     /// <summary>The index of the value in the line, from 0, when <see cref="Name"/> is null.</summary>
     public int? Index { get; init; }
 
-    public override string HistoryLabel => $"Set {Name ?? "value"}";
+    protected override string Describe() => $"Set {Name ?? "value"}";
 
     internal override void Run(MissionDraft d)
     {
@@ -150,7 +150,7 @@ public sealed record AddSection(ScriptRef Script, string Type, IReadOnlyList<Lin
     /// <summary>The section that the new section goes before, or null for the end of the file.</summary>
     public ItemRef? Before { get; init; }
 
-    public override string HistoryLabel => $"Add [{Type}]";
+    protected override string Describe() => $"Add [{Type}]";
 
     internal override void Run(MissionDraft d)
     {
@@ -183,7 +183,7 @@ public sealed record AddSection(ScriptRef Script, string Type, IReadOnlyList<Lin
 /// <summary>Removes a section of a mission file. Lines that name it stay and show "Missing".</summary>
 public sealed record RemoveSection(ItemRef Section) : MissionCommand
 {
-    public override string HistoryLabel => $"Delete {Section.Section}";
+    protected override string Describe() => $"Delete {Section.Section}";
 
     internal override void Run(MissionDraft d)
     {
@@ -197,7 +197,7 @@ public sealed record RemoveSection(ItemRef Section) : MissionCommand
 /// <param name="Index">The index of the section in the file. A larger index puts the section at the end.</param>
 public sealed record RestoreSection(ScriptRef Script, int Index, RawSection Section) : MissionCommand
 {
-    public override string HistoryLabel => $"Restore [{Section.Type}]";
+    protected override string Describe() => $"Restore [{Section.Type}]";
 
     internal override void Run(MissionDraft d)
     {
@@ -224,7 +224,7 @@ public sealed record RestoreSection(ScriptRef Script, int Index, RawSection Sect
 /// rename. The raw INI editor and the inverses use it.</summary>
 public sealed record ReplaceSectionBody(ItemRef Section, IReadOnlyList<RawEntry> Entries) : MissionCommand
 {
-    public override string HistoryLabel => $"Edit {Section.Section}";
+    protected override string Describe() => $"Edit {Section.Section}";
 
     internal override void Run(MissionDraft d)
     {
@@ -255,7 +255,7 @@ public sealed record RevertSection(ItemRef Section) : MissionCommand
     /// <summary>The key whose lines go back, or null for the whole section.</summary>
     public string? Name { get; init; }
 
-    public override string HistoryLabel => Name == null ? $"Revert {Section.Section}" : $"Revert {Name}";
+    protected override string Describe() => Name == null ? $"Revert {Section.Section}" : $"Revert {Name}";
 
     internal override void Run(MissionDraft d)
     {
@@ -297,7 +297,7 @@ public sealed record RevertSection(ItemRef Section) : MissionCommand
 /// 6.3 of the M6b design). W does not change.</summary>
 public sealed record AcceptBase(ItemRef Section) : MissionCommand
 {
-    public override string HistoryLabel => $"Keep my lines of {Section.Section}";
+    protected override string Describe() => $"Keep my lines of {Section.Section}";
 
     internal override void Run(MissionDraft d)
     {
@@ -324,7 +324,7 @@ public sealed record CommandGroup(IReadOnlyList<MissionCommand> Commands) : Miss
     /// <summary>The body guards: the reference of each section and the hash that it must have.</summary>
     public IReadOnlyDictionary<string, string> ExpectBodies { get; init; } = new Dictionary<string, string>();
 
-    public override string HistoryLabel => Commands.Count == 1 ? Commands[0].HistoryLabel : "Mission edits";
+    protected override string Describe() => Commands.Count == 1 ? Commands[0].HistoryLabel : "Mission edits";
 
     internal override void Run(MissionDraft d)
     {
@@ -354,7 +354,7 @@ public sealed record SetText(string Key) : MissionCommand
 {
     public string? Text { get; init; }
 
-    public override string HistoryLabel => $"Set text {Key}";
+    protected override string Describe() => $"Set text {Key}";
 
     internal override void Run(MissionDraft d)
     {

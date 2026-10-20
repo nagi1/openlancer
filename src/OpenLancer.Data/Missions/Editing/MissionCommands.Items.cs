@@ -88,7 +88,7 @@ public sealed record AddMissionShip(ScriptRef Script) : MissionCommand
     /// <summary>The order list that the ship starts with, or null.</summary>
     public string? Orders { get; init; }
 
-    public override string HistoryLabel => $"Add mission ship {Nickname}".TrimEnd();
+    protected override string Describe() => $"Add mission ship {Nickname}".TrimEnd();
 
     internal override void Run(MissionDraft d)
     {
@@ -183,7 +183,7 @@ public sealed record AddMissionShip(ScriptRef Script) : MissionCommand
 /// </summary>
 public sealed record RemoveMissionShip(ItemRef Ship) : MissionCommand
 {
-    public override string HistoryLabel => $"Delete mission ship {Ship.Section.Key}";
+    protected override string Describe() => $"Delete mission ship {Ship.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -229,7 +229,7 @@ public sealed record PlaceMissionShip(ItemRef Ship) : MissionCommand
     public string? System { get; init; }
     public NearSpec? Near { get; init; }
 
-    public override string HistoryLabel => $"Place {Ship.Section.Key}";
+    protected override string Describe() => $"Place {Ship.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -267,7 +267,7 @@ public sealed record PlaceMissionShip(ItemRef Ship) : MissionCommand
 /// </summary>
 public sealed record SetShipLoadout(ItemRef Ship, string Loadout, LoadoutScope Scope) : MissionCommand
 {
-    public override string HistoryLabel => $"Set the loadout of {Ship.Section.Key}";
+    protected override string Describe() => $"Set the loadout of {Ship.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -337,20 +337,20 @@ public sealed record SetShipLoadout(ItemRef Ship, string Loadout, LoadoutScope S
 
 /// <summary>Adds an item to a mission file: a formation, a solar, a loot, an order list, an objective, a conversation,
 /// an NPC, a random encounter or a ship build. A ship build goes into the ship build file.</summary>
-/// <param name="Kind">The section type, for example <c>MsnFormation</c>, or a kind word such as <c>formation</c>,
+/// <param name="ItemKind">The section type, for example <c>MsnFormation</c>, or a kind word such as <c>formation</c>,
 /// <c>order_list</c> or <c>ship_build</c>.</param>
-public sealed record AddItem(ScriptRef Script, string Kind) : MissionCommand
+public sealed record AddItem(ScriptRef Script, string ItemKind) : MissionCommand
 {
     public string? Nickname { get; init; }
     public IReadOnlyList<LineSpec> Lines { get; init; } = [];
 
-    public override string HistoryLabel => $"Add {Kind} {Nickname}".TrimEnd();
+    protected override string Describe() => $"Add {ItemKind} {Nickname}".TrimEnd();
 
     internal override void Run(MissionDraft d)
     {
-        var type = MissionDraft.TypeOfKind(Kind) ?? throw d.Refuse(MissionErrors.NotAKeyError(Kind, "mission file") with
+        var type = MissionDraft.TypeOfKind(ItemKind) ?? throw d.Refuse(MissionErrors.NotAKeyError(ItemKind, "mission file") with
         {
-            Message = $"'{Kind}' is not a kind of mission item. Use formation, solar, loot, order_list, objective, " +
+            Message = $"'{ItemKind}' is not a kind of mission item. Use formation, solar, loot, order_list, objective, " +
                       "conversation, npc, random_encounter or ship_build.",
         });
         var script = d.Script(Script);
@@ -372,7 +372,7 @@ public sealed record AddItem(ScriptRef Script, string Kind) : MissionCommand
 /// and a ship build that an <c>[NPC]</c> names, refuse the delete (RequireComponent).</summary>
 public sealed record RemoveItem(ItemRef Item) : MissionCommand
 {
-    public override string HistoryLabel => $"Delete {Item.Section.Key ?? Item.Section.Type}";
+    protected override string Describe() => $"Delete {Item.Section.Key ?? Item.Section.Type}";
 
     internal override void Run(MissionDraft d)
     {
@@ -403,7 +403,7 @@ public sealed record DuplicateItem(ItemRef Item) : MissionCommand
 {
     public string? NewName { get; init; }
 
-    public override string HistoryLabel => $"Duplicate {Item.Section.Key}";
+    protected override string Describe() => $"Duplicate {Item.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -432,7 +432,7 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
 {
     public bool ChangeReferences { get; init; } = true;
 
-    public override string HistoryLabel => $"Rename {Item.Section.Key} to {NewName}";
+    protected override string Describe() => $"Rename {Item.Section.Key} to {NewName}";
 
     internal override void Run(MissionDraft d)
     {
@@ -499,7 +499,7 @@ public sealed record RenameItem(ItemRef Item, string NewName) : MissionCommand
 /// or a formation goes before the first <c>formation</c> or <c>ship</c> line (rule M09).</summary>
 public sealed record SetItemKey(ItemRef Item, string Key, IReadOnlyList<LineSpec> Lines) : MissionCommand
 {
-    public override string HistoryLabel => $"Set {Key}";
+    protected override string Describe() => $"Set {Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -519,7 +519,7 @@ public sealed record SetItemKey(ItemRef Item, string Key, IReadOnlyList<LineSpec
 /// later in the file moves before the formation (rule M08).</summary>
 public sealed record SetFormationMembers(ItemRef Formation, IReadOnlyList<string> Ships) : MissionCommand
 {
-    public override string HistoryLabel => $"Set the members of {Formation.Section.Key}";
+    protected override string Describe() => $"Set the members of {Formation.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -553,7 +553,7 @@ public sealed record SetFormationMembers(ItemRef Formation, IReadOnlyList<string
 /// <c>ship</c> line (rule M09).</summary>
 public sealed record AddLabel(ItemRef Item, string Label) : MissionCommand
 {
-    public override string HistoryLabel => $"Add label {Label}";
+    protected override string Describe() => $"Add label {Label}";
 
     internal override void Run(MissionDraft d)
     {
@@ -572,7 +572,7 @@ public sealed record AddLabel(ItemRef Item, string Label) : MissionCommand
 /// <summary>Removes each <c>label</c> line with a label from an item.</summary>
 public sealed record RemoveLabel(ItemRef Item, string Label) : MissionCommand
 {
-    public override string HistoryLabel => $"Remove label {Label}";
+    protected override string Describe() => $"Remove label {Label}";
 
     internal override void Run(MissionDraft d)
     {
@@ -592,7 +592,7 @@ public sealed record MoveSection(ItemRef Section) : MissionCommand
     /// <summary>The section that the section goes before, or null for the end of the file.</summary>
     public ItemRef? Before { get; init; }
 
-    public override string HistoryLabel => $"Move {Section.Section.Key}";
+    protected override string Describe() => $"Move {Section.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -619,7 +619,7 @@ public sealed record AddOrder(ItemRef OrderList, LineSpec Line) : MissionCommand
 {
     public int? Before { get; init; }
 
-    public override string HistoryLabel => $"Add order {Line.Key}";
+    protected override string Describe() => $"Add order {Line.Key}";
 
     internal override void Run(MissionDraft d)
     {
@@ -649,7 +649,7 @@ public sealed record AddWaypoint(ItemRef OrderList, MissionValue Position) : Mis
 {
     public int? Before { get; init; }
 
-    public override string HistoryLabel => "Add waypoint";
+    protected override string Describe() => "Add waypoint";
 
     internal override void Run(MissionDraft d) =>
         d.RunAsThis(new AddOrder(OrderList, LineSpec.Of("GotoVec", ("point", Position))) { Before = Before });
@@ -659,7 +659,7 @@ public sealed record AddWaypoint(ItemRef OrderList, MissionValue Position) : Mis
 /// order list page uses it.</summary>
 public sealed record SetOrders(ItemRef OrderList, IReadOnlyList<LineSpec> Lines) : MissionCommand
 {
-    public override string HistoryLabel => $"Set the orders of {OrderList.Section.Key}";
+    protected override string Describe() => $"Set the orders of {OrderList.Section.Key}";
 
     internal override void Run(MissionDraft d)
     {

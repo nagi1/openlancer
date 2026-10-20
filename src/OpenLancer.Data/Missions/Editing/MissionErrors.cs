@@ -59,6 +59,8 @@ public static class MissionErrors
     public const string NotMovable = "NotMovable";
     public const string NotAnItem = "NotAnItem";
     public const string NotADirective = "NotADirective";
+    public const string BadJson = "BadJson";
+    public const string UnknownField = "UnknownField";
 
     internal static EditError NotEditableError(string reason) =>
         new(EditErrorKind.ReadOnly, NotEditable, $"The editor cannot change missions now. {reason}");
@@ -179,6 +181,13 @@ public static class MissionErrors
 
     internal static EditError UnknownCommandError(string kind) =>
         new(EditErrorKind.InvalidArgument, UnknownCommand, $"'{kind}' is not a mission command.");
+
+    internal static EditError BadJsonError(string reason) =>
+        new(EditErrorKind.InvalidArgument, BadJson, $"The request is not a valid mission batch: {reason} Correct the JSON.");
+
+    internal static EditError UnknownFieldError(string kind, string field) =>
+        new(EditErrorKind.InvalidArgument, UnknownField,
+            $"Command '{kind}' has no field '{field}'. Remove the field, or correct its name.");
 
     internal static EditError NoSuchValueError(string key, string name, IEnumerable<string> names) =>
         new(EditErrorKind.InvalidArgument, NoSuchValue,
