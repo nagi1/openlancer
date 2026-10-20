@@ -55,7 +55,7 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
 
     void IClosePromptHost.DiscardRecovery() => Edits.DiscardRecovery();
 
-    void IClosePromptHost.Close() => Exit();
+    void IClosePromptHost.Close() => CloseWindow();
 
     void IClosePromptHost.Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel) =>
         closeDialog.Show(title, message, choices, cancel);

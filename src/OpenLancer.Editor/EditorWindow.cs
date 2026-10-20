@@ -202,6 +202,10 @@ internal sealed partial class EditorWindow : Game
     /// <summary>The reason of an action that waits while <see cref="CanChangeProfile"/> is false.</summary>
     internal const string ProfileLoading = "The game data of the open profile is loading.";
 
+    /// <summary>The status line of a close of the window that waits for the running load (see
+    /// <see cref="CloseWindow"/>).</summary>
+    internal const string CloseWaitsText = "The game data loads now. The editor closes when the load ends.";
+
     /// <summary>The error of the last profile that did not open, or null. The Welcome screen shows it.</summary>
     public string? OpenError { get; private set; }
 
@@ -373,20 +377,51 @@ internal sealed partial class EditorWindow : Game
         Cutscenes.Dispose();
         assets?.Dispose();
         Scene.Dispose();
-        Session?.Dispose();
+        // A close of the window waits for the running load (see CloseWindow). A crash can end the window while a load
+        // runs. The load fills the resources of the session, so the session is not disposed then. The end of the process
+        // frees it, and closes the lock of the active mod as after a crash.
+        if (Session is { IsBusy: false } idle)
+        {
+            idle.Dispose();
+        }
     }
 
     /// <summary>The user closes the window: the close button, Alt+F4 or the taskbar. With unsaved edits, the window
-    /// stays open and the close prompt asks first (OL-0027, see <see cref="ClosePrompt"/>).</summary>
+    /// stays open and the close prompt asks first (OL-0027, see <see cref="ClosePrompt"/>). While the game data loads,
+    /// the window closes when the load ends (see <see cref="CloseWindow"/>).</summary>
     /// <remarks>A running test server asks first, so that FLServer can save its characters (decision D336).</remarks>
     protected override bool OnCloseRequested() =>
         GamePlay.CloseRequested(() =>
         {
             if (closePrompt.Request())
             {
-                Exit();
+                CloseWindow();
             }
-        }) && closePrompt.Request();
+        }) && closePrompt.Request() && CloseWindow();
+
+    /// <summary>
+    /// Closes the window now, or when the running load of the game data ends, as Unity ends a running import before it
+    /// quits. Each load fills the resources of the session, so the session must not be disposed while a load runs
+    /// (finding 9 of the S1 review). While the close waits, the status bar tells why, and no other load starts (see
+    /// <see cref="DataLoads.Close"/>).
+    /// </summary>
+    /// <returns>True when the window closes now. False when the close waits for the load.</returns>
+    private bool CloseWindow()
+    {
+        if (Session is { } session)
+        {
+            if (session.Loads.Close(Exit))
+            {
+                return true;
+            }
+
+            Log.AddStatus(ConsoleSeverity.Info, EditorSource, CloseWaitsText);
+            return false;
+        }
+
+        Exit();
+        return true;
+    }
 
     /// <summary>Ends an open field edit or drag and keeps its change, before the window closes.</summary>
     private void EndOpenEdits()
@@ -1040,7 +1075,7 @@ internal sealed partial class EditorWindow : Game
         ImGui.Separator();
         if (Theme.IconMenuItem(EditorIcons.DoorOpen, "Exit", true) && closePrompt.Request())
         {
-            Exit();
+            CloseWindow();
         }
     }
 
