@@ -158,7 +158,6 @@ internal sealed class EditorSession : IDisposable
         return text;
     }
 
-
     /// <summary>
     /// The display name of an item, or an empty string when it has no name. The name of a scene item, a system or a
     /// section comes from W (see <see cref="ItemTexts"/>).
@@ -186,7 +185,6 @@ internal sealed class EditorSession : IDisposable
 
     /// <summary>The name of a section: the text of its <c>ids_name</c>, or an empty string.</summary>
     public string NameOf(SectionView view) => Texts.NameOf(view);
-
 
     /// <summary>Frees the resources and releases the lock of the active mod (see <see cref="EditSession"/>).</summary>
     public void Dispose()

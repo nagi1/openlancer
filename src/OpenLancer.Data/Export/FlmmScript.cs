@@ -180,7 +180,7 @@ internal sealed partial class FlmmScript
             : null;
         var ops = new List<(string Method, string Section, string? Dest, string Source)>();
         if (reason == null)
-            reason = Operations(raw!, diff, ops);
+            reason = Operations(file.Path, raw!, diff, ops);
         if (reason != null)
         {
             Fallback(file, reason);
@@ -192,7 +192,8 @@ internal sealed partial class FlmmScript
 
     /// <summary>Adds the operations of the changes of a file to the list. Returns the reason why an operation cannot
     /// express a change, or null.</summary>
-    private string? Operations(RawIni raw, FileDiff diff, List<(string, string, string?, string)> ops)
+    /// <param name="path">The install path of the file.</param>
+    private string? Operations(string path, RawIni raw, FileDiff diff, List<(string, string, string?, string)> ops)
     {
         if (diff.Removed.Count > 0)
             return "the mod removes a section";
@@ -210,7 +211,7 @@ internal sealed partial class FlmmScript
                 .Concat(pair.Inserted.Select(j => section[j].Name)).ToList();
             if (SectionKeys.LinkedGroups(section.Name).Any(g => g.Any(n => touched.Contains(n, StringComparer.OrdinalIgnoreCase))))
                 return $"the mod changes lines of [{section.Name}] that belong together";
-            if (pair.Inserted.Any() && SectionKeys.IsOrderSensitive(section.Name))
+            if (pair.Inserted.Any() && SectionKeys.IsOrderSensitive(section.Name, path))
                 return $"the game reads the lines of [{section.Name}] in order, and FLMM adds lines after the key line";
             if (Anchor(raw, pair.Base, diff.BaseSections[pair.Base], text) is not { } anchor)
                 return $"OpenLancer finds no unique anchor for [{section.Name}]";

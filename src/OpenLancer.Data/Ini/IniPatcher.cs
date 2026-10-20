@@ -522,14 +522,16 @@ internal static class IniPatcher
                         "the new base.");
     }
 
-    /// <summary>The indexes of the sections of a type whose key is the key, as a patch section finds them.</summary>
+    /// <summary>The indexes of the sections of a type whose first key line has the key. <c>ol.before</c> finds its
+    /// section as <c>ol.replace</c> does, because the game reads the first <c>nickname</c> line of a mission
+    /// section.</summary>
     private static List<int> FindKeyed(IniDocument target, string type, string key, string path)
     {
         var match = SectionKeys.For(type, path);
         return target.Sections
             .Select((section, index) => (section, index))
             .Where(c => c.section.Name.Equals(type, StringComparison.OrdinalIgnoreCase) &&
-                        match.Kind == SectionMatchKind.Keyed && KeyEquals(c.section, match.KeyEntry!, key))
+                        match.Kind == SectionMatchKind.Keyed && FirstKeyEquals(c.section, match.KeyEntry!, key))
             .Select(c => c.index)
             .ToList();
     }

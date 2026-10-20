@@ -189,7 +189,8 @@ public sealed class ItemRefsTests
 
         Assert.Equal(EditErrorKind.NotFound, error.Kind);
         Assert.Equal("obj:Li01_chlid", error.Target);
-        Assert.Equal("The edit view has no object 'Li01_chlid'. The closest names are: Li01_child.", error.Message);
+        Assert.Equal("The edit view has no object 'Li01_chlid'. Use a name that the edit view has. The closest names " +
+                     "are: Li01_child.", error.Message);
         Assert.Equal(EditErrorKind.NotFound, Assert.Throws<EditException>(() =>
             ItemRefs.ResolveSection(session, ItemRefs.Parse("zone:Li01_child"))).Error.Kind);
         Assert.Equal(EditErrorKind.InvalidArgument, Assert.Throws<EditException>(() =>
@@ -234,6 +235,63 @@ public sealed class ItemRefsTests
             ItemRefs.ResolveCutsceneElement(session, ItemRefs.Parse($"thn:{path}#event/6"))).Error.Kind);
         Assert.Equal(EditErrorKind.NotFound, Assert.Throws<EditException>(() =>
             ItemRefs.ResolveCutscene(session, ItemRefs.Parse(@"thn:DATA\x.thn"))).Error.Kind);
+    }
+
+    [Theory]
+    [InlineData(@"sec:DATA\MISSIONS\OL_TEST\ol_test.ini#MsnShip/ol_a~1~0", "MsnShip", "ol_a~1", 0)]
+    [InlineData(@"sec:DATA\MISSIONS\OL_TEST\ol_test.ini#MsnShip/ol_a~1~2", "MsnShip", "ol_a~1", 2)]
+    [InlineData(@"sec:DATA\MISSIONS\OL_TEST\ol_test.ini#MsnShip/ol_a~", "MsnShip", "ol_a~", 0)]
+    [InlineData(@"sec:DATA\EQUIPMENT\goods.ini#Good/ol_a>ol_b", "Good", "ol_a>ol_b", 0)]
+    public void AKeyWithTheMarksOfTheSectionPartRoundTrips(string text, string type, string key, int ordinal)
+    {
+        var reference = ItemRefs.Parse(text);
+
+        Assert.Equal(new SectionIdentity(type, key, null, ordinal), reference.Section);
+        Assert.Equal(text, reference.ToString());
+    }
+
+    [Fact]
+    public void AGreaterThanSignStartsAChildOnlyBeforeAChildType()
+    {
+        var child = new SectionIdentity("MRoom", "bar", new SectionIdentity("MBase", "ol>base"));
+        var text = ItemRefs.Of(new SectionRef(@"DATA\UNIVERSE\mbases.ini", child));
+
+        Assert.Equal(@"sec:DATA\UNIVERSE\mbases.ini#MBase/ol>base>MRoom/bar", text);
+        Assert.Equal(child, ItemRefs.Parse(text).Section);
+        // A key that ends with the ordinal mark keeps the ordinal 0.
+        Assert.Equal("MsnShip/ol_a~1~0", ItemRefs.SectionText(new SectionIdentity("MsnShip", "ol_a~1")));
+    }
+
+    [Fact]
+    public void ATriggerOfAMissionScriptGivesTheTriggerFormAndItsOwnErrors()
+    {
+        using var ws = OlReplaceMergeTests.Workspace(OlReplaceMergeTests.Script +
+                                                     "\n\n[Trigger]\nnickname = ol_wave\nCnd_True = no_params\n");
+        ws.Mod("act", new Dictionary<string, string>());
+        ws.WriteProfile("act");
+        var session = ws.Session("act");
+        var path = OlReplaceMergeTests.ScriptPath;
+        var wave = new SectionRef(path, new SectionIdentity("Trigger", "ol_wave"));
+
+        Assert.Equal($"trg:{path}#ol_wave", ItemRefs.Canonical(session, wave));
+        Assert.Equal(wave, ItemRefs.ResolveSection(session, ItemRefs.Parse($"trg:{path}#OL_WAVE")));
+        // The trg: form names the first trigger with a nickname, so the second keeps the sec: form.
+        var second = wave with { Id = new SectionIdentity("Trigger", "ol_wave", null, 1) };
+        Assert.Equal($"sec:{path}#Trigger/ol_wave~1", ItemRefs.Canonical(session, second));
+        // Another section of a mission file keeps the sec: form.
+        Assert.Equal($"sec:{path}#MsnShip/ol_ship_a",
+            ItemRefs.Canonical(session, new SectionRef(path, new SectionIdentity("MsnShip", "ol_ship_a"))));
+
+        var trigger = Assert.Throws<EditException>(() =>
+            ItemRefs.ResolveSection(session, ItemRefs.Parse($"trg:{path}#ol_wav"))).Error;
+        Assert.Equal((EditErrorKind.NotFound, ItemRefs.TriggerNotFound), (trigger.Kind, trigger.Detail));
+        Assert.Equal($"Script {path} has no trigger 'ol_wav'. Pick a trigger of this script. The closest names are: " +
+                     "ol_wave.", trigger.Message);
+        var script = Assert.Throws<EditException>(() =>
+            ItemRefs.ResolveSection(session, ItemRefs.Parse(@"trg:DATA\MISSIONS\OL_NONE\ol_none.ini#ol_wave"))).Error;
+        Assert.Equal((EditErrorKind.NotFound, ItemRefs.ScriptNotFound), (script.Kind, script.Detail));
+        Assert.Equal(@"The game data and the mods have no mission script DATA\MISSIONS\OL_NONE\ol_none.ini. Pick a " +
+                     "script from the Missions tab.", script.Message);
     }
 
     [Fact]

@@ -16,8 +16,8 @@ public static class InstallPaths
     /// <summary>The normal form of an install path (see <see cref="VfsPath.Normalize"/>). The path can use <c>\</c> or
     /// <c>/</c>.</summary>
     /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/>: the path is empty, holds a control
-    /// character or a <c>:</c> (a drive or a stream name), starts with <c>\</c> or <c>/</c>, or goes above the game
-    /// folder.</exception>
+    /// character or a <c>:</c> (a drive or a stream name), starts with <c>\</c> or <c>/</c>, goes above the game
+    /// folder, or has a part that starts or ends with a space or a dot.</exception>
     public static string Parse(string? path) =>
         Problem(path) is { } problem
             ? throw new EditException(new EditError(EditErrorKind.InvalidArgument, NotInstallPath, problem))
@@ -46,6 +46,16 @@ public static class InstallPaths
         var normal = VfsPath.Normalize(path);
         if (normal == null)
             return Refuse("It goes above the game folder.");
-        return normal.Length == 0 ? Refuse("It names no file.") : null;
+        if (normal.Length == 0)
+            return Refuse("It names no file.");
+        // Windows removes a space or a dot at the end of a part when it opens a file. So such a part names the file of
+        // another path, and two keys of the session could save one file. No path of the game data has a part that
+        // starts with a space or a dot.
+        foreach (var part in normal.Split('\\'))
+        {
+            if (part[0] is ' ' or '.' || part[^1] is ' ' or '.')
+                return Refuse($"The part '{part}' starts or ends with a space or a dot.");
+        }
+        return null;
     }
 }

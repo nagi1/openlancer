@@ -38,9 +38,13 @@ public sealed partial class EditSession
 
     /// <summary>The view of the target checks of a session: B of each file without the active mod, and W with
     /// it.</summary>
+    /// <remarks>A whole file of the active mod has no B. Without the active mod, the view gives the file of the lower
+    /// layer. With it, the view gives W of a document of the kind "whole file" (section 6.7 of the M6b design), so the
+    /// checks see the unsaved edits. For another whole file of the active mod, W has the lower data, so the view gives
+    /// the file of the edit view.</remarks>
     private sealed class SessionCheckView(EditSession session, Mod active) : CheckView
     {
-        private readonly Dictionary<string, IReadOnlyList<Section>?> wholeFiles = new(VfsPath.Comparer);
+        private readonly Dictionary<(string, bool), IReadOnlyList<Section>?> wholeFiles = new();
         private FileSystem? editView;
 
         public override IReadOnlyCollection<string> ChangedPaths { get; } = session.ActiveChangedPaths();
@@ -49,11 +53,16 @@ public sealed partial class EditSession
         {
             if (VfsPath.Normalize(path) is not { } normal)
                 return null;
-            // W of a whole file of the active mod has the lower data. The edit view has the content of the file.
-            if (withMods && active.Files.ContainsKey(normal))
+            if (active.Files.ContainsKey(normal))
             {
-                if (!wholeFiles.TryGetValue(normal, out var sections))
-                    wholeFiles[normal] = sections = Read(EditView, normal);
+                if (withMods && session.OpenDocument(normal) is { IsWholeFile: true } whole)
+                    return whole.Working;
+                var key = (normal.ToLowerInvariant(), withMods);
+                if (!wholeFiles.TryGetValue(key, out var sections))
+                {
+                    sections = withMods ? Read(EditView, normal) : session.lowerView.Document(normal)?.Sections;
+                    wholeFiles[key] = sections;
+                }
                 return sections;
             }
             return session.OpenDocument(normal) is { } document ? withMods ? document.Working : document.Base : null;

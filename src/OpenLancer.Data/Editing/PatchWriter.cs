@@ -71,8 +71,9 @@ internal sealed record PatchText(
 /// <list type="bullet">
 /// <item>Changed: the key line, then the lines of each name that changed, in the order of W, then
 /// <c>ol.remove</c> with the names that W does not have. A name of a linked group adds the whole group. In an
-/// order-sensitive section, a change writes all lines. A pinned name (a name that the loaded patch sets or removes,
-/// and that no edit touched) is always written, so the mod keeps it when a lower mod changes.</item>
+/// order-sensitive section, a change writes all lines, also a change of the order of lines with different names. A
+/// pinned name (a name that the loaded patch sets or removes, and that no edit touched) is always written, so the mod
+/// keeps it when a lower mod changes.</item>
 /// <item>Deleted: the key line and <c>ol.delete</c>. The merge also deletes the child sections.</item>
 /// <item>New: <c>ol.new</c> and all lines. A new child of a section in B gets <c>ol.parent</c>. The children of
 /// a new section follow it with no directive. A new <c>[BaseGood]</c> needs no directive.</item>
@@ -90,6 +91,9 @@ internal sealed record PatchText(
 /// <item>Placed: a new or moved ship or formation section of a mission file before a kept section gets
 /// <c>ol.before</c> with that section (section 6.4 of the M6b design). It does not move the sections after it. The
 /// delete of a moved section of a mission file gets <c>ol.base</c>.</item>
+/// <item>Base: <c>ol.base</c> keeps the hash of the loaded section when it has one, also when B changed after the
+/// edit (rule P2 of section 6.3 of the M6b design). So the merge warns until the user accepts the new base. A
+/// section without a loaded hash gets the hash of B.</item>
 /// </list>
 /// <para>A patch section finds its target by its key in the whole file. So the writer refuses to change or delete a
 /// section without a key, a section whose key another section of its type also has, and a <c>[BaseGood]</c> of
@@ -364,7 +368,7 @@ internal static class PatchWriter
             var failures = new List<Failure>();
             for (var k = 0; k < ids.Length; k++)
             {
-                if (!SectionComparer.Equivalent(result.Sections[k], w[k], Binary))
+                if (!SectionComparer.Equivalent(result.Sections[k], w[k], Binary, path))
                     failures.Add(new Failure(wIds[k], "the merge gives other lines.", IsKeptW(k) || loaded.Contains(wIds[k])));
             }
             return failures;
@@ -422,11 +426,17 @@ internal static class PatchWriter
             names.RemoveWhere(IsKey);
             foreach (var group in SectionKeys.LinkedGroups(edited.Name).Where(g => g.Any(names.Contains)))
                 names.UnionWith(group.Where(n => before.ContainsKey(n) || after.ContainsKey(n)));
+            // The lines of each name can be the same while lines with different names change places. In an
+            // order-sensitive section, that is a change too. A new key alone is a rename, not a change of the order.
+            var orderSensitive = SectionKeys.IsOrderSensitive(edited.Name, path);
+            if (names.Count == 0 && orderSensitive && !original.Select(e => e.Name)
+                    .SequenceEqual(edited.Select(e => e.Name), StringComparer.OrdinalIgnoreCase))
+                names.UnionWith(after.Keys.Where(n => !IsKey(n)));
             if (names.Count == 0 && !keepEmpty && !rename)
                 return null;
             if (names.Count > 0 && SectionKeys.IsReplaced(edited.Name, path))
                 return Replaced(i, j, rename ? key : null, loadedSection, rewritten);
-            if (names.Count > 0 && SectionKeys.IsOrderSensitive(edited.Name))
+            if (names.Count > 0 && orderSensitive)
                 names.UnionWith(after.Keys.Where(n => !IsKey(n)));
 
             // W has a renamed section under its new key, so only B must give the old key once.
@@ -479,7 +489,8 @@ internal static class PatchWriter
                       "it again, but it cannot delete it, because " + reason
                     : "a patch cannot delete this section, because " + reason);
             }
-            var lines = Lines(source?.Existing(original.Name, id.Key), inB: true, keepText: true);
+            var loadedSection = source?.Existing(original.Name, id.Key);
+            var lines = Lines(loadedSection, inB: true, keepText: true);
             var match = SectionKeys.For(original.Name, path);
             var keyLine = match.Kind == SectionMatchKind.Keyed
                 ? original.FirstOrDefault(e => e.Name.Equals(match.KeyEntry, StringComparison.OrdinalIgnoreCase))
@@ -490,7 +501,7 @@ internal static class PatchWriter
             // The delete of a moved section holds the hash of its base, so the merge finds a base that changed after
             // the edit (section 6.4 of the M6b design).
             if (error == null && WIndexOfB(i) >= 0 && SectionKeys.IsMissionFile(path))
-                error = lines.Base(SectionHash.Of(original));
+                error = lines.Base(BaseHash(original, loadedSection));
             return error != null ? Problem(id, error) : Built(id, lines);
         }
 
@@ -558,6 +569,21 @@ internal static class PatchWriter
             PatchWriter.NotPatchable(section, kept, bCounts.Value, wCounts.Value, path);
 
         /// <summary>
+        /// The hash of the <c>ol.base</c> line of a section of B: the hash of the first loaded section that changes or
+        /// deletes it, when that section has one. Else the hash of the section in B now.
+        /// </summary>
+        /// <remarks>Rule P2 of section 6.3 of the M6b design: a save keeps the old hash, also when B changed after the
+        /// edit, and also when an edit changed the section. So the merge warns until the user accepts the new base, and
+        /// a save never drops the changes of a lower mod without a message.</remarks>
+        private static string BaseHash(Section original, SourceSection? loadedSection) =>
+            loadedSection?.Lines
+                .Where(l => l.Part == 0 && l.Parsed.Count == 1 &&
+                            l.Parsed.Name.Equals(IniPatcher.DirectiveBase, StringComparison.OrdinalIgnoreCase))
+                .Select(l => SectionHash.TextOf(l.Parsed[0]))
+                .FirstOrDefault(h => h.Length > 0)
+            ?? SectionHash.Of(original);
+
+        /// <summary>
         /// A changed section of a mission type whose line order counts, in a mission file (section 6.2 of the M6b
         /// design): all lines of W in order. The first key line is the key line of B, so the merge finds the section by
         /// its key in B. <c>ol.rename</c>, <c>ol.replace</c> and <c>ol.base</c> follow it. The n-th line of a name
@@ -598,7 +624,7 @@ internal static class PatchWriter
                                   lines.Directive(IniPatcher.DirectiveRename, [newKey])
                                 : null) ??
                             lines.Directive(IniPatcher.DirectiveReplace, TrueValue) ??
-                            lines.Base(SectionHash.Of(original));
+                            lines.Base(BaseHash(original, loadedSection));
                 }
                 else
                 {

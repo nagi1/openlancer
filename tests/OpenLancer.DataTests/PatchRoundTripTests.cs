@@ -390,7 +390,7 @@ public sealed class PatchRoundTripTests(ITestOutputHelper output)
                 failures.Add($"{group.Key}: the merge does not give the sections of W in their order.");
             for (var k = 0; k < Math.Min(merged.Count, w.Count); k++)
             {
-                if (!SectionComparer.Equivalent(merged[k], w[k], document.IsBinary))
+                if (!SectionComparer.Equivalent(merged[k], w[k], document.IsBinary, document.Path))
                     failures.Add($"{group.Key} {expected[k]}: the merge gives other lines.");
             }
         }

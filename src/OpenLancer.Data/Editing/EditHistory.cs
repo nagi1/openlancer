@@ -52,7 +52,8 @@ internal sealed class ChangeSet(string label, EditOrigin origin = EditOrigin.Use
     /// <summary>Who made the entry.</summary>
     public EditOrigin Origin { get; } = origin;
 
-    /// <summary>The install paths of the files that the entry changed.</summary>
+    /// <summary>The keys of the files that the entry changed: install paths, and the keys of the editor files of the
+    /// mod.</summary>
     public IReadOnlyCollection<string> Paths => files.Keys;
 
     /// <summary>True when a command of the entry set the text of the mod.</summary>
@@ -72,6 +73,8 @@ internal sealed class ChangeSet(string label, EditOrigin origin = EditOrigin.Use
         new(sections.Distinct().ToList(), Structural, ChangesText, cutscenes.Distinct(VfsPath.Comparer).ToList())
         {
             Renames = renames.ToList(),
+            ModFiles = files.Keys.Where(ModFileDocument.IsKey).Select(k => k[ModFileDocument.KeyPrefix.Length..])
+                .Order(StringComparer.OrdinalIgnoreCase).ToList(),
         };
 
     /// <summary>What an undo of the entry changes: the same sections, and each rename in the other direction, in

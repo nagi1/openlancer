@@ -158,6 +158,95 @@ public sealed class PatchWriterMissionTests
             reopened.Get(wave)!.Entries.Select(e => e.Name));
     }
 
+    /// <summary>Rule P2 of section 6.3 of the M6b design: the writer keeps the loaded hash of <c>ol.base</c>, also when
+    /// a lower mod changed the section after the edit. Only the user decides about the new base.</summary>
+    [Fact]
+    public void AWriteKeepsTheLoadedBaseOfASectionWhoseBaseChanged()
+    {
+        var oldHash = SectionHash.Of(ScriptSections()[4]);
+        var b = Doc(Script.Replace("Cnd_Timer = 3", "Cnd_Timer = 4"));
+        Assert.NotEqual(oldHash, SectionHash.Of(b.Sections[4]));
+        var loaded = Lines("[Trigger]", "nickname = ol_next", "ol.replace = true", $"ol.base = {oldHash}", "Cnd_Timer = 8",
+            "Act_ChangeState = SUCCEED");
+        var source = PatchSource.Parse("patch.ini", Encoding.ASCII.GetBytes(loaded), ScriptPath);
+        var w = b.WithSections(b.Sections);
+        var diagnostics = new List<Diagnostic>();
+        IniPatcher.Apply(w, source.Sections, new PatchContext("act", "patch.ini", ScriptPath, null, new PatchLedger(),
+            diagnostics, keepPlaceholders: true));
+        Assert.Single(diagnostics, d => d.Severity == DiagnosticSeverity.Warning);
+
+        // No edit of the section: the patch keeps its text.
+        var untouched = PatchWriter.Write(ScriptPath, b, w.Sections, _ => [], source);
+        Assert.True(untouched.Succeeded, string.Join("\n", untouched.Problems));
+        Assert.Equal(loaded, untouched.Text);
+
+        // An edit of the section keeps the old hash too.
+        var edited = w.Sections.ToList();
+        edited[4] = Text("[Trigger]\nnickname = ol_next\nCnd_Timer = 9\nAct_ChangeState = SUCCEED\n").Sections[0];
+        var patch = PatchWriter.Write(ScriptPath, b, edited, _ => [], source);
+        Assert.True(patch.Succeeded, string.Join("\n", patch.Problems));
+        Assert.Equal(Lines("[Trigger]", "nickname = ol_next", "ol.replace = true", $"ol.base = {oldHash}",
+            "Cnd_Timer = 9", "Act_ChangeState = SUCCEED"), patch.Text);
+    }
+
+    [Fact]
+    public void ASaveOfAnotherSectionKeepsTheOldBaseSoTheWarningStays()
+    {
+        using var ws = Workspace();
+        var oldHash = SectionHash.Of(ScriptSections()[4]);
+        ws.Mod("lower", new Dictionary<string, string>
+        {
+            [@"patches\" + ScriptPath] = "[Trigger]\nnickname = ol_next\nCnd_Timer = 4\n",
+        });
+        ws.Mod("act", new Dictionary<string, string>
+        {
+            [@"patches\" + ScriptPath] =
+                $"[Trigger]\nnickname = ol_next\nol.replace = true\nol.base = {oldHash}\nCnd_Timer = 8\n",
+        });
+        ws.WriteProfile("lower", "act");
+        var session = ws.Session("act");
+        static bool BaseWarning(Diagnostic d) =>
+            d.Severity == DiagnosticSeverity.Warning && d.Message.StartsWith("Mod 'act' replaces [Trigger] nickname = ol_next");
+        Assert.Contains(session.EditView.Diagnostics, BaseWarning);
+        var mission = new SectionRef(ScriptPath, new SectionIdentity("Mission", null));
+
+        session.Execute(EditCommand.SetLinesFromText(mission, "npc_ship_file", [@"missions\ol_test\ol_b.ini"]));
+        var result = session.Save();
+
+        Assert.True(result.Saved, string.Join("\n", result.Problems));
+        Assert.Contains($"ol.base = {oldHash}\r\n", ws.ReadModPatch(ScriptPath));
+        Assert.Contains(session.EditView.Diagnostics, BaseWarning);
+    }
+
+    /// <summary>A change of the order of lines with different names, in a mission type whose line order counts, writes
+    /// the section with <c>ol.replace</c>. The self-check compares the order of all lines.</summary>
+    [Theory]
+    [InlineData("MsnShip", "nickname = ol_s\nlabel = ol_l\nnpc = ol_npc\n", "nickname = ol_s\nnpc = ol_npc\nlabel = ol_l\n")]
+    [InlineData("MsnFormation", "nickname = ol_f\nship = ol_a\nlabel = ol_l\n", "nickname = ol_f\nlabel = ol_l\nship = ol_a\n")]
+    [InlineData("Dialog", "nickname = ol_d\nline = ol_a, ol_b, dx_1\nsystem = ol_sys\n",
+        "nickname = ol_d\nsystem = ol_sys\nline = ol_a, ol_b, dx_1\n")]
+    [InlineData("Trigger", "nickname = ol_t\nAct_A = 1\nAct_B = 2\n", "nickname = ol_t\nAct_B = 2\nAct_A = 1\n")]
+    public void AChangeOfTheOrderOfLinesWithDifferentNamesReachesThePatch(string type, string before, string after)
+    {
+        var b = Doc($"[Mission]\nnpc_ship_file = x.ini\n\n[{type}]\n{before}");
+        var w = Doc($"[Mission]\nnpc_ship_file = x.ini\n\n[{type}]\n{after}").Sections;
+
+        var result = PatchWriter.Write(ScriptPath, b, w, _ => []);
+
+        Assert.True(result.Succeeded, string.Join("\n", result.Problems));
+        Assert.Contains("ol.replace = true", result.Text);
+        var merged = b.WithSections(b.Sections);
+        var diagnostics = new List<Diagnostic>();
+        IniPatcher.Apply(merged, IniDocument.Parse(ScriptPath, result.ToBytes()).Sections,
+            new PatchContext("act", ScriptPath, ScriptPath, null, new PatchLedger(), diagnostics, keepPlaceholders: true));
+        Assert.Empty(diagnostics);
+        Assert.Equal(w[1].Select(e => e.Name), merged.Sections[1].Select(e => e.Name));
+        // Outside the mission files, only the types of the upstream entry handlers read their lines in order.
+        Assert.Equal(!SectionKeys.IsOrderSensitive(type),
+            SectionComparer.Equivalent(b.Sections[1], w[1], false, @"DATA\other.ini"));
+        Assert.False(SectionComparer.Equivalent(b.Sections[1], w[1], false, ScriptPath));
+    }
+
     private static string Write(string w) => Write(Doc(w).Sections);
 
     private static string Write(IReadOnlyList<Section> w,

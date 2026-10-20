@@ -25,6 +25,15 @@ public sealed class InstallPathsTests
     [InlineData("  ")]
     [InlineData("DATA\\x\u0001.ini")]
     [InlineData(@".\.")]
+    // Windows removes a space or a dot at the end of a part, so these parts name the file of another path.
+    [InlineData(@"DATA.\x.ini")]
+    [InlineData(@"DATA\x.ini.")]
+    [InlineData(@"DATA\x.ini ")]
+    [InlineData(@"DATA\.. \x.ini")]
+    [InlineData(@"DATA\...\x.ini")]
+    [InlineData(@" \x.ini")]
+    [InlineData(@"DATA\ x.ini")]
+    [InlineData(@"DATA\.x\y.ini")]
     public void TheParserRefusesEachPathThatIsNotAnInstallPath(string path)
     {
         var error = Assert.Throws<EditException>(() => InstallPaths.Parse(path)).Error;
@@ -49,6 +58,16 @@ public sealed class InstallPathsTests
     {
         Assert.Equal(@"The path 'C:\data\x.ini' is not an install path. An install path cannot hold a drive or a ':'. " +
                      @"Use a path such as DATA\SHIPS\loadouts.ini.", InstallPaths.Problem(@"C:\data\x.ini"));
+        Assert.Equal(@"The path 'graphs\DATA.\x.ini' is not an install path. The part 'DATA.' starts or ends with a " +
+                     @"space or a dot. Use a path such as DATA\SHIPS\loadouts.ini.",
+            InstallPaths.Problem(@"graphs\DATA.\x.ini"));
+    }
+
+    [Fact]
+    public void AnEditorFileRefusesAPartThatWindowsChanges()
+    {
+        Assert.Null(ModFileDocument.Normalize(@"graphs\DATA.\x.ini"));
+        Assert.Equal(@"graphs\DATA\x.ini", ModFileDocument.Normalize(@"graphs\DATA\x.ini"));
     }
 
     [Fact]

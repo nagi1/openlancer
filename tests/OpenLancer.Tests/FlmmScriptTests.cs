@@ -237,6 +237,25 @@ public sealed class FlmmScriptTests
         Assert.Contains("because OpenLancer finds no unique anchor for [SystemInfo]", Assert.Single(script.Problems).Message);
     }
 
+    /// <summary>FLMM adds a line after the key line. In a mission file, the game reads the lines of a formation in order,
+    /// so the package holds the whole merged file.</summary>
+    [Fact]
+    public void ANewLineOfAMissionSectionWhoseLineOrderCountsFallsBack()
+    {
+        using var game = new ExportGame();
+        const string script = @"DATA\MISSIONS\OL_TEST\ol_test.ini";
+        game.Game.Write(script, "[MsnFormation]\nnickname = ol_form\nship = ol_ship_a\n");
+
+        var flmm = Script(game, game.Mod("m", new()
+        {
+            [@"patches\" + script] = "[MsnFormation]\nnickname = ol_form\nol.replace = true\nship = ol_ship_a\nship = ol_ship_b\n",
+        }));
+
+        Assert.Contains("because the game reads the lines of [MsnFormation] in order, and FLMM adds lines after the key " +
+                        "line", Assert.Single(flmm.Problems).Message);
+        Assert.Equal([script], flmm.Files.Select(f => f.Path), System.StringComparer.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void AKeyLineAfterAnotherLineFallsBack()
     {

@@ -19,16 +19,17 @@ internal static class SectionComparer
     /// <remarks>
     /// A unit is the lines of one name, or the lines of all names of one linked group (see
     /// <see cref="SectionKeys.LinkedGroups"/>), because the engine attaches each line of a group to the line before
-    /// it. The order of the units does not count. For an order-sensitive type (see
-    /// <see cref="SectionKeys.IsOrderSensitive"/>), the whole section is one unit.
+    /// it. The order of the units does not count. For a type whose line order counts in the file (see
+    /// <see cref="SectionKeys.IsOrderSensitive(string, string)"/>), the whole section is one unit.
     /// </remarks>
-    public static bool Equivalent(Section a, Section b, bool binary)
+    /// <param name="path">The install path of the file of the sections.</param>
+    public static bool Equivalent(Section a, Section b, bool binary, string path)
     {
         if (ReferenceEquals(a, b))
             return true;
         if (a.Name != b.Name || a.Count != b.Count)
             return false;
-        if (SectionKeys.IsOrderSensitive(a.Name))
+        if (SectionKeys.IsOrderSensitive(a.Name, path))
             return SameLines(a.ToList(), b.ToList(), binary);
         var unitsA = Lines(a, Unit);
         var unitsB = Lines(b, Unit);

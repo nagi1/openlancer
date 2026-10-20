@@ -230,6 +230,31 @@ public sealed class OlReplaceMergeTests
             "Trigger ol_next"], Describe(TestWorkspace.Sections(overlay, ScriptPath)));
     }
 
+    /// <summary><c>ol.before</c> finds its section by the first <c>nickname</c> line, as <c>ol.replace</c> does and as
+    /// the game reads the section.</summary>
+    [Fact]
+    public void BeforeFindsItsSectionByTheFirstKeyLine()
+    {
+        var script = Script.Replace("nickname = ol_form\n", "nickname = ol_form\nnickname = ol_form_b\n");
+        Assert.NotEqual(Script, script);
+        const string patch = "[MsnShip]\nnickname = ol_ship_b\nol.new = true\nol.before = MsnFormation, {0}\nnpc = ol_npc\n";
+
+        using (var ws = Workspace(script))
+        {
+            var overlay = ws.Build(ws.Mod("m", Patch(string.Format(patch, "ol_form"))));
+            Assert.Empty(overlay.Diagnostics);
+            Assert.Equal("MsnShip", TestWorkspace.Sections(overlay, ScriptPath)[2].Name);
+        }
+
+        using (var ws = Workspace(script))
+        {
+            var overlay = ws.Build(ws.Mod("m", Patch(string.Format(patch, "ol_form_b"))));
+            var error = Assert.Single(overlay.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+            Assert.Contains("ol.before = MsnFormation, ol_form_b: DATA\\MISSIONS\\OL_TEST\\ol_test.ini has no such section.",
+                error.Message);
+        }
+    }
+
     [Fact]
     public void AMissionPatchFindsTheOneMissionSectionAndFailsWithTwo()
     {

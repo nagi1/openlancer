@@ -56,7 +56,7 @@ public sealed class EditBatch : IDisposable
     private readonly List<IBatchCheck> checks = [];
     private readonly List<EditResult> parts = [];
 
-    /// <summary>The parts of the checks of the last <see cref="Finish"/>, or null when a step or a part came after
+    /// <summary>The parts of the checks of the last <see cref="Finish"/>, or null when a step or a new check came after
     /// it.</summary>
     private List<EditResult>? checkParts;
 
@@ -98,7 +98,7 @@ public sealed class EditBatch : IDisposable
         checkParts = null;
         try
         {
-            session.RunInBatch(change, command);
+            session.Run(change, command);
         }
         catch
         {
@@ -117,8 +117,8 @@ public sealed class EditBatch : IDisposable
         checkParts = null;
     }
 
-    /// <summary>Adds the part of the result that a member gives, for example the adds and the deletes of its
-    /// plan.</summary>
+    /// <summary>Adds the part of the result that a member gives, for example the adds and the deletes of its plan. A
+    /// part with errors refuses the batch (section 4.0.4 of the M6b design, item 8).</summary>
     /// <exception cref="InvalidOperationException">The batch has ended.</exception>
     public void Report(EditResult part)
     {
@@ -129,24 +129,44 @@ public sealed class EditBatch : IDisposable
     /// <summary>
     /// Runs the commit checks and gives the result without a commit. The status is <see cref="EditStatus.Applied"/>,
     /// or <see cref="EditStatus.NoChange"/> when the batch changes no state, or <see cref="EditStatus.Refused"/> when a
-    /// check gives an error. The checks run again only after a new step.
+    /// reported part or a check gives an error. The result has the errors of each part. The checks run again only after
+    /// a new step or a new check.
     /// </summary>
+    /// <remarks>A check that throws puts back the states before the batch and ends the batch, as a step that throws
+    /// does.</remarks>
     /// <exception cref="InvalidOperationException">The batch has ended.</exception>
     public EditResult Finish()
     {
         ThrowIfEnded();
-        checkParts ??= checks.Select(c => c.Check(this)).ToList();
-        var errors = checkParts.SelectMany(p => p.Errors).ToList();
-        var status = errors.Count > 0 ? EditStatus.Refused
+        if (checkParts == null)
+        {
+            try
+            {
+                checkParts = checks.Select(c => c.Check(this)).ToList();
+            }
+            catch
+            {
+                Cancel();
+                throw;
+            }
+        }
+        var result = EditResult.Merge(EditStatus.Applied, [.. parts, .. checkParts]);
+        var status = result.Errors.Count > 0 ? EditStatus.Refused
             : session.ChangesState(change) ? EditStatus.Applied
             : EditStatus.NoChange;
-        return Result(status, errors);
+        return result with
+        {
+            Status = status,
+            Label = Label,
+            Revision = session.Revision,
+            Files = Paths.Order(StringComparer.OrdinalIgnoreCase).ToList(),
+        };
     }
 
     /// <summary>
     /// Runs the commit checks, then adds one entry to the history and raises <see cref="EditSession.Changed"/> once. A
-    /// batch that changes no state adds no entry and gives <see cref="EditStatus.NoChange"/>. When a check gives an
-    /// error, the batch cancels, and the result has the errors.
+    /// batch that changes no state adds no entry and gives <see cref="EditStatus.NoChange"/>. When a reported part or
+    /// a check gives an error, the batch cancels, and the result has the errors.
     /// </summary>
     /// <exception cref="InvalidOperationException">The batch has ended.</exception>
     public EditResult Commit()
@@ -159,7 +179,7 @@ public sealed class EditBatch : IDisposable
         }
         End();
         change.Label = UndoLabel;
-        session.PushBatch(change);
+        session.Push(change);
         return result with
         {
             UndoLabel = result.Status == EditStatus.Applied ? UndoLabel : null,
@@ -195,15 +215,6 @@ public sealed class EditBatch : IDisposable
     /// <summary>The install paths of the INI files and the cutscenes that the steps changed until now, in normal
     /// form.</summary>
     public IReadOnlyCollection<string> Paths => change.Paths.Where(p => !ModFileDocument.IsKey(p)).ToList();
-
-    private EditResult Result(EditStatus status, IReadOnlyList<EditError> errors) =>
-        EditResult.Merge(status, parts.Concat(checkParts ?? []).ToList()) with
-        {
-            Errors = errors,
-            Label = Label,
-            Revision = session.Revision,
-            Files = Paths.Order(StringComparer.OrdinalIgnoreCase).ToList(),
-        };
 
     private void End()
     {

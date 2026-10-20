@@ -256,9 +256,10 @@ public sealed class DataLists
     }
 
     /// <summary>True when the active mod adds or changes the section at an index of a table: a section of W that is
-    /// not the section of the lower layer, or a section of a whole file of the active mod.</summary>
-    private bool ChangedByActiveMod(FileTable table, int index) =>
-        session.ActiveMod != null && (table.Document is not { } document ||
+    /// not the section of the lower layer, or a section of a whole file of the active mod. B of a document of the kind
+    /// "whole file" is the file of the active mod, so each of its sections counts.</summary>
+    internal bool ChangedByActiveMod(FileTable table, int index) =>
+        session.ActiveMod != null && (table.Document is not { } document || document.IsWholeFile ||
                                       document.BaseSection(table.Ids[index]) is not { } lower ||
                                       !ReferenceEquals(lower, table.Working[index]));
 

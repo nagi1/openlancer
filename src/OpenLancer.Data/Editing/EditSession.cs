@@ -150,6 +150,22 @@ public sealed partial class EditSession : IDisposable
     /// </summary>
     public long Revision { get; private set; }
 
+    /// <summary>The detail code of the refusal of <see cref="RevisionGuard"/>.</summary>
+    public const string RevisionChanged = "RevisionChanged";
+
+    /// <summary>
+    /// The guard of a request that names the revision that its caller read (<c>if_revision</c>, section 4.0.5 of the
+    /// M6b design). Each command calls it before it changes data.
+    /// </summary>
+    /// <param name="ifRevision">The revision that the caller read, or null for a request without the guard.</param>
+    /// <returns>A refusal of the kind <see cref="EditErrorKind.StaleRevision"/> when the revision changed after the
+    /// read, else null.</returns>
+    public EditError? RevisionGuard(long? ifRevision) =>
+        ifRevision is { } read && read != Revision
+            ? new EditError(EditErrorKind.StaleRevision, RevisionChanged,
+                $"The edit view changed after revision {read}. Read the items again, then edit.")
+            : null;
+
     /// <summary>The open batch, or null (see <see cref="BeginBatch"/>). A command of the command layer joins
     /// it.</summary>
     public EditBatch? OpenBatch => batch;
@@ -162,11 +178,13 @@ public sealed partial class EditSession : IDisposable
     public bool HoldsLock => modLock != null;
 
     /// <summary>
-    /// The install paths of the files that a command of the session changed, also when an undo took the change back.
-    /// A save writes the patches of these files. The session opened each of them, so a read of W of such a file opens
-    /// no new file.
+    /// The files that a command of the session changed, also when an undo took the change back: the install paths of
+    /// the INI files and the cutscenes, and the keys of the editor files of the mod (<c>mod:</c> and the path in the mod
+    /// folder, see <see cref="ModFileDocument"/>). A save writes these files. The session opened each of them, so a
+    /// read of W of such a file opens no new file.
     /// </summary>
-    public IReadOnlyList<string> EditedPaths => touched.Order(StringComparer.OrdinalIgnoreCase).ToList();
+    public IReadOnlyList<string> EditedPaths =>
+        touched.Concat(touchedModFiles).Order(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>Tells what an edit, an undo or a redo changed.</summary>
     public event Action<EditChange>? Changed;
@@ -476,9 +494,6 @@ public sealed partial class EditSession : IDisposable
             Changed?.Invoke(change.UndoChange);
     }
 
-    /// <summary>Runs a step of a batch on top of the steps before it.</summary>
-    internal void RunInBatch(ChangeSet change, EditCommand command) => Run(change, command);
-
     /// <summary>True when the change set of a batch changes a state now. It records the states after the
     /// steps.</summary>
     internal bool ChangesState(ChangeSet change)
@@ -486,9 +501,6 @@ public sealed partial class EditSession : IDisposable
         change.Finish(FileAt, text);
         return change.ChangesState;
     }
-
-    /// <summary>Adds the change set of a committed batch to the history.</summary>
-    internal void PushBatch(ChangeSet change) => Push(change);
 
     /// <summary>Puts back the states before a batch. Raises no <see cref="Changed"/>.</summary>
     internal void CancelBatch(ChangeSet change)
@@ -504,8 +516,9 @@ public sealed partial class EditSession : IDisposable
             batch = null;
     }
 
-    /// <summary>Runs a command. When it throws, puts back the states before the change set.</summary>
-    private void Run(ChangeSet change, EditCommand command)
+    /// <summary>Runs a command, also a step of a batch on top of the steps before it. When it throws, puts back the
+    /// states before the change set.</summary>
+    internal void Run(ChangeSet change, EditCommand command)
     {
         try
         {
@@ -523,8 +536,9 @@ public sealed partial class EditSession : IDisposable
         }
     }
 
-    /// <summary>Adds a change set to the history, when it changed anything.</summary>
-    private void Push(ChangeSet change)
+    /// <summary>Adds a change set to the history, also the change set of a committed batch, when it changed
+    /// anything.</summary>
+    internal void Push(ChangeSet change)
     {
         CacheRevision++;
         change.Finish(FileAt, text);

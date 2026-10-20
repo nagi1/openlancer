@@ -181,6 +181,81 @@ public sealed class WholeFileScriptTests
         }
     }
 
+    /// <summary>The merge applies a patch of the active mod to its whole file of the same path (section 16 of the M6b
+    /// design). An edit of the whole file cannot reach the game, so the document is read-only and shows the
+    /// patch.</summary>
+    [Fact]
+    public void AWholeFileWithAPatchOfTheSameModIsReadOnlyAndShowsWhatTheGameGets()
+    {
+        using var ws = Workspace(new()
+        {
+            [WholeFile] = Script,
+            [@"patches\" + ScriptPath] = "[Trigger]\nnickname = ol_next\nCnd_Timer = 9\n",
+        });
+        var session = ws.Session("act");
+
+        var view = session.Get(Next)!;
+        Assert.Equal(["9"], Values(session, Next, "Cnd_Timer"));
+        Assert.Equal($"The active mod 'act' has a whole file and a patch for {ScriptPath}. The game applies the patch " +
+                     "to the whole file, so the editor cannot save an edit of this file. Move the lines of the patch into " +
+                     "the whole file, then delete the patch.", view.ReadOnlyReason);
+        Assert.Throws<InvalidOperationException>(() =>
+            session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["5"])));
+        Assert.Equal(["9"], Values(session, Next, "Cnd_Timer"));
+    }
+
+    /// <summary>A whole file does not depend on the lower layer, so a change of a lower mod does not stop its
+    /// save.</summary>
+    [Fact]
+    public void AChangeOfALowerModDoesNotStopTheSaveOfAWholeMissionFile()
+    {
+        using var ws = Workspace();
+        ws.WriteBase(ScriptPath, Script);
+        ws.Mod("lower", new() { [@"patches\" + ScriptPath] = "[Trigger]\nnickname = ol_next\nCnd_Timer = 4\n" });
+        ws.WriteProfile("lower", "act");
+        var session = ws.Session("act");
+        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", ["6"]));
+        File.WriteAllText(Path.Combine(ws.ModFolder("lower"), "patches", ScriptPath),
+            "[Trigger]\nnickname = ol_next\nCnd_Timer = 5\n");
+
+        var result = session.Save();
+
+        Assert.True(result.Saved, string.Join("\n", result.Problems));
+        Assert.Contains("Cnd_Timer = 6", ws.ReadModFile(WholeFile));
+    }
+
+    /// <summary>The target checks of the save gate read W of a whole mission file, so they see its unsaved edits.
+    /// Without the active mod, they read the file of the lower layer.</summary>
+    [Fact]
+    public void TheTargetChecksOfTheSaveReadTheEditsOfAWholeMissionFile()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        Assert.DoesNotContain(session.SaveProblems(), p => p.Target == Next);
+
+        session.Execute(EditCommand.SetLinesFromText(Next, "Cnd_Timer", []));
+        var result = session.Save();
+
+        Assert.False(result.Saved);
+        var error = Assert.Single(result.Problems, p => p.Severity == DiagnosticSeverity.Error);
+        Assert.Equal(Next, error.Target);
+        Assert.Equal(OpenLancer.Data.Missions.TriggerRules.NoConditionMessage("ol_next"), error.Message);
+    }
+
+    /// <summary>B of a document of the kind "whole file" is the file of the mod, so each of its sections counts as a
+    /// section of the active mod for the lists, as for the origin of its lines.</summary>
+    [Fact]
+    public void EachSectionOfAWholeMissionFileIsASectionOfTheActiveModForTheLists()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var table = session.Lists.TableOf(ScriptPath)!;
+
+        Assert.Same(session.OpenDocument(ScriptPath), table.Document);
+        Assert.All(Enumerable.Range(0, table.Working.Count), i => Assert.True(session.Lists.ChangedByActiveMod(table, i)));
+        Assert.Equal((ValueOrigin.ActiveMod, "act"), session.Origin(Wave, "Act_ActTrig"));
+    }
+
     internal static TestWorkspace Workspace(Dictionary<string, string>? files = null) =>
         EditSessionTests.Workspace(files ?? new() { [WholeFile] = Script });
 

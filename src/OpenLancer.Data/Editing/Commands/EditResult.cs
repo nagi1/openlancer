@@ -66,13 +66,15 @@ public sealed record Problem(DiagnosticSeverity Severity, string Message)
     /// <summary>The ids of the fixes of the problem.</summary>
     public IReadOnlyList<string> Fixes { get; init; } = [];
 
-    /// <summary>The problem of a diagnostic of a check.</summary>
+    /// <summary>The problem of a diagnostic of a check. An origin that waits for the comparison with the base game
+    /// (<see cref="OriginKind.Pending"/>) is not known yet, so the problem gives <see cref="OriginKind.Unknown"/>.
+    /// Section 4.0.6 of the M6b design has no pending origin.</summary>
     /// <param name="reference">The reference of the item or the line, or null.</param>
     public static Problem From(Diagnostic diagnostic, string? reference) => new(diagnostic.Severity, diagnostic.Message)
     {
         Ref = reference,
         Rule = diagnostic.Rule,
-        Origin = diagnostic.Origin?.Kind ?? OriginKind.Unknown,
+        Origin = diagnostic.Origin?.Kind is { } kind and not OriginKind.Pending ? kind : OriginKind.Unknown,
         ModId = diagnostic.Origin?.ModId,
     };
 }

@@ -37,7 +37,9 @@ public sealed partial class EditSession
     /// a strings.json with comments (F13). When the text changes, the save checks the
     /// placeholders of all patches and whole INI files of the mod, because strings.json gives the text of each.</item>
     /// <item>A change of the lower layer since the open stops the save (F11): the base data, a lower mod, or the mod
-    /// list of the profile. The session writes the recovery file, and the profile must open again.</item>
+    /// list of the profile. The session writes the recovery file, and the profile must open again. A whole mission file
+    /// and an editor file of the mod do not depend on the lower layer, so a change of their path in a lower mod does
+    /// not stop the save.</item>
     /// <item>A file of the active mod that changed outside the editor stops the save, unless
     /// <paramref name="overwrite"/> is true (P7).</item>
     /// <item><see cref="SaveTransaction"/> writes the files (P5, P6). Then W becomes what the saved files give
@@ -92,9 +94,9 @@ public sealed partial class EditSession
         var writes = plan.Where(p => !p.SameAsDisk).ToList();
         if (writes.Count > 0)
         {
-            // An editor file of the mod does not depend on the lower layer.
-            var stale = inputs.Changed(plan.Where(p => p.Source is EditDocument or ThnDocument).Select(p => p.Source!.Path),
-                profileNow, active);
+            // An editor file of the mod and a whole mission file of the mod do not depend on the lower layer.
+            var stale = inputs.Changed(plan.Where(p => p.Source is EditDocument { IsWholeFile: false } or ThnDocument)
+                .Select(p => p.Source!.Path), profileNow, active);
             if (stale.Count > 0)
                 return Stale(stale, problems);
         }

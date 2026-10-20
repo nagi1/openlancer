@@ -84,6 +84,11 @@ public sealed record EditChange(IReadOnlyList<SectionRef> Sections, bool Structu
     /// direction and in reverse order. The scene uses them to keep the item of a renamed section (milestone M3).
     /// </summary>
     public IReadOnlyList<(SectionRef From, SectionRef To)> Renames { get; init; } = [];
+
+    /// <summary>The editor files of the active mod that changed, by their path in the mod folder, for example
+    /// <c>graphs\DATA\MISSIONS\M02\m02.ini</c> (section 6.8 of the M6b design). A change of an editor file alone lists
+    /// no section.</summary>
+    public IReadOnlyList<string> ModFiles { get; init; } = [];
 }
 
 /// <summary>The result of <see cref="EditSession.Save"/>.</summary>

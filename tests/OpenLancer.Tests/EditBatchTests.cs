@@ -237,6 +237,74 @@ public sealed class EditBatchTests
         Assert.Equal(EditOrigin.User, session.RedoUndoneBy);
     }
 
+    [Fact]
+    public void ACheckThatThrowsCancelsTheBatch()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var before = session.OpenDocument(GoodsPath)!.State;
+
+        var commit = session.BeginBatch("Commit");
+        commit.Run(Set(Good("g1"), "price", new Int32Value(7)));
+        commit.AddCommitCheck(new ThrowingCheck());
+        Assert.Throws<InvalidOperationException>(() => commit.Commit());
+
+        Assert.False(commit.IsOpen);
+        Assert.Null(session.OpenBatch);
+        Assert.Same(before, session.OpenDocument(GoodsPath)!.State);
+
+        var preview = session.BeginBatch("Preview");
+        preview.Run(Set(Good("g1"), "price", new Int32Value(8)));
+        preview.AddCommitCheck(new ThrowingCheck());
+        Assert.Throws<InvalidOperationException>(() => preview.Preview());
+
+        // The session takes edits, an undo and a save again.
+        Assert.Null(session.OpenBatch);
+        Assert.Same(before, session.OpenDocument(GoodsPath)!.State);
+        session.Execute(Set(Good("g1"), "price", new Int32Value(9)));
+        session.Undo();
+        Assert.True(session.Save().Saved);
+    }
+
+    [Fact]
+    public void APartWithAnErrorRefusesTheBatchAndTheResultKeepsEachError()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var refused = new EditError(EditErrorKind.Refused, "PlanRefused", "The member refuses the edit.");
+        var newErrors = new EditError(EditErrorKind.NewErrors, "NewErrors", "The edit adds 1 error, so the editor did not apply it.");
+
+        var batch = session.BeginBatch("Refused");
+        batch.Run(Set(Good("g1"), "price", new Int32Value(7)));
+        batch.Report(new EditResult(EditStatus.Refused) { Errors = [refused] });
+        batch.AddCommitCheck(new FakeCheck(new EditResult(EditStatus.Applied) { Errors = [newErrors] }));
+        var result = batch.Commit();
+
+        Assert.Equal(EditStatus.Refused, result.Status);
+        Assert.Equal([refused, newErrors], result.Errors);
+        Assert.Equal(["100"], Values(session, Good("g1"), "price"));
+        Assert.False(session.CanUndo);
+    }
+
+    [Fact]
+    public void TheRevisionGuardRefusesARequestAfterAChange()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var read = session.Revision;
+
+        Assert.Null(session.RevisionGuard(null));
+        Assert.Null(session.RevisionGuard(read));
+        session.Execute(Set(Good("g1"), "price", new Int32Value(7)));
+        var error = session.RevisionGuard(read);
+
+        Assert.NotNull(error);
+        Assert.Equal(EditErrorKind.StaleRevision, error.Kind);
+        Assert.Equal(EditSession.RevisionChanged, error.Detail);
+        Assert.Equal($"The edit view changed after revision {read}. Read the items again, then edit.", error.Message);
+        Assert.Null(session.RevisionGuard(session.Revision));
+    }
+
     /// <summary>A commit check that gives a fixed part and counts its runs.</summary>
     private sealed class FakeCheck(EditResult part) : IBatchCheck
     {
@@ -247,5 +315,11 @@ public sealed class EditBatchTests
             Runs++;
             return part;
         }
+    }
+
+    /// <summary>A commit check that fails.</summary>
+    private sealed class ThrowingCheck : IBatchCheck
+    {
+        public EditResult Check(EditBatch batch) => throw new InvalidOperationException("The check failed.");
     }
 }

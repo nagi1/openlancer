@@ -111,6 +111,9 @@ public sealed record ItemReference(ItemRefKind Kind, string Name)
 /// <c>~&lt;n&gt;</c> follows when the identity repeats: <c>n</c> is the ordinal of <see cref="SectionIdentity"/>, from
 /// 0, and the form leaves out <c>~0</c>. A child section puts its parent first, with <c>&gt;</c> between them, for
 /// example <c>MBase/ol_base&gt;MRoom/bar</c>.</para>
+/// <para>A key can hold these marks. A key that ends with <c>~</c> and digits gets <c>~0</c> too, so the parser reads
+/// the last <c>~</c> as the ordinal. A <c>&gt;</c> starts a child only before a child type (see
+/// <see cref="Ini.SectionKeys.IsChild"/>), so another <c>&gt;</c> stays in the key.</para>
 /// </remarks>
 public static class ItemRefs
 {
@@ -119,6 +122,14 @@ public static class ItemRefs
 
     /// <summary>The detail code of a text that is not a reference.</summary>
     public const string BadReference = "BadReference";
+
+    /// <summary>The detail code of a <c>trg:</c> reference whose script the edit view does not have (section 4.7 of
+    /// the M6b design).</summary>
+    public const string ScriptNotFound = "ScriptNotFound";
+
+    /// <summary>The detail code of a <c>trg:</c> reference whose script has no such trigger (section 4.7 of the M6b
+    /// design).</summary>
+    public const string TriggerNotFound = "TriggerNotFound";
 
     private static readonly (string Prefix, ItemRefKind Kind)[] Prefixes =
     [
@@ -197,7 +208,8 @@ public static class ItemRefs
     public static string SectionText(SectionIdentity id)
     {
         var part = id.Key == null ? id.Type : $"{id.Type}/{id.Key}";
-        if (id.Ordinal > 0)
+        // A key that ends with '~' and digits keeps the ordinal 0, so the parser does not read its end as the ordinal.
+        if (id.Ordinal > 0 || OrdinalAt(part) != null)
             part += "~" + id.Ordinal.ToString(CultureInfo.InvariantCulture);
         return id.Parent == null ? part : $"{SectionText(id.Parent)}>{part}";
     }
@@ -205,14 +217,22 @@ public static class ItemRefs
     /// <summary>
     /// The most specific form of a section (section 5.6 of the MCP1 design): <c>obj:</c>, <c>zone:</c>, <c>light:</c>,
     /// <c>nebula:</c> and <c>field:</c> for a section of a system file, <c>system:</c> and <c>base:</c> for a section
-    /// of <c>universe.ini</c>, else <c>sec:</c>. It also works for a section that a delete removed.
+    /// of <c>universe.ini</c>, <c>trg:</c> for a <c>[Trigger]</c> of a mission file, else <c>sec:</c>. It also works for
+    /// a section that a delete removed.
     /// </summary>
+    /// <remarks>A <c>trg:</c> reference names the first trigger with its nickname. So the second trigger with a repeated
+    /// nickname keeps the <c>sec:</c> form with its ordinal.</remarks>
     public static string Canonical(EditSession session, SectionRef section)
     {
         var id = section.Id;
         if (id.Key is { } key && id.Parent == null && id.Ordinal == 0)
         {
-            if (session.IsSystemFile(section.Path))
+            if (Ini.SectionKeys.IsMissionFile(section.Path))
+            {
+                if (id.Type.Equals("Trigger", StringComparison.OrdinalIgnoreCase))
+                    return Format(new ItemReference(ItemRefKind.Trigger, key) { Path = section.Path });
+            }
+            else if (session.IsSystemFile(section.Path))
             {
                 var kind = id.Type.ToLowerInvariant() switch
                 {
@@ -290,7 +310,9 @@ public static class ItemRefs
             case ItemRefKind.ListEntry:
             {
                 var list = session.Lists.List(reference.Scope!) ?? throw new EditException(new EditError(
-                    EditErrorKind.NotFound, NotFound, $"The editor has no data list '{reference.Scope}'.")
+                    EditErrorKind.NotFound, NotFound,
+                    $"The editor has no data list '{reference.Scope}'. Use the id of a data list, for example base or " +
+                    "loadout." + Hint(reference.Scope!, session.Lists.RuleData.Lists.Keys))
                 {
                     Target = text,
                 });
@@ -304,11 +326,23 @@ public static class ItemRefs
                     SectionText(reference.Section!), session.Sections(reference.Path!).Select(s => SectionText(s.Id)));
             }
             case ItemRefKind.Trigger when !reference.Path!.StartsWith(PrefabScript, StringComparison.Ordinal):
-                return Existing(session, reference.Path!, "Trigger", reference.Name) ?? throw Missing(text, "trigger",
-                    reference.Name, Keys(session, reference.Path!, "Trigger"));
+            {
+                var path = reference.Path!;
+                if (session.OpenDocument(path) == null)
+                {
+                    throw new EditException(new EditError(EditErrorKind.NotFound, ScriptNotFound,
+                        $"The game data and the mods have no mission script {path}. Pick a script from the Missions " +
+                        "tab.") { Target = text });
+                }
+                return Existing(session, path, "Trigger", reference.Name) ?? throw new EditException(new EditError(
+                    EditErrorKind.NotFound, TriggerNotFound,
+                    $"Script {path} has no trigger '{reference.Name}'. Pick a trigger of this script." +
+                    Hint(reference.Name, Keys(session, path, "Trigger"))) { Target = text });
+            }
             default:
                 throw new EditException(new EditError(EditErrorKind.InvalidArgument, BadReference,
-                    $"The reference '{text}' names no section of an INI file.") { Target = text });
+                    $"The reference '{text}' names no section of an INI file. Use a reference of a section, for " +
+                    "example sec:, obj: or trg:.") { Target = text });
         }
     }
 
@@ -433,13 +467,19 @@ public static class ItemRefs
         session.Sections(path).Where(s => s.Id.Type.Equals(type, StringComparison.OrdinalIgnoreCase) && s.Id.Key != null)
             .Select(s => s.Id.Key!);
 
-    private static EditException Missing(string text, string what, string name, IEnumerable<string> candidates)
-    {
-        var closest = Closest(name, candidates);
-        var hint = closest.Count == 0 ? "" : " The closest names are: " + string.Join(", ", closest) + ".";
-        return new EditException(new EditError(EditErrorKind.NotFound, NotFound,
-            $"The edit view has no {what} '{name}'.{hint}") { Target = text });
-    }
+    private static EditException Missing(string text, string what, string name, IEnumerable<string> candidates) =>
+        new(new EditError(EditErrorKind.NotFound, NotFound,
+            $"The edit view has no {what} '{name}'. Use a name that the edit view has.{Hint(name, candidates)}")
+        {
+            Target = text,
+        });
+
+    /// <summary>The sentence with the closest names of a name, with a space before it, or an empty text when no name
+    /// is close.</summary>
+    private static string Hint(string name, IEnumerable<string> candidates) =>
+        Closest(name, candidates) is { Count: > 0 } closest
+            ? " The closest names are: " + string.Join(", ", closest) + "."
+            : "";
 
     private static EditException Bad(string text, string reason) =>
         new(new EditError(EditErrorKind.InvalidArgument, BadReference, $"'{text}' is not an item reference. {reason}"));
@@ -532,12 +572,11 @@ public static class ItemRefs
     private static SectionIdentity ParseSection(string text, string part)
     {
         SectionIdentity? parent = null;
-        foreach (var piece in part.Split('>'))
+        foreach (var piece in Pieces(part))
         {
             var body = piece;
             var ordinal = 0;
-            var tilde = body.LastIndexOf('~');
-            if (tilde > 0 && int.TryParse(body[(tilde + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var n))
+            if (OrdinalAt(body) is var (tilde, n))
             {
                 ordinal = n;
                 body = body[..tilde];
@@ -550,6 +589,32 @@ public static class ItemRefs
             parent = new SectionIdentity(type, key, parent, ordinal);
         }
         return parent!;
+    }
+
+    /// <summary>The parts of a section part, split at each <c>&gt;</c> before a child type. Another <c>&gt;</c> stays
+    /// in its part, because it belongs to a key.</summary>
+    private static List<string> Pieces(string part)
+    {
+        var pieces = new List<string>();
+        foreach (var piece in part.Split('>'))
+        {
+            var end = piece.IndexOfAny(['/', '~']);
+            if (pieces.Count > 0 && !Ini.SectionKeys.IsChild(end < 0 ? piece : piece[..end]))
+                pieces[^1] += ">" + piece;
+            else
+                pieces.Add(piece);
+        }
+        return pieces;
+    }
+
+    /// <summary>The place of the last <c>~</c> and the ordinal after it, when a text ends with <c>~</c> and digits,
+    /// and has another character before the <c>~</c>. Else null.</summary>
+    private static (int Tilde, int Ordinal)? OrdinalAt(string text)
+    {
+        var tilde = text.LastIndexOf('~');
+        return tilde > 0 && int.TryParse(text[(tilde + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var n)
+            ? (tilde, n)
+            : null;
     }
 
     /// <summary>The edit distance of two texts: the fewest inserts, deletes and changes of one character.</summary>

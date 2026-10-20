@@ -142,8 +142,8 @@ public sealed class MissionReplaceRetailTests(ITestOutputHelper output)
     };
 
     /// <summary>The number of sections of each mission type whose line order counts with a line before the key line.
-    /// The test asserts that each of them is editable now: the order rule does not refuse it, and a patch can find
-    /// it.</summary>
+    /// The test asserts that each of them is editable now: the order rule does not refuse it, and a patch can find it
+    /// unless its nickname repeats.</summary>
     private Dictionary<string, int> LineBeforeKey(string folder, IReadOnlyList<string> scripts)
     {
         var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -160,8 +160,14 @@ public sealed class MissionReplaceRetailTests(ITestOutputHelper output)
                 // The same section in a file outside the missions keeps the old rule.
                 if (SectionKeys.IsOrderSensitive(section.Name))
                     Assert.NotNull(PatchWriter.OrderNotKept(section, @"DATA\other.ini"));
+                // A patch finds each such section, except a section whose nickname another section of its type has
+                // (decision D20). That section stays read-only.
                 if (PatchWriter.NotPatchable(section, kept: true, counts, counts, path) is { } reason)
+                {
                     output.WriteLine($"{path} [{section.Name}]: {reason}");
+                    Assert.True(SectionIdentity.KeyOf(section) is { } key && counts.Keys(section.Name, key) > 1,
+                        $"{path} [{section.Name}]: {reason}");
+                }
             }
         }
         output.WriteLine(string.Join(", ", result.Select(r => $"{r.Key} {r.Value}")));

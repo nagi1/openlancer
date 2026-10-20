@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
@@ -30,11 +31,60 @@ public sealed class ModFileDocumentTests
         Assert.Equal(GraphText, session.ModFileText(GraphPath));
         Assert.True(session.IsDirty);
         Assert.Equal($"Set {GraphPath}", session.UndoLabel);
-        Assert.Empty(session.EditedPaths);
+        // The edited paths hold the key of the editor file, so a dirty session always has an edited path.
+        Assert.Equal([ModFileDocument.KeyPrefix + GraphPath], session.EditedPaths);
         session.Undo();
         Assert.Null(session.ModFileText(GraphPath));
         session.Redo();
         Assert.Equal(GraphText, session.ModFileText("graphs/DATA/MISSIONS/OL_TEST/ol_test.ini"));
+    }
+
+    [Fact]
+    public void TheChangeOfAnEditAnUndoAndARedoNamesTheEditorFiles()
+    {
+        using var ws = Workspace();
+        var session = ws.Session("act");
+        var changes = new List<EditChange>();
+        session.Changed += changes.Add;
+
+        session.Execute(EditCommand.SetModFile(GraphPath, GraphText));
+        session.Undo();
+        session.Redo();
+        session.Execute(Set(Good("g1"), "price", new Int32Value(300)));
+
+        Assert.Equal(4, changes.Count);
+        Assert.All(changes.Take(3), c => Assert.Equal([GraphPath], c.ModFiles));
+        Assert.All(changes.Take(3), c => Assert.Empty(c.Sections));
+        Assert.Empty(changes[3].ModFiles);
+    }
+
+    /// <summary>A save that deletes an editor file stops after its commit point. The next open completes it, so the
+    /// file is gone.</summary>
+    [Fact]
+    public void AnOpenCompletesASaveThatDeletesAnEditorFile()
+    {
+        for (var k = 0; k <= 2; k++)
+        {
+            using var ws = Workspace(new() { [GraphPath] = GraphText });
+            var file = Path.Combine(ws.ModFolder("act"), GraphPath);
+            var session = ws.Session("act");
+            session.Execute(EditCommand.SetModFile(GraphPath, null));
+            session.Execute(Set(Good("g1"), "price", new Int32Value(300)));
+            var stop = k;
+            Assert.Throws<EditorStopped>(() => session.Save(false, done =>
+            {
+                if (done == stop)
+                    throw new EditorStopped();
+            }));
+            session.Abandon();
+
+            var reopened = ws.Session("act");
+
+            Assert.Empty(reopened.OpenProblems);
+            Assert.False(File.Exists(file));
+            Assert.Null(reopened.ModFileText(GraphPath));
+            Assert.Equal(["300"], Values(reopened, Good("g1"), "price"));
+        }
     }
 
     [Fact]
@@ -158,4 +208,6 @@ public sealed class ModFileDocumentTests
 
     internal static TestWorkspace Workspace(Dictionary<string, string>? modFiles = null) =>
         EditSessionTests.Workspace(modFiles ?? new());
+
+    private sealed class EditorStopped : Exception;
 }

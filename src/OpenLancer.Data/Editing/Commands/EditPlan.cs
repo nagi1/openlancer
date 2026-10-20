@@ -55,15 +55,42 @@ public abstract class EditPlan
     /// (decisions D238 and D242).</summary>
     public bool NeedsConfirmation { get; protected internal set; }
 
+    /// <summary>The detail code of the error of a refused plan whose refusal names no rule.</summary>
+    public const string PlanRefused = "PlanRefused";
+
     /// <summary>
     /// The part of the result that the plan gives after its run (section 4.0.8 of the M6b design): the adds, changes,
     /// deletes, fixes, "Missing" lines, warnings, refusals, mentions and the selection, as item references in their
     /// canonical form.
     /// </summary>
+    /// <remarks>A plan without a session command did not run. Its result has the status
+    /// <see cref="EditStatus.Refused"/>, and each refusal is an error of the kind <see cref="EditErrorKind.Refused"/>
+    /// (section 4.0.6 of the M6b design). The refusals of a result are only the parts of a plan that refused while the
+    /// rest ran.</remarks>
     public EditResult Report(EditSession session)
     {
         string Ref(SectionRef section) => ItemRefs.Canonical(session, section);
-        return new EditResult(Command == null ? EditStatus.Refused : EditStatus.Applied)
+        string? TargetOf(Diagnostic d) => d.Target is { } t ? Ref(t) : null;
+        if (Command == null)
+        {
+            var errors = Refusals.Select(r => new EditError(EditErrorKind.Refused, r.Rule ?? PlanRefused, r.Message)
+            {
+                Target = TargetOf(r),
+            }).ToList();
+            if (errors.Count == 0)
+            {
+                errors.Add(new EditError(EditErrorKind.Refused, PlanRefused,
+                    $"The edit '{Label}' did not run. Make it again."));
+            }
+            return new EditResult(EditStatus.Refused)
+            {
+                Label = Label,
+                Errors = errors,
+                Warnings = Warnings.Select(w => Problem.From(w, TargetOf(w))).ToList(),
+                NeedsConfirmation = NeedsConfirmation,
+            };
+        }
+        return new EditResult(EditStatus.Applied)
         {
             Label = Label,
             Adds = Adds.Select(Ref).ToList(),
@@ -72,8 +99,8 @@ public abstract class EditPlan
             Fixes = Fixes.Select(f => new ResultFix(Ref(f.Section), f.Key, f.Text)).ToList(),
             Missing = Missing.Select(m => new ResultMissing(Ref(m.Reference.Section), m.Reference.Key, m.Consequence,
                 m.BlocksSave)).ToList(),
-            Warnings = Warnings.Select(w => Problem.From(w, w.Target is { } t ? Ref(t) : null)).ToList(),
-            Refusals = Refusals.Select(r => Problem.From(r, r.Target is { } t ? Ref(t) : null)).ToList(),
+            Warnings = Warnings.Select(w => Problem.From(w, TargetOf(w))).ToList(),
+            Refusals = Refusals.Select(r => Problem.From(r, TargetOf(r))).ToList(),
             Mentions = Mentions,
             NeedsConfirmation = NeedsConfirmation,
             Select = SelectAfter is { } select ? Ref(select) : null,

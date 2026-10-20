@@ -52,6 +52,9 @@ internal sealed record DocumentState(
 /// <item>The active mod replaces the file with its own file, outside the mission files. The merge then applies the
 /// patch of the mod to that file, not to B. W is then B, and the document only shows it.</item>
 /// <item>The file is <c>EXE\freelancer.ini</c>, which a patch cannot change.</item>
+/// <item>The active mod has a whole mission file and a patch for the same path. The merge applies the patch to the
+/// whole file, so an edit of the whole file cannot reach the game. W is the whole file with the patch, as the game
+/// gets it, and the document only shows it.</item>
 /// </list>
 /// <para>A whole mission file of the active mod (see <see cref="EditsWholeFile"/>) is a document of the kind "whole
 /// file" (section 6.7 of the M6b design). B is the file of the mod as it is on disk, and W gets the edits. A save
@@ -130,10 +133,13 @@ internal sealed class EditDocument : IEditFile
     public bool IsWholeFile => whole != null;
 
     /// <summary>
-    /// True when the editor edits a whole file of the active mod at an install path (decision D680 of the M6b design):
-    /// a file under <c>DATA\MISSIONS</c>, for example a test script, a replaced slot script or a ship build file. The
-    /// editor shows the other whole files of the active mod read-only.
+    /// True when the editor edits a whole file of the active mod at an install path (decision D680, section 6.7 of the
+    /// M6b design): a file under <c>DATA\MISSIONS</c>, for example a test script, a replaced slot script or a ship build
+    /// file. The editor shows the other whole files of the active mod read-only.
     /// </summary>
+    /// <remarks>The rule also takes the shared world files under <c>DATA\MISSIONS</c>, for example
+    /// <c>npcships.ini</c>. They are world data, so the mission guard does not cover them (section 4.1 of the M6b
+    /// design). Their edits get the checks of the edits of a patch, and their errors stop the save.</remarks>
     public static bool EditsWholeFile(string path) => SectionKeys.IsMissionFile(path);
 
     /// <summary>
@@ -151,7 +157,11 @@ internal sealed class EditDocument : IEditFile
         if (activeMod != null && activeMod.Files.TryGetValue(path, out var file))
         {
             if (EditsWholeFile(path))
-                return OpenWhole(path, file, b, diagnostics);
+            {
+                return activeMod.Patches.TryGetValue(path, out var patchOfWhole)
+                    ? WholeWithPatch(path, file, patchOfWhole, b, activeMod.Id, diagnostics)
+                    : OpenWhole(path, file, b, diagnostics);
+            }
             return Refused(path, b!, diagnostics, Diagnostic.Error(file,
                 $"The active mod '{activeMod.Id}' replaces {path} with this file. The editor cannot write a patch " +
                 "for a file that the active mod replaces."));
@@ -387,6 +397,34 @@ internal sealed class EditDocument : IEditFile
             return Refused(path, lower ?? IniDocument.Parse(path, []), diagnostics, Diagnostic.Error(file, e.Message));
         }
         return Whole(path, file, bytes, lower, diagnostics);
+    }
+
+    /// <summary>
+    /// A whole mission file of the active mod that the active mod also patches. The merge applies the patch to the whole
+    /// file. So the document is read-only, and W is the whole file with the patch.
+    /// </summary>
+    private static EditDocument WholeWithPatch(string path, string file, string patchFile, IniDocument? lower,
+        string modId, List<Diagnostic> diagnostics)
+    {
+        var whole = OpenWhole(path, file, lower, diagnostics);
+        if (whole.refusal != null)
+            return whole;
+        var refusal = Diagnostic.Error(patchFile,
+            $"The active mod '{modId}' has a whole file and a patch for {path}. The game applies the patch to the whole " +
+            "file, so the editor cannot save an edit of this file. Move the lines of the patch into the whole file, " +
+            "then delete the patch.");
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(patchFile);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Refused(path, whole.b, diagnostics, refusal);
+        }
+        // The merge reports the problems of the patch, so only the refusal goes into the diagnostics.
+        var patched = Load(path, whole.b, modId, patchFile, bytes, []);
+        return Refused(path, whole.b.WithSections(patched.Working), diagnostics, refusal);
     }
 
     private static EditDocument Whole(string path, string file, byte[] bytes, IniDocument? lower,

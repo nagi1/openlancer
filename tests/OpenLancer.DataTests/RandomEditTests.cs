@@ -185,7 +185,8 @@ public sealed class RandomEditTests(ITestOutputHelper output)
                 var merged = IniDocument.Parse(file.Document.Path, fs.ReadAllBytes(file.Document.Path)).Sections;
                 var working = file.Document.Working;
                 var same = merged.Count == working.Count &&
-                           merged.Zip(working).All(p => SectionComparer.Equivalent(p.First, p.Second, file.Document.IsBinary));
+                           merged.Zip(working).All(p =>
+                               SectionComparer.Equivalent(p.First, p.Second, file.Document.IsBinary, file.Document.Path));
                 if (!same)
                     run.Failures.Add($"Round {run.Rounds}: the merged {file.Document.Path} differs from the edited file.");
             }
