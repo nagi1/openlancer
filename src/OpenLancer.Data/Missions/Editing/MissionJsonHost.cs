@@ -1,6 +1,9 @@
 using System;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Missions.Run;
 
 namespace OpenLancer.Data.Missions.Editing;
 
@@ -63,6 +66,25 @@ public sealed class MissionJsonHost(EditSession session)
     /// <param name="baseGame">True to give the problems of the base game too.</param>
     public MissionHostReply Problems(string script, bool baseGame = false) =>
         Read(() => Queries.GetProblems(ScriptRef.Parse(script), baseGame));
+
+    /// <summary>
+    /// The dry run query (the tool <c>mission_dry_run</c>, section 7.3 of the M6c design): a request with
+    /// <c>script</c>, <c>inputs</c>, <c>timer_bound</c> and <c>since_step</c>. It changes nothing.
+    /// </summary>
+    public MissionHostReply DryRun(string json) => Read(() =>
+    {
+        JsonNode? node;
+        try
+        {
+            node = JsonNode.Parse(json);
+        }
+        catch (JsonException)
+        {
+            node = null;
+        }
+        return Queries.DryRun(RunJson.ReadRequest(node as JsonObject ?? throw new EditException(
+            MissionErrors.BadJsonError("The request is a JSON object with script and inputs."))));
+    });
 
     /// <summary>The JSON Schema of a batch, the input schema of the tool <c>mission_edit</c>.</summary>
     public static string Schema() => MissionJson.Schema().ToJsonString();

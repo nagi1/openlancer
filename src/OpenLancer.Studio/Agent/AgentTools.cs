@@ -7,6 +7,7 @@ using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Lists;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Studio.Agent;
@@ -16,8 +17,9 @@ namespace OpenLancer.Studio.Agent;
 /// <c>tools/list</c>. Both hosts serve this table, so a tool behaves the same in both (decision D700). A tool that waits
 /// for another milestone is not in the table of this build (section 7.9).
 /// </summary>
-/// <remarks>This build has the query tools of section 7.1 (milestone MCP1-1a) and the view tools of section 7.7
-/// (milestone MCP1-1b). No tool changes the data. The view tools are tools of the editor host.</remarks>
+/// <remarks>This build has the query tools of section 7.1 (milestone MCP1-1a), the dry run query of M6c-1 and the view
+/// tools of section 7.7 (milestone MCP1-1b). No tool changes the data. The view tools are tools of the editor
+/// host.</remarks>
 public static class AgentTools
 {
     private static readonly ToolParam Cursor = new TextParam("cursor", false, null, null);
@@ -68,6 +70,12 @@ public static class AgentTools
             typeof(MissionTriggerView), MissionQueryTools.GetTrigger),
         Query("describe_mission_name", ToolGroup.Missions, new ToolInput(Text("key", true)),
             typeof(MissionPaletteName), MissionQueryTools.DescribeMissionName),
+        Query("mission_dry_run", ToolGroup.Missions, new ToolInput(
+                Text("script", true),
+                new ObjectsParam("inputs", true, RunJson.KindNames, MissionQueryTools.DryRunFields),
+                new TextParam("timer_bound", false, ["shortest", "longest"], "shortest"),
+                new WholeParam("since_step", 0, 0)),
+            typeof(DryRunView), MissionQueryTools.DryRun),
         Query("list_cutscenes", ToolGroup.Cutscenes,
             new ToolInput(new TextParam("category", false, Names<CutsceneFolder>(), null), TextFilter, Cursor, Limit),
             typeof(Page<CutsceneRow>), CutsceneQueries.ListCutscenes),

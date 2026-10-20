@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Data.Missions.Run;
 
 namespace OpenLancer.Studio.Agent;
 
@@ -125,6 +127,43 @@ internal static class MissionQueryTools
             {
                 Field = "key",
             });
+    }
+
+    /// <summary>The schema of the fields of an input of <c>mission_dry_run</c> (section 7.3 of the M6c design), without
+    /// <c>kind</c>. The query reads each input and gives the reason for an input that does not fit.</summary>
+    internal static IReadOnlyDictionary<string, JsonObject> DryRunFields { get; } = new Dictionary<string, JsonObject>
+    {
+        ["trigger"] = new() { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = TextParam.MaxLength },
+        ["line"] = new()
+        {
+            ["type"] = "object",
+            ["properties"] = new JsonObject
+            {
+                ["key"] = new JsonObject { ["type"] = "string", ["minLength"] = 1 },
+                ["values"] = new JsonObject { ["type"] = "object" },
+            },
+            ["required"] = new JsonArray("key"),
+            ["additionalProperties"] = false,
+        },
+        ["on"] = new() { ["type"] = "boolean" },
+        ["count"] = new() { ["type"] = "integer", ["minimum"] = 1, ["maximum"] = Data.Missions.Run.DryRun.MaxHeartbeats },
+        ["until_timer"] = new() { ["type"] = "boolean" },
+        ["system"] = new() { ["type"] = new JsonArray("string", "null") },
+        ["value"] = new() { ["type"] = "boolean" },
+    };
+
+    /// <summary>The dry run query (section 7.2 of the M6c design): the inputs fold over the model of the script now. The
+    /// query keeps no state, so the agent sends all inputs each time.</summary>
+    public static ToolStep DryRun(ToolCall call)
+    {
+        var script = ScriptRef.Parse(call.Args.Text("script")!).Path;
+        var inputs = RunJson.ReadInputs(call.Args.Node("inputs")!.AsArray(), script);
+        var request = new DryRunRequest(script, inputs)
+        {
+            Timers = call.Args.Text("timer_bound") == "longest" ? TimerBound.Longest : TimerBound.Shortest,
+            SinceStep = (int)Math.Min(int.MaxValue, call.Args.Whole("since_step") ?? 0),
+        };
+        return ToolResult.Of(call.Session.Missions.Queries.DryRun(request));
     }
 
     /// <summary>A trigger in summary form: the sentence of its condition and one chip for each action group, in the

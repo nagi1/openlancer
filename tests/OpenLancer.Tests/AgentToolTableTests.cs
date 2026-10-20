@@ -25,7 +25,7 @@ public sealed class AgentToolTableTests
         [
             "studio_status", "list_systems", "get_system", "list_items", "get_item", "find_references", "list_values",
             "search_assets", "list_prop_groups", "list_missions", "get_mission", "get_trigger", "describe_mission_name",
-            "list_cutscenes", "get_cutscene", "get_raw_ini", "check", "get_console",
+            "mission_dry_run", "list_cutscenes", "get_cutscene", "get_raw_ini", "check", "get_console",
             "open_view", "select_items", "render_scene", "render_cutscene", "capture_panel",
         ], AgentTools.All.Select(t => t.Name));
     }

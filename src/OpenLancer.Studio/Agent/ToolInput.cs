@@ -211,6 +211,46 @@ internal sealed class PointParam(string name, bool required, float? bound = null
             float.IsFinite((float)number) && Math.Abs(number) <= (bound ?? float.MaxValue));
 }
 
+/// <summary>
+/// A list of objects with a <c>kind</c>, for example the inputs of <c>mission_dry_run</c>. The schema gives the kinds and
+/// the fields of the items. The handler reads each item and gives the reason for an item that does not fit, because the
+/// fields of an item depend on its kind.
+/// </summary>
+/// <param name="kinds">The words of <c>kind</c>.</param>
+/// <param name="fields">The schema of each field of an item, without <c>kind</c>.</param>
+internal sealed class ObjectsParam(string name, bool required, IReadOnlyCollection<string> kinds,
+    IReadOnlyDictionary<string, JsonObject> fields) : ToolParam(name, required)
+{
+    public override JsonObject Schema(string tool)
+    {
+        var properties = new JsonObject
+        {
+            ["kind"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray(kinds.Select(k => (JsonNode)k).ToArray()),
+            },
+        };
+        foreach (var (field, schema) in fields)
+            properties[field] = schema.DeepClone();
+        return new JsonObject
+        {
+            ["type"] = "array",
+            ["items"] = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = properties,
+                ["required"] = new JsonArray("kind"),
+                ["additionalProperties"] = false,
+            },
+        };
+    }
+
+    public override string Expected => "a list of objects, each with a kind";
+
+    public override bool Fits(JsonNode value) => value is JsonArray array && array.All(item => item is JsonObject);
+}
+
 /// <summary>An object with arguments of its own.</summary>
 internal sealed class GroupParam(string name, IReadOnlyList<ToolParam> members) : ToolParam(name, false)
 {
@@ -338,6 +378,9 @@ internal sealed class ToolArgs(IReadOnlyList<ToolParam> parameters, IReadOnlyDic
     public Vector3? Point(string name) => values.TryGetValue(name, out var value)
         ? new Vector3(value[0]!.GetValue<float>(), value[1]!.GetValue<float>(), value[2]!.GetValue<float>())
         : null;
+
+    /// <summary>The JSON value of an argument, or null when the call does not give it.</summary>
+    public JsonNode? Node(string name) => values.GetValueOrDefault(name);
 
     /// <summary>The arguments of an object argument, or null.</summary>
     public ToolArgs? Group(string name) => groups.GetValueOrDefault(name);

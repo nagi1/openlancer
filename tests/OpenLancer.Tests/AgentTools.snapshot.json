@@ -4839,6 +4839,519 @@
       }
     },
     {
+      "name": "mission_dry_run",
+      "title": "Dry run a mission",
+      "description": "Runs the trigger rules of the retail game on one mission script, step by step, without a game world. You give the inputs. An input starts the mission, loads a checkpoint, runs an active trigger or says that an event happens. It can also set a fact or the place of the player, or advance the time in heartbeats of 1/30 s. The result gives each step with its changes in the order of the game, and the state after the last step. The query keeps no state, so send all inputs at each call. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The reference of a mission script, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "start_mission",
+                    "load_checkpoint",
+                    "start_at",
+                    "run_trigger",
+                    "event",
+                    "fact",
+                    "heartbeats",
+                    "player_system",
+                    "player_in_space"
+                  ]
+                },
+                "trigger": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "line": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "values": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ],
+                  "additionalProperties": false
+                },
+                "on": {
+                  "type": "boolean"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 18000
+                },
+                "until_timer": {
+                  "type": "boolean"
+                },
+                "system": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "description": "The inputs in order, at most 1000, with at most 108000 heartbeats in all. Each input is an object with a kind. The kinds are start_mission, load_checkpoint {trigger}, run_trigger {trigger}, event {line} and fact {line, on}. The other kinds are heartbeats {count} or {until_timer: true}, player_system {system} and player_in_space {value}. A trigger is a trg: reference. A line is {key, values} with the value names of describe_mission_name. A value that the line does not give matches any value. start_at comes in a later version."
+          },
+          "timer_bound": {
+            "type": "string",
+            "enum": [
+              "shortest",
+              "longest"
+            ],
+            "default": "shortest",
+            "description": "Which bound of a timer range the run uses. The game picks a value in the range when the mission loads."
+          },
+          "since_step": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Give only the steps after this step. The state after the last step always comes. Use it as the page of a long run."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "script",
+          "inputs"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The msn: reference of the script."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The version of the script that the run read. It changes at each change of the script."
+          },
+          "total_steps": {
+            "type": "integer",
+            "description": "The number of all steps of the run: one step for each input."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "step": {
+                  "type": "integer",
+                  "description": "The number of the step, from 1. Each input gives one step."
+                },
+                "cause": {
+                  "type": "string",
+                  "description": "The input of the step in plain words, for example Start mission or Comm line X ends."
+                },
+                "changes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "started",
+                          "ran",
+                          "rearmed",
+                          "stopped",
+                          "cancelled",
+                          "ignored",
+                          "checkpoint",
+                          "effect",
+                          "end",
+                          "stop",
+                          "note"
+                        ],
+                        "description": "What changed: started, ran, rearmed, stopped, cancelled, ignored, checkpoint, effect, end, stop or note."
+                      },
+                      "trigger": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The trg: reference of the trigger of the change, or none for a note."
+                      },
+                      "text": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The row of the Run log of the Mission tab for the change."
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The trigger name of an ignored start or stop and of a checkpoint, as the line writes it, else none."
+                      },
+                      "line": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "description": "The line: reference of the action line of the change, or none."
+                      },
+                      "count": {
+                        "type": "integer",
+                        "description": "How many times the change happened in the step. A step of many heartbeats gives the same change one row."
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  },
+                  "description": "The changes of the step in the order of the game."
+                },
+                "heartbeats": {
+                  "type": "integer",
+                  "description": "The heartbeats since the start of the run at the end of the step."
+                }
+              },
+              "required": [
+                "step",
+                "cause",
+                "changes",
+                "heartbeats"
+              ]
+            },
+            "description": "The steps after since_step, in order."
+          },
+          "state": {
+            "type": "object",
+            "properties": {
+              "heartbeats": {
+                "type": "integer",
+                "description": "The heartbeats since the start of the run. 30 heartbeats are one second."
+              },
+              "active": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The trg: references of the active triggers, in the order of the active list."
+              },
+              "pending": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The trg: references of the triggers that start at the next event or heartbeat, smallest game id first."
+              },
+              "waiting_events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "line": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "description": "The condition, for example Cnd_Destroyed."
+                        },
+                        "values": {
+                          "type": "object",
+                          "description": "The values of the line by their names."
+                        },
+                        "texts": {
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The values by their position, or none."
+                        }
+                      },
+                      "required": [
+                        "key"
+                      ],
+                      "description": "The line. Give it in an event or a fact input to make it happen."
+                    },
+                    "sentence": {
+                      "type": "string",
+                      "description": "The condition in plain words, with the count of a condition that counts."
+                    },
+                    "kind": {
+                      "enum": [
+                        "event",
+                        "fact",
+                        "event_and_fact"
+                      ],
+                      "description": "event for a line that waits for an event, fact for a line that the game tests at each heartbeat, event_and_fact for both."
+                    },
+                    "triggers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The trg: references of the triggers that wait for the line."
+                    },
+                    "count": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "The events so far of a condition that counts, else none."
+                    },
+                    "needed": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "The events that a condition that counts needs, else none."
+                    },
+                    "note": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Sent at step n or Spawned at step n when the run itself makes the line likely, else none."
+                    }
+                  },
+                  "required": [
+                    "line",
+                    "sentence",
+                    "kind",
+                    "triggers"
+                  ]
+                },
+                "description": "The events and facts that the active triggers wait for, one row for each distinct line."
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "The condition, for example Cnd_Destroyed."
+                    },
+                    "values": {
+                      "$ref": "#/properties/state/properties/waiting_events/items/properties/line/properties/values"
+                    },
+                    "texts": {
+                      "$ref": "#/properties/state/properties/waiting_events/items/properties/line/properties/texts"
+                    }
+                  },
+                  "required": [
+                    "key"
+                  ]
+                },
+                "description": "The facts that are true. A fact stays true until an input sets it off."
+              },
+              "player": {
+                "type": "object",
+                "properties": {
+                  "system": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The system: reference of the system of the player, or none."
+                  },
+                  "in_space": {
+                    "type": "boolean",
+                    "description": "True while the player is in space. A timer with RUN_IN_SPACE_ONLY counts only then."
+                  }
+                },
+                "required": [
+                  "in_space"
+                ],
+                "description": "The facts about the player."
+              },
+              "end": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "success",
+                      "fail"
+                    ],
+                    "description": "success or fail."
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "description": "The trg: reference of the trigger that ends the mission."
+                  },
+                  "text_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The text id that the player sees after a fail, or none."
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "The end in plain words."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "trigger",
+                  "text"
+                ],
+                "description": "The end of the mission, or none while the mission runs."
+              },
+              "stop": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "stop_point",
+                      "no_condition",
+                      "endless_chain"
+                    ],
+                    "description": "no_condition when a trigger without a condition starts, endless_chain when a chain of starts does not end."
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "description": "The trg: reference of the trigger that stops the run."
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "Why the game stops here, and how to correct the script."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "trigger",
+                  "message"
+                ],
+                "description": "Why the run stopped before the end of the mission, or none."
+              }
+            },
+            "required": [
+              "heartbeats",
+              "active",
+              "pending",
+              "waiting_events",
+              "facts",
+              "player"
+            ],
+            "description": "The state of the run after the last step."
+          },
+          "rev": {
+            "type": "string",
+            "description": "The revision of the edit view that the tool read, as text. A save does not change it."
+          },
+          "code": {
+            "enum": [
+              "not_found",
+              "read_only",
+              "invalid_argument",
+              "invalid_value",
+              "refused",
+              "new_errors",
+              "needs_confirmation",
+              "name_taken",
+              "stale_revision",
+              "busy",
+              "save_blocked",
+              "changed_on_disk",
+              "guard_conflict",
+              "paused",
+              "limit",
+              "not_available",
+              "not_agent_entry",
+              "step_failed"
+            ],
+            "description": "The kind of the error. Each kind has a fixed meaning, for example not_found or invalid_argument."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail code of the error, for example ReferenceNotFound or BadArgument."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and how to correct it."
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The index of the step of a batch that failed, or none."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference or the text that the error is about, or none."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The argument or the field that the error is about, or none."
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "script",
+              "version",
+              "total_steps",
+              "steps",
+              "state"
+            ],
+            "description": "A result of the tool. The structured content of a call is a result or a tool error."
+          },
+          {
+            "description": "A tool error. The call has isError true. Read the message, then correct the call.",
+            "required": [
+              "code",
+              "detail",
+              "message"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "title": "Dry run a mission",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
       "name": "list_cutscenes",
       "title": "List the cutscenes",
       "description": "Lists the cutscene scripts with their folder group, the layer that gives them and their duration. This tool changes nothing.",

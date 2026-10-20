@@ -206,6 +206,23 @@ public sealed class RunJsonTests
     }
 
     [Fact]
+    public void TheJsonHostRunsTheQuery()
+    {
+        using var m = Create();
+        var host = new MissionJsonHost(m.Session);
+
+        var reply = host.DryRun(Request(new JsonObject { ["kind"] = "start_mission" }).ToJsonString());
+        var bad = host.DryRun("[1]");
+        var missing = host.DryRun(Request(new JsonObject { ["kind"] = "run_trigger", ["trigger"] = Trg("ol_none") }).ToJsonString());
+
+        Assert.False(reply.IsError);
+        Assert.Equal(1, (int)JsonNode.Parse(reply.Json)!["total_steps"]!);
+        Assert.True(bad.IsError);
+        Assert.True(missing.IsError);
+        Assert.Contains("\"code\":\"not_found\"", missing.Json);
+    }
+
+    [Fact]
     public void TheQueryChangesNothing()
     {
         using var m = Create();

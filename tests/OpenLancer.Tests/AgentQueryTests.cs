@@ -268,6 +268,34 @@ public sealed class AgentQueryTests
         Assert.Contains("Cnd_Timer", Error(host, "describe_mission_name", """{ "key": "Cnd_Timr" }""").Message);
     }
 
+    /// <summary>The tool mission_dry_run calls the dry run query of the mission layer (section 7.2 of the M6c design).
+    /// It changes nothing, and an input that does not fit gives its reason.</summary>
+    [Fact]
+    public void TheDryRunToolFoldsTheInputsOfTheCall()
+    {
+        using var m = MissionEdits.Create();
+        var host = new TestAgentHost(m.Session);
+        var script = Json("msn:" + MissionEdits.Script);
+        var revision = m.Session.Revision;
+
+        var run = Ok(host, "mission_dry_run", $$"""
+            { "script": {{script}}, "inputs": [ { "kind": "start_mission" }, { "kind": "heartbeats", "count": 1 },
+              { "kind": "heartbeats", "until_timer": true },
+              { "kind": "event", "line": { "key": "Cnd_Destroyed", "values": { "target": "ol_ship_1" } } } ],
+              "since_step": 3 }
+            """);
+        var bad = Error(host, "mission_dry_run", $$"""{ "script": {{script}}, "inputs": [ { "kind": "jump" } ] }""");
+        var field = Error(host, "mission_dry_run", $$"""{ "script": {{script}}, "inputs": [ { "kind": "heartbeats", "count": 0 } ] }""");
+
+        Assert.Equal(4, (int)run["total_steps"]!);
+        Assert.Equal(4, (int)run["steps"]![0]!["step"]!);
+        Assert.Equal("success", (string?)run["state"]!["end"]!["kind"]);
+        Assert.Equal(revision, m.Session.Revision);
+        Assert.Equal(("invalid_argument", "BadJson"), Code(bad));
+        Assert.Equal(("invalid_argument", "BadJson"), Code(field));
+        Assert.Contains("count of heartbeats", field.Message);
+    }
+
     [Fact]
     public void TheCutsceneToolsGiveTheScriptAndItsElements()
     {
