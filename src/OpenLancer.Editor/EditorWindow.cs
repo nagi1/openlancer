@@ -118,6 +118,7 @@ internal sealed partial class EditorWindow : Game
             () => playClock.Elapsed);
         playMenu = new PlayMenu(this);
         Mods = new ModsWindow(this);
+        MakeAgent();
         // A test play changes the publish checklist of its mods.
         GamePlay.PlaysRecorded += Mods.Refresh;
         // The window gets this title when it is made. The shaders compile before the first frame, and the window
@@ -277,6 +278,8 @@ internal sealed partial class EditorWindow : Game
             return;
         }
 
+        StartAgentWithEditor();
+
         // The first-run screen shows when the user has no game, no profile and no command line (decision D193). The
         // linked games get their check in the background.
         firstRunAtStart = GameLinks.FirstRunApplies(options, Settings, File.Exists);
@@ -328,6 +331,8 @@ internal sealed partial class EditorWindow : Game
 
     protected override void Cleanup()
     {
+        // The agent calls run on this thread, so the agent server stops first.
+        agentController.Dispose();
         // The game shows the data of this window, so it ends with the window (decision D48).
         Play.SessionEnding(windowClose: true);
         Play.Dispose();
@@ -747,6 +752,8 @@ internal sealed partial class EditorWindow : Game
 
         RefreshOnFocus();
         ReopenAfterReload();
+        // The session part of at most one agent call runs before the panels draw (decision D708 of the MCP1 design).
+        agentController.Frame();
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;
@@ -908,6 +915,12 @@ internal sealed partial class EditorWindow : Game
         if (ImGui.BeginMenu("Play"))
         {
             playMenu.Menu();
+            ImGui.EndMenu();
+        }
+
+        if (ImGui.BeginMenu("Agent"))
+        {
+            agentMenu.Menu();
             ImGui.EndMenu();
         }
 

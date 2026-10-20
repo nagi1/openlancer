@@ -21,6 +21,16 @@
     <ProjectReference Include="..\OpenLancer.Tools\OpenLancer.Tools.csproj" />
     <!-- Play runs the game in its own process, so the play program goes next to the editor. -->
     <ProjectReference Include="..\OpenLancer.Play\OpenLancer.Play.csproj" />
+    <!-- The agent server of the editor (milestone MCP1): the SDK binding of the agent tools. -->
+    <ProjectReference Include="..\OpenLancer.Mcp\OpenLancer.Mcp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The agent server of the editor serves Streamable HTTP with Kestrel on 127.0.0.1 (section 6.1 of the MCP1 design).
+         The package is Apache License 2.0. NOTICE and release/third-party.json list it. The ASP.NET Core shared framework
+         is MIT, as part of the .NET runtime. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
   </ItemGroup>
 
   <ItemGroup>

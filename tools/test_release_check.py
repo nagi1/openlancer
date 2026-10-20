@@ -289,6 +289,26 @@ class DocsTests(RepoFixture):
         self.assertIn("component app: repo:NOPE: the file does not exist", problems[0])
 
 
+class RuntimePackTests(unittest.TestCase):
+    def test_runtimepack_is_the_dotnet_pack_and_nuget_names_another_pack(self):
+        with tempfile.TemporaryDirectory() as folder:
+            write(os.path.join(folder, "microsoft.netcore.app.runtime.win-x64", "10.0.1", "LICENSE.TXT"), "core")
+            write(os.path.join(folder, "microsoft.aspnetcore.app.runtime.win-x64", "10.0.2", "LICENSE.TXT"), "asp")
+            versions = {"runtimepack.Microsoft.AspNetCore.App.Runtime.win-x64": "10.0.2",
+                        "runtimepack.Microsoft.NETCore.App.Runtime.win-x64": "10.0.1"}
+            old = os.environ.get("NUGET_PACKAGES")
+            os.environ["NUGET_PACKAGES"] = folder
+            try:
+                self.assertEqual("core", rc.resolve_text("runtimepack:LICENSE.TXT", folder, versions))
+                self.assertEqual("asp", rc.resolve_text("nuget:Microsoft.AspNetCore.App.Runtime.win-x64/LICENSE.TXT",
+                                                        folder, versions))
+            finally:
+                if old is None:
+                    del os.environ["NUGET_PACKAGES"]
+                else:
+                    os.environ["NUGET_PACKAGES"] = old
+
+
 class StageCheckTests(RepoFixture):
     def test_the_notice_check_finds_files_and_packages_without_a_component(self):
         self.docs()

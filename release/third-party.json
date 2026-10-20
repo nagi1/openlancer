@@ -155,7 +155,7 @@
     },
     {
       "id": "modelcontextprotocol", "name": "MCP C# SDK (ModelContextProtocol)", "version": "NuGet packages", "license": "Apache-2.0, parts MIT",
-      "packages": ["ModelContextProtocol.Core"],
+      "packages": ["ModelContextProtocol.Core", "ModelContextProtocol", "ModelContextProtocol.AspNetCore"],
       "copyright": ["Copyright (c) 2024-2026 Model Context Protocol a Series of LF Projects, LLC.", "Copyright (c) 2024 Peder Holdgaard Pedersen (mcpdotnet)", "Copyright (c) .NET Foundation and Contributors (Polyfills)"],
       "texts": ["repo:release/licenses/Apache-2.0.txt", "repo:release/licenses/MIT.txt"],
       "note": "The agent server of oltool and of the editor (milestone MCP1). The repository of the SDK moves from the MIT License to the Apache License 2.0. Parts whose authors did not agree to the change stay under the MIT License. The packages hold no license file, so the texts come from release/licenses."
@@ -181,6 +181,12 @@
       "id": "dotnet-runtime", "name": ".NET runtime (self-contained)", "version": "runtime pack of the publish", "license": "MIT, with third-party notices",
       "packages": ["runtimepack.Microsoft.NETCore.App.Runtime.win-x64"],
       "texts": ["runtimepack:LICENSE.TXT", "runtimepack:THIRD-PARTY-NOTICES.TXT"]
+    },
+    {
+      "id": "aspnetcore-runtime", "name": "ASP.NET Core shared framework (self-contained)", "version": "runtime pack of the publish", "license": "MIT, with third-party notices",
+      "packages": ["runtimepack.Microsoft.AspNetCore.App.Runtime.win-x64"],
+      "texts": ["nuget:Microsoft.AspNetCore.App.Runtime.win-x64/LICENSE.txt", "nuget:Microsoft.AspNetCore.App.Runtime.win-x64/THIRD-PARTY-NOTICES.TXT"],
+      "note": "The agent server of the editor (milestone MCP1) uses Kestrel of ASP.NET Core on 127.0.0.1."
     },
     {
       "id": "sdl3", "name": "SDL", "version": "3.2.0", "license": "Zlib",

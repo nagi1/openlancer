@@ -12,4 +12,11 @@
     <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The editor serves the agent server with ASP.NET Core (milestone MCP1), and this program runs from the folder of
+         the editor. The shared framework of ASP.NET Core then gives the Microsoft.Extensions assemblies of the folder,
+         so each program of the folder uses that framework too. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
 </Project>

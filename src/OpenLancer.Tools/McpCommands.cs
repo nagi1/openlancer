@@ -10,8 +10,8 @@ using OpenLancer.Studio.Agent;
 namespace OpenLancer.Tools;
 
 /// <summary>
-/// The commands <c>oltool mcp</c> of the agent server (section 6.2 of the MCP1 design): <c>serve</c>, <c>replay</c>
-/// and <c>tools</c>. In this build, the server without a window only reads, so <c>serve</c> needs
+/// The commands <c>oltool mcp</c> of the agent server (section 6.2 of the MCP1 design): <c>serve</c>, <c>replay</c>,
+/// <c>token</c> and <c>tools</c>. In this build, the server without a window only reads, so <c>serve</c> needs
 /// <c>--read-only</c>, and <c>replay</c> opens the profile only to read.
 /// </summary>
 internal static class McpCommands
@@ -27,6 +27,10 @@ internal static class McpCommands
                                             tools, and write one result line for each call. Exit 1 at the first result
                                             that differs from the recorded result, or at an error of a call without a
                                             recorded result. The profile opens only to read.
+          mcp token                         Print the header with the token of the agent server of the editor, as JSON,
+                                            for the headersHelper of Claude Code. Exit 2 and print nothing when no
+                                            editor server runs, or when CLAUDE_CODE_MCP_SERVER_URL names another
+                                            address than the server.
           mcp tools [--json]                Print the agent tools: names, titles and descriptions. --json: print the
                                             tool list of the MCP protocol with the schemas and the hints.
         """;
@@ -38,6 +42,7 @@ internal static class McpCommands
     {
         ["serve", var profile, .. var options] => Serve(profile, options, error),
         ["replay", var profile, .. var options] => Replay(profile, options, output, error),
+        ["token"] => Token(output, error),
         ["tools"] => Tools(output, json: false),
         ["tools", "--json"] => Tools(output, json: true),
         _ => null,
@@ -106,6 +111,18 @@ internal static class McpCommands
         {
             return Fail(error, e.Message);
         }
+    }
+
+    /// <summary>The token helper (section 6.1, item 7 of the MCP1 design). Claude Code gives the address of the server
+    /// in CLAUDE_CODE_MCP_SERVER_URL. The helper reads no other variable.</summary>
+    private static int Token(TextWriter output, TextWriter error)
+    {
+        var (headers, problem) = AgentDiscovery.Headers(AgentDiscovery.DefaultPath,
+            Environment.GetEnvironmentVariable("CLAUDE_CODE_MCP_SERVER_URL"));
+        if (headers == null)
+            return Fail(error, problem!);
+        output.WriteLine(headers);
+        return 0;
     }
 
     private static int Tools(TextWriter output, bool json)

@@ -256,15 +256,19 @@ def resolve_text(source, repo, versions):
         return text
     elif kind in ("nuget", "runtimepack"):
         if kind == "runtimepack":
-            library = next((lib for lib in versions if lib.startswith("runtimepack.")), None)
+            # The .NET runtime pack. A program with a framework reference, for example the ASP.NET Core of the agent
+            # server of the editor, adds a second runtime pack, and a nuget: source names that pack.
+            packs = [lib for lib in versions if lib.startswith("runtimepack.")]
+            library = next((lib for lib in packs if lib.startswith("runtimepack.Microsoft.NETCore.App.")),
+                           packs[0] if packs else None)
             if library is None:
                 raise ValueError(f"{source}: the deps.json files name no runtime pack")
             package, file = library[len("runtimepack."):], rest
         else:
             package, _, file = rest.partition("/")
-            if package not in versions:
+            library = package if package in versions else "runtimepack." + package
+            if library not in versions:
                 raise ValueError(f"{source}: the deps.json files do not name the package {package}")
-            library = package
         path = os.path.join(nuget_root(), package.lower(), versions[library], file)
     else:
         raise ValueError(f"{source}: the source must start with repo:, header:, nuget: or runtimepack:")

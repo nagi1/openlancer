@@ -508,12 +508,13 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         templateDialog.Draw();
         SceneEdits.Draw();
         closeDialog.Draw();
+        agentMenu.Draw();
     }
 
     /// <summary>True while a dialog of the editor is open.</summary>
     internal bool DialogOpen => Choice.IsOpen || newModDialog.IsOpen || newProfileDialog.IsOpen ||
                                 templateDialog.IsOpen || SceneEdits.IsOpen || closeDialog.IsOpen ||
-                                exportDialog?.IsOpen == true || Mods.DialogOpen;
+                                exportDialog?.IsOpen == true || Mods.DialogOpen || agentMenu.DialogOpen;
 
     /// <summary>
     /// The keys of the editor. Ctrl+S (File > Save) also works while a text field has the keyboard or a field edit is

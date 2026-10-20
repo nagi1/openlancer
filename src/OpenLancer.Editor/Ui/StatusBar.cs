@@ -18,8 +18,8 @@ namespace OpenLancer.Editor.Ui;
 
 /// <summary>
 /// The status bar at the bottom of the window. Segments at the right show the load task, the profile, the linked game,
-/// the system and the game of Play. Then they show the game and the test server of a play copy, the selection, the
-/// camera and the frame rate. A thin line separates them, and each one has a tooltip with the full text. The left part
+/// the system and the game of Play. Then they show the game and the test server of a play copy, the agent server, the
+/// selection, the camera and the frame rate. A thin line separates them, and each one has a tooltip with the full text. The left part
 /// shows the newest warning or error of the Console, or the result of the last save (see
 /// <see cref="ConsoleLog.AddStatus"/>).
 /// </summary>
@@ -65,6 +65,7 @@ internal sealed class StatusBar(EditorWindow window)
     private (string? Text, Segment? Segment) playSegment;
     private (string? Text, Segment? Segment) gameCopySegment;
     private (string? Text, Segment? Segment) serverSegment;
+    private (string? Text, Segment? Segment) agentSegment;
     private (object? Item, SystemIndex? Index, Segment? Segment) selectionSegment;
     private ((long X, long Y, long Z, long Speed) Values, Segment? Segment) cameraSegment;
     private Segment frameRateSegment = new(EditorIcons.TachometerAlt, "", "", MinWidthText: FrameRateWidthText);
@@ -181,6 +182,17 @@ internal sealed class StatusBar(EditorWindow window)
                 segments.Add(segment);
             }
         }
+
+        // The agent server of the editor (section 10 of the MCP1 design). A click opens the menu "Agent".
+        var agentText = window.AgentStatus;
+        if (agentText != agentSegment.Text)
+        {
+            agentSegment = (agentText, new Segment(EditorIcons.Comments, agentText,
+                $"{agentText}\nClick to open the Agent menu.", window.AgentServerOn ? EditorTheme.Success : null,
+                window.OpenAgentMenu));
+        }
+
+        segments.Add(agentSegment.Segment!);
 
         var selection = window.Selection;
         if (selection != selectionSegment.Item || scene.Index != selectionSegment.Index)
