@@ -499,7 +499,7 @@ internal sealed class SceneEdits(EditorWindow window)
         Renaming = section;
         RenameText = ScenePlans.RenameTarget(session.Edits, section).Id.Key ?? "";
         RenameStarted = true;
-        window.ShowPanel("hierarchy");
+        window.ShowPanel(Hierarchy.HierarchyPanel.PanelId);
     }
 
     /// <summary>Ends the rename field without a rename.</summary>

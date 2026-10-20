@@ -72,11 +72,22 @@ internal sealed class TextParam(string name, bool required, IReadOnlyList<string
 }
 
 /// <summary>A whole number from a minimum.</summary>
-internal sealed class WholeParam(string name, int minimum) : ToolParam(name, false)
+/// <param name="fallback">The value when the call does not give the argument, for the schema and the help, or
+/// null.</param>
+internal sealed class WholeParam(string name, int minimum, int? fallback = null) : ToolParam(name, false)
 {
     public int Minimum { get; } = minimum;
 
-    public override JsonObject Schema(string tool) => new() { ["type"] = "integer", ["minimum"] = Minimum };
+    /// <summary>The value when the call does not give the argument, or null.</summary>
+    public int? Default { get; } = fallback;
+
+    public override JsonObject Schema(string tool)
+    {
+        var schema = new JsonObject { ["type"] = "integer", ["minimum"] = Minimum };
+        if (Default is { } value)
+            schema["default"] = value;
+        return schema;
+    }
 
     public override string Expected => $"a whole number from {Minimum}";
 
@@ -84,21 +95,37 @@ internal sealed class WholeParam(string name, int minimum) : ToolParam(name, fal
         value.GetValueKind() == JsonValueKind.Number && value.AsValue().TryGetValue(out long number) && number >= Minimum;
 }
 
-/// <summary>A number from a minimum.</summary>
-internal sealed class NumberParam(string name, bool required, double minimum) : ToolParam(name, required)
+/// <summary>A number from a minimum, and up to a maximum when the argument has one.</summary>
+internal sealed class NumberParam(string name, bool required, double minimum, double maximum = double.PositiveInfinity)
+    : ToolParam(name, required)
 {
-    public override JsonObject Schema(string tool) => new() { ["type"] = "number", ["minimum"] = minimum };
+    public override JsonObject Schema(string tool)
+    {
+        var schema = new JsonObject { ["type"] = "number", ["minimum"] = minimum };
+        if (double.IsFinite(maximum))
+            schema["maximum"] = maximum;
+        return schema;
+    }
 
-    public override string Expected => $"a number from {minimum.ToString(CultureInfo.InvariantCulture)}";
+    public override string Expected => double.IsFinite(maximum)
+        ? $"a number from {Text(minimum)} to {Text(maximum)}"
+        : $"a number from {Text(minimum)}";
 
     public override bool Fits(JsonNode value) =>
-        value.GetValueKind() == JsonValueKind.Number && value.GetValue<double>() >= minimum;
+        value.GetValueKind() == JsonValueKind.Number && value.GetValue<double>() is var number && number >= minimum &&
+        number <= maximum;
+
+    private static string Text(double value) => value.ToString(CultureInfo.InvariantCulture);
 }
 
 /// <summary>True or false.</summary>
-internal sealed class FlagParam(string name) : ToolParam(name, false)
+/// <param name="fallback">The value when the call does not give the argument.</param>
+internal sealed class FlagParam(string name, bool fallback = false) : ToolParam(name, false)
 {
-    public override JsonObject Schema(string tool) => new() { ["type"] = "boolean", ["default"] = false };
+    /// <summary>The value when the call does not give the argument.</summary>
+    public bool Default { get; } = fallback;
+
+    public override JsonObject Schema(string tool) => new() { ["type"] = "boolean", ["default"] = Default };
 
     public override string Expected => "true or false";
 
@@ -132,6 +159,24 @@ internal sealed class ChoicesParam(string name, IReadOnlyList<string> choices) :
                                  Choices.Contains(item.GetValue<string>(), StringComparer.Ordinal) &&
                                  words.Add(item.GetValue<string>()));
     }
+}
+
+/// <summary>A list of texts, for example item references, with at least one text. Each text has at most
+/// <see cref="TextParam.MaxLength"/> characters.</summary>
+internal sealed class TextListParam(string name, bool required) : ToolParam(name, required)
+{
+    public override JsonObject Schema(string tool) => new()
+    {
+        ["type"] = "array",
+        ["items"] = new JsonObject { ["type"] = "string", ["minLength"] = 1, ["maxLength"] = TextParam.MaxLength },
+        ["minItems"] = 1,
+    };
+
+    public override string Expected => $"a list of texts of 1 to {TextParam.MaxLength} characters";
+
+    public override bool Fits(JsonNode value) =>
+        value is JsonArray { Count: > 0 } array && array.All(item =>
+            item?.GetValueKind() == JsonValueKind.String && item.GetValue<string>() is { Length: > 0 and <= TextParam.MaxLength });
 }
 
 /// <summary>A point: three numbers, X, Y and Z in meters.</summary>
@@ -256,17 +301,25 @@ internal sealed class ToolArgs(IReadOnlyList<ToolParam> parameters, IReadOnlyDic
         values.TryGetValue(name, out var value) ? value.GetValue<string>()
         : parameters.OfType<TextParam>().FirstOrDefault(p => p.Name == name)?.Default;
 
-    /// <summary>A whole number, or null.</summary>
-    public long? Whole(string name) => values.TryGetValue(name, out var value) ? value.GetValue<long>() : null;
+    /// <summary>A whole number, the default of its argument, or null.</summary>
+    public long? Whole(string name) =>
+        values.TryGetValue(name, out var value) ? value.GetValue<long>()
+        : parameters.OfType<WholeParam>().FirstOrDefault(p => p.Name == name)?.Default;
 
     /// <summary>A number, or null.</summary>
     public double? Number(string name) => values.TryGetValue(name, out var value) ? value.GetValue<double>() : null;
 
-    /// <summary>True or false. A missing argument is false.</summary>
-    public bool Flag(string name) => values.TryGetValue(name, out var value) && value.GetValue<bool>();
+    /// <summary>True or false. A missing argument gives the default of its argument.</summary>
+    public bool Flag(string name) =>
+        values.TryGetValue(name, out var value) ? value.GetValue<bool>()
+        : parameters.OfType<FlagParam>().FirstOrDefault(p => p.Name == name)?.Default ?? false;
 
     /// <summary>The words of a list, or null when the call does not give the list.</summary>
     public IReadOnlyList<string>? Choices(string name) =>
+        values.TryGetValue(name, out var value) ? value.AsArray().Select(v => v!.GetValue<string>()).ToList() : null;
+
+    /// <summary>The texts of a list, or null when the call does not give the list.</summary>
+    public IReadOnlyList<string>? Texts(string name) =>
         values.TryGetValue(name, out var value) ? value.AsArray().Select(v => v!.GetValue<string>()).ToList() : null;
 
     /// <summary>A point, or null.</summary>

@@ -180,6 +180,10 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         changed |= RangeField("Size of a request (MB)",
             "The largest request. The change applies at the next start of the server.", limits.RequestMegabytes,
             AgentLimits.RequestMegabytesRange, v => limits = limits with { RequestMegabytes = v });
+        changed |= RangeField("Side of an image (pixels)",
+            "The most pixels on each side of an image of the Scene or of a cutscene. A large image takes more time in " +
+            "a frame of the editor.", limits.RenderPixels, AgentLimits.RenderPixelsRange,
+            v => limits = limits with { RenderPixels = v });
         if (changed)
         {
             settings.Limits = limits.Clamped();

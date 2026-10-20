@@ -625,7 +625,7 @@ internal sealed class AssetsPanel : IDisposable
     private void Open(AssetRow row)
     {
         Select(row);
-        window.ShowPanel("inspector");
+        window.ShowPanel(Inspector.InspectorPanel.PanelId);
     }
 
     private bool IsSelected(AssetRow row) => row.Asset.Equals(selected) && Equals(window.Selection, selectedItem);

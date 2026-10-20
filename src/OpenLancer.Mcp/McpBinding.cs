@@ -67,10 +67,14 @@ public static class McpBinding
     }
 
     /// <summary>The result of a call in the form of the protocol: the JSON as structured content and as one text
-    /// block (section 5.7 of the MCP1 design).</summary>
+    /// block (section 5.7 of the MCP1 design). Each image of a view tool follows the text as an image block (section
+    /// 7.7).</summary>
     public static CallToolResult Protocol(ToolResult result) => new()
     {
-        Content = [new TextContentBlock { Text = result.Text }],
+        Content = [
+            new TextContentBlock { Text = result.Text },
+            .. result.Images.Select(i => ImageContentBlock.FromBytes(i.Png, ToolImage.MimeType)),
+        ],
         StructuredContent = JsonSerializer.SerializeToElement(result.Content),
         IsError = result.IsError,
     };

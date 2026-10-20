@@ -199,6 +199,10 @@
               "request_megabytes": {
                 "type": "integer",
                 "description": "The largest request, in MB."
+              },
+              "render_pixels": {
+                "type": "integer",
+                "description": "The most pixels on each side of an image of render_scene and render_cutscene."
               }
             },
             "description": "The limits of one call."
@@ -5829,6 +5833,810 @@
       },
       "annotations": {
         "title": "Read the Console",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "open_view",
+      "title": "Open a view of the editor",
+      "description": "Opens a system in the Scene, a mission script in the Mission tab or a cutscene in the Cutscene tab. Give one of the three. The tool changes what the user sees, not the data. Only the editor host has this tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The system to open in the Scene: its nickname or its system: reference."
+          },
+          "mission": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The mission script to open in the Mission tab, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini."
+          },
+          "cutscene": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The cutscene to open in the Cutscene tab, for example thn:DATA\\MODS\\my_mod\\CUTSCENES\\my_scene.thn."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "enum": [
+              "system",
+              "mission",
+              "cutscene"
+            ],
+            "description": "The view that opened: system, mission or cutscene."
+          },
+          "ref": {
+            "type": "string",
+            "description": "The reference of the system, the mission script or the cutscene."
+          },
+          "rev": {
+            "type": "string",
+            "description": "The revision of the edit view that the tool read, as text. A save does not change it."
+          },
+          "code": {
+            "enum": [
+              "not_found",
+              "read_only",
+              "invalid_argument",
+              "invalid_value",
+              "refused",
+              "new_errors",
+              "needs_confirmation",
+              "name_taken",
+              "stale_revision",
+              "busy",
+              "save_blocked",
+              "changed_on_disk",
+              "guard_conflict",
+              "paused",
+              "limit",
+              "not_available",
+              "not_agent_entry",
+              "step_failed"
+            ],
+            "description": "The kind of the error. Each kind has a fixed meaning, for example not_found or invalid_argument."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail code of the error, for example ReferenceNotFound or BadArgument."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and how to correct it."
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The index of the step of a batch that failed, or none."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference or the text that the error is about, or none."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The argument or the field that the error is about, or none."
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "description": "A result of the tool. The structured content of a call is a result or a tool error."
+          },
+          {
+            "description": "A tool error. The call has isError true. Read the message, then correct the call.",
+            "required": [
+              "code",
+              "detail",
+              "message"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "title": "Open a view of the editor",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "select_items",
+      "title": "Select an item in the editor",
+      "description": "Selects an item in the editor, as a click of the user does. The Inspector then shows its fields. The tool changes what the user sees, not the data. Only the editor host has this tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "minItems": 1,
+            "description": "The reference of the item, for example obj:my_station_1 or trg:DATA\\MISSIONS\\M01A\\m01a.ini#my_trigger. The editor selects one item at a time."
+          },
+          "frame": {
+            "type": "boolean",
+            "default": true,
+            "description": "Move the view to the item: the camera of the Scene, the graph of the Mission tab or the free camera of the Cutscene tab."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "refs"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "description": "The reference of the selected item."
+          },
+          "shown": {
+            "enum": [
+              "scene",
+              "inspector",
+              "mission",
+              "cutscene"
+            ],
+            "description": "Where the editor shows the item: scene, inspector, mission or cutscene."
+          },
+          "framed": {
+            "type": "boolean",
+            "description": "True when the view moved to show the item."
+          },
+          "rev": {
+            "type": "string",
+            "description": "The revision of the edit view that the tool read, as text. A save does not change it."
+          },
+          "code": {
+            "enum": [
+              "not_found",
+              "read_only",
+              "invalid_argument",
+              "invalid_value",
+              "refused",
+              "new_errors",
+              "needs_confirmation",
+              "name_taken",
+              "stale_revision",
+              "busy",
+              "save_blocked",
+              "changed_on_disk",
+              "guard_conflict",
+              "paused",
+              "limit",
+              "not_available",
+              "not_agent_entry",
+              "step_failed"
+            ],
+            "description": "The kind of the error. Each kind has a fixed meaning, for example not_found or invalid_argument."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail code of the error, for example ReferenceNotFound or BadArgument."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and how to correct it."
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The index of the step of a batch that failed, or none."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference or the text that the error is about, or none."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The argument or the field that the error is about, or none."
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "ref",
+              "shown",
+              "framed"
+            ],
+            "description": "A result of the tool. The structured content of a call is a result or a tool error."
+          },
+          {
+            "description": "A tool error. The call has isError true. Read the message, then correct the call.",
+            "required": [
+              "code",
+              "detail",
+              "message"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "title": "Select an item in the editor",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "render_scene",
+      "title": "Render an image of a system",
+      "description": "Renders an image of a system from a camera. The tool does not move the camera of the user. Only the editor host can render. The system must be the system that the Scene shows. The result gives the place of each item in the image.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The system of the image: its nickname or its system: reference. The default is the system that the Scene shows."
+          },
+          "camera": {
+            "type": "object",
+            "properties": {
+              "position": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "The position of the camera in meters: X, Y and Z."
+              },
+              "look_at": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "The point that the camera looks at, in meters: X, Y and Z."
+              },
+              "fov": {
+                "type": "number",
+                "minimum": 5,
+                "maximum": 150,
+                "description": "The horizontal angle of the whole image in degrees. The default is the angle of the Scene camera."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "position",
+              "look_at"
+            ],
+            "description": "The camera of the image. Without it, the camera frames the items of frame, or the whole system."
+          },
+          "frame": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "minItems": 1,
+            "description": "The references of the items to show, for example obj:my_station_1. The camera looks at them from above and from the front, as the Scene frames an item."
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 16,
+            "default": 1024,
+            "description": "The width of the image in pixels. studio_status gives the largest value."
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 16,
+            "default": 640,
+            "description": "The height of the image in pixels. studio_status gives the largest value."
+          },
+          "zones": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show the volumes of the zones, nebulae and asteroid fields, and the patrol paths."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string",
+            "description": "The system: reference of the image."
+          },
+          "width": {
+            "type": "integer",
+            "description": "The width of the image in pixels."
+          },
+          "height": {
+            "type": "integer",
+            "description": "The height of the image in pixels."
+          },
+          "camera": {
+            "type": "object",
+            "properties": {
+              "position": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "description": "The position of the camera in meters: X, Y and Z."
+              },
+              "look_at": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "description": "The point that the camera looks at, in meters: X, Y and Z."
+              },
+              "fov": {
+                "type": "number",
+                "description": "The horizontal angle of the whole image in degrees."
+              }
+            },
+            "required": [
+              "position",
+              "look_at",
+              "fov"
+            ],
+            "description": "The camera of the image. Give it to render_scene again for the same view."
+          },
+          "zones": {
+            "type": "boolean",
+            "description": "True when the image shows the zone volumes and the patrol paths."
+          },
+          "visible": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string",
+                  "description": "The reference of the item: obj: or zone:."
+                },
+                "x": {
+                  "type": "number",
+                  "description": "The distance of the center of the item from the left edge of the image, in pixels."
+                },
+                "y": {
+                  "type": "number",
+                  "description": "The distance of the center of the item from the top edge of the image, in pixels."
+                },
+                "radius": {
+                  "type": "number",
+                  "description": "The radius of the item in the image, in pixels."
+                },
+                "distance": {
+                  "type": "number",
+                  "description": "The distance of the item from the camera along the view direction, in meters."
+                }
+              },
+              "required": [
+                "ref",
+                "x",
+                "y",
+                "radius",
+                "distance"
+              ]
+            },
+            "description": "The items in the image, the largest first, with their places in pixels."
+          },
+          "visible_total": {
+            "type": "integer",
+            "description": "The number of all items in the image. The list can have fewer rows."
+          },
+          "rev": {
+            "type": "string",
+            "description": "The revision of the edit view that the tool read, as text. A save does not change it."
+          },
+          "code": {
+            "enum": [
+              "not_found",
+              "read_only",
+              "invalid_argument",
+              "invalid_value",
+              "refused",
+              "new_errors",
+              "needs_confirmation",
+              "name_taken",
+              "stale_revision",
+              "busy",
+              "save_blocked",
+              "changed_on_disk",
+              "guard_conflict",
+              "paused",
+              "limit",
+              "not_available",
+              "not_agent_entry",
+              "step_failed"
+            ],
+            "description": "The kind of the error. Each kind has a fixed meaning, for example not_found or invalid_argument."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail code of the error, for example ReferenceNotFound or BadArgument."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and how to correct it."
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The index of the step of a batch that failed, or none."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference or the text that the error is about, or none."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The argument or the field that the error is about, or none."
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "system",
+              "width",
+              "height",
+              "camera",
+              "zones",
+              "visible",
+              "visible_total"
+            ],
+            "description": "A result of the tool. The structured content of a call is a result or a tool error."
+          },
+          {
+            "description": "A tool error. The call has isError true. Read the message, then correct the call.",
+            "required": [
+              "code",
+              "detail",
+              "message"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "title": "Render an image of a system",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "render_cutscene",
+      "title": "Render an image of a cutscene",
+      "description": "Renders an image of a cutscene at a time, through the active camera or another CAMERA entity. The tool does not change the preview of the user. Only the editor host can render. A space script shows without its system.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cutscene": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The reference of the cutscene, for example thn:DATA\\MODS\\my_mod\\CUTSCENES\\my_scene.thn."
+          },
+          "time": {
+            "type": "number",
+            "minimum": 0,
+            "description": "The script time in seconds. The default is 0."
+          },
+          "camera": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The name of a CAMERA entity. The default is the camera that the cutscene shows at the time."
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 16,
+            "default": 1024,
+            "description": "The width of the image in pixels. studio_status gives the largest value."
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 16,
+            "default": 640,
+            "description": "The height of the image in pixels. studio_status gives the largest value."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "cutscene"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "cutscene": {
+            "type": "string",
+            "description": "The thn: reference of the cutscene."
+          },
+          "time": {
+            "type": "number",
+            "description": "The script time of the image in seconds. The preview steps in 1/60 s, so the time can be a little before the time of the call."
+          },
+          "camera": {
+            "type": "string",
+            "description": "The name of the camera that the image looks through."
+          },
+          "width": {
+            "type": "integer",
+            "description": "The width of the image in pixels."
+          },
+          "height": {
+            "type": "integer",
+            "description": "The height of the image in pixels."
+          },
+          "context": {
+            "type": "string",
+            "description": "The preview context of the image, as the Cutscene tab names it."
+          },
+          "without_system": {
+            "type": "boolean",
+            "description": "True when the image shows a space script without its system."
+          },
+          "rev": {
+            "type": "string",
+            "description": "The revision of the edit view that the tool read, as text. A save does not change it."
+          },
+          "code": {
+            "enum": [
+              "not_found",
+              "read_only",
+              "invalid_argument",
+              "invalid_value",
+              "refused",
+              "new_errors",
+              "needs_confirmation",
+              "name_taken",
+              "stale_revision",
+              "busy",
+              "save_blocked",
+              "changed_on_disk",
+              "guard_conflict",
+              "paused",
+              "limit",
+              "not_available",
+              "not_agent_entry",
+              "step_failed"
+            ],
+            "description": "The kind of the error. Each kind has a fixed meaning, for example not_found or invalid_argument."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail code of the error, for example ReferenceNotFound or BadArgument."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and how to correct it."
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The index of the step of a batch that failed, or none."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference or the text that the error is about, or none."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The argument or the field that the error is about, or none."
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "cutscene",
+              "time",
+              "camera",
+              "width",
+              "height",
+              "context",
+              "without_system"
+            ],
+            "description": "A result of the tool. The structured content of a call is a result or a tool error."
+          },
+          {
+            "description": "A tool error. The call has isError true. Read the message, then correct the call.",
+            "required": [
+              "code",
+              "detail",
+              "message"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "title": "Render an image of a cutscene",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "capture_panel",
+      "title": "Capture a panel of the editor",
+      "description": "Gives an image of a panel of the editor as the user sees it, with its marks and labels, after the next frame. This tool changes nothing. Only the editor host has this tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "panel": {
+            "type": "string",
+            "enum": [
+              "scene",
+              "mission",
+              "timeline",
+              "inspector",
+              "hierarchy",
+              "console"
+            ],
+            "description": "The panel to capture. Its tab must show in the editor."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "panel"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "panel": {
+            "enum": [
+              "scene",
+              "mission",
+              "timeline",
+              "inspector",
+              "hierarchy",
+              "console"
+            ],
+            "description": "The panel of the image."
+          },
+          "width": {
+            "type": "integer",
+            "description": "The width of the image in pixels."
+          },
+          "height": {
+            "type": "integer",
+            "description": "The height of the image in pixels."
+          },
+          "rev": {
+            "type": "string",
+            "description": "The revision of the edit view that the tool read, as text. A save does not change it."
+          },
+          "code": {
+            "enum": [
+              "not_found",
+              "read_only",
+              "invalid_argument",
+              "invalid_value",
+              "refused",
+              "new_errors",
+              "needs_confirmation",
+              "name_taken",
+              "stale_revision",
+              "busy",
+              "save_blocked",
+              "changed_on_disk",
+              "guard_conflict",
+              "paused",
+              "limit",
+              "not_available",
+              "not_agent_entry",
+              "step_failed"
+            ],
+            "description": "The kind of the error. Each kind has a fixed meaning, for example not_found or invalid_argument."
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail code of the error, for example ReferenceNotFound or BadArgument."
+          },
+          "message": {
+            "type": "string",
+            "description": "What is wrong and how to correct it."
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "The index of the step of a batch that failed, or none."
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference or the text that the error is about, or none."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The argument or the field that the error is about, or none."
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "panel",
+              "width",
+              "height"
+            ],
+            "description": "A result of the tool. The structured content of a call is a result or a tool error."
+          },
+          {
+            "description": "A tool error. The call has isError true. Read the message, then correct the call.",
+            "required": [
+              "code",
+              "detail",
+              "message"
+            ]
+          }
+        ]
+      },
+      "annotations": {
+        "title": "Capture a panel of the editor",
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,

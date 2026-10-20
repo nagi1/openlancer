@@ -274,6 +274,8 @@ public sealed class AgentControllerTests : IDisposable
         public ConsoleLog Log { get; } = new();
 
         public AgentView View => new("system:Li01", null, null);
+
+        public IAgentViews Views { get; } = new FakeAgentViews();
     }
 
     private string Agent => Path.Combine(folder, "agent");

@@ -239,10 +239,10 @@ internal sealed partial class EditorWindow : Game
         // An older cimgui.dll lacks the exports of the raw INI editor. The Console then gets one info entry.
         RawIniEditor.FallbackShown += () => Log.Add(ConsoleSeverity.Info, EditorSource, RawIniEditor.NeedsNewNatives);
         layout = new EditorLayout(Settings,
-            new EditorPanel("hierarchy", "Hierarchy", EditorIcons.List, hierarchy.Draw, hierarchy.Toolbar),
+            new EditorPanel(HierarchyPanel.PanelId, "Hierarchy", EditorIcons.List, hierarchy.Draw, hierarchy.Toolbar),
             new EditorPanelGroup("center",
             [
-                new EditorPanel("scene", "Scene", EditorIcons.Globe, () => Scene.Draw(frameElapsed), Scene.Toolbar,
+                new EditorPanel(SceneView.PanelId, "Scene", EditorIcons.Globe, () => Scene.Draw(frameElapsed), Scene.Toolbar,
                     padding: false),
                 new EditorPanel(CutsceneView.PanelId, "Cutscene", EditorIcons.Film,
                     () => cutsceneView.Draw(frameElapsed), cutsceneView.Toolbar, padding: false),
@@ -250,7 +250,7 @@ internal sealed partial class EditorWindow : Game
                     () => missionView.Draw(frameElapsed), missionView.Toolbar, padding: false,
                     tooltip: "The graph of the open mission, with the Scene beside it."),
             ]),
-            new EditorPanel("inspector", "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
+            new EditorPanel(InspectorPanel.PanelId, "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
                 padding: false),
             new EditorPanelGroup("bottom",
             [
@@ -259,7 +259,7 @@ internal sealed partial class EditorWindow : Game
                     tooltip: "The assets of the game data and the mods, as the Unity Project window shows them."),
                 new EditorPanel("database", "Database", EditorIcons.Database, () => database.Draw(Session?.GameData),
                     database.Toolbar, padding: false),
-                new EditorPanel("console", "Console", EditorIcons.Terminal, console.Draw, console.Toolbar,
+                new EditorPanel(ConsolePanel.PanelId, "Console", EditorIcons.Terminal, console.Draw, console.Toolbar,
                     padding: false, badges: console.Badges),
                 new EditorPanel(TimelinePanel.PanelId, "Timeline", EditorIcons.Stream, timeline.Draw, timeline.Toolbar,
                     padding: false),
@@ -440,7 +440,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         console.Select(entry);
-        layout.Show("console");
+        layout.Show(ConsolePanel.PanelId);
     }
 
     /// <summary>

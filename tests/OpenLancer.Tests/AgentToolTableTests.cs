@@ -19,13 +19,14 @@ namespace OpenLancer.Tests;
 public sealed class AgentToolTableTests
 {
     [Fact]
-    public void TheToolsHaveTheFixedOrderOfTheQueryTools()
+    public void TheToolsHaveTheFixedOrderOfTheQueryToolsThenTheViewTools()
     {
         Assert.Equal(
         [
             "studio_status", "list_systems", "get_system", "list_items", "get_item", "find_references", "list_values",
             "search_assets", "list_prop_groups", "list_missions", "get_mission", "get_trigger", "describe_mission_name",
             "list_cutscenes", "get_cutscene", "get_raw_ini", "check", "get_console",
+            "open_view", "select_items", "render_scene", "render_cutscene", "capture_panel",
         ], AgentTools.All.Select(t => t.Name));
     }
 
@@ -51,12 +52,21 @@ public sealed class AgentToolTableTests
         }
     }
 
+    /// <summary>No tool of this build changes the data (section 7.0 of the MCP1 design). <c>open_view</c> and
+    /// <c>select_items</c> change what the user sees, so they are not read-only. The Console and the view tools need the
+    /// window of the editor.</summary>
     [Fact]
-    public void EachToolOfThisBuildIsAQueryAndNoToolReachesOutside()
+    public void NoToolOfThisBuildChangesTheDataAndTheViewToolsNeedTheEditor()
     {
-        Assert.All(AgentTools.All, t => Assert.Equal(new ToolHints(ReadOnly: true, Destructive: false, Idempotent: true), t.Hints));
-        Assert.Equal(ToolHosts.Editor, AgentTools.Find("get_console")!.Hosts);
-        Assert.All(AgentTools.All.Where(t => t.Name != "get_console"), t => Assert.Equal(ToolHosts.Both, t.Hosts));
+        string[] views = ["open_view", "select_items"];
+        string[] editor = ["get_console", "open_view", "select_items", "render_scene", "render_cutscene", "capture_panel"];
+
+        Assert.All(AgentTools.All.Where(t => !views.Contains(t.Name)),
+            t => Assert.Equal(new ToolHints(ReadOnly: true, Destructive: false, Idempotent: true), t.Hints));
+        Assert.All(views.Select(n => AgentTools.Find(n)!),
+            t => Assert.Equal(new ToolHints(ReadOnly: false, Destructive: false, Idempotent: true), t.Hints));
+        Assert.All(editor.Select(n => AgentTools.Find(n)!), t => Assert.Equal(ToolHosts.Editor, t.Hosts));
+        Assert.All(AgentTools.All.Where(t => !editor.Contains(t.Name)), t => Assert.Equal(ToolHosts.Both, t.Hosts));
     }
 
     [Fact]

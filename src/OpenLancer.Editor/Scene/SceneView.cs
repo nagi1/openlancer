@@ -27,6 +27,9 @@ namespace OpenLancer.Editor.Scene;
 /// </summary>
 internal sealed class SceneView : IDisposable
 {
+    /// <summary>The id of the panel. The layout reports its focus by this id.</summary>
+    public const string PanelId = "scene";
+
     private static readonly Color4 GridColor = new(EditorTheme.GridLine);
     private static readonly Color4 AxisXColor = new(EditorTheme.AxisX);
     private static readonly Color4 AxisZColor = new(EditorTheme.AxisZ);
