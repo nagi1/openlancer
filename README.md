@@ -95,8 +95,9 @@ With an active mod, you can edit the mission. Each gesture is one entry of the e
 - Change the fields of a page in the Inspector. Use "Pick in Scene" to set a position with a click in the Scene.
 - Click "Fix" on a problem or on a missing step when the fix needs no choice.
 - Use the "+" menu of the Hierarchy to add an item. Drag a ship from the Assets panel onto the group "Cast" to add a mission ship.
+- Drag a behavior prefab from the library into the graph, for example "Spawn wave", and set its fields in the Inspector. An override of a field is bold with a violet bar, with "Revert" and "Apply to prefab". "Open prefab" edits the prefab and each of its instances.
 
-The editor keeps the places of the nodes that you move and the acts that you edit in a graph file of the mod. The game does not read it. See "Editor files of missions" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md).
+A graph file of the mod keeps the places of the nodes that you move, the acts that you edit and the prefab instances. The game does not read it. See "Editor files of missions" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md). [docs/MISSIONS.md](docs/MISSIONS.md) is the help page of the mission studio.
 
 To measure the frame time of the Mission tab, start the editor with `OpenLancer.Editor <profile.json> --bench-mission <install path>...`. For example, give the scripts `DATA\MISSIONS\M10\m10.ini` and `DATA\MISSIONS\M06\m06.ini`. The bench opens the profile without an active mod and shows each mission with the Scene beside it. For each mission, it draws 300 frames in the Beats lens and 300 frames in the Logic lens with "Show lines". The frames pan and zoom the graph.
 

@@ -407,6 +407,83 @@ member = ol_wave_spawn
 
 When the script has no trigger with the name of a record, the editor tells it when the mission opens. The editor removes that record when it writes the file again.
 
+A graph file also holds an `[Instance]` record for each linked prefab instance of the script (see "Behavior prefabs" in [MISSIONS.md](MISSIONS.md)):
+
+```ini
+[Instance]
+id = ol_w1
+prefab = mod:ol_gate
+prefab_hash = 6d2a91c0
+member = spawn, ol_w1_spawn
+member = end, ol_w1_end
+value = formation, ol_form
+override = delay, 7
+lines_hash = 0b47e3f5
+```
+
+| Key | Meaning |
+|---|---|
+| `id` | The id of the instance. The nicknames of its sections start with it. |
+| `prefab` | The prefab: `builtin:<id>` for a prefab of the editor, or `mod:<id>` for a prefab file of a mod. |
+| `prefab_hash` | The hash of the prefab at the last compile. When the prefab changes, the instance gets the warning P03. |
+| `member = <role>, <nickname>` | The section of each role of the prefab. |
+| `value = <field>, <row>` | The value of a field that each instance sets. A field with several rows has one line for each row. |
+| `override = <field>, <row>` | The value of a field that differs from the prefab. |
+| `removed = <role>` | A member that the user deleted. The prefab keeps it until the user applies the delete. |
+| `port = <port>, <trigger>` | A trigger of the mission that a port of the prefab starts. |
+| `lines_hash` | The hash of the compiled lines. Other lines of the members are a hand edit, and the instance gets the warning P01. |
+
+A prefab file is plain INI with the comment of the editor at the top. The editor reads format 1. This example is the prefab of the record above:
+
+```ini
+; OpenLancer mission prefab, format 1. The game does not read this file.
+[Prefab]
+id = ol_gate
+name = Gate ambush
+kind = beat
+format = 1
+
+[Field]
+id = formation
+label = Enemy formation
+kind = formation
+per_instance = true
+default = none
+
+[Field]
+id = delay
+label = Spawn after
+kind = number
+unit = s
+default = 5
+
+[Port]
+id = done
+label = When all are destroyed
+role = end
+
+[Trigger]
+role = spawn
+nickname = {instance}_spawn
+Cnd_Timer = {delay}
+Act_SpawnFormation = {formation}
+Act_ActTrig = {instance}_end
+
+[Trigger]
+role = end
+nickname = {instance}_end
+Cnd_Destroyed = {formation}, -1
+Act_ActTrig = {port:done}
+```
+
+- `[Prefab]` is the first section. `id` is the file name, with letters, digits, `_` and `-`. `kind` is `beat` or `order`. `help` and `writes` are the texts of the info icon. `variant_of` names the prefab that a variant copies, as `builtin:<id>` or `mod:<id>`.
+- Each `[Field]` has an `id`, a `label` and a `kind`. A kind is a value kind of the mission schema, for example `number`, `wholeNumber` or `formation`, or `list`, `triggers`, `condition` or `lines`. A word field has a `tokens` line with the id of a word set. A list field has one `column = <id>, <kind>, <label>` line for each column. A condition field and a lines field can limit their keys with `key` lines. `default` gives the value of a new instance, with one line for each row. `per_instance = true` makes a field that each instance sets, and `optional = true` lets a value field have no value.
+- Each `[Port]` has an `id`, a `label` and the `role` of its section.
+- Each other section is a template section of a mission section type. Its first line is `role`, and its `nickname` line uses `{instance}`.
+- A slot puts a value into a line. `{field}` is the value of a field, and `{field.column}` is a column of a list field. `{port:id}` is the triggers of a port, and `{instance}` is the id of the instance. A line `{field} =` takes the line of a condition field, or the lines of a lines field.
+
+The editor checks each prefab file and shows each problem with its line. A prefab with a problem does not place, and its instances get the warning P02.
+
 ## Prop groups
 
 A prop group is a set of separate objects, zones and lights. The editor saves it in the `props/` folder of a mod, as Unity saves a prefab asset. The editor places a group again in any system, and each member becomes a separate item. The merge, the game, `oltool deploy` and the validation ignore the folder. So a group changes no game data until you place it.
