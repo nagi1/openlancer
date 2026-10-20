@@ -729,7 +729,7 @@ internal sealed class AssetsPanel : IDisposable
             return;
         }
 
-        window.ShowPanel("inspector");
+        window.ShowPanel(Inspector.InspectorPanel.PanelId);
     }
 
     private bool IsSelected(AssetRow row) => row.Asset.Equals(selected) && Equals(window.Selection, selectedItem);

@@ -34,6 +34,11 @@ internal sealed class TestAgentHost(EditSession? session, AgentHostKind kind = A
 
     public AgentView? TestView { get; set; }
 
+    /// <summary>The views of the editor, or null for a host without a window.</summary>
+    public IAgentViews? TestViews { get; set; }
+
+    public override IAgentViews? Views => TestViews;
+
     /// <summary>Runs in each read of <see cref="View"/>. studio_status reads the view, so a test sees each session part
     /// of the tool with it.</summary>
     public Action? Probe { get; set; }
@@ -60,6 +65,61 @@ internal sealed class TestAgentHost(EditSession? session, AgentHostKind kind = A
 
     public override Func<CancellationToken, Task<TargetCheckResult>> CheckTarget(string target) => Target?.Invoke(target) ??
         throw new InvalidOperationException("The test host has no target checks.");
+}
+
+/// <summary>The views of a test editor: they keep each request and give a fixed image.</summary>
+internal sealed class FakeAgentViews : IAgentViews
+{
+    /// <summary>The image of each image call: the start of a PNG file.</summary>
+    public static readonly ToolImage Image = new([0x89, 0x50, 0x4E, 0x47], 2, 1);
+
+    public List<(ViewKind Kind, string Target)> Opened { get; } = [];
+
+    public List<(SelectTarget Target, bool Frame)> Selected { get; } = [];
+
+    public SceneShotRequest? Scene { get; private set; }
+
+    public CutsceneShotRequest? Cutscene { get; private set; }
+
+    public AgentPanel? Panel { get; private set; }
+
+    /// <summary>The largest side of the last capture.</summary>
+    public int? PanelSide { get; private set; }
+
+    public void Open(ViewKind kind, string target) => Opened.Add((kind, target));
+
+    public SelectionView Select(SelectTarget target, bool frame)
+    {
+        Selected.Add((target, frame));
+        return new SelectionView(target.Ref, target.Section != null ? SelectionPlace.Inspector : SelectionPlace.Mission,
+            true, frame);
+    }
+
+    public Func<CancellationToken, Task<(SceneShotView View, ToolImage Image)>> RenderScene(SceneShotRequest request)
+    {
+        Scene = request;
+        var camera = request.Camera ?? ShotCamera.Frame([], request.Width / (float)request.Height);
+        var view = new SceneShotView("system:" + request.System, request.Width, request.Height, ShotView.Of(camera),
+            request.Zones, [new VisibleRow("obj:Li01_01", 512, 320, 12.5f, 1000)], 1);
+        return _ => Task.FromResult((view, Image));
+    }
+
+    public Func<CancellationToken, Task<(CutsceneShotView View, ToolImage Image)>> RenderCutscene(
+        CutsceneShotRequest request)
+    {
+        Cutscene = request;
+        var view = new CutsceneShotView("thn:" + request.Path, (float)request.Time, request.Camera ?? "Cam_A",
+            request.Width, request.Height, "Script only", false);
+        return _ => Task.FromResult((view, Image));
+    }
+
+    public Func<CancellationToken, Task<(PanelShotView View, ToolImage Image)>> CapturePanel(AgentPanel panel,
+        int maxSide)
+    {
+        Panel = panel;
+        PanelSide = maxSide;
+        return _ => Task.FromResult((new PanelShotView(panel, 2, 1), Image));
+    }
 }
 
 /// <summary>The calls of the agent tools for the tests, without a host thread.</summary>

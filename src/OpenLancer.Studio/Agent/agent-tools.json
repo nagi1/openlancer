@@ -5,6 +5,7 @@
     "Use the list tools to find items. Then use the get tools to read them.",
     "Pass the references of a result into the next call.",
     "Use check to find the problems of the data.",
+    "In the editor, render_scene and render_cutscene give images, and capture_panel gives an image of a panel.",
     "This server only reads the data. It changes no file."
   ],
   "fields": {
@@ -15,7 +16,9 @@
     "system": "The system: its nickname or its system: reference, for example my_system or system:my_system.",
     "include_lines": "Also give the raw values of each line by their position.",
     "include_base_game": "Also give the problems and the messages that the base game gives without mods.",
-    "script": "The reference of a mission script, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini."
+    "script": "The reference of a mission script, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini.",
+    "width": "The width of the image in pixels. studio_status gives the largest value.",
+    "height": "The height of the image in pixels. studio_status gives the largest value."
   },
   "tools": {
     "studio_status": {
@@ -156,6 +159,52 @@
         "since": "Give the entries after this sequence number, oldest first. Use the sequence of the last entry of the previous result.",
         "include_base_game": "Also give the entries that the base game gives without mods."
       }
+    },
+    "open_view": {
+      "title": "Open a view of the editor",
+      "description": "Opens a system in the Scene, a mission script in the Mission tab or a cutscene in the Cutscene tab. Give one of the three. The tool changes what the user sees, not the data. Only the editor host has this tool.",
+      "fields": {
+        "system": "The system to open in the Scene: its nickname or its system: reference.",
+        "mission": "The mission script to open in the Mission tab, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini.",
+        "cutscene": "The cutscene to open in the Cutscene tab, for example thn:DATA\\MODS\\my_mod\\CUTSCENES\\my_scene.thn."
+      }
+    },
+    "select_items": {
+      "title": "Select an item in the editor",
+      "description": "Selects an item in the editor, as a click of the user does. The Inspector then shows its fields. The tool changes what the user sees, not the data. Only the editor host has this tool.",
+      "fields": {
+        "refs": "The reference of the item, for example obj:my_station_1 or trg:DATA\\MISSIONS\\M01A\\m01a.ini#my_trigger. The editor selects one item at a time.",
+        "frame": "Open the view of the item, show its tab and move the view to the item. The view is the camera of the Scene, the graph of the Mission tab or the free camera of the Cutscene tab. With false, the open views, the tabs and the cameras stay. An item of a system or a mission that is not open then shows only in the Inspector."
+      }
+    },
+    "render_scene": {
+      "title": "Render an image of a system",
+      "description": "Renders an image of a system from a camera. The tool does not move the camera of the user and does not open the system in the Scene. Only the editor host can render. Y is up. The result gives the place of each item in the image.",
+      "fields": {
+        "system": "The system of the image: its nickname or its system: reference. The default is the system that the Scene shows.",
+        "camera": "The camera of the image. Without it, the camera frames the items of frame, or the whole system. A view straight down has -Z at the top of the image.",
+        "position": "The position of the camera in meters: X, Y and Z. Y is up.",
+        "look_at": "The point that the camera looks at, in meters: X, Y and Z.",
+        "fov": "The horizontal angle of the whole image in degrees. The default is the angle of the Scene camera.",
+        "frame": "The references of the items to show, for example obj:my_station_1. Each item must be in the system of the image. The camera looks at them from above and from the front, as the Scene frames an item.",
+        "zones": "Show the volumes of the zones, nebulae and asteroid fields, and the patrol paths. The visible items then also include the zones."
+      }
+    },
+    "render_cutscene": {
+      "title": "Render an image of a cutscene",
+      "description": "Renders an image of a cutscene at a time, through the active camera or another CAMERA entity. The tool does not change the preview of the user. Only the editor host can render. A space script shows without its system.",
+      "fields": {
+        "cutscene": "The reference of the cutscene, for example thn:DATA\\MODS\\my_mod\\CUTSCENES\\my_scene.thn.",
+        "time": "The script time in seconds. The default is 0.",
+        "camera": "The name of a CAMERA entity. The default is the camera that the cutscene shows at the time."
+      }
+    },
+    "capture_panel": {
+      "title": "Capture a panel of the editor",
+      "description": "Gives an image of a panel of the editor as the user sees it, with its marks and labels, after the next frame. A panel larger than the image limit gives a smaller image. This tool changes nothing. Only the editor host has this tool.",
+      "fields": {
+        "panel": "The panel to capture. Its tab must show in the editor."
+      }
     }
   },
   "errors": {
@@ -203,7 +252,33 @@
     "wait_editing": "The user edits a field or drags an item now.",
     "wait_dialog": "A dialog of the editor is open.",
     "wait_loading": "The editor loads the game data now.",
-    "wait_user_edit": "An edit of the user runs now."
+    "wait_user_edit": "An edit of the user runs now.",
+    "render_closed": "The profile closed before the image was ready. Open the profile, then call the tool again.",
+    "render_data_changed": "The game data loaded again before the image was ready. Call the tool again.",
+    "render_preview_failed": "The preview of the cutscene stopped at {time} s, so no image rendered. {reason}",
+    "render_draw_failed": "The image of the cutscene at {time} s did not render. {reason}",
+    "render_camera_none": "The cutscene has no entity {camera}. Use get_cutscene to find the CAMERA entities.",
+    "render_camera_type": "The entity {camera} is not a CAMERA entity. Give the name of a CAMERA entity in the argument camera.",
+    "render_no_camera": "No camera of the cutscene is active at {time} s. Give the name of a CAMERA entity in the argument camera.",
+    "capture_hidden": "The panel {panel} does not show now. Ask the user to show the panel, then call the tool again.",
+    "open_view_one": "Give exactly one of the arguments system, mission and cutscene.",
+    "select_one": "The editor selects one item at a time. Give one reference in refs.",
+    "select_kind": "The editor cannot select {ref}. Give the reference of a section, a trigger, a line, a mission script, a cutscene or a cutscene element.",
+    "render_no_system": "The Scene shows no system. Open a system with open_view, then try again.",
+    "render_camera_or_frame": "Give camera or frame, not both.",
+    "render_look_at_position": "The camera cannot look at its own position. Give a look_at point away from the position.",
+    "limit_frame": "One image can frame at most {max} items. Give fewer references in frame.",
+    "limit_render": "One image can have at most {max} pixels on each side. Give a smaller width or height.",
+    "render_frame_kind": "The image cannot frame {ref}. Give the reference of an item of the system, for example obj:my_station_1, or its system: reference.",
+    "render_time_after_end": "The cutscene ends at {duration} s. Give a time from 0 to {duration}.",
+    "render_no_game_data": "The game data is not loaded. Wait until the editor loads it, then try again.",
+    "render_frame_none": "The Scene of {system} does not show {ref}. Give an item of that system.",
+    "view_not_loaded": "The game data has no system {system}. Ask the user to save the mod. The editor then loads the system.",
+    "view_cutscene_failed": "The Cutscene tab cannot open {cutscene}. {reason}",
+    "render_no_preview": "The cutscene {cutscene} has no preview. {reason}",
+    "render_frame_other_system": "The item {ref} is in the system {other}, not in {system}. Give system {other}, or frame only items of {system}.",
+    "render_cutscene_busy": "The editor renders {count} images of cutscenes now. Call the tool again when one of them is ready.",
+    "select_not_open": "The editor does not show {ref} now. Open it with open_view, or call select_items with frame true."
   },
   "resources": {
     "openlancer://catalog/lists": {
@@ -613,6 +688,34 @@
     "MissionValueView.rest": "True when the value takes all positions to the end of the line.",
     "MissionValueView.default": "The text that a command writes in a gap, or none.",
     "MissionValueView.words": "The words of a value that takes one of a set of words, else empty.",
-    "MissionValueView.help": "What the value does, or none."
+    "MissionValueView.help": "What the value does, or none.",
+    "width": "The width of the image in pixels.",
+    "height": "The height of the image in pixels.",
+    "AgentLimits.render_pixels": "The most pixels on each side of an image of render_scene and render_cutscene. A larger panel of capture_panel gives a smaller image.",
+    "OpenedView.kind": "The view that opened: system, mission or cutscene.",
+    "OpenedView.ref": "The reference of the system, the mission script or the cutscene.",
+    "SelectionView.ref": "The reference of the selected item.",
+    "SelectionView.framed": "True when the view moved to show the item.",
+    "SceneShotView.system": "The system: reference of the image.",
+    "SceneShotView.camera": "The camera of the image. Give it to render_scene again for the same view.",
+    "SceneShotView.zones": "True when the image shows the zone volumes and the patrol paths.",
+    "SceneShotView.visible": "The items whose bounding spheres are in the view, the largest first, with their places in pixels. Another item can hide an item of the list. An item whose center is behind the camera is not in the list.",
+    "SceneShotView.visible_total": "The number of all items in the view. The list can have fewer rows.",
+    "ShotView.position": "The position of the camera in meters: X, Y and Z.",
+    "ShotView.look_at": "The point that the camera looks at, in meters: X, Y and Z.",
+    "ShotView.fov": "The horizontal angle of the whole image in degrees.",
+    "VisibleRow.ref": "The reference of the item: obj: or zone:.",
+    "VisibleRow.x": "The distance of the center of the item from the left edge of the image, in pixels.",
+    "VisibleRow.y": "The distance of the center of the item from the top edge of the image, in pixels.",
+    "VisibleRow.radius": "The radius of the item in the image, in pixels.",
+    "VisibleRow.distance": "The distance of the item from the camera along the view direction, in meters.",
+    "CutsceneShotView.cutscene": "The thn: reference of the cutscene.",
+    "CutsceneShotView.time": "The script time of the image in seconds. The preview steps in 1/60 s, so the time can be a little before the time of the call.",
+    "CutsceneShotView.camera": "The name of the camera that the image looks through.",
+    "CutsceneShotView.context": "The preview context of the image, as the Cutscene tab names it.",
+    "CutsceneShotView.without_system": "True when the image shows a space script without its system.",
+    "PanelShotView.panel": "The panel of the image.",
+    "SelectionView.place": "Where the editor selects the item: scene, mission or cutscene for the item of a tab, else inspector.",
+    "SelectionView.shown": "True when the user sees the selection after the call. False when the tab of the item does not show. That tab then selects the item when the user shows it."
   }
 }

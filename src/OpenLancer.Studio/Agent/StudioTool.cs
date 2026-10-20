@@ -56,6 +56,10 @@ public sealed record ToolHints(bool ReadOnly, bool Destructive, bool Idempotent)
 {
     /// <summary>The hints of a query tool.</summary>
     public static readonly ToolHints Query = new(true, false, true);
+
+    /// <summary>The hints of a tool that changes what the editor shows and changes no data, for example
+    /// <c>open_view</c>.</summary>
+    public static readonly ToolHints View = new(false, false, true);
 }
 
 /// <summary>

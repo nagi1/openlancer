@@ -38,6 +38,9 @@ internal interface IAgentEditor
 
     /// <summary>What the editor shows now: the open system, mission and cutscene.</summary>
     AgentView View { get; }
+
+    /// <summary>The views of the editor for the view tools: the open of a view, the selection and the images.</summary>
+    IAgentViews Views { get; }
 }
 
 /// <summary>
@@ -60,6 +63,8 @@ internal sealed class EditorAgentHost(IAgentEditor editor) : AgentHost
     public override IReadOnlySet<ToolGroup> HiddenGroups => editor.Settings.HiddenToolGroups;
 
     public override AgentView? View => editor.View;
+
+    public override IAgentViews Views => editor.Views;
 
     public override string NameText(int ids) => editor.Name(ids);
 

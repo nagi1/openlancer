@@ -1,9 +1,12 @@
+using System.Numerics;
+using ImGuiNET;
 using LibreLancer;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Editor.Agent;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Ui;
 using OpenLancer.Studio.Agent;
 
 namespace OpenLancer.Editor;
@@ -16,10 +19,15 @@ internal sealed partial class EditorWindow : IAgentEditor
 {
     private AgentController agentController = null!;
     private AgentMenu agentMenu = null!;
+    private AgentRender agentRender = null!;
+    private EditorAgentViews agentViews = null!;
 
-    /// <summary>The agent server and its menu. The window makes them before its first frame.</summary>
+    /// <summary>The agent server, its menu and its render service. The window makes them before its first
+    /// frame.</summary>
     private void MakeAgent()
     {
+        agentRender = new AgentRender(this);
+        agentViews = new EditorAgentViews(this);
         agentController = new AgentController(this, this, Activity,
             AgentDiscovery.PathOf(AgentDiscovery.DefaultFolder, System.Environment.ProcessId),
             AppHandler.LogFolder(Product.Name));
@@ -42,6 +50,16 @@ internal sealed partial class EditorWindow : IAgentEditor
     /// <summary>True while the agent server runs.</summary>
     public bool AgentServerOn => agentController.State == AgentServerState.On;
 
+    /// <summary>The offscreen render service of the agent server (milestone MCP1-1b).</summary>
+    internal AgentRender AgentRender => agentRender;
+
+    /// <summary>The place of a panel on the screen in this frame, in pixels, or null when the panel does not show (see
+    /// <see cref="EditorLayout.PlaceOf"/>).</summary>
+    public (Vector2 Min, Vector2 Size)? PanelPlace(string panelId) => layout.PlaceOf(panelId, ImGui.GetFrameCount());
+
+    /// <summary>True when the panel shows in its group in the last frame. The Welcome screen shows no panel.</summary>
+    internal bool IsPanelShown(string panelId) => Session != null && layout.IsShown(panelId);
+
     /// <summary>Opens the menu "Agent" as a popup, for a click on the status bar.</summary>
     public void OpenAgentMenu() => agentMenu.OpenPopup();
 
@@ -54,7 +72,7 @@ internal sealed partial class EditorWindow : IAgentEditor
         }
 
         console.Search(text);
-        layout.Show("console");
+        layout.Show(ConsolePanel.PanelId);
     }
 
     /// <summary>What the editor does now: an agent call waits while the user edits, a dialog is open, the data loads
@@ -73,6 +91,8 @@ internal sealed partial class EditorWindow : IAgentEditor
     AgentSettings IAgentEditor.Settings => Settings.Agent;
 
     ConsoleLog IAgentEditor.Log => Log;
+
+    IAgentViews IAgentEditor.Views => agentViews;
 
     AgentView IAgentEditor.View => new(
         Scene.System is { } system ? ItemRefs.Format(new ItemReference(ItemRefKind.System, system.Nickname)) : null,

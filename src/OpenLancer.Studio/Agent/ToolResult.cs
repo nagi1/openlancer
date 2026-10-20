@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -19,19 +20,32 @@ public sealed record ToolOutcome(string Status, string? Code = null, string? Det
     public const string Error = "error";
 }
 
+/// <summary>A PNG image of a result, for example the image of <c>render_scene</c> (section 7.7 of the MCP1
+/// design).</summary>
+/// <param name="Png">The data of the PNG file.</param>
+/// <param name="Width">The width in pixels.</param>
+/// <param name="Height">The height in pixels.</param>
+public sealed record ToolImage(byte[] Png, int Width, int Height)
+{
+    /// <summary>The media type of the image.</summary>
+    public const string MimeType = "image/png";
+}
+
 /// <summary>
 /// The result of a call (section 5.7 of the MCP1 design): the JSON object in the snake case of the command layer, which
 /// the SDK binding gives as <c>structuredContent</c> and as one text block. A tool error has <see cref="IsError"/>,
-/// and its object has the error kind as <c>code</c>, the detail code as <c>detail</c> and the message.
+/// and its object has the error kind as <c>code</c>, the detail code as <c>detail</c> and the message. A view tool
+/// also gives an image (section 7.7), which the binding gives as an image block after the text.
 /// </summary>
 public sealed class ToolResult
 {
     private static readonly JsonSerializerOptions Compact = new(EditJson.Options) { WriteIndented = false };
 
-    private ToolResult(JsonObject content, bool isError)
+    private ToolResult(JsonObject content, bool isError, IReadOnlyList<ToolImage>? images = null)
     {
         Content = content;
         IsError = isError;
+        Images = images ?? [];
         Text = content.ToJsonString(Compact);
     }
 
@@ -41,10 +55,14 @@ public sealed class ToolResult
     /// <summary>True for a tool error. The model reads it and can correct its call.</summary>
     public bool IsError { get; }
 
+    /// <summary>The images of the result, for example the image of <c>render_scene</c>. A tool error has none.</summary>
+    public IReadOnlyList<ToolImage> Images { get; }
+
     /// <summary>The JSON text of <see cref="Content"/>, without white space.</summary>
     public string Text { get; }
 
-    /// <summary>The size of <see cref="Text"/> in bytes of UTF-8.</summary>
+    /// <summary>The size of <see cref="Text"/> in bytes of UTF-8. The images do not count, because the limit of a result
+    /// is for its text (section 8.4 of the MCP1 design).</summary>
     public int Bytes => Encoding.UTF8.GetByteCount(Text);
 
     /// <summary>The short form of the result for the audit log.</summary>
@@ -55,6 +73,10 @@ public sealed class ToolResult
     /// <summary>The result of a query: the value in the JSON form of the command layer.</summary>
     public static ToolResult Of<T>(T value) where T : notnull =>
         new((JsonObject)JsonSerializer.SerializeToNode(value, EditJson.Options)!, false);
+
+    /// <summary>The result of a view tool: the value in the JSON form of the command layer, and its image.</summary>
+    public static ToolResult Of<T>(T value, ToolImage image) where T : notnull =>
+        new((JsonObject)JsonSerializer.SerializeToNode(value, EditJson.Options)!, false, [image]);
 
     /// <summary>A tool error: the error kind as <c>code</c>, the detail code as <c>detail</c>, the message, and the
     /// target and the argument when the error names them.</summary>
@@ -76,7 +98,7 @@ public sealed class ToolResult
             return this;
         var content = (JsonObject)Content.DeepClone();
         content[StudioTool.RevisionName] = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        return new ToolResult(content, false);
+        return new ToolResult(content, false, Images);
     }
 
     /// <summary>The result, or the error <c>limit</c> when its text is larger than the limit of a result (section 8.4

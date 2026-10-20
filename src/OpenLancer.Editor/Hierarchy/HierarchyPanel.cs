@@ -30,6 +30,9 @@ namespace OpenLancer.Editor.Hierarchy;
 /// </remarks>
 internal sealed partial class HierarchyPanel(EditorWindow window)
 {
+    /// <summary>The id of the panel. The layout reports its focus by this id.</summary>
+    public const string PanelId = "hierarchy";
+
     private const string SearchTip =
         "Search by name or nickname. A t: word shows one type, for example t:station.\n" +
         "Types: sun, planet, station, ring, gate, hole, lane, satellite, platform, zone, field, nebula, light.";

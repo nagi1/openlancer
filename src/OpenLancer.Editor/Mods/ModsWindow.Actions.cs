@@ -243,7 +243,7 @@ internal sealed partial class ModsWindow
             }
         }
 
-        window.ShowPanel("console");
+        window.ShowPanel(Logs.ConsolePanel.PanelId);
     }
 
     /// <summary>"Mark as tested": records a test of the current content outside OpenLancer (decision D569).</summary>

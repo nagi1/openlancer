@@ -20,6 +20,9 @@ namespace OpenLancer.Editor.Logs;
 /// them. While engine lines wait for the base run, a row at the top counts them.</remarks>
 internal sealed class ConsolePanel(EditorWindow window)
 {
+    /// <summary>The id of the panel. The layout reports its focus by this id.</summary>
+    public const string PanelId = "console";
+
     // Sizes in unscaled points.
     private const float IconWidth = 20;
     private const float TimeWidth = 64;

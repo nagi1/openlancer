@@ -165,7 +165,9 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         changed |= RangeField("Rows of a page without a limit",
             "The rows of a list result when the agent gives no limit. A larger list gives more pages.", limits.ListRows,
             (1, limits.MaxListRows), v => limits = limits with { ListRows = v });
-        changed |= RangeField("Largest page limit", "The largest limit that the agent can ask for in one list result.",
+        changed |= RangeField("Largest page limit",
+            "The largest limit that the agent can ask for in one list result. It is also the most items that one image " +
+            "frames and the most rows of the visible items of an image.",
             limits.MaxListRows, AgentLimits.MaxListRowsRange, v => limits = limits with { MaxListRows = v });
         changed |= RangeField("Size of a result (KB)",
             "The most text of one result. A larger result asks the agent for pages.", limits.ResultKilobytes,
@@ -175,11 +177,16 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         changed |= RangeField("Wait for the editor (s)",
             "How long a call waits while you edit a field or a dialog is open.", limits.WaitSeconds,
             AgentLimits.WaitSecondsRange, v => limits = limits with { WaitSeconds = v });
-        changed |= RangeField("Time of a check (s)", "How long a check of a retail target can run.", limits.TailSeconds,
-            AgentLimits.TailSecondsRange, v => limits = limits with { TailSeconds = v });
+        changed |= RangeField("Time of a check or an image (s)",
+            "How long a check of a retail target or an image can take. A longer call gives the agent an error.",
+            limits.TailSeconds, AgentLimits.TailSecondsRange, v => limits = limits with { TailSeconds = v });
         changed |= RangeField("Size of a request (MB)",
             "The largest request. The change applies at the next start of the server.", limits.RequestMegabytes,
             AgentLimits.RequestMegabytesRange, v => limits = limits with { RequestMegabytes = v });
+        changed |= RangeField("Largest side of an image (pixels)",
+            "The most pixels on each side of an image of a system or of a cutscene. A larger panel capture becomes " +
+            "smaller. A large image takes more time in a frame of the editor.", limits.RenderPixels,
+            AgentLimits.RenderPixelsRange, v => limits = limits with { RenderPixels = v });
         if (changed)
         {
             settings.Limits = limits.Clamped();

@@ -63,6 +63,10 @@ internal sealed class EditorPanelGroup(string id, IReadOnlyList<EditorPanel> tab
 
     /// <summary>True when the group, or a window in it, had the focus in its last draw.</summary>
     internal bool Focused { get; set; }
+
+    /// <summary>The place of the group on the screen in its last draw, in pixels, and the ImGui frame of that draw. A
+    /// group that did not show has no place.</summary>
+    internal (Vector2 Min, Vector2 Size, int Frame)? Place { get; set; }
 }
 
 /// <summary>
@@ -135,6 +139,18 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
 
     /// <summary>True when the panel is the selected tab of its group in the last draw.</summary>
     public bool IsShown(string panelId) => Groups.Any(g => g.Shown?.Id == panelId);
+
+    /// <summary>
+    /// The place of a panel on the screen in a frame, in pixels: the place of its group with the header and the toolbar
+    /// strip, as the user sees them. Null when the panel did not show in that frame, for example because another tab of
+    /// its group was selected or the Welcome screen showed. The agent tool <c>capture_panel</c> reads it (section 7.7 of
+    /// the MCP1 design).
+    /// </summary>
+    /// <param name="frame">The ImGui frame, from <c>ImGui.GetFrameCount</c>.</param>
+    public (Vector2 Min, Vector2 Size)? PlaceOf(string panelId, int frame) =>
+        Groups.FirstOrDefault(g => g.Shown?.Id == panelId && g.Place?.Frame == frame)?.Place is { } place
+            ? (place.Min, place.Size)
+            : null;
 
     private EditorPanelGroup[] Groups => [hierarchyGroup, center, bottom, inspectorGroup];
 
@@ -250,6 +266,7 @@ internal sealed class EditorLayout(EditorSettings settings, EditorPanel hierarch
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         ImGui.PopStyleColor();
         group.Focused = visible && ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
+        group.Place = visible ? (min, Vector2.Max(size, Vector2.One), ImGui.GetFrameCount()) : null;
         if (visible)
         {
             var scale = ImGuiHelper.Scale;

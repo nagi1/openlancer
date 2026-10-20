@@ -30,6 +30,9 @@ namespace OpenLancer.Editor.Inspector;
 /// </summary>
 internal sealed class InspectorPanel : IDisposable
 {
+    /// <summary>The id of the panel. The layout reports its focus by this id.</summary>
+    public const string PanelId = "inspector";
+
     // Sizes in unscaled points.
     private const float HeaderHeight = 52;
     private const float HeaderPaddingX = 10;

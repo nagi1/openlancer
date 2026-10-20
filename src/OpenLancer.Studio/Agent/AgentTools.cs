@@ -16,12 +16,15 @@ namespace OpenLancer.Studio.Agent;
 /// <c>tools/list</c>. Both hosts serve this table, so a tool behaves the same in both (decision D700). A tool that waits
 /// for another milestone is not in the table of this build (section 7.9).
 /// </summary>
-/// <remarks>This build has the query tools of section 7.1 (milestone MCP1-1a). Each of them changes nothing.</remarks>
+/// <remarks>This build has the query tools of section 7.1 (milestone MCP1-1a) and the view tools of section 7.7
+/// (milestone MCP1-1b). No tool changes the data. The view tools are tools of the editor host.</remarks>
 public static class AgentTools
 {
     private static readonly ToolParam Cursor = new TextParam("cursor", false, null, null);
     private static readonly ToolParam Limit = new WholeParam("limit", 1);
     private static readonly ToolParam TextFilter = new TextParam("text", false, null, null);
+    private static readonly ToolParam Width = new WholeParam("width", ViewTools.MinSide, ViewTools.DefaultWidth);
+    private static readonly ToolParam Height = new WholeParam("height", ViewTools.MinSide, ViewTools.DefaultHeight);
 
     /// <summary>The tools in the order of <c>tools/list</c>.</summary>
     public static IReadOnlyList<StudioTool> All { get; } =
@@ -86,6 +89,28 @@ public static class AgentTools
                 new WholeParam("since", 0),
                 Limit),
             typeof(ConsoleView), CheckQueries.Console, ToolHosts.Editor),
+        View("open_view", ToolGroup.Studio, ToolHints.View, new ToolInput(Text("system"), Text("mission"), Text("cutscene")),
+            typeof(OpenedView), ViewTools.OpenView),
+        View("select_items", ToolGroup.Studio, ToolHints.View,
+            new ToolInput(new TextListParam("refs", true), new FlagParam("frame", true)),
+            typeof(SelectionView), ViewTools.SelectItems),
+        View("render_scene", ToolGroup.Scene, ToolHints.Query, new ToolInput(
+                Text("system"),
+                new GroupParam("camera", [
+                    new PointParam("position", true, ShotCamera.MaxCoordinate),
+                    new PointParam("look_at", true, ShotCamera.MaxCoordinate),
+                    new NumberParam("fov", false, ShotCamera.MinFov, ShotCamera.MaxFov),
+                ]),
+                new TextListParam("frame", false),
+                Width, Height,
+                new FlagParam("zones", true)),
+            typeof(SceneShotView), ViewTools.RenderScene),
+        View("render_cutscene", ToolGroup.Cutscenes, ToolHints.Query,
+            new ToolInput(Text("cutscene", true), new NumberParam("time", false, 0), Text("camera"), Width, Height),
+            typeof(CutsceneShotView), ViewTools.RenderCutscene),
+        View("capture_panel", ToolGroup.Studio, ToolHints.Query,
+            new ToolInput(new TextParam("panel", true, Names<AgentPanel>(), null)),
+            typeof(PanelShotView), ViewTools.CapturePanel),
     ];
 
     /// <summary>The tool with a name, or null.</summary>
@@ -108,10 +133,7 @@ public static class AgentTools
         if ((tool.Hosts & hosts) == 0)
             return ToolResult.Failure(EditErrorKind.NotAvailable, "EditorOnly", AgentTexts.Error("editor_only", ("tool", name)));
         if (host.HiddenGroups.Contains(tool.Group))
-        {
-            return ToolResult.Failure(EditErrorKind.NotAvailable, "GroupHidden",
-                AgentTexts.Error("group_hidden", ("group", Snake(tool.Group.ToString()))));
-        }
+            return ToolResult.Failure(GroupHidden(tool.Group));
         ToolStep step;
         try
         {
@@ -146,6 +168,11 @@ public static class AgentTools
         });
     }
 
+    /// <summary>The error of a tool of a group that the user hides (decision D725 of the MCP1 design). A view tool also
+    /// gives it for an item of such a group.</summary>
+    internal static EditError GroupHidden(ToolGroup group) => new(EditErrorKind.NotAvailable, "GroupHidden",
+        AgentTexts.Error("group_hidden", ("group", Snake(group.ToString()))));
+
     /// <summary>The error of a call whose handler or tail failed with an exception (see <see cref="Run"/>).</summary>
     internal static ToolResult Failed(string tool, Exception e) => ToolResult.Failure(EditErrorKind.StepFailed, "ToolFailed",
         AgentTexts.Error("tool_failed", ("tool", tool), ("reason", e.Message)));
@@ -163,4 +190,8 @@ public static class AgentTools
 
     private static StudioTool Query(string name, ToolGroup group, ToolInput input, Type output, Func<ToolCall, ToolStep> run,
         ToolHosts hosts = ToolHosts.Both) => new(name, group, hosts, ToolHints.Query, input, output, run);
+
+    /// <summary>A view tool (section 7.7 of the MCP1 design). Only the editor host has the views.</summary>
+    private static StudioTool View(string name, ToolGroup group, ToolHints hints, ToolInput input, Type output,
+        Func<ToolCall, ToolStep> run) => new(name, group, ToolHosts.Editor, hints, input, output, run);
 }

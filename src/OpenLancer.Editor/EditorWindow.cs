@@ -20,6 +20,7 @@ using OpenLancer.Data.Editing.Assets;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Agent;
 using OpenLancer.Editor.Assets;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Database;
@@ -75,6 +76,7 @@ internal sealed partial class EditorWindow : Game
     private MissionView missionView = null!;
     private CutsceneBench? bench;
     private MissionBench? missionBench;
+    private AgentRenderBench? agentBench;
     private readonly PlayMenu playMenu;
 
     // The base run of the Console: the engine lines of the base folder without mods (decision D516 of the console
@@ -239,10 +241,10 @@ internal sealed partial class EditorWindow : Game
         // An older cimgui.dll lacks the exports of the raw INI editor. The Console then gets one info entry.
         RawIniEditor.FallbackShown += () => Log.Add(ConsoleSeverity.Info, EditorSource, RawIniEditor.NeedsNewNatives);
         layout = new EditorLayout(Settings,
-            new EditorPanel("hierarchy", "Hierarchy", EditorIcons.List, hierarchy.Draw, hierarchy.Toolbar),
+            new EditorPanel(HierarchyPanel.PanelId, "Hierarchy", EditorIcons.List, hierarchy.Draw, hierarchy.Toolbar),
             new EditorPanelGroup("center",
             [
-                new EditorPanel("scene", "Scene", EditorIcons.Globe, () => Scene.Draw(frameElapsed), Scene.Toolbar,
+                new EditorPanel(SceneView.PanelId, "Scene", EditorIcons.Globe, () => Scene.Draw(frameElapsed), Scene.Toolbar,
                     padding: false),
                 new EditorPanel(CutsceneView.PanelId, "Cutscene", EditorIcons.Film,
                     () => cutsceneView.Draw(frameElapsed), cutsceneView.Toolbar, padding: false),
@@ -250,7 +252,7 @@ internal sealed partial class EditorWindow : Game
                     () => missionView.Draw(frameElapsed), missionView.Toolbar, padding: false,
                     tooltip: "The graph of the open mission, with the Scene beside it."),
             ]),
-            new EditorPanel("inspector", "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
+            new EditorPanel(InspectorPanel.PanelId, "Inspector", EditorIcons.InfoCircle, () => inspector.Draw(Selection),
                 padding: false),
             new EditorPanelGroup("bottom",
             [
@@ -259,7 +261,7 @@ internal sealed partial class EditorWindow : Game
                     tooltip: "The assets of the game data and the mods, as the Unity Project window shows them."),
                 new EditorPanel("database", "Database", EditorIcons.Database, () => database.Draw(Session?.GameData),
                     database.Toolbar, padding: false),
-                new EditorPanel("console", "Console", EditorIcons.Terminal, console.Draw, console.Toolbar,
+                new EditorPanel(ConsolePanel.PanelId, "Console", EditorIcons.Terminal, console.Draw, console.Toolbar,
                     padding: false, badges: console.Badges),
                 new EditorPanel(TimelinePanel.PanelId, "Timeline", EditorIcons.Stream, timeline.Draw, timeline.Toolbar,
                     padding: false),
@@ -304,12 +306,16 @@ internal sealed partial class EditorWindow : Game
     }
 
     /// <summary>
-    /// Starts the preview bench: it opens the profile of the command line without an active mod, so the bench takes no
-    /// lock and writes no file of a mod.
+    /// Starts a bench: it opens the profile of the command line without an active mod, so the bench takes no lock and
+    /// writes no file of a mod.
     /// </summary>
     private void StartBench()
     {
-        if (options.BenchMissions.Count > 0)
+        if (options.BenchAgentRender is { } system)
+        {
+            agentBench = new AgentRenderBench(this, agentViews, system);
+        }
+        else if (options.BenchMissions.Count > 0)
         {
             missionBench = new MissionBench(this, missionView, options.BenchMissions);
         }
@@ -331,8 +337,9 @@ internal sealed partial class EditorWindow : Game
 
     protected override void Cleanup()
     {
-        // The agent calls run on this thread, so the agent server stops first.
+        // The agent calls run on this thread, so the agent server stops first. Its images that wait end then.
         agentController.Dispose();
+        agentRender.Dispose();
         // The game shows the data of this window, so it ends with the window (decision D48).
         Play.SessionEnding(windowClose: true);
         Play.Dispose();
@@ -439,7 +446,7 @@ internal sealed partial class EditorWindow : Game
         }
 
         console.Select(entry);
-        layout.Show("console");
+        layout.Show(ConsolePanel.PanelId);
     }
 
     /// <summary>
@@ -579,6 +586,9 @@ internal sealed partial class EditorWindow : Game
         // The game shows the data of one profile and one active mod, so it cannot follow another session (decision
         // D48). A change of the active mod and a new mod open the profile again, so they close it here too.
         Play.SessionEnding(windowClose: false);
+        // The images of the agent and the system that they keep use the resources of the session, so they end before
+        // the panels close.
+        agentRender.Reset();
         // The panels forget the game data of the profile, so that it does not stay in memory while no profile is
         // open. The panels do not draw while the Welcome screen shows, so they cannot do this themselves.
         Scene.Close();
@@ -667,7 +677,8 @@ internal sealed partial class EditorWindow : Game
         Log.Add(ConsoleSeverity.Info, EditorSource,
             $"Game data loaded: {data.Items.Systems.Count()} systems, {data.Items.Ships.Count()} ships, " +
             $"{data.Items.Equipment.Count()} equipment.");
-        // The bench measures the preview alone, so it opens no system.
+        // A bench opens no system of its own choice: the preview bench and the mission bench measure their views
+        // alone, and the render bench opens the system of its command line.
         if (!options.Bench && data.Items.Systems.Get(DefaultSystem) is { } system)
         {
             OpenSystem(system);
@@ -754,6 +765,8 @@ internal sealed partial class EditorWindow : Game
         ReopenAfterReload();
         // The session part of at most one agent call runs before the panels draw (decision D708 of the MCP1 design).
         agentController.Frame();
+        agentRender.Frame();
+        agentBench?.Update();
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;

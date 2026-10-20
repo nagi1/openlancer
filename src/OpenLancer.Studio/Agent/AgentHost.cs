@@ -37,6 +37,11 @@ public sealed record AgentLimits
     /// <summary>The largest body of an HTTP request, in megabytes. A larger body gets 413.</summary>
     public int RequestMegabytes { get; init; } = 4;
 
+    /// <summary>The most pixels on each side of an image of <c>render_scene</c> and <c>render_cutscene</c>. A larger
+    /// width or height gives the error <c>limit</c>, because a large image takes GPU time and memory in the frame of the
+    /// editor. A larger panel of <c>capture_panel</c> gives a smaller image.</summary>
+    public int RenderPixels { get; init; } = 2048;
+
     /// <summary>The allowed range of <see cref="MaxListRows"/>. <see cref="ListRows"/> goes from 1 to
     /// <see cref="MaxListRows"/>.</summary>
     public static readonly (int Min, int Max) MaxListRowsRange = (1, 1000);
@@ -56,6 +61,10 @@ public sealed record AgentLimits
     /// <summary>The allowed range of <see cref="RequestMegabytes"/>.</summary>
     public static readonly (int Min, int Max) RequestMegabytesRange = (1, 64);
 
+    /// <summary>The allowed range of <see cref="RenderPixels"/>.</summary>
+    /// <remarks>Decision D722 of the MCP1 design allows at most 2048 pixels on each side.</remarks>
+    public static readonly (int Min, int Max) RenderPixelsRange = (256, 2048);
+
     /// <summary>The limits with each value in its allowed range: from the smallest useful value to the largest value
     /// that keeps the editor responsive and the result small enough for a model. The settings file can hold any
     /// value.</summary>
@@ -71,6 +80,7 @@ public sealed record AgentLimits
             WaitSeconds = Clamp(WaitSeconds, WaitSecondsRange),
             TailSeconds = Clamp(TailSeconds, TailSecondsRange),
             RequestMegabytes = Clamp(RequestMegabytes, RequestMegabytesRange),
+            RenderPixels = Clamp(RenderPixels, RenderPixelsRange),
         };
     }
 
@@ -139,6 +149,10 @@ public abstract class AgentHost
 
     /// <summary>What the editor shows now, or null in a host without a window.</summary>
     public virtual AgentView? View => null;
+
+    /// <summary>The views of the editor for the view tools (section 7.7 of the MCP1 design), or null in a host without a
+    /// window.</summary>
+    public virtual IAgentViews? Views => null;
 
     /// <summary>The entries of the Console that match the filter, oldest first, or null in a host without a
     /// Console.</summary>

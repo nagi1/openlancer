@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using ImGuiNET;
 using LibreLancer;
+using LibreLancer.Data.IO;
 using LibreLancer.Thn;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.IO;
@@ -21,6 +22,15 @@ namespace OpenLancer.Editor.Cutscene;
 /// design).</summary>
 /// <param name="Path">The install path of the cutscene, in normal form.</param>
 internal sealed record CutsceneRoot(string Path);
+
+/// <summary>The plan of a cutscene for an image of the agent, with the bytes of its scripts at the time of the call (see
+/// <see cref="CutsceneWorkspace.ShotPlan"/>).</summary>
+/// <param name="Path">The install path of the cutscene, in normal form.</param>
+/// <param name="Context">The context of the plan.</param>
+/// <param name="Scripts">The bytes of each script of the plan, by install path.</param>
+/// <param name="Data">The game data that the plan read.</param>
+internal sealed record CutsceneShotPlan(string Path, PreviewContext Context, PreviewPlan Plan,
+    IReadOnlyDictionary<string, byte[]> Scripts, GameDataManager Data);
 
 /// <summary>
 /// The open cutscene of the editor: its path, its preview context and plan, its timeline, and the clock of the
@@ -793,11 +803,39 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
         choices.FirstOrDefault(c => PreviewContext.Same(c, chosen)) ?? choices[0];
 
     /// <summary>The contexts that fit the open cutscene in the game data, with the ship package of Play.</summary>
-    private List<PreviewContext> MakeChoices(GameDataManager data)
+    private List<PreviewContext> MakeChoices(GameDataManager data) => ChoicesOf(Path!, session!, data);
+
+    /// <summary>The contexts that fit a cutscene in the game data, the suggested context first, with the ship package of
+    /// Play.</summary>
+    private List<PreviewContext> ChoicesOf(string path, EditorSession current, GameDataManager data)
     {
-        var package = window.Settings.PlayPackageOf(session!.Profile.FilePath);
-        return PreviewContext.Choices(Path!, References(), data.Items, SpaceScenes())
+        var package = window.Settings.PlayPackageOf(current.Profile.FilePath);
+        return PreviewContext.Choices(path, References(), data.Items, SpaceScenes())
             .Select(c => c with { ShipPackage = package }).ToList();
+    }
+
+    /// <summary>
+    /// The plan of a cutscene of W for an image of the agent (section 7.7 of the MCP1 design): the plan of the context of
+    /// the Cutscene tab when the tab shows the cutscene, else the plan of the suggested context. The plan keeps the
+    /// bytes of each of its scripts now, so a later build shows W at the time of the call. The preview of the user does
+    /// not change.
+    /// </summary>
+    /// <param name="path">The install path of a cutscene of W.</param>
+    /// <exception cref="ArgumentException">The context does not fit the cutscene. The message tells why.</exception>
+    /// <exception cref="InvalidOperationException">No game data is loaded, or the session cannot read a script of the
+    /// plan.</exception>
+    internal CutsceneShotPlan ShotPlan(string path)
+    {
+        var current = window.Session ?? throw new InvalidOperationException("No profile is open.");
+        var data = current.GameData ?? throw new InvalidOperationException("The game data is not loaded.");
+        var working = current.Edits.Cutscene(path) ?? throw new InvalidOperationException(
+            current.Edits.CutsceneReadOnlyReason(path) ?? $"The edit view has no cutscene {path}.");
+        var context = VfsPath.Comparer.Equals(path, Path) && Context != null ? Context : ChoicesOf(path, current, data)[0];
+        var plan = context.Plan(path, data.Items, References(), working);
+        var scripts = new[] { plan.SetScript, plan.Fidget }.Concat(plan.Scripts).OfType<string>()
+            .Distinct(VfsPath.Comparer)
+            .ToDictionary(p => p, p => ScriptBytes(current.Edits, data.Items.VFS, p, path), VfsPath.Comparer);
+        return new CutsceneShotPlan(path, context, plan, scripts, data);
     }
 
     /// <summary>
@@ -986,21 +1024,26 @@ internal sealed partial class CutsceneWorkspace(EditorWindow window) : IDisposab
     /// </summary>
     private ThnScript Script(string path)
     {
-        var edits = session!.Edits;
-        var items = session.GameData!.Items;
-        byte[] bytes;
-        if (VfsPath.Comparer.Equals(path, Path) || edits.OpenCutscenes.Contains(path, VfsPath.Comparer))
+        var items = session!.GameData!.Items;
+        return new ThnScript(ScriptBytes(session.Edits, items.VFS, path, Path), items.ThornReadCallback, path);
+    }
+
+    /// <summary>
+    /// The bytes of a script for a build: the text that the writer makes from W for a cutscene and for each other open
+    /// cutscene of the session, else the bytes of the edit view.
+    /// </summary>
+    /// <param name="files">The file system of the game data.</param>
+    /// <param name="cutscene">The cutscene of the build, or null.</param>
+    internal static byte[] ScriptBytes(EditSession edits, FileSystem files, string path, string? cutscene)
+    {
+        if (VfsPath.Comparer.Equals(path, cutscene) || edits.OpenCutscenes.Contains(path, VfsPath.Comparer))
         {
             var working = edits.Cutscene(path) ?? throw new InvalidOperationException(
                 edits.CutsceneReadOnlyReason(path) ?? $"No cutscene {path}.");
-            bytes = Encoding.ASCII.GetBytes(ThnWriter.Write(working.ToGlobals()));
-        }
-        else
-        {
-            bytes = items.VFS.ReadAllBytes(path);
+            return Encoding.ASCII.GetBytes(ThnWriter.Write(working.ToGlobals()));
         }
 
-        return new ThnScript(bytes, items.ThornReadCallback, path);
+        return files.ReadAllBytes(path);
     }
 
     /// <summary>
