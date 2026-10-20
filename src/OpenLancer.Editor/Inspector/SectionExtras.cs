@@ -6,7 +6,9 @@ using System.Text;
 using ImGuiNET;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Missions;
 using OpenLancer.Editor.Editing;
+using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Studio.Commands;
 
@@ -211,7 +213,16 @@ internal sealed class SectionExtras(EditorWindow window, PropertyGrid grid)
             return $"{string.Join(" ", plan.Problems)} The draft text:\n{end}";
         }
 
-        if (plan.Command != null)
+        foreach (var note in plan.Notes)
+        {
+            window.Log.Add(ConsoleSeverity.Info, MissionChecks.Source, note);
+        }
+
+        if (plan.Mission != null)
+        {
+            window.Edits.Apply(plan.Mission);
+        }
+        else if (plan.Command != null)
         {
             window.Edits.Execute(plan.Command);
         }

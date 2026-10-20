@@ -82,6 +82,18 @@ public sealed partial class MissionEditor
             .Where(d => d is { HoldsScript: true, State.Exists: true }).Select(d => d.Path).ToList();
     }
 
+    /// <summary>True when the mission editor is the only write path of a file (decision D660): a mission script, or the
+    /// ship build file of a script. The raw INI editors send such a file to <see cref="RawMissionEdit"/>.</summary>
+    /// <param name="path">An install path, with <c>\</c> or <c>/</c>, in any letter case.</param>
+    public bool IsMissionFile(string path) =>
+        InstallPaths.TryParse(path) is { } normal && session.IsGuardedMissionFile(normal);
+
+    /// <summary>Why the user cannot change a mission file, or null: the session takes no edits, or the file is a whole
+    /// file of another mod.</summary>
+    public string? ReadOnlyReason(string path) =>
+        session.ReadOnlyReason ??
+        (InstallPaths.TryParse(path) is { } normal && session.OpenDocument(normal) is { } document ? document.ReadOnlyReason : null);
+
     /// <summary>The model cache, for the tests.</summary>
     internal MissionModelCache Cache => cache;
 

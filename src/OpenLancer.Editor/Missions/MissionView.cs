@@ -14,7 +14,8 @@ namespace OpenLancer.Editor.Missions;
 /// The Mission tab (section 7.1 of the M6a design): the graph of the open mission, or its raw INI text, beside the
 /// Scene. A splitter is between them. The graph toolbar is the strip of the tab, and the Scene toolbar is a strip above
 /// the Scene part. In the raw view, the text has the colors of the INI mode and the marks of the checks. A cursor in a
-/// section selects its item, and a selection of an item scrolls the text to its section.
+/// section selects its item, and a selection of an item scrolls the text to its section. The user can edit the text
+/// while the session takes edits (section 8.8 of the M6b design).
 /// </summary>
 internal sealed class MissionView : IDisposable
 {
@@ -128,8 +129,6 @@ internal sealed class MissionView : IDisposable
 
         ImGui.SameLine();
         MissionsBrowser.BaseGameToggle(window, missions);
-        ImGui.SameLine();
-        Chip.Flow([new ChipItem("Read-only", ChipLook.Grey, MissionPageModel.ReadOnlyNote)]);
         ImGui.SameLine();
         InfoIcon.Draw("help", MissionSchema.Retail.Help[missions.ShowRaw ? "rawIni" : "missionGraph"]);
     }
@@ -297,6 +296,8 @@ internal sealed class MissionView : IDisposable
             }
             else
             {
+                // The switch to the graph ends an open edit of the text.
+                raw.EndEdit();
                 GraphPart(analysis);
             }
         }
@@ -428,9 +429,20 @@ internal sealed class MissionView : IDisposable
 
         missions.PendingGraphFrame = false;
         Follow(path, text);
-        raw.Draw("##raw", text, missions.MarksOf(path), ImGui.GetContentRegionAvail());
-        FollowCursor(path, text);
+        raw.DrawEditable("##raw", path, text, missions.MarksOf(path), ImGui.GetContentRegionAvail(), missions.NoEditReason(path),
+            (start, end) => missions.CommitRaw(path, null, start, end), draft => MissionWorkspace.DraftMarks(path, draft));
+        // While the user types, the lines of the text do not match the sections of the analysis.
+        if (!raw.IsEditing)
+        {
+            FollowCursor(path, text);
+        }
     }
+
+    /// <summary>True while the user edits the raw text of the script.</summary>
+    public bool IsEditing => raw.IsEditing;
+
+    /// <summary>Ends an open edit of the raw text, for example before a save.</summary>
+    public void EndEdit() => raw.EndEdit();
 
     /// <summary>The Scene part: the Scene toolbar strip, the banner of an item in another system, and the Scene view.
     /// After the view, the Scene frames the world items of a pending request.</summary>

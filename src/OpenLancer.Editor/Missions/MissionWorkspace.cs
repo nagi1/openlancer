@@ -7,6 +7,7 @@ using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
@@ -17,12 +18,16 @@ namespace OpenLancer.Editor.Missions;
 /// <summary>
 /// The mission scripts of the open profile and the open mission (section 4 of the M6a design): the last run of the
 /// mission checks, the open mission, the selection of the Mission tab, and the requests of the raw view and of the
-/// Mission page. One mission is open at a time. The workspace changes no file: M6a only shows mission scripts.
+/// Mission page. One mission is open at a time. The edits of mission files go through the mission editor of the session
+/// (section 4 of the M6b design).
 /// </summary>
 /// <remarks>
 /// <para>A run of the checks starts after each load of the game data. The UI thread makes the snapshot, a worker task runs
 /// the checks, and the UI thread takes the result. A run that a newer run replaced drops its result and its error
-/// (section 12.3 of the M6a design).</para>
+/// (section 12.3 of the M6a design). The mission editor takes the analyses of the run into its model cache.</para>
+/// <para>After each change of a script, also an Undo or a Redo, the result takes the model of the script from the
+/// mission editor, and the Console gets the problems again (section 6.11 of the M6b design). A new or deleted script, and
+/// a change of a ship build file, start a new run.</para>
 /// <para>The raw text of a script needs a parse of each section for the round trip check. A worker task makes it at the
 /// first use. So the open of a mission does not stop the UI thread.</para>
 /// </remarks>
@@ -44,6 +49,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
     private readonly Dictionary<string, (RawText Text, IReadOnlyList<RawMark> Marks)> marks = new(VfsPath.Comparer);
     private bool marksShowBaseGame;
     private int latestRun;
+
+    // The edit session whose changes the workspace follows.
+    private EditSession? followed;
 
     /// <summary>The names that the raw INI editors of mission scripts color: the conditions and actions, and the keys and
     /// orders of the section types.</summary>
@@ -118,7 +126,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
         MissionInputs inputs;
         try
         {
-            inputs = current.Edits.MissionInputs(EngineCoverage.Instance);
+            Follow(current.Edits);
+            current.Edits.Missions.Coverage = EngineCoverage.Instance;
+            inputs = current.Edits.Missions.RunInputs();
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -140,15 +150,15 @@ internal sealed class MissionWorkspace(EditorWindow window)
                 error = e.Message;
             }
 
-            window.QueueUIThread(() => Done(current, inputs.Generation, result, error));
+            window.QueueUIThread(() => Done(current, inputs, result, error));
         });
     }
 
     /// <summary>Takes the result of a run on the UI thread. A result or an error of a closed session or of a replaced
     /// run is dropped.</summary>
-    private void Done(EditorSession current, int generation, MissionRunResult? result, string? error)
+    private void Done(EditorSession current, MissionInputs inputs, MissionRunResult? result, string? error)
     {
-        if (window.Session != current || generation != latestRun)
+        if (window.Session != current || inputs.Generation != latestRun)
         {
             return;
         }
@@ -164,15 +174,126 @@ internal sealed class MissionWorkspace(EditorWindow window)
             return;
         }
 
+        current.Edits.Missions.TakeRun(inputs, result);
         Result = result;
         rawTexts.Clear();
         marks.Clear();
         window.Log.ReplaceSet(MissionChecks.Source, result.Problems.ToList());
     }
 
+    /// <summary>Follows the changes of the mission scripts of a session.</summary>
+    private void Follow(EditSession edits)
+    {
+        if (ReferenceEquals(followed, edits))
+        {
+            return;
+        }
+
+        Unfollow();
+        edits.Missions.ScriptsChanged += ScriptsChanged;
+        edits.Changed += FilesChanged;
+        followed = edits;
+    }
+
+    private void Unfollow()
+    {
+        if (followed != null)
+        {
+            followed.Missions.ScriptsChanged -= ScriptsChanged;
+            followed.Changed -= FilesChanged;
+            followed = null;
+        }
+    }
+
+    /// <summary>Takes the model of each changed script into the result, and gives the Console its problems
+    /// again.</summary>
+    private void ScriptsChanged(MissionScriptsChange change)
+    {
+        if (Result is not { } result || followed is not { } edits)
+        {
+            return;
+        }
+
+        var scripts = edits.Missions.ScriptPaths();
+        var analyses = new Dictionary<string, MissionAnalysis>(result.Analyses, VfsPath.Comparer);
+        foreach (var path in change.Versions.Keys)
+        {
+            rawTexts.Remove(path);
+            marks.Remove(path);
+            if (!result.IsScript(path) || !scripts.Contains(path, VfsPath.Comparer))
+            {
+                // The browser rows come from a run, so a new or deleted script needs one.
+                Run();
+                return;
+            }
+
+            analyses[path] = edits.Missions.Model(path).Analysis;
+        }
+
+        Result = result with { Analyses = analyses };
+        window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
+    }
+
+    /// <summary>Starts a run after a change of a ship build file, because the run reads the ship builds of all
+    /// scripts.</summary>
+    private void FilesChanged(EditChange change)
+    {
+        if (followed is { } edits && change.Files.Any(f => !IsScript(f) && edits.Missions.IsMissionFile(f)))
+        {
+            Run();
+        }
+    }
+
+    /// <summary>
+    /// Runs a raw edit of the whole text of a mission file, or of the INI block of a page (section 8.8 of the M6b
+    /// design). A problem keeps nothing: the Console line holds the problem and the draft text, so the user can copy it
+    /// back (decision D114).
+    /// </summary>
+    /// <param name="sections">The sections of the block in the file, or null for the whole file.</param>
+    public void CommitRaw(string path, IReadOnlyList<SectionIdentity>? sections, string start, string end)
+    {
+        if (window.Session?.Edits is not { } edits)
+        {
+            return;
+        }
+
+        var plan = sections == null
+            ? RawMissionEdit.PlanFile(edits, path, start, end)
+            : RawMissionEdit.PlanBlock(edits, path, sections, start, end);
+        if (plan.Problems.Count > 0)
+        {
+            window.Log.Add(ConsoleSeverity.Error, MissionChecks.Source,
+                $"{string.Join(" ", plan.Problems)} The editor kept the lines before the edit. Your text:\n{end}");
+            return;
+        }
+
+        foreach (var note in plan.Notes)
+        {
+            window.Log.Add(ConsoleSeverity.Info, MissionChecks.Source, note);
+        }
+
+        if (plan.Batch != null)
+        {
+            window.Edits.Apply(plan.Batch);
+        }
+    }
+
+    /// <summary>The marks of the problems of a draft text while the user types.</summary>
+    public static IReadOnlyList<RawMark> DraftMarks(string path, string text) =>
+    [
+        .. RawMissionEdit.TextProblems(path, text).Select(p =>
+            new RawMark(Math.Max(0, p.Line - 1), DiagnosticSeverity.Error, p.Message, false)),
+    ];
+
+    /// <summary>Why the user cannot edit a mission file, or null.</summary>
+    public string? NoEditReason(string path) =>
+        window.Session is not { } session ? "No profile is open."
+        : session.NoEditReason ?? session.Edits.Missions.ReadOnlyReason(path);
+
     /// <summary>Forgets the result and the open mission, for example when the profile closes.</summary>
     public void Reset()
     {
+        Unfollow();
         Result = null;
         OpenPath = null;
         PendingLine = null;

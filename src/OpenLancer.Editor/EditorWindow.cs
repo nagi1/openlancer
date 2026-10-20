@@ -184,7 +184,8 @@ internal sealed partial class EditorWindow : Game
     /// <summary>True while a field edit of the Inspector, a drag of a gizmo, a drag on the Timeline or a drag of a curve
     /// point is open. Undo, redo, the recovery file and the model loads of the scene wait for its end. A save ends it
     /// first (see <see cref="SaveCommand"/>).</summary>
-    public bool IsEditing => inspector.IsEditing || Scene.IsDragging || timeline.IsDragging || cutsceneView.IsDragging;
+    public bool IsEditing => inspector.IsEditing || Scene.IsDragging || timeline.IsDragging || cutsceneView.IsDragging ||
+                             missionView.IsEditing;
 
     /// <summary>The dialog for the questions of the editor, for example Save, Discard or Cancel.</summary>
     public ChoiceDialog Choice { get; } = new();
@@ -382,6 +383,7 @@ internal sealed partial class EditorWindow : Game
         Scene.EndDrag();
         timeline.EndDrag();
         cutsceneView.EndDrag();
+        missionView.EndEdit();
     }
 
     /// <summary>Asks for a profile file and opens it.</summary>

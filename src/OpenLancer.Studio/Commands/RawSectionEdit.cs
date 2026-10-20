@@ -2,11 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Missions.Editing;
 
 namespace OpenLancer.Studio.Commands;
 
 /// <summary>The commands of a raw edit, or the problems that stop it. No problem and no command: nothing changed.</summary>
-internal sealed record RawEditPlan(EditCommand? Command, IReadOnlyList<RawProblem> Problems);
+internal sealed record RawEditPlan(EditCommand? Command, IReadOnlyList<RawProblem> Problems)
+{
+    /// <summary>The batch of a raw edit of a section of a mission file, or null. The mission editor runs it, because it
+    /// is the only write path of mission files (decision D660 of the M6b design).</summary>
+    public MissionBatch? Mission { get; init; }
+
+    /// <summary>The notes of the edit for the Console, for example about a comment that the editor does not keep.</summary>
+    public IReadOnlyList<string> Notes { get; init; } = [];
+}
 
 /// <summary>A problem of the text of a raw edit.</summary>
 /// <param name="Line">The line of the text, from 1, or 0 for the whole text.</param>
@@ -42,11 +51,21 @@ internal static class RawSectionEdit
     /// </summary>
     /// <param name="startText">The text of the block at the start of the edit.</param>
     /// <param name="endText">The text of the block at the end of the edit.</param>
+    /// <remarks>A section of a mission file gives a batch of mission commands (section 8.8 of the M6b design).</remarks>
     public static RawEditPlan Plan(EditSession session, SectionRef section, string startText, string endText)
     {
         var view = session.Get(section);
         if (view == null)
             return Stop(0, "The edit view does not have this section any more.");
+        if (session.Missions.IsMissionFile(section.Path))
+        {
+            var mission = RawMissionEdit.PlanBlock(session, section.Path, [section.Id], startText, endText);
+            return new RawEditPlan(null, [.. mission.Problems.Select(p => new RawProblem(p.Line, p.Message))])
+            {
+                Mission = mission.Batch,
+                Notes = mission.Notes,
+            };
+        }
         var problems = new List<RawProblem>();
         var start = Parse(startText, view.Type, problems);
         problems.Clear();

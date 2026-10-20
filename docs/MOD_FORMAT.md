@@ -939,6 +939,17 @@ Each Inspector page that edits sections ends with "Loaded values (read-only)" an
 
 The block refuses an edit and keeps nothing when the text has a problem: a second header, a comment, a line without `=`, a changed nickname line, a line that the type of its key cannot hold, or a key that no row can change. The Console line then holds the problem and your whole text, so you can copy it back. When the section changed while you typed, for example by an undo, the block also refuses the edit. A value outside its list does not stop the edit: the row above then shows the error. The block is read-only when the section is read-only.
 
+#### Raw edits of mission files
+
+The "Raw INI" view of a mission script and the INI block of a mission page take edits too. The game reads the lines of a mission section in order, so the edit compares your text with the text at its start section by section, not name by name:
+
+- A changed section gets all lines of your text, in your order.
+- A new section goes in at its place in your text. A removed section goes, and each line that names it shows "Missing" until you fix the line or undo.
+- A ship or a formation section in another place moves, because a formation reads the ships before it. A section of another type keeps its place, and the Console tells it.
+- All changes of one raw edit are one entry of the edit history.
+
+The edit stops and keeps nothing when a first nickname line changes, because the lines that name the item would not follow. Use Rename (F2). It also stops when the section changed while you typed, and for a problem of the text: a header of an unknown section type, a line before the first header, or a line without `=` whose key the game does not know. The Console line then holds the problem and your whole text. A comment inside a changed mission section does not stay in the patch, and the Console tells it once.
+
 ### The save gate
 
 Each save runs the save gate first, also a save with nothing to write, and also the save before Play. A save writes nothing while the gate finds an error:

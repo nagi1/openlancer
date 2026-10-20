@@ -64,7 +64,11 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
     private static IniVocabulary? nativeVocabulary;
 
     private readonly RawIniEditorState state = new();
+    private readonly RawIniEdit edit = new();
     private ColorTextEdit? editor;
+    private bool? readOnly;
+    // The content and the commit of the open edit, or of the last draw when no edit is open.
+    private (string Key, Action<string, string> Commit)? target;
     private int? goToLine;
     private string fallbackText = "";
 
@@ -83,6 +87,9 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
     /// <summary>Moves the cursor to a line, selects it and scrolls to it at the next draw.</summary>
     public void GoToLine(int line) => goToLine = line;
 
+    /// <summary>True while the user edits the text of an editable editor.</summary>
+    public bool IsEditing => edit.IsOpen;
+
     /// <summary>Draws the editor with the text and the marks, read-only, in a region of the size.</summary>
     /// <param name="id">The id of the editor.</param>
     /// <param name="marks">The marks of the lines, from <see cref="IniLint.Marks"/>.</param>
@@ -94,12 +101,96 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
             return;
         }
 
+        var native = Native(readOnly: true);
+        Show(native, text, marks);
+        Render(native, id, size);
+    }
+
+    /// <summary>
+    /// Draws the editor with the text and the marks. The user can edit the text when <paramref name="readOnlyReason"/>
+    /// is null (section 8.8 of the M6b design). The edit ends when the editor loses the focus, when the editor draws
+    /// another content, or at <see cref="EndEdit"/>. While the user types, the text and the marks of the arguments
+    /// wait.
+    /// </summary>
+    /// <param name="key">The content of the editor, for example the path of a script. The commit of an edit is the
+    /// commit of the content at the start of the edit.</param>
+    /// <param name="readOnlyReason">Why the user cannot edit the text, or null.</param>
+    /// <param name="commit">Gets the start text and the end text of an edit at its end.</param>
+    /// <param name="draft">Gives the marks of the text of the editor while the user types, or null.</param>
+    public void DrawEditable(string id, string key, RawText text, IReadOnlyList<RawMark> marks, Vector2 size,
+        string? readOnlyReason, Action<string, string> commit, Func<string, IReadOnlyList<RawMark>>? draft = null)
+    {
+        if (!NativeReady)
+        {
+            Fallback(id, text, marks, size);
+            return;
+        }
+
+        // A click on another item can show another content before the editor loses the focus.
+        if (edit.IsOpen && target?.Key != key)
+        {
+            EndEdit();
+        }
+
+        if (!edit.IsOpen)
+        {
+            target = (key, commit);
+        }
+
+        var native = Native(readOnlyReason != null);
+        if (!edit.IsOpen)
+        {
+            Show(native, text, marks);
+        }
+
+        var focused = Render(native, id, size);
+        if (readOnlyReason != null)
+        {
+            ImGui.SetItemTooltip($"{EditorIcons.Lock} {readOnlyReason}");
+        }
+
+        var changed = native.TextChanged();
+        var ended = edit.Frame(text.Text, changed, native.GetText, focused);
+        if (ended is var (start, end))
+        {
+            Commit(start, end);
+        }
+        else if (edit.IsOpen && changed && draft != null)
+        {
+            SetMarks(native, draft(native.GetText()));
+        }
+    }
+
+    /// <summary>Ends an open edit now, for example before a save, and gives it to the commit of the last draw.</summary>
+    public void EndEdit()
+    {
+        if (editor != null && edit.End(editor.GetText) is var (start, end))
+        {
+            Commit(start, end);
+        }
+    }
+
+    private void Commit(string start, string end)
+    {
+        // The next draw shows the text of the arguments again: the text after the edit, or the text before a refusal.
+        state.Reset();
+        target?.Commit(start, end);
+    }
+
+    /// <summary>The native editor in the read-only state, with the vocabulary of this editor.</summary>
+    private ColorTextEdit Native(bool readOnly)
+    {
         if (editor == null)
         {
             editor = new ColorTextEdit();
             editor.SetMode(ColorTextEditMode.Ini);
-            editor.SetReadOnly(true);
             editor.SetPalette(Palette());
+        }
+
+        if (this.readOnly != readOnly)
+        {
+            editor.SetReadOnly(readOnly);
+            this.readOnly = readOnly;
         }
 
         if (vocabulary != null && !ReferenceEquals(nativeVocabulary, vocabulary))
@@ -109,37 +200,55 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
             nativeVocabulary = vocabulary;
         }
 
+        return editor;
+    }
+
+    /// <summary>Gives the native editor a new text and new marks when they changed.</summary>
+    private void Show(ColorTextEdit native, RawText text, IReadOnlyList<RawMark> marks)
+    {
         var (setText, setMarks) = state.Plan(text.Text, marks);
         if (setText)
         {
-            editor.SetText(text.Text);
+            native.SetText(text.Text);
         }
 
         if (setMarks)
         {
-            editor.ClearMarkers();
-            foreach (var mark in marks)
-            {
-                var color = MarkColor(mark);
-                editor.AddMarker(mark.Line, ImGui.GetColorU32(color), ImGui.GetColorU32(color with { W = 0.18f }),
-                    mark.Message, mark.Message);
-            }
+            SetMarks(native, marks);
         }
+    }
 
+    private static void SetMarks(ColorTextEdit native, IReadOnlyList<RawMark> marks)
+    {
+        native.ClearMarkers();
+        foreach (var mark in marks)
+        {
+            var color = MarkColor(mark);
+            native.AddMarker(mark.Line, ImGui.GetColorU32(color), ImGui.GetColorU32(color with { W = 0.18f }),
+                mark.Message, mark.Message);
+        }
+    }
+
+    /// <summary>Renders the editor in a child region. Returns true while the editor has the focus.</summary>
+    private bool Render(ColorTextEdit native, string id, Vector2 size)
+    {
         if (goToLine is { } line)
         {
-            editor.SetCursor(line, 0);
-            editor.SelectLine(line);
-            editor.ScrollToLine(line);
+            native.SetCursor(line, 0);
+            native.SelectLine(line);
+            native.ScrollToLine(line);
             goToLine = null;
         }
 
+        var focused = false;
         if (ImGui.BeginChild(id, size))
         {
-            editor.Render(id);
+            native.Render(id);
+            focused = ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows);
         }
 
         ImGui.EndChild();
+        return focused;
     }
 
     /// <summary>The read-only field and the list of marks, when the natives lack the exports.</summary>
@@ -216,6 +325,8 @@ internal sealed class RawIniEditor(IniVocabulary? vocabulary = null) : IDisposab
     {
         editor?.Dispose();
         editor = null;
+        readOnly = null;
         state.Reset();
+        edit.Reset();
     }
 }

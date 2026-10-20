@@ -26,7 +26,7 @@ public sealed record MissionInstanceRow(string Ref, string Prefab, string Name, 
 public sealed record MissionCastRow(string Ref, MissionSectionKind Kind, string? System);
 
 /// <summary>The summary of a script (query <c>GetMission</c>).</summary>
-public sealed record MissionSummary(string Ref, long Version)
+public sealed record MissionOverview(string Ref, long Version)
 {
     public string? Slot { get; init; }
 
@@ -183,7 +183,7 @@ public sealed class MissionQueries
     ];
 
     /// <summary>The summary of a script: start triggers, acts, prefab instances, cast and problems.</summary>
-    public MissionSummary GetMission(ScriptRef script)
+    public MissionOverview GetMission(ScriptRef script)
     {
         var model = editor.Model(script.Path);
         var path = model.Script;
@@ -192,7 +192,7 @@ public sealed class MissionQueries
             .Where(s => s.Kind is MissionSectionKind.Ship or MissionSectionKind.Formation or MissionSectionKind.Solar or
                 MissionSectionKind.Loot or MissionSectionKind.Npc)
             .Select(s => new MissionCastRow(Ref(s.Ref), s.Kind, index.SystemOf(s))).ToList();
-        return new MissionSummary(new ScriptRef(path).ToString(), model.Version)
+        return new MissionOverview(new ScriptRef(path).ToString(), model.Version)
         {
             Slot = model.Analysis.Script.Slot?.Slot,
             State = model.Analysis.Script.State,

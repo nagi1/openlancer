@@ -74,7 +74,6 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         {
             var padding = MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale);
             ImGui.Indent(padding);
-            ImGui.TextDisabled(MissionPageModel.ReadOnlyNote);
             foreach (var field in model.Lead)
             {
                 LeadLine(field);
@@ -231,7 +230,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             }
 
             // The list field has its own label and rows, so it spans both columns of the section.
-            grid.FullRow(() => widget.Draw(key, list, null, MissionPageModel.ReadOnlyNote));
+            grid.FullRow(() => widget.Draw(key, list, null, MissionPageModel.FieldNote));
         }
         else if (field.Chips.Count > 0)
         {
@@ -339,9 +338,16 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         });
     }
 
-    /// <summary>The INI block of the sections of the page, read-only, with the marks of the checks (section 10.1 item
-    /// 7 of the M6a design). The Mission page also has a button that opens the whole script. A page with several
-    /// sections, for example a prefab instance, shows them all in one block that starts closed.</summary>
+    /// <summary>True while the user edits the INI block.</summary>
+    public bool IsEditing => ini.IsEditing;
+
+    /// <summary>Ends an open edit of the INI block, for example before a save.</summary>
+    public void EndEdit() => ini.EndEdit();
+
+    /// <summary>The INI block of the sections of the page, with the marks of the checks (section 10.1 item 7 of the M6a
+    /// design). The user can edit it while the session takes edits (section 8.8 of the M6b design). The Mission page
+    /// also has a button that opens the whole script. A page with several sections, for example a prefab instance,
+    /// shows them all in one block that starts closed.</summary>
     /// <param name="wholeScript">True for the Mission page, which has the button for the whole script.</param>
     private void Ini(MissionRunResult result, MissionAnalysis analysis, MissionPageModel model, bool wholeScript)
     {
@@ -351,12 +357,15 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         var sections = targets.Select(t => analysis.Document.Find(t)).OfType<MissionSection>().ToList();
         if (sections.Count == 0)
         {
+            ini.EndEdit();
             return;
         }
 
         if (!grid.BeginSection(SectionKey(model.IniSections.Count > 0 ? "iniAll" : "ini"), EditorIcons.Terminal, model.IniTitle,
                 model.IniSections.Count == 0, MissionSchema.Retail.Help["rawIni"]))
         {
+            // A closed block ends its open edit.
+            ini.EndEdit();
             return;
         }
 
@@ -376,7 +385,11 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
 
         var height = MathF.Min(IniHeight * ImGuiHelper.Scale * (sections.Count > 1 ? 2 : 1),
             (text.Lines.Count + 2) * ImGui.GetTextLineHeightWithSpacing());
-        ini.Draw("##ini", text, block.Marks, new Vector2(ImGui.GetContentRegionAvail().X, height));
+        var path = sections[0].Ref.Path;
+        var ids = sections.Select(s => s.Ref.Id).ToList();
+        ini.DrawEditable("##ini", key, text, block.Marks, new Vector2(ImGui.GetContentRegionAvail().X, height),
+            window.Missions.NoEditReason(path), (start, end) => window.Missions.CommitRaw(path, ids, start, end),
+            draft => MissionWorkspace.DraftMarks(path, draft));
         if (wholeScript && ImGui.Button("Open the whole script"))
         {
             window.Missions.ShowRaw = true;

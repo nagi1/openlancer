@@ -6,6 +6,9 @@ using LibreLancer;
 using LibreLancer.Data;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Strings;
 using OpenLancer.Editor.Dialogs;
@@ -104,6 +107,37 @@ internal sealed class EditController(EditorWindow window) : IDisposable
             Log.Add(ConsoleSeverity.Error, Source, ErrorText.Of(e));
             return false;
         }
+    }
+
+    /// <summary>
+    /// Runs a batch of mission commands through the mission editor of the session (decision D660 of the M6b design). A
+    /// refusal changes nothing, and the Console tells why. Returns true when the batch changed W.
+    /// </summary>
+    public bool Apply(MissionBatch batch)
+    {
+        if (window.Session is not { } session)
+        {
+            return false;
+        }
+
+        if (session.NoEditReason is { } reason)
+        {
+            Log.Add(ConsoleSeverity.Warning, Source, reason);
+            return false;
+        }
+
+        var result = session.Edits.Missions.Apply(batch);
+        foreach (var error in result.Errors)
+        {
+            Log.Add(ConsoleSeverity.Error, MissionChecks.Source, error.Message);
+        }
+
+        foreach (var note in result.Notes)
+        {
+            Log.Add(ConsoleSeverity.Info, MissionChecks.Source, note);
+        }
+
+        return result.Status == EditStatus.Applied;
     }
 
     /// <summary>

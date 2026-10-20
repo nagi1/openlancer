@@ -80,7 +80,7 @@ internal sealed class InspectorPanel : IDisposable
 
     /// <summary>True while a field edit or a drag of a curve point is open. The edit history waits for its end. A save
     /// ends it first.</summary>
-    public bool IsEditing => grid.IsEditing || thnPage.IsDragging;
+    public bool IsEditing => grid.IsEditing || thnPage.IsDragging || missionPage.IsEditing;
 
     /// <summary>Ends an open field edit and keeps its text, and an open drag of a curve point, for example when the
     /// window closes.</summary>
@@ -88,6 +88,7 @@ internal sealed class InspectorPanel : IDisposable
     {
         grid.EndEdit();
         thnPage.EndDrag();
+        missionPage.EndEdit();
     }
 
     /// <summary>Forgets the items that the pages keep. Call it when the profile closes.</summary>
@@ -122,6 +123,9 @@ internal sealed class InspectorPanel : IDisposable
             missionPage.Draw(mission);
             return;
         }
+
+        // Another page ends an open edit of the INI block of a mission page.
+        missionPage.EndEdit();
 
         Header(item, window.Cutscenes.KindOf(item) ?? window.Scene.KindOf(item) ?? ObjectKinds.Unknown);
         Banner();

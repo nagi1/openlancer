@@ -95,13 +95,14 @@ internal sealed record PageSection(string Id, string Title, char Glyph, HelpText
 internal sealed partial record MissionPageModel(string Title, string Kind, char Glyph, HelpText Help,
     CompletenessReport? Completeness, IReadOnlyList<PageSection> Sections, SectionRef? Ini)
 {
-    /// <summary>The read-only note of each mission page (section 13.1 of the M6a design).</summary>
-    public const string ReadOnlyNote = "This editor version shows mission scripts but does not change them.";
+    /// <summary>The tooltip of a field of a mission page. The fields take edits in milestone M6b-2. Until then, the INI
+    /// block of the page and the raw view take the edits (section 8.8 of the M6b design).</summary>
+    public const string FieldNote = "Change this value in the INI block of the page.";
 
     /// <summary>The section of an id, or null.</summary>
     public PageSection? Section(string id) => Sections.FirstOrDefault(s => s.Id == id);
 
-    /// <summary>The lines under the read-only note, before the completeness panel, for example "Part of".</summary>
+    /// <summary>The lines under the header, before the completeness panel, for example "Part of".</summary>
     public IReadOnlyList<PageField> Lead { get; init; } = [];
 
     /// <summary>The chips of the header, for example "Start" and "Repeats" of a trigger.</summary>
