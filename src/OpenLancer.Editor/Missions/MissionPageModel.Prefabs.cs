@@ -481,7 +481,8 @@ internal sealed partial record MissionPageModel
     /// <summary>
     /// The field of a value of a matched instance (section 5.8 of the M6b design). A value of an action has the widget of
     /// its value spec, a condition has a text field of its line, and a key of the core section has a text field of its
-    /// values. A field without a write rule is read-only and goes to its trigger.
+    /// values. A value without its line has a text field, and the write adds the line. A field without a write rule is
+    /// read-only and goes to its trigger.
     /// </summary>
     private static PageField MatchedValueField(PageContext context, InstanceRef instance, PrefabField field,
         PrefabFieldValue? value, bool writes, Func<IReadOnlyList<string>, MissionBatch?> make)
@@ -489,8 +490,22 @@ internal sealed partial record MissionPageModel
         var script = context.Analysis.Script.Path;
         var link = value?.Trigger != null ? new MissionRef(script, MissionItemKind.Trigger, value.Trigger.Section.Ref) : null;
         var shown = new PageField(field.Label, value?.Text ?? "None", field.Help, link);
-        if (!writes || value?.Line is not { } line)
+        if (!writes)
             return shown;
+        if (value?.Line is not { } line)
+        {
+            // A value without its line gets a text field. The write adds the line (section 5.8 of the M6b design).
+            return field.Write is PrefabWrite.Value or PrefabWrite.Key or PrefabWrite.Condition
+                ? shown with
+                {
+                    Edit = new FieldEdit(EditWidget.Text, $"Set {field.Label}")
+                    {
+                        Make = v => v.Scalar is { Length: > 0 } text ? make([text]) : null,
+                    },
+                }
+                : shown;
+        }
+
         switch (field.Write)
         {
             case PrefabWrite.Value when line.Name?.Values.FirstOrDefault(s => s.Index == field.From.Value) is { } spec:

@@ -217,7 +217,7 @@ public sealed class MatchedFieldWriteTests
         Assert.Empty(record.Overrides);
         var linked = m.Missions.Model(Script).Prefabs!.Instances.Single(i => i.Linked?.Record.Id == "ol_wave");
         Assert.Equal(0, linked.Linked!.OverrideCount);
-        Assert.Empty(m.Missions.Model(Script).Problems.Where(p => p.Rule is "P01" or "P02" or "P03"));
+        Assert.DoesNotContain(m.Missions.Model(Script).Problems, p => p.Rule is "P01" or "P02" or "P03");
         Assert.Equal("prefab:mod:ol_saved", result.Select);
 
         m.Apply(new SetPrefabField(new InstanceRef(Script, "ol_wave"), "spawnWhen", ["Cnd_Timer = 9"]));

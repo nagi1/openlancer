@@ -241,6 +241,12 @@ public sealed class PrefabStudioTests
         One(new SetPrefabField(new InstanceRef(Script, "success/ol_win"), "reward", ["2500"]), field.Edit.Make!(2500));
         Run(m, field.Edit.Make!(2500));
         Assert.Contains("Act_AdjAcct = 2500", m.Lines("ol_win"));
+        // A value without its line gets a text field, and the write adds the line.
+        var scene = definition.Fields.Single(f => f.Id == "endScene");
+        var endScene = Field(InstancePage(m, "success/ol_win"), "fields", scene.Label);
+        Assert.Equal((EditWidget.Text, "None"), (endScene.Edit!.Widget, endScene.Value));
+        Run(m, endScene.Edit.Make!(@"missions\ol\ol_room.thn"));
+        Assert.Contains(@"Act_AddRTC = missions\\ol\\ol_room.thn", m.Lines("ol_win"));
 
         var save = page.PageActions.Single(a => a.Label == "Save as prefab...");
         var link = Assert.IsType<SavePrefabLink>(save.Link);
