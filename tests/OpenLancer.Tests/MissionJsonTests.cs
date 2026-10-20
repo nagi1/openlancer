@@ -24,6 +24,7 @@ public sealed class MissionJsonTests
         ["delete_script"] = () => new DeleteScript(TestScript),
         ["revert_section"] = () => new RevertSection(T("ol_end").Item) { Name = "Cnd_Destroyed" },
         ["accept_base"] = () => new AcceptBase(Item("MsnShip", "ol_ship_1")),
+        ["remove_act"] = () => new RemoveAct(new ActRef(Script, "act_1")),
     };
 
     [Theory]
@@ -48,7 +49,7 @@ public sealed class MissionJsonTests
     [MemberData(nameof(Kinds))]
     public void EachInverseRoundTrips(string kind)
     {
-        if (kind is "delete_script" or "revert_section" or "accept_base")
+        if (kind is "delete_script" or "revert_section" or "accept_base" or "remove_act")
             return;
         using var m = Create();
         var inverse = m.Apply(Samples()[kind]()).Inverse!;

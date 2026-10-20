@@ -169,7 +169,10 @@ public static class MissionCompleteness
                   baseInstance != null && analysis.BaseIndex is { } baseIndex && !Holds(baseIndex, baseInstance, step)
                     ? CompletenessState.Hidden
                     : CompletenessState.Missing;
-            steps.Add(new CompletenessStep(step.Name, state, step.Reason, GoTo: instance.CoreSection?.Ref));
+            steps.Add(new CompletenessStep(step.Name, state, step.Reason, GoTo: instance.CoreSection?.Ref,
+                Fix: state == CompletenessState.Missing && Editing.MissionFixes.HasStepFix(instance.Definition.Id, step.Id)
+                    ? Editing.MissionFixes.StepSubject(instance, step.Id)
+                    : null));
         }
         return new CompletenessReport(instance.Definition.Name, steps)
         {
@@ -185,8 +188,10 @@ public static class MissionCompleteness
             return new CompletenessStep(name, CompletenessState.Done, reason);
         var shown = problems.Where(p => p.Origin?.IsBaseGame != true).ToList();
         var first = shown.FirstOrDefault() ?? problems[0];
+        // A problem with a fix that needs no choice gives the step its fix (section 8.7 of the M6b design).
         return new CompletenessStep(name, shown.Count > 0 ? CompletenessState.Missing : CompletenessState.Hidden, reason,
-            first.Message, first.Target, IsError: shown.Any(p => p.Severity == DiagnosticSeverity.Error));
+            first.Message, first.Target, Editing.MissionFixes.HasFix(first.Rule) ? first.Subject : null,
+            IsError: shown.Any(p => p.Severity == DiagnosticSeverity.Error));
     }
 
     /// <summary>True when the member role or the check of a step holds.</summary>

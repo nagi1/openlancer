@@ -159,13 +159,21 @@ public sealed record AddSection(ScriptRef Script, string Type, IReadOnlyList<Lin
         var built = Lines.Select(l => d.Build(type, LinePlace.Section, l, null)).ToList();
         var entries = new List<Entry>();
         var keyEntry = d.KeyEntryOf(type);
+        var named = false;
         if (keyEntry != null && !built.Any(b => b.Key.Equals(keyEntry, StringComparison.OrdinalIgnoreCase)))
+        {
             entries.Add(d.NewEntry(document, null, keyEntry, [d.NewName(document, type, null)], 0));
+            named = true;
+        }
         foreach (var line in built)
         {
-            if (keyEntry != null && line.Key.Equals(keyEntry, StringComparison.OrdinalIgnoreCase) && line.Texts.Count > 0 &&
-                entries.Count == 0)
+            // The first key line names the section, also after a line before it, as a pasted trigger can have (TR2).
+            if (keyEntry != null && !named && line.Key.Equals(keyEntry, StringComparison.OrdinalIgnoreCase) &&
+                line.Texts.Count > 0)
+            {
                 d.NewName(document, type, line.Texts[0]);
+                named = true;
+            }
             entries.Add(d.NewEntry(document, null, line.Key, line.Texts,
                 entries.Count(e => e.Name.Equals(line.Key, StringComparison.OrdinalIgnoreCase))));
         }

@@ -111,23 +111,24 @@ internal sealed class EditController(EditorWindow window) : IDisposable
 
     /// <summary>
     /// Runs a batch of mission commands through the mission editor of the session (decision D660 of the M6b design). A
-    /// refusal changes nothing, and the Console tells why. Returns true when the batch changed W.
+    /// refusal changes nothing, and the Console tells why. A batch that needs a confirmation tells nothing here, because
+    /// the caller asks in a dialog. Returns the result, or null when no profile is open or the editor takes no edits.
     /// </summary>
-    public bool Apply(MissionBatch batch)
+    public MissionEditResult? Apply(MissionBatch batch)
     {
         if (window.Session is not { } session)
         {
-            return false;
+            return null;
         }
 
         if (session.NoEditReason is { } reason)
         {
             Log.Add(ConsoleSeverity.Warning, Source, reason);
-            return false;
+            return null;
         }
 
         var result = session.Edits.Missions.Apply(batch);
-        foreach (var error in result.Errors)
+        foreach (var error in result.NeedsConfirmation && !batch.Confirm ? [] : result.Errors)
         {
             Log.Add(ConsoleSeverity.Error, MissionChecks.Source, error.Message);
         }
@@ -137,7 +138,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
             Log.Add(ConsoleSeverity.Info, MissionChecks.Source, note);
         }
 
-        return result.Status == EditStatus.Applied;
+        return result;
     }
 
     /// <summary>

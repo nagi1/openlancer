@@ -45,7 +45,8 @@ public static class CrossLinks
 
     /// <summary>The lines of a selection: one row, the lines of a trigger, or the lines of the triggers of a prefab
     /// instance or an act. Empty for another selection.</summary>
-    public static IReadOnlyList<MissionLine> SourceLines(MissionAnalysis analysis, MissionRef selection)
+    /// <param name="acts">The acts of the graph file, or null for the acts of the analysis.</param>
+    public static IReadOnlyList<MissionLine> SourceLines(MissionAnalysis analysis, MissionRef selection, MissionActs? acts = null)
     {
         switch (selection.Kind)
         {
@@ -58,7 +59,7 @@ public static class CrossLinks
                                                          { } instance:
                 return MissionUses.LinesOf(instance.Triggers);
             case MissionItemKind.Act when selection.Key != null:
-                return MissionUses.LinesOf((analysis.Acts ?? MissionActs.Propose(analysis.Index)).TriggersOf(selection.Key));
+                return MissionUses.LinesOf((acts ?? analysis.Acts ?? MissionActs.Propose(analysis.Index)).TriggersOf(selection.Key));
             default:
                 return [];
         }

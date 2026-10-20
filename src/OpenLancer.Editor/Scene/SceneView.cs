@@ -397,6 +397,7 @@ internal sealed class SceneView : IDisposable
             overlay.Markers.Append(projection, window.Selection, missionLayer.Markers(window.Settings.ShowMissionItems));
         }
         gizmo.Update(projection);
+        PickHint(origin, size);
         Pick(projection, stage.Index, activated, deactivated);
         if (activated && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
         {
@@ -697,6 +698,22 @@ internal sealed class SceneView : IDisposable
             return;
         }
 
+        // "Pick in Scene" of a mission field (section 8.9 of the M6b design): the point is on an object, or on the
+        // plane of the camera pivot. The click selects nothing. While the Scene shows another system than the system of
+        // the item, a click sets nothing, and the hint tells why.
+        if (window.Missions.PendingPick is { } pending)
+        {
+            if (OtherSystem(pending) == null)
+            {
+                var point = ObjectAt(projection, mouse) is { } picked
+                    ? picked.Position
+                    : Assets.ScenePlacement.PivotPlanePoint(projection.Eye, projection.Ray(mouse).Direction, controller.Pivot);
+                window.Missions.Picked(point);
+            }
+
+            return;
+        }
+
         var settings = window.Settings;
         var pick = scenePicker.Pick(projection, mouse, index,
             new PickView(controller.Position, settings.ShowZones, settings.ShowNebulae, settings.ShowFog));
@@ -713,6 +730,39 @@ internal sealed class SceneView : IDisposable
             window.Selection = selection;
         }
     }
+
+    /// <summary>The hint of "Pick in Scene" at the top of the view while a mission field waits for a point. Esc
+    /// cancels the pick.</summary>
+    private void PickHint(Vector2 origin, Vector2 size)
+    {
+        if (window.Missions.PendingPick is not { } pick)
+        {
+            return;
+        }
+
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape, false))
+        {
+            window.Missions.CancelPick();
+            return;
+        }
+
+        var text = OtherSystem(pick) is { } shown ? pick.OtherSystemHint(shown) : pick.Hint;
+        var textSize = ImGui.CalcTextSize(text);
+        var at = origin + new Vector2((size.X - textSize.X) / 2, 8 * ImGuiHelper.Scale);
+        var drawList = ImGui.GetWindowDrawList();
+        var padding = new Vector2(6, 3) * ImGuiHelper.Scale;
+        drawList.AddRectFilled(at - padding, at + textSize + padding, ImGui.GetColorU32(EditorTheme.Panel with { W = 0.9f }),
+            4 * ImGuiHelper.Scale);
+        drawList.AddText(at, ImGui.GetColorU32(EditorTheme.AccentText), text);
+    }
+
+    /// <summary>The nickname of the system that the Scene shows when it is not the system of the item of a pick, or
+    /// null.</summary>
+    private string? OtherSystem(Missions.ScenePick pick) =>
+        pick.System is { } system && System is { } shown &&
+        !system.Equals(shown.Nickname, StringComparison.OrdinalIgnoreCase)
+            ? shown.Nickname
+            : null;
 
     /// <summary>The first object of the pick stack under a screen point, for a dropped loadout or faction (decision D281
     /// of the M23 design), or null.</summary>

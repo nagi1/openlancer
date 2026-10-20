@@ -331,6 +331,55 @@ internal static class MissionValues
     private static EditException Refuse(EditError error) => new(error);
 }
 
+/// <summary>
+/// The name rules of the mission commands for a caller that names a new item before its batch runs, for example a
+/// gesture that adds a trigger and then links to it in one batch (section 8.2 of the M6b design). The layer checks each
+/// name again when the batch runs.
+/// </summary>
+public static class MissionNaming
+{
+    /// <summary>True when a new name of a section type has the form rule of section 4.3 of the M6b design.</summary>
+    public static bool IsValidNew(string name, string sectionType) =>
+        MissionNames.FormOk(name, MissionNames.MaxFor(sectionType));
+
+    /// <summary>
+    /// A name of a section type that is not in <paramref name="taken"/>, without letter case. Without a wanted name, it
+    /// is the made name <c>{script stem}_{kind}_{n}</c> of decision D683. With a wanted name, it is that name when it is
+    /// valid and free, else the name with <c>_2</c>, <c>_3</c> and so on, cut to the length limit.
+    /// </summary>
+    public static string Free(string script, string sectionType, IReadOnlySet<string> taken, string? wanted = null)
+    {
+        var max = MissionNames.MaxFor(sectionType);
+        bool Ok(string name) => MissionNames.FormOk(name, max) && !taken.Contains(name);
+        if (wanted == null)
+        {
+            var stem = System.IO.Path.GetFileNameWithoutExtension(script.Replace('\\', '/')).ToLowerInvariant();
+            var word = MissionNames.MadeWord(sectionType);
+            for (var n = 1;; n++)
+            {
+                var made = $"{stem}_{word}_{n.ToString(CultureInfo.InvariantCulture)}";
+                if (made.Length > max)
+                    made = $"{word}_{n.ToString(CultureInfo.InvariantCulture)}";
+                if (Ok(made))
+                    return made;
+            }
+        }
+        var trimmed = wanted.Trim();
+        if (Ok(trimmed))
+            return trimmed;
+        var stemOfWanted = new string(trimmed.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_').ToArray());
+        if (stemOfWanted.Length == 0)
+            stemOfWanted = MissionNames.MadeWord(sectionType);
+        for (var n = 2;; n++)
+        {
+            var suffix = "_" + n.ToString(CultureInfo.InvariantCulture);
+            var candidate = stemOfWanted[..Math.Min(stemOfWanted.Length, max - suffix.Length)] + suffix;
+            if (Ok(candidate))
+                return candidate;
+        }
+    }
+}
+
 /// <summary>The name rules of the mission commands (section 4.3 of the M6b design, decision D683).</summary>
 internal static class MissionNames
 {

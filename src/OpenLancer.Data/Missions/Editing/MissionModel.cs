@@ -25,12 +25,16 @@ public sealed record MissionModel(string Script, long Version, MissionAnalysis A
     /// <summary>The behavior prefab instances that the matcher finds.</summary>
     public MissionPrefabResult? Prefabs => Analysis.Prefabs;
 
-    /// <summary>The proposed acts of the script.</summary>
-    public MissionActs? Acts => Analysis.Acts;
+    /// <summary>The acts of the script: the acts of the graph file after the first act edit, else the proposed acts
+    /// (decision D679).</summary>
+    public MissionActs? Acts => Graph.Acts.Count > 0 ? MissionActs.FromFile(Index, Graph.Acts) : Analysis.Acts;
 
     /// <summary>The text of the graph file of the script in the active mod (section 6.8 of the M6b design), or null
     /// when the mod has none.</summary>
     public string? GraphFile { get; init; }
+
+    /// <summary>The records of the graph file: the node places, the acts and the other records.</summary>
+    public OpenLancer.Data.Missions.GraphFile Graph { get; init; } = OpenLancer.Data.Missions.GraphFile.Empty;
 
     /// <summary>Why the editor cannot change the script, or null.</summary>
     public string? ReadOnlyReason { get; init; }

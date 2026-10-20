@@ -82,7 +82,7 @@ internal sealed class MissionLinks(EditorWindow window, MissionWorkspace mission
 
             if (selection is MissionRef item && string.Equals(item.Script, analysis.Script.Path, StringComparison.OrdinalIgnoreCase))
             {
-                targets = CrossLinks.Targets(analysis, CrossLinks.SourceLines(analysis, item), ObjectSystem);
+                targets = CrossLinks.Targets(analysis, CrossLinks.SourceLines(analysis, item, graph.Graph?.ActsOf()), ObjectSystem);
                 // A trigger, a line, a prefab, an act and the mission are not world items, so they get no bar.
                 if (!keepBar && item.Kind is not (MissionItemKind.Trigger or MissionItemKind.Row or
                         MissionItemKind.PrefabInstance or MissionItemKind.Act or MissionItemKind.Mission))
@@ -503,7 +503,7 @@ internal sealed class MissionLinks(EditorWindow window, MissionWorkspace mission
             return;
         }
 
-        var found = CrossLinks.Targets(analysis, CrossLinks.SourceLines(analysis, request), ObjectSystem);
+        var found = CrossLinks.Targets(analysis, CrossLinks.SourceLines(analysis, request, graph.Graph?.ActsOf()), ObjectSystem);
         if (window.Scene.Index is { } index && Frame(index, request, found))
         {
             Done();

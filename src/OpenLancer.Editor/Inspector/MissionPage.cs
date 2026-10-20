@@ -26,7 +26,7 @@ namespace OpenLancer.Editor.Inspector;
 /// <remarks>The page keeps its model and the marks of its INI block until the run of the checks, the selection or a
 /// toggle changes. So it does not make them again in each frame. The list fields are read-only in M6a, with the same
 /// widget as an editable list field (section 11.1).</remarks>
-internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDisposable
+internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid) : IDisposable
 {
     // Sizes in unscaled points.
     private const float HeaderPaddingX = 10;
@@ -34,8 +34,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
 
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
     private readonly Dictionary<string, ListField> lists = [];
-    private (MissionRunResult? Result, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer, MissionPageModel? Model)
-        page;
+    private (MissionRunResult? Result, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer, string? NoEdit,
+        GraphFile? File, MissionPageModel? Model) page;
     private (MissionRunResult? Result, string? Key, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
         block = (null, null, false, null, []);
 
@@ -52,6 +52,12 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         {
             PanelStates.Message("This mission script is not in the edit view.", "Select a mission in the Missions tab.");
             return;
+        }
+
+        // A gesture whose widget is gone ends, so the history does not wait for it.
+        if (gesture != null && !GestureShows())
+        {
+            EndGesture();
         }
 
         var model = Model(result, analysis, item, out var changed);
@@ -79,6 +85,16 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             {
                 ImGui.TextDisabled(note);
             }
+            else if (model.ReadOnly is { } reason)
+            {
+                ImGui.PushTextWrapPos(0);
+                ImGui.TextDisabled(reason);
+                ImGui.PopTextWrapPos();
+            }
+            else if (model.Base is { } change)
+            {
+                BaseBanner(change);
+            }
 
             foreach (var field in model.Lead)
             {
@@ -87,15 +103,19 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
 
             if (model.Completeness is { } report)
             {
-                CompletenessPanel.Draw("completeness", report, missions.ShowBaseGame, GoTo);
+                CompletenessPanel.Draw("completeness", report, missions.ShowBaseGame, GoTo,
+                    missions.ReadOnlyNote == null ? step => Fixes(analysis, step) : null);
             }
 
             ImGui.Unindent(padding);
             foreach (var pageSection in model.Sections)
             {
-                Section(pageSection);
+                Section(model, pageSection);
             }
 
+            ImGui.Indent(padding);
+            AddAction(model);
+            ImGui.Unindent(padding);
             Ini(result, analysis, model, wholeScript: item.Kind == MissionItemKind.Mission);
         }
 
@@ -105,6 +125,74 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
     /// <summary>The key of a section of the page in the settings and in a section request.</summary>
     private static string SectionKey(string id) => $"Mission.{id}";
 
+    // True while the banner of a changed base shows the two sets of lines.
+    private bool compareBase;
+
+    /// <summary>
+    /// The banner of a section whose base changed after the edit of the active mod (sections 6.3 and 8.11 of the M6b
+    /// design). "Compare" shows the lines of the edit and of the new base side by side. "Keep my lines" accepts the new
+    /// base, and "Use the new base" removes the edit of the section. Each button is one undo entry.
+    /// </summary>
+    private void BaseBanner(BaseChange change)
+    {
+        ImGui.PushTextWrapPos(0);
+        ImGui.TextColored(EditorTheme.Warning, $"{EditorIcons.ExclamationTriangle} {BaseChange.Text}");
+        ImGui.PopTextWrapPos();
+        if (ImGui.SmallButton("Compare##base"))
+        {
+            compareBase = !compareBase;
+        }
+
+        ImGui.SetItemTooltip(BaseChange.CompareTip);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Keep my lines##base"))
+        {
+            Run(change.Keep);
+        }
+
+        ImGui.SetItemTooltip(BaseChange.KeepTip);
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Use the new base##base"))
+        {
+            Run(change.Revert);
+        }
+
+        ImGui.SetItemTooltip(BaseChange.RevertTip);
+        if (!compareBase || !ImGui.BeginTable("##base-compare", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchSame))
+        {
+            return;
+        }
+
+        ImGui.TableSetupColumn("Your lines");
+        ImGui.TableSetupColumn("The new base");
+        ImGui.TableHeadersRow();
+        for (var i = 0; i < Math.Max(change.Mine.Count, change.Base.Count); i++)
+        {
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            CompareLine(change.Mine, change.Base, i);
+            ImGui.TableNextColumn();
+            CompareLine(change.Base, change.Mine, i);
+        }
+
+        ImGui.EndTable();
+    }
+
+    /// <summary>A line of the compare of a changed base. A line that differs from the line of the other side shows in
+    /// the accent color.</summary>
+    private static void CompareLine(IReadOnlyList<string> lines, IReadOnlyList<string> other, int index)
+    {
+        var text = index < lines.Count ? lines[index] : "";
+        if (index < other.Count && other[index] == text)
+        {
+            ImGui.TextDisabled(text);
+        }
+        else
+        {
+            ImGui.TextColored(EditorTheme.AccentText, text);
+        }
+    }
+
     /// <summary>The model of the page, made again only when the run, the selection or a toggle changes.</summary>
     /// <param name="changed">True when the page made a new model for another item.</param>
     private MissionPageModel Model(MissionRunResult result, MissionAnalysis analysis, MissionRef item, out bool changed)
@@ -112,9 +200,13 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         var session = window.Session!;
         var showBaseGame = window.Missions.ShowBaseGame;
         var hidesOpenLancer = session.Edits.HidesOpenLancer;
+        var noEdit = window.Missions.NoEditReason(item.Script);
+        // The graph file holds the acts, so a change of it makes the page again.
+        var file = window.Missions.GraphOf(item.Script);
         changed = !Equals(page.Item, item);
         if (page.Model is { } known && ReferenceEquals(page.Result, result) && !changed &&
-            page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer)
+            page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer && page.NoEdit == noEdit &&
+            ReferenceEquals(page.File, file))
         {
             return known;
         }
@@ -125,20 +217,33 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             CommFile = CommFile,
             SystemName = session.SystemName,
             NameOf = NameOf,
+            ReadOnlyOf = section => window.Missions.NoEditReason(section.Path) ?? session.Edits.Missions.ReadOnlyReason(section),
+            Acts = window.Missions.ActsOf(analysis),
+            ChangedOf = session.Edits.Missions.ChangedLines,
+            BaseOf = session.Edits.Missions.ChangedBase,
+            SharedBuildFile = session.Edits.Missions.IsSharedBuildFile,
         };
         var model = MissionPageModel.For(context, item);
-        page = (result, item, showBaseGame, hidesOpenLancer, model);
+        page = (result, item, showBaseGame, hidesOpenLancer, noEdit, file, model);
         if (changed)
         {
+            // The widgets of another item start again, and an open gesture of the item before ends.
             lists.Clear();
+            ForgetWidgets();
+            compareBase = false;
+        }
+        else
+        {
+            // The new model has the values of the last edit.
+            ForgetNumbers();
         }
 
         return model;
     }
 
-    /// <summary>The header line: the glyph of the kind, the title, the kind as a dim label and the chips. The info icon
-    /// is at the right end.</summary>
-    private static void Header(MissionPageModel model)
+    /// <summary>The header line: the glyph of the kind, the title, the kind as a dim label and the chips. The page menu
+    /// and the info icon are at the right end.</summary>
+    private void Header(MissionPageModel model)
     {
         var padding = MathF.Truncate(HeaderPaddingX * ImGuiHelper.Scale);
         var min = ImGui.GetCursorScreenPos();
@@ -157,6 +262,9 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             Chip.Flow(model.HeaderChips.Select(c => new ChipItem(c, ChipLook.Grey, MissionPageModel.TriggerChipTip(c))).ToList());
         }
 
+        ImGui.SetCursorScreenPos(new Vector2(min.X + width - 2 * InfoIcon.Width - padding,
+            min.Y + MathF.Truncate((height - ImGui.GetFrameHeight()) / 2)));
+        PageMenu(model);
         ImGui.SetCursorScreenPos(new Vector2(min.X + width - InfoIcon.Width - padding,
             min.Y + MathF.Truncate((height - ImGui.GetFrameHeight()) / 2)));
         InfoIcon.Draw("header", model.Help);
@@ -187,9 +295,12 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         }
     }
 
-    private void Section(PageSection section)
+    private void Section(MissionPageModel model, PageSection section)
     {
-        if (!grid.BeginSection(SectionKey(section.Id), section.Glyph, section.Title, !section.Advanced, section.Help))
+        var add = section.AddGroup is { } group && model.PageTrigger is { } trigger && window.Missions.ReadOnlyNote == null
+            ? (EditorIcons.Plus, $"Add an action of the group {section.Title}.", (Action)(() => AddToGroup(trigger, group)))
+            : ((char, string, Action)?)null;
+        if (!grid.BeginSection(SectionKey(section.Id), section.Glyph, section.Title, !section.Advanced, section.Help, add))
         {
             return;
         }
@@ -204,6 +315,7 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             grid.NoteRow(note);
         }
 
+        SectionActions(section);
         grid.EndSection();
     }
 
@@ -219,9 +331,49 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             grid.Help(field.Help, field.Hard);
         }
 
+        var id = $"{section.Id}.{index}";
+        var editable = window.Missions.ReadOnlyNote == null;
+        // The label of a value that the active mod sets gets the blue bar (section 8.1 of the M6b design, UI rule 7).
+        if (field.Changed)
+        {
+            grid.MarkNextChanged();
+        }
+
+        // A field with an edit binding that the session can change draws its edit widget (section 8.4 of the M6b
+        // design). Else it uses the read-only state of the widget.
+        if (field is { Heading: false, List: null, Actions.Count: 0, Edit: not null } && EditField(id, field))
+        {
+            return;
+        }
+
         if (field.Severity != null && field.Link is LineLink)
         {
             Problem(field);
+        }
+        else if (field.Actions.Count > 0 && editable)
+        {
+            // A row with a menu: the value or the link, and the menu button after it.
+            grid.Row(field.Label, () =>
+            {
+                ImGui.AlignTextToFramePadding();
+                if (field.Link is { } link)
+                {
+                    if (ImGui.TextLink($"{field.Value}##link-{id}"))
+                    {
+                        GoTo(link);
+                    }
+                }
+                else if (field.Struck)
+                {
+                    StruckOrMissing(field);
+                }
+                else
+                {
+                    ImGui.Text(field.Value);
+                }
+
+                RowMenu(id, field.Actions);
+            });
         }
         else if (field.Heading)
         {
@@ -229,14 +381,8 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
         }
         else if (field.List is { } list)
         {
-            var key = $"{section.Id}.{index}";
-            if (!lists.TryGetValue(key, out var widget))
-            {
-                lists[key] = widget = new ListField();
-            }
-
             // The list field has its own label and rows, so it spans both columns of the section.
-            grid.FullRow(() => widget.Draw(key, list, null, window.Missions.ReadOnlyNote ?? MissionPageModel.FieldNote));
+            ListEdit(id, field, list);
         }
         else if (field.Chips.Count > 0)
         {
@@ -341,14 +487,23 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             }
 
             ImGui.SetItemTooltip("Open the mission at the line in the Mission tab.");
+            // The fixes of the problem (section 8.7 of the M6b design). Each fix is one undo entry.
+            if (window.Missions.ReadOnlyNote == null && field.Actions.Count > 0)
+            {
+                CompletenessPanel.FixButtons(field.Actions.Select(a => (a.Label, (Action)(() => Run(a.Batch)))).ToList());
+            }
         });
     }
 
-    /// <summary>True while the user edits the INI block.</summary>
-    public bool IsEditing => ini.IsEditing;
+    /// <summary>True while the user edits the INI block or drags a field.</summary>
+    public bool IsEditing => ini.IsEditing || gesture != null;
 
-    /// <summary>Ends an open edit of the INI block, for example before a save.</summary>
-    public void EndEdit() => ini.EndEdit();
+    /// <summary>Ends an open edit of the INI block and an open drag of a field, for example before a save.</summary>
+    public void EndEdit()
+    {
+        ini.EndEdit();
+        EndGesture();
+    }
 
     /// <summary>The INI block of the sections of the page, with the marks of the checks (section 10.1 item 7 of the M6a
     /// design). The user can edit it while the session takes edits (section 8.8 of the M6b design). The Mission page
@@ -413,6 +568,12 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
             case MissionRef item:
                 window.Selection = item;
                 break;
+            case RawLineLink raw:
+                missions.ShowRaw = true;
+                missions.OpenMission(raw.Target.Path, show: true);
+                window.Selection = MissionRef.OfSection(raw.Target, raw.Entry);
+                missions.PendingLine = (raw.Target, raw.Entry);
+                break;
             case LineLink line:
                 missions.GoTo(line.Target, line.Entry);
                 break;
@@ -441,6 +602,12 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
                 break;
         }
     }
+
+    /// <summary>The fixes of a step of the completeness panel: one batch of <see cref="ApplyFix"/> for each fix.</summary>
+    private IReadOnlyList<(string Label, Action Run)> Fixes(MissionAnalysis analysis, CompletenessStep step) =>
+        step.Fix is { } subject
+            ? MissionPageModel.FixActions(analysis, subject).Select(a => (a.Label, (Action)(() => Run(a.Batch)))).ToList()
+            : [];
 
     /// <summary>The voices file of a comm line, from the comm line list of the edit view, or null.</summary>
     private string? CommFile(string line) =>
@@ -471,9 +638,11 @@ internal sealed class MissionPage(EditorWindow window, PropertyGrid grid) : IDis
     /// <summary>Forgets the model and the texts of the profile.</summary>
     public void Reset()
     {
+        ForgetWidgets();
         page = default;
         block = (null, null, false, null, []);
         lists.Clear();
+        compareBase = false;
     }
 
     public void Dispose() => ini.Dispose();

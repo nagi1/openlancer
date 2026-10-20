@@ -64,6 +64,7 @@ public static class MissionErrors
     public const string ReplacesLowerFile = "ReplacesLowerFile";
     public const string WorldFile = "WorldFile";
     public const string BadPath = "BadPath";
+    public const string FixNotFound = "FixNotFound";
 
     internal static EditError NotEditableError(string reason) => new(EditErrorKind.ReadOnly, NotEditable, NotEditableMessage(reason));
 
@@ -118,6 +119,12 @@ public static class MissionErrors
     internal static EditError NameTakenError(string script, string kind, string name) =>
         new(EditErrorKind.NameTaken, NameTaken, $"Script {script} already has {MissionChecks.WithArticle(kind)} '{name}'. " +
                                                 "Pick another name.");
+
+    /// <summary>A fix of section 8.7 of the M6b design that does not apply to W now.</summary>
+    internal static EditError FixNotFoundError(string script) =>
+        new(EditErrorKind.Refused, FixNotFound,
+            $"This fix does not apply to {script} now. The problem or the step changed. Read the problems again, then try " +
+            "again.");
 
     internal static EditError NameIdTakenError(string name, string other) =>
         new(EditErrorKind.NameTaken, NameIdTaken,

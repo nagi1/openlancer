@@ -14,6 +14,15 @@ public sealed record MissionAct(int Number, string? System, IReadOnlyList<Missio
 {
     /// <summary>The number of triggers of the act with a checkpoint line.</summary>
     public int Checkpoints => Triggers.Count(t => t.ActionsOf("Act_Save").Any());
+
+    /// <summary>The nickname of an act of the graph file, or null for a proposed act (decision D679).</summary>
+    public string? Nickname { get; init; }
+
+    /// <summary>The name of an act of the graph file, or null for a proposed act.</summary>
+    public string? Name { get; init; }
+
+    /// <summary>The walkthrough text of an act of the graph file, or null.</summary>
+    public string? Text { get; init; }
 }
 
 /// <summary>
@@ -60,8 +69,46 @@ public sealed class MissionActs
     /// <summary>The act of a trigger, or null for a trigger of the frame "Not started by the mission".</summary>
     public MissionAct? ActOf(MissionTrigger trigger) => actOf.GetValueOrDefault(trigger);
 
-    /// <summary>The key of an act in the graph and in a selection, for example <c>a:2</c>.</summary>
+    /// <summary>The key of an act in the graph and in a selection, for example <c>a:2</c>. An act of the graph file has
+    /// the key of its place in the file, so a selection stays on the act after the first act edit (decision
+    /// D679).</summary>
     public static string KeyOf(MissionAct act) => "a:" + act.Number.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>The nickname of an act in the graph file: its own nickname, or <c>act_{n}</c> for a proposed act. The
+    /// first act edit writes each proposed act with this nickname (decision D679).</summary>
+    public static string NicknameOf(MissionAct act) =>
+        act.Nickname ?? "act_" + act.Number.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The acts of the graph file of a mission (decision D679): each act of the file in file order, with its members
+    /// that the script has. A trigger that no act of the file names and that a start trigger reaches takes the act with
+    /// the number of its proposed act, or the last act. Each other trigger is in the frame "Not started by the
+    /// mission". A trigger is in one act: the first act that names it.
+    /// </summary>
+    public static MissionActs FromFile(MissionIndex index, IReadOnlyList<GraphAct> fileActs)
+    {
+        var proposed = Propose(index);
+        if (fileActs.Count == 0)
+            return proposed;
+        var taken = new HashSet<MissionTrigger>();
+        var members = fileActs.Select(a => a.Members.Select(index.Trigger).OfType<MissionTrigger>()
+            .Where(t => !t.IsDuplicate && taken.Add(t)).ToList()).ToList();
+        foreach (var trigger in index.Triggers.Where(t => !t.IsDuplicate && !taken.Contains(t) && index.Reached.Contains(t)))
+        {
+            var number = proposed.ActOf(trigger)?.Number ?? fileActs.Count;
+            members[Math.Min(number, fileActs.Count) - 1].Add(trigger);
+            taken.Add(trigger);
+        }
+        var acts = fileActs.Select((a, i) => new MissionAct(i + 1,
+            members[i].Select(t => t.SystemHint).FirstOrDefault(h => h != null && !MissionIndex.Is(h, "ANY")),
+            members[i].OrderBy(t => t.Section.Index).ToList())
+        {
+            // An act without a name shows the title of a proposed act, for example "Act 2: {system name}".
+            Nickname = a.Nickname, Name = a.Name.Length > 0 ? a.Name : null, Text = a.Text,
+        }).ToList();
+        var notStarted = index.Triggers.Where(t => !taken.Contains(t)).ToList();
+        return new MissionActs(acts, proposed.MainPath, notStarted);
+    }
 
     /// <summary>The act of a key, or null for the frame "Not started by the mission" and for a key that is not
     /// known.</summary>

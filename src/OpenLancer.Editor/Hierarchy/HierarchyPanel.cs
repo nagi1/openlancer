@@ -28,7 +28,7 @@ namespace OpenLancer.Editor.Hierarchy;
 /// The rows of a system take a tile of the Assets panel, and a row drags onto the prop groups of the Assets panel
 /// (section 8.1 of the M23 design). The rows of a cutscene take no drop (review finding R20).
 /// </remarks>
-internal sealed class HierarchyPanel(EditorWindow window)
+internal sealed partial class HierarchyPanel(EditorWindow window)
 {
     /// <summary>The id of the panel. The layout reports its focus by this id.</summary>
     public const string PanelId = "hierarchy";
@@ -73,6 +73,8 @@ internal sealed class HierarchyPanel(EditorWindow window)
 
         if (window.CenterMode == CenterMode.Mission)
         {
+            MissionCreateButton();
+            ImGui.SameLine();
             ToolbarItems.SearchField("search-mission", "Search (t:ship)", ref missionSearch, -1, MissionSearchTip);
             return;
         }
@@ -144,7 +146,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             }
 
             tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel,
-                session.SystemName);
+                session.SystemName, window.Missions.ActsOf(analysis));
             Show(tree, missionModel);
             missionModel = tree;
             tree.SetSearch(missionSearch);
@@ -208,12 +210,22 @@ internal sealed class HierarchyPanel(EditorWindow window)
             ImGui.EndPopup();
         }
 
+        if (window.CenterMode == CenterMode.Mission)
+        {
+            MissionRenamePopup();
+            FactionMenu();
+        }
+
         if (focused && !ImGui.GetIO().WantTextInput)
         {
             Keys(tree);
             if (IsScene)
             {
                 window.SceneEdits.Keys(window.Selection);
+            }
+            else if (window.CenterMode == CenterMode.Mission)
+            {
+                MissionKeys();
             }
         }
     }
@@ -357,6 +369,10 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (IsScene)
         {
             DragAndDrop(node);
+        }
+        else if (window.CenterMode == CenterMode.Mission)
+        {
+            MissionDragAndDrop(node);
         }
 
         if (ImGui.BeginPopupContextItem())
@@ -629,6 +645,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
         if (item is MissionRef mission)
         {
             MissionMenu(mission);
+            MissionEditMenu(mission);
             return;
         }
 

@@ -33,6 +33,13 @@ internal sealed class MissionView : IDisposable
     private readonly MissionWorkspace missions;
     private readonly RawIniEditor raw = new(MissionWorkspace.Vocabulary);
     private readonly MissionLinks links;
+    private readonly LibraryStrip library;
+
+    // True while the Mission tab is narrower than LibraryStrip.MinTabWidth, from the last frame.
+    private bool narrowTab;
+
+    // True when the toggle opened the library strip in a narrow tab.
+    private bool libraryInNarrowTab;
     private int lastCursor = -1;
     private object? lastSelection;
     private string? shownPath;
@@ -46,6 +53,8 @@ internal sealed class MissionView : IDisposable
         this.missions = missions;
         State = new GraphViewState(window.Settings.MissionLens);
         Graph = new GraphView(window, missions, State);
+        library = new LibraryStrip(window);
+        Graph.Library = library;
         links = new MissionLinks(window, missions, Graph);
         window.Scene.DoubleClicked += item =>
         {
@@ -113,6 +122,7 @@ internal sealed class MissionView : IDisposable
         if (!missions.ShowRaw)
         {
             GraphToolbar(scale);
+            EditToolbar();
         }
 
         ImGui.SameLine();
@@ -137,6 +147,39 @@ internal sealed class MissionView : IDisposable
 
         ImGui.SameLine();
         InfoIcon.Draw("help", MissionSchema.Retail.Help[missions.ShowRaw ? "rawIni" : "missionGraph"]);
+    }
+
+    /// <summary>The edit items of the graph toolbar (section 8.11 of the M6b design): the toggle "Library" and the button
+    /// "Add...".</summary>
+    private void EditToolbar()
+    {
+        var settings = window.Settings;
+        ImGui.SameLine();
+        ToolbarItems.Separator();
+        ImGui.SameLine();
+        var before = LibraryStrip.Shows(settings.MissionShowLibrary, narrowTab, libraryInNarrowTab);
+        var shown = ToolbarItems.Toggle("library", EditorIcons.Boxes,
+            "Library: show the prefabs, events, actions and conditions that you can add.", before);
+        if (shown != before)
+        {
+            // In a narrow tab, the toggle opens or closes the strip for this tab width only.
+            var (setting, inNarrowTab) = LibraryStrip.Toggled(settings.MissionShowLibrary, narrowTab, shown);
+            libraryInNarrowTab = inNarrowTab;
+            if (setting != settings.MissionShowLibrary)
+            {
+                settings.MissionShowLibrary = setting;
+                settings.Save();
+            }
+        }
+
+        if (missions.OpenPath is { } path && missions.NoEditReason(path) == null)
+        {
+            ImGui.SameLine();
+            if (ToolbarItems.Button("add", EditorIcons.Plus, "Add...: add a trigger, a prefab, an action or a condition. Shortcut: Space."))
+            {
+                Graph.OpenQuickAdd(path, new Vector2(ImGui.GetItemRectMin().X, ImGui.GetItemRectMax().Y));
+            }
+        }
     }
 
     /// <summary>The items of the graph toolbar: the lens, "Show lines" and "Frame all".</summary>
@@ -304,7 +347,7 @@ internal sealed class MissionView : IDisposable
             {
                 // The switch to the graph ends an open edit of the text.
                 raw.EndEdit();
-                GraphPart(analysis);
+                GraphPart(analysis, avail.X / scale);
             }
         }
 
@@ -348,8 +391,11 @@ internal sealed class MissionView : IDisposable
         }
     }
 
-    /// <summary>The graph part: the graph of the mission, and the keys of the graph while it has the focus.</summary>
-    private void GraphPart(MissionAnalysis analysis)
+    /// <summary>The graph part: the library strip, the graph of the mission, and the keys of the graph while it has the
+    /// focus. The strip closes in a Mission tab that is narrower than <see cref="LibraryStrip.MinTabWidth"/>, and the
+    /// toggle opens it again (section 8.3 of the M6b design).</summary>
+    /// <param name="tabWidth">The width of the Mission tab, in points.</param>
+    private void GraphPart(MissionAnalysis analysis, float tabWidth)
     {
         if (missions.PendingGraphFrame)
         {
@@ -359,22 +405,44 @@ internal sealed class MissionView : IDisposable
         }
 
         links.UsesBar();
+        var path = analysis.Script.Path;
+        narrowTab = tabWidth < LibraryStrip.MinTabWidth;
+        if (!narrowTab)
+        {
+            // A tab that gets narrow again closes the strip again.
+            libraryInNarrowTab = false;
+        }
+
+        if (LibraryStrip.Shows(window.Settings.MissionShowLibrary, narrowTab, libraryInNarrowTab))
+        {
+            var avail = ImGui.GetContentRegionAvail();
+            var width = MathF.Truncate(LibraryStrip.Width * ImGuiHelper.Scale);
+            if (library.Draw(new Vector2(width, avail.Y), missions.NoEditReason(path)) is { } item)
+            {
+                Graph.AddFromLibrary(path, item);
+            }
+
+            ImGui.SameLine(0, 0);
+        }
+
         Graph.Draw(analysis, ImGui.GetContentRegionAvail());
-        Keys();
+        Keys(path);
     }
 
     /// <summary>The keys of the graph (decision D558). F frames the selection, and A or Home frame all. Ctrl+F goes to
-    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts that change data are
-    /// off, so Delete does nothing. The keys work only while the graph part or one of its child windows has the focus.
-    /// So a key of the Scene part, for example A to fly left, does not move the graph. A key with Ctrl or Alt other
-    /// than Ctrl+F does nothing.</summary>
-    private void Keys()
+    /// the search, and Esc ends the path view and the neighbor view. The node editor shortcuts stay off, and the edit
+    /// keys of the graph come first: Delete, F2, Space, Ctrl+C, Ctrl+V and Ctrl+D (section 8.2 of the M6b design). The
+    /// keys work only while the graph part or one of its child windows has the focus. So a key of the Scene part, for
+    /// example A to fly left, does not move the graph.</summary>
+    private void Keys(string path)
     {
         var io = ImGui.GetIO();
         if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.ChildWindows) || io.WantTextInput)
         {
             return;
         }
+
+        Graph.EditKeys(path);
 
         if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.F, false))
         {

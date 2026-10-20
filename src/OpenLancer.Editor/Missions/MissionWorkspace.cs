@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
@@ -14,6 +15,23 @@ using OpenLancer.Editor.Ui.Fields;
 using OpenLancer.Runtime.Missions;
 
 namespace OpenLancer.Editor.Missions;
+
+/// <summary>A field that waits for "Pick in Scene": the next click in the Scene sets its position.</summary>
+/// <param name="Key">The key of the field on its page, so two fields with one label do not both wait.</param>
+/// <param name="Label">The label of the field.</param>
+/// <param name="System">The system of the item of the field, or null when the item names no system.</param>
+/// <param name="Owner">The selection of the page of the field. A pick ends when the selection changes.</param>
+/// <param name="Set">Sets the position.</param>
+internal sealed record ScenePick(string Key, string Label, string? System, object Owner,
+    Action<System.Numerics.Vector3> Set)
+{
+    /// <summary>The hint in the Scene while the pick waits (section 8.11 of the M6b design).</summary>
+    public string Hint => $"Click a point in the Scene to set {Label}. Esc cancels.";
+
+    /// <summary>The hint in the Scene while it shows another system than the system of the item.</summary>
+    public string OtherSystemHint(string shown) =>
+        $"{Label} is a position in {System}. The Scene shows {shown}. Open {System} to pick a point. Esc cancels.";
+}
 
 /// <summary>
 /// The mission scripts of the open profile and the open mission (section 4 of the M6a design): the last run of the
@@ -96,6 +114,63 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <summary>Asks the Scene part to frame the world items of a mission item, for example after a double-click on a
     /// node.</summary>
     public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
+
+    // The acts of the graph file of each script, with the analysis and the graph file that gave them. Each script has
+    // its own entry, so a read of another script does not make new acts (review finding 8 of M6b-2).
+    private readonly Dictionary<string, (MissionAnalysis Analysis, GraphFile File, MissionActs? Acts)> acts =
+        new(VfsPath.Comparer);
+
+    /// <summary>The records of the graph file of a script in W (section 6.8 of the M6b design), or
+    /// <see cref="GraphFile.Empty"/>. The same file gives the same record.</summary>
+    public GraphFile GraphOf(string path) => window.Session?.Edits.Missions.Graph(path) ?? GraphFile.Empty;
+
+    /// <summary>The acts of the graph file of an analysis after the first act edit, or null for the proposed acts
+    /// (decision D679). The graph, the Hierarchy and the Act page use them.</summary>
+    public MissionActs? ActsOf(MissionAnalysis analysis)
+    {
+        var path = analysis.Script.Path;
+        var file = GraphOf(path);
+        if (acts.TryGetValue(path, out var known) && ReferenceEquals(known.Analysis, analysis) &&
+            ReferenceEquals(known.File, file))
+        {
+            return known.Acts;
+        }
+
+        var made = file.Acts.Count > 0 ? MissionActs.FromFile(analysis.Index, file.Acts) : null;
+        acts[path] = (analysis, file, made);
+        return made;
+    }
+
+    private ScenePick? pendingPick;
+
+    /// <summary>The field that waits for "Pick in Scene", or null (section 8.9 of the M6b design). A pick ends when the
+    /// selection changes, for example to another item or another mission.</summary>
+    public ScenePick? PendingPick
+    {
+        get
+        {
+            if (pendingPick != null && !Equals(pendingPick.Owner, window.Selection))
+            {
+                pendingPick = null;
+            }
+
+            return pendingPick;
+        }
+    }
+
+    /// <summary>Starts "Pick in Scene": the next click in the Scene sets the position of a field. Esc cancels.</summary>
+    public void StartPick(ScenePick pick) => pendingPick = pick;
+
+    /// <summary>Ends "Pick in Scene" without a change.</summary>
+    public void CancelPick() => pendingPick = null;
+
+    /// <summary>Ends "Pick in Scene" with a point: the field gets it.</summary>
+    public void Picked(System.Numerics.Vector3 point)
+    {
+        var pick = PendingPick;
+        pendingPick = null;
+        pick?.Set(point);
+    }
 
     // The systems that the user picked for items whose system the index cannot find. The Hierarchy menu "Show in
     // system..." picks them (section 9 of the M6a design). The choice lasts until the editor closes and writes nothing.
@@ -271,6 +346,13 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
         Result = result with { Analyses = analyses };
         window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
+        // A rename, also its Undo and its Redo, keeps the selection on the renamed trigger (section 8.10 of the M6b
+        // design).
+        if (Followed(window.Selection, change.Renames.Select(r => (r.From.ToString(), r.To.ToString())).ToList(), []) is
+            { } next)
+        {
+            window.Selection = next;
+        }
     }
 
     /// <summary>Starts a run after a change of a ship build file, because the run reads the ship builds of all
@@ -316,6 +398,161 @@ internal sealed class MissionWorkspace(EditorWindow window)
         }
     }
 
+    /// <summary>
+    /// Runs the batch of a gesture of the studio through the mission editor of the session (section 4.0 of the M6b
+    /// design). After a gesture that adds an item, the studio selects the item. Else the selection follows the renames
+    /// and the row moves of the result (section 8.10 of the M6b design). A null batch does nothing.
+    /// </summary>
+    /// <returns>True when the batch changed W.</returns>
+    /// <remarks>A batch that needs a confirmation, for example a change of a ship build of a shared file, asks in a
+    /// dialog first (section 4.0.5 of the M6b design). "Confirm" runs it again with the confirmation.</remarks>
+    public bool Run(MissionBatch? batch)
+    {
+        if (batch == null || window.Edits.Apply(batch) is not { } result)
+        {
+            return false;
+        }
+
+        if (result is { Status: EditStatus.Refused, NeedsConfirmation: true } && !batch.Confirm)
+        {
+            window.Choice.Show("Confirm the change", string.Join("\n\n", result.Errors.Select(e => e.Message)),
+            [
+                new Dialogs.Choice("Confirm", () => Run(batch with { Confirm = true })),
+                new Dialogs.Choice("Cancel", () => { }) { Default = true },
+            ]);
+            return false;
+        }
+
+        if (result.Status != EditStatus.Applied)
+        {
+            return false;
+        }
+
+        var selection = window.Selection;
+        var next = result.Select is { } select && Result?.Of(ScriptOf(select) ?? "") is { } analysis
+            ? SelectionOf(analysis, select, ActsOf(analysis))
+            : null;
+        next ??= Followed(selection, result.Renames.Select(r => (r.From, r.To)).ToList(), result.RowMoves);
+        if (next != null && !Equals(next, selection))
+        {
+            window.Selection = next;
+        }
+
+        return true;
+    }
+
+    /// <summary>The install path of a reference of a mission item, or null.</summary>
+    private static string? ScriptOf(string reference)
+    {
+        try
+        {
+            return ItemRefs.Parse(reference).Path;
+        }
+        catch (EditException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The selection of a reference of a result (section 4.0.7 of the M6b design) in an analysis: a trigger, a section,
+    /// a line of a trigger, a label, an act or the script. Null for a reference that the analysis does not have.
+    /// </summary>
+    /// <param name="acts">The acts of the graph file, for the reference of an act, or null.</param>
+    internal static MissionRef? SelectionOf(MissionAnalysis analysis, string reference, MissionActs? acts = null)
+    {
+        ItemReference parsed;
+        try
+        {
+            parsed = ItemRefs.Parse(reference);
+        }
+        catch (EditException)
+        {
+            return null;
+        }
+
+        var script = analysis.Script.Path;
+        if (parsed.Path is not { } path || !VfsPath.Comparer.Equals(path, script))
+        {
+            return null;
+        }
+
+        switch (parsed.Kind)
+        {
+            case ItemRefKind.Script:
+                return MissionRef.Of(script);
+            case ItemRefKind.Trigger when analysis.Index.Trigger(parsed.Name) is { } trigger:
+                return new MissionRef(script, MissionItemKind.Trigger, trigger.Section.Ref);
+            case ItemRefKind.Section or ItemRefKind.Line when parsed.Section is { } id &&
+                                                                analysis.Document.Find(new SectionRef(script, id)) is { } section:
+                return MissionRef.OfSection(section.Ref, parsed.Kind == ItemRefKind.Line ? parsed.Row ?? -1 : -1);
+            case ItemRefKind.Label:
+                return new MissionRef(script, MissionItemKind.Label, Key: parsed.Name);
+            case ItemRefKind.Act when acts?.Acts.FirstOrDefault(a => MissionIndex.Is(a.Nickname, parsed.Name)) is { } act:
+                return new MissionRef(script, MissionItemKind.Act, Key: MissionActs.KeyOf(act));
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// A selection after renames and row moves: a selected item that a rename renamed gets its new name, and a selected
+    /// line of a trigger keeps its line when the rows before it moved (section 8.10 of the M6b design). Null when nothing
+    /// changes it.
+    /// </summary>
+    /// <param name="renames">The old and the new references of each renamed item.</param>
+    internal static MissionRef? Followed(object? selection, IReadOnlyList<(string From, string To)> renames,
+        IReadOnlyList<RowMove> moves)
+    {
+        if (selection is not MissionRef { Section: { } section } item)
+        {
+            return null;
+        }
+
+        foreach (var (from, to) in renames)
+        {
+            if (Identity(from) is not { } old || Identity(to) is not { } renamed ||
+                !VfsPath.Comparer.Equals(old.Path, section.Path) || !old.Id.Equals(section.Id))
+            {
+                continue;
+            }
+
+            item = item with { Section = renamed };
+            section = renamed;
+        }
+
+        if (item.Kind == MissionItemKind.Row && item.Row >= 0)
+        {
+            var move = moves.FirstOrDefault(m => VfsPath.Comparer.Equals(m.Trigger.Script, section.Path) &&
+                                                 MissionIndex.Is(m.Trigger.Name, section.Id.Key ?? "") && m.From == item.Row);
+            if (move != null)
+            {
+                item = item with { Row = move.To };
+            }
+        }
+
+        return Equals(item, selection) ? null : item;
+    }
+
+    /// <summary>The section of a reference of a trigger or a section, or null.</summary>
+    private static SectionRef? Identity(string reference)
+    {
+        try
+        {
+            var parsed = ItemRefs.Parse(reference);
+            return parsed switch
+            {
+                { Kind: ItemRefKind.Trigger, Path: { } path } => new SectionRef(path, new SectionIdentity("Trigger", parsed.Name)),
+                { Kind: ItemRefKind.Section, Path: { } path, Section: { } id } => new SectionRef(path, id),
+                _ => null,
+            };
+        }
+        catch (EditException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>The Console text of a raw edit that the editor refused. It keeps the whole text of the user, so the user
     /// can copy it back (decision D114). The raw blocks of all files use it.</summary>
     public static string RawRefusal(IEnumerable<string> problems, string text) =>
@@ -357,6 +594,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
         PendingSection = null;
         PendingSceneFrame = null;
         PendingGraphFrame = false;
+        pendingPick = null;
+        acts.Clear();
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();
@@ -378,7 +617,13 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <param name="show">True to show the Mission tab.</param>
     public void OpenMission(string path, bool show)
     {
+        var opened = !string.Equals(OpenPath, VfsPath.Normalize(path) ?? path, StringComparison.OrdinalIgnoreCase);
         OpenPath = VfsPath.Normalize(path) ?? path;
+        if (opened)
+        {
+            GraphNotes(OpenPath);
+        }
+
         if (window.Scene.System == null && Analysis(OpenPath)?.Index is { } index &&
             MissionSummary.StartSystem(index) is { } nickname &&
             window.Session?.GameData?.Items.Systems.Get(nickname) is { } system)
@@ -391,6 +636,26 @@ internal sealed class MissionWorkspace(EditorWindow window)
         if (show)
         {
             window.ShowPanel(PanelId);
+        }
+    }
+
+    /// <summary>The Console notes of the graph file of a mission when it opens (section 6.8 of the M6b design): the lines
+    /// that the editor cannot read, and the records of triggers that the script does not have.</summary>
+    private void GraphNotes(string path)
+    {
+        if (window.Session?.Edits.Missions is not { } editor || Analysis(path) is not { } analysis)
+        {
+            return;
+        }
+
+        foreach (var problem in editor.GraphProblems(path))
+        {
+            window.Log.Add(ConsoleSeverity.Warning, MissionChecks.Source, problem);
+        }
+
+        foreach (var note in GraphOf(path).Notes(path, name => analysis.Index.Trigger(name) != null))
+        {
+            window.Log.Add(ConsoleSeverity.Info, MissionChecks.Source, note);
         }
     }
 

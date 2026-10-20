@@ -85,6 +85,16 @@ public sealed class MissionInverseTests
         ["add_waypoint"] = () => new AddWaypoint(Item("ObjList", "ol_orders"), MissionValue.Of(10, 20, 30)),
         ["set_orders"] = () => new SetOrders(Item("ObjList", "ol_orders"),
             [LineSpec.Of("Delay", ("seconds", 3)), LineSpec.Of("Idle")]),
+        ["add_trigger_placed"] = () => new AddTrigger(TestScript)
+        {
+            Condition = LineSpec.Raw("Cnd_True", "no_params"), Place = new GraphPoint(10, 20), Act = new ActRef(Script, "act_1"),
+        },
+        ["duplicate_trigger_placed"] = () => new DuplicateTrigger(T("ol_wave")) { Place = new GraphPoint(300, 40) },
+        ["move_nodes"] = () => new MoveNodes(TestScript, [new NodePlace("ol_wave", 100, 200), new NodePlace("ol_end", -5, 7)]),
+        ["add_act"] = () => new AddAct(TestScript) { Name = "The ambush", Text = "Two waves attack.", Members = ["ol_wave"] },
+        ["set_act"] = () => new SetAct(new ActRef(Script, "act_1")) { Name = "The start", Text = "The player launches." },
+        ["set_act_members"] = () => new SetActMembers(new ActRef(Script, "act_1"), ["ol_end", "ol_start"]),
+        ["apply_fix"] = () => new ApplyFix(TestScript, "M04|ol_wave|system", "move"),
     };
 
     [Theory]
@@ -112,8 +122,8 @@ public sealed class MissionInverseTests
     [Fact]
     public void EachCommandKindOfTheCatalogOfStepsOneToFiveHasASample()
     {
-        // DeleteScript, RevertSection and AcceptBase need an edit before them, so they have their own tests.
-        var kinds = MissionJson.Kinds.Keys.Where(k => k is not ("delete_script" or "revert_section" or "accept_base"))
+        // DeleteScript, RevertSection, AcceptBase and RemoveAct need an edit before them, so they have their own tests.
+        var kinds = MissionJson.Kinds.Keys.Where(k => k is not ("delete_script" or "revert_section" or "accept_base" or "remove_act"))
             .ToHashSet();
         var samples = Commands.Values.Select(c => MissionJson.KindOf(c().GetType())).ToHashSet();
 

@@ -145,6 +145,27 @@ public sealed record LabelRef(string Script, string Label) : IMissionRef
             : throw MissionRefs.Bad(text, "a label, for example label:DATA\\MISSIONS\\M02\\m02.ini#ol_wing");
 }
 
+/// <summary>An act of the graph file of a mission script by its nickname (section 4.2 of the M6b design). It is not an
+/// action line. JSON writes it as <c>act:&lt;install path&gt;#&lt;act&gt;</c>.</summary>
+[JsonConverter(typeof(MissionRefConverter<ActRef>))]
+public sealed record ActRef(string Script, string Name) : IMissionRef
+{
+    public bool Equals(ActRef? other) =>
+        other is not null && VfsPath.Comparer.Equals(Script, other.Script) &&
+        string.Equals(Name, other.Name, StringComparison.OrdinalIgnoreCase);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(VfsPath.Comparer.GetHashCode(Script), StringComparer.OrdinalIgnoreCase.GetHashCode(Name));
+
+    public override string ToString() => ItemRefs.Format(new ItemReference(ItemRefKind.Act, Name) { Path = Script });
+
+    /// <exception cref="EditException">The text is not an act reference.</exception>
+    public static ActRef Parse(string text) =>
+        ItemRefs.Parse(text) is { Kind: ItemRefKind.Act, Path: { } path } reference
+            ? new ActRef(path, reference.Name)
+            : throw MissionRefs.Bad(text, "an act, for example act:DATA\\MISSIONS\\M02\\m02.ini#act_1");
+}
+
 /// <summary>A reference of the mission commands that JSON writes as one string.</summary>
 public interface IMissionRef;
 
@@ -162,6 +183,7 @@ internal static class MissionRefs
         type == typeof(ScriptRef) ? @"msn:DATA\MISSIONS\M02\m02.ini"
         : type == typeof(TriggerRef) ? @"trg:DATA\MISSIONS\M02\m02.ini#ol_trigger"
         : type == typeof(LabelRef) ? @"label:DATA\MISSIONS\M02\m02.ini#ol_wing"
+        : type == typeof(ActRef) ? @"act:DATA\MISSIONS\M02\m02.ini#act_1"
         : @"sec:DATA\MISSIONS\M02\m02.ini#MsnShip/ol_ship";
 
     /// <summary>The reference of a text as a type of the mission commands.</summary>
@@ -170,6 +192,7 @@ internal static class MissionRefs
         : type == typeof(TriggerRef) ? TriggerRef.Parse(text)
         : type == typeof(ItemRef) ? ItemRef.Parse(text)
         : type == typeof(LabelRef) ? LabelRef.Parse(text)
+        : type == typeof(ActRef) ? ActRef.Parse(text)
         : throw new NotSupportedException(type.Name);
 }
 

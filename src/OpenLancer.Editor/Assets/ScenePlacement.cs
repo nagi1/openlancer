@@ -36,6 +36,25 @@ internal static class ScenePlacement
         return new Vector3(MathF.Round(point.X), MathF.Round(point.Y), MathF.Round(point.Z));
     }
 
+    /// <summary>
+    /// The point of "Pick in Scene" on empty space (section 8.9 of the M6b design): the hit of the ray on the horizontal
+    /// plane of the camera pivot when it is in front of the camera and at most <see cref="MaxPlaneDistance"/> times the
+    /// distance from the camera to the pivot. Else the point on the ray at the distance of the pivot. Each value rounds
+    /// to a whole number.
+    /// </summary>
+    public static Vector3 PivotPlanePoint(Vector3 eye, Vector3 direction, Vector3 pivot)
+    {
+        var distance = Vector3.Distance(eye, pivot);
+        var point = eye + direction * distance;
+        if (direction.Y != 0)
+        {
+            var t = (pivot.Y - eye.Y) / direction.Y;
+            if (t > 0 && t <= MaxPlaneDistance * distance)
+                point = eye + direction * t;
+        }
+        return new Vector3(MathF.Round(point.X), MathF.Round(point.Y), MathF.Round(point.Z));
+    }
+
     /// <summary>True when the point lies on the grid plane, so the ghost needs no line down to the plane.</summary>
     public static bool OnPlane(Vector3 point) => point.Y == 0;
 }
