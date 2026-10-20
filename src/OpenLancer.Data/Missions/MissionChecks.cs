@@ -28,12 +28,13 @@ public static class MissionChecks
     /// <summary>The ids of the rules, in the order of section 13.6 of the M6a design. M24, M25 and M26 are the lint rules
     /// of section 11.5: unknown keys, unknown section types and words outside a closed set of words. M27 and M28 come
     /// from section 6.10 of the M6b design: two triggers with the same game id, and a name with no retail
-    /// example.</summary>
+    /// example. P01, P02 and P03 are the warnings of the linked prefab instances (section 6.10 of the M6b design). The
+    /// graph file of the mod gives them, so <see cref="Prefabs.PrefabLinks"/> adds them, not <see cref="Run"/>.</summary>
     public static readonly IReadOnlyList<string> Rules =
     [
         "M01", "M02", "M03", "M04", "M05", "M06", "M07", "M08", "M09", "M10", "M11", "M12", "M13", "M14", "M15", "M16",
         "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24", "M25", "M26", "M27", "M28", "G01", "G02", "G03", "G04",
-        "G05", "G06",
+        "G05", "G06", "P01", "P02", "P03",
     ];
 
     /// <summary>The rules whose problems are errors for a line of the active mod. The others are warnings.</summary>

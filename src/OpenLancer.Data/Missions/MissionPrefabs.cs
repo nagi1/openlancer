@@ -169,12 +169,23 @@ public sealed class MissionPrefabInstance
     /// <summary>The triggers that this instance claims: its frame holds them.</summary>
     public IReadOnlyList<MissionTrigger> Claimed { get; }
 
-    /// <summary>The identity of the instance in its script: the prefab and the core trigger or section. A base-game run
-    /// of the script compares instances by it (decision D551).</summary>
-    public string Key => $"{Definition.Id}|{Core?.Nickname ?? CoreSection?.Ref.Id.ToString()}";
+    /// <summary>The record, the prefab and the fields of a linked instance (section 5.1 of the M6b design), or null for
+    /// a matched instance.</summary>
+    public Prefabs.LinkedInstance? Linked { get; internal init; }
 
-    /// <summary>The name of the instance: the nickname of the core trigger or section.</summary>
-    public string Name => Core?.Nickname ?? CoreSection?.Nickname ?? Definition.Name;
+    /// <summary>The identity of the instance in its script: the prefab and the core trigger or section, or the record of
+    /// a linked instance. A base-game run of the script compares instances by it (decision D551).</summary>
+    public string Key => Linked is { } linked
+        ? $"{Definition.Id}|@{linked.Record.Id}"
+        : $"{Definition.Id}|{Core?.Nickname ?? CoreSection?.Ref.Id.ToString()}";
+
+    /// <summary>The id of the instance in its <c>inst:</c> reference (section 4.0.7 of the M6b design): the id of the
+    /// record of a linked instance, else the prefab id and the nickname of the core trigger or section.</summary>
+    public string Id => Linked is { } linked ? linked.Record.Id : $"{Definition.Id}/{Core?.Nickname ?? CoreSection?.Nickname ?? Name}";
+
+    /// <summary>The name of the instance: the id of a linked instance, or the nickname of the core trigger or
+    /// section.</summary>
+    public string Name => Linked?.Record.Id ?? Core?.Nickname ?? CoreSection?.Nickname ?? Definition.Name;
 
     /// <summary>The triggers of a role: <c>core</c>, a member role or <c>all</c>.</summary>
     public IReadOnlyList<MissionTrigger> Role(string role) => role switch
@@ -358,18 +369,22 @@ public sealed class MissionPrefabs
     ];
 
     /// <summary>Finds the instances of the prefabs in the index of a script.</summary>
-    public MissionPrefabResult Match(MissionIndex index)
+    /// <param name="linked">The sections of the linked instances of the script (section 5.1 of the M6b design). The
+    /// matcher leaves them out: no matched instance has them as its core or as a member.</param>
+    public MissionPrefabResult Match(MissionIndex index, IReadOnlySet<MissionSection>? linked = null)
     {
         var claims = new Dictionary<MissionTrigger, MissionPrefabInstance>();
         var instances = new List<MissionPrefabInstance>();
-        var triggers = index.Triggers.Where(t => !t.IsDuplicate).ToList();
+        var blocked = linked ?? new HashSet<MissionSection>();
+        var triggers = index.Triggers.Where(t => !t.IsDuplicate && !blocked.Contains(t.Section)).ToList();
         foreach (var definition in Definitions)
         {
             if (definition.Core.Section is { } type)
             {
-                foreach (var section in index.Document.Sections.Where(s => MissionIndex.Is(s.Type, type) && SectionMatches(definition.Core, s)))
+                foreach (var section in index.Document.Sections.Where(s => MissionIndex.Is(s.Type, type) && !blocked.Contains(s) &&
+                                                                           SectionMatches(definition.Core, s)))
                 {
-                    var members = Members(index, definition, null, section, claims);
+                    var members = Members(index, definition, null, section, claims, blocked);
                     var instance = new MissionPrefabInstance(definition, null, section, members,
                         definition.Kind == MissionPrefabKind.Order ? [] : Claim(definition, null, members, claims));
                     Register(instance, claims);
@@ -383,7 +398,7 @@ public sealed class MissionPrefabs
                     continue;
                 if (definition.Core.Chain is { } chain && !IsChainHead(index, trigger, chain))
                     continue;
-                var members = Members(index, definition, trigger, null, claims);
+                var members = Members(index, definition, trigger, null, claims, blocked);
                 if (definition.Core.WatchedTarget &&
                     (members.GetValueOrDefault("on") is not { Count: > 0 } || members.GetValueOrDefault("off") is not { Count: > 0 }))
                     continue;
@@ -488,7 +503,7 @@ public sealed class MissionPrefabs
     /// <summary>The triggers of each member role of a new instance.</summary>
     private static Dictionary<string, IReadOnlyList<MissionTrigger>> Members(MissionIndex index,
         MissionPrefabDefinition definition, MissionTrigger? core, MissionSection? section,
-        Dictionary<MissionTrigger, MissionPrefabInstance> claims)
+        Dictionary<MissionTrigger, MissionPrefabInstance> claims, IReadOnlySet<MissionSection> blocked)
     {
         var result = new Dictionary<string, IReadOnlyList<MissionTrigger>>();
         var taken = new HashSet<MissionTrigger>();
@@ -497,7 +512,7 @@ public sealed class MissionPrefabs
         foreach (var member in definition.Members)
         {
             var found = Rule(index, member, core, section)
-                .Where(t => member.Shared || !claims.ContainsKey(t) && !taken.Contains(t))
+                .Where(t => !blocked.Contains(t.Section) && (member.Shared || !claims.ContainsKey(t) && !taken.Contains(t)))
                 .Distinct()
                 .ToList();
             if (!member.Shared)

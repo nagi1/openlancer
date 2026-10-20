@@ -174,6 +174,13 @@ public static class MissionCompleteness
                     ? Editing.MissionFixes.StepSubject(instance, step.Id)
                     : null));
         }
+        if (instance.Linked is { } linked)
+        {
+            // A linked instance also needs the lines of its prefab (rules P01 to P03, section 6.10 of the M6b design).
+            var problems = analysis.Problems.Where(p => p.Rule is "P01" or "P02" or "P03" &&
+                                                        p.Subject == $"{p.Rule}|{linked.Record.Id}").ToList();
+            steps.Add(RuleStep(Prefabs.PrefabLinks.StepName, Prefabs.PrefabLinks.StepReason, problems));
+        }
         return new CompletenessReport(instance.Definition.Name, steps)
         {
             HiddenMessages = BaseGameMessages.Count(analysis.Problems.Where(p => p.Target != null && sections.Contains(p.Target))),

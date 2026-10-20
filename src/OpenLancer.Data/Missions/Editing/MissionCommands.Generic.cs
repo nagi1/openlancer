@@ -194,7 +194,7 @@ public sealed record RemoveSection(ItemRef Section) : MissionCommand
     internal override void Run(MissionDraft d)
     {
         var (document, index) = d.Item(Section);
-        d.Editable(document, index);
+        d.Editable(document, index, members: true);
         d.RemoveSection(document, index, ReferencesMode.Keep, OpenLancer.Data.Editing.Scene.DeleteReason.Target, null);
     }
 }
@@ -351,8 +351,20 @@ public sealed record CommandGroup(IReadOnlyList<MissionCommand> Commands) : Miss
                 throw d.Refuse(MissionErrors.SectionChangedError(item.Section.ToString()) with { Target = reference });
         }
         var inverses = new List<MissionCommand>();
-        foreach (var command in Commands)
-            inverses.AddRange(d.RunInner(command));
+        // An inverse with body guards changes back the sections that its edit left as they are now. So it can change
+        // the lines of a member of a linked prefab instance (section 4.8 of the M6b design).
+        if (ExpectBodies.Count > 0)
+            d.GuardedReverts++;
+        try
+        {
+            foreach (var command in Commands)
+                inverses.AddRange(d.RunInner(command));
+        }
+        finally
+        {
+            if (ExpectBodies.Count > 0)
+                d.GuardedReverts--;
+        }
         inverses.Reverse();
         if (inverses.Count > 0)
             d.Inverse(inverses.Count == 1 ? inverses[0] : new CommandGroup(inverses));

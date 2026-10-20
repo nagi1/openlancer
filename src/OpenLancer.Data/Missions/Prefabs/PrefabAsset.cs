@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using OpenLancer.Data.Editing.Fields;
@@ -291,9 +292,10 @@ public sealed record PrefabTemplate(string Id, string Name, MissionPrefabKind Ki
     /// The id, the name and the texts of the header do not count, so a rename does not make the instances old (rule
     /// P03). SHA-256, 16 hex digits.
     /// </summary>
-    public string ContentHash => contentHash ??= Hash(Body());
+    public string ContentHash => Hashes.GetValue(this, t => new StrongBox<string>(Hash(t.Body()))).Value!;
 
-    private string? contentHash;
+    // The hash of each template. A copy with 'with' is a new key, so a changed template gets its own hash.
+    private static readonly ConditionalWeakTable<PrefabTemplate, StrongBox<string>> Hashes = new();
 
     /// <summary>The canonical text of the template.</summary>
     public string Write()
@@ -840,4 +842,33 @@ public static class BuiltinPrefabs
         }
         return result;
     }
+}
+
+/// <summary>
+/// A behavior prefab that an instance can name (section 5.2 of the M6b design): a built-in prefab, an asset of the active
+/// mod, or an asset of a lower mod. The asset has its text, and its template when the text has no problem.
+/// </summary>
+/// <param name="Ref">The prefab.</param>
+/// <param name="Text">The text of the template file.</param>
+/// <param name="ModId">The mod of the asset, or null for a built-in prefab.</param>
+/// <param name="Active">True for an asset of the active mod. Only such an asset can change.</param>
+public sealed record PrefabAsset(Editing.PrefabRef Ref, string Text, string? ModId, bool Active)
+{
+    /// <summary>The template of the text and its problems, from the cache of the texts that the editor read.</summary>
+    private (PrefabTemplate? Template, IReadOnlyList<PrefabProblem> Problems) Parsed => PrefabTemplate.Cached(Text);
+
+    /// <summary>The template, or null when the format check found a problem.</summary>
+    public PrefabTemplate? Template => Parsed.Problems.Count == 0 ? Parsed.Template : null;
+
+    /// <summary>The problems of the format check.</summary>
+    public IReadOnlyList<PrefabProblem> Problems => Parsed.Problems;
+
+    /// <summary>The plain name of the prefab, or its id when the file has a problem.</summary>
+    public string Name => Parsed.Template?.Name is { Length: > 0 } name ? name : Ref.Id;
+
+    /// <summary>The path of an asset of a mod, relative to the mod folder (decision D673).</summary>
+    public static string PathOf(string id) => $@"prefabs\missions\{id}.ini";
+
+    /// <summary>The folder of the assets of a mod, relative to the mod folder.</summary>
+    public const string Folder = @"prefabs\missions\";
 }

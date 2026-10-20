@@ -23,15 +23,77 @@ public sealed record GraphAct(string Nickname, string Name, string Text, IReadOn
     public override int GetHashCode() => HashCode.Combine(Nickname, Name, Text, Members.Count);
 }
 
-/// <summary>A section of the graph file that this editor keeps as it is, for example an <c>[Instance]</c> record of
-/// milestone M6b-3: its type and its lines.</summary>
+/// <summary>A section of the graph file that this editor keeps as it is, for example a <c>[Node]</c> record of a prefab
+/// instance: its type and its lines.</summary>
 public sealed record GraphRawSection(string Type, IReadOnlyList<(string Key, string Value)> Lines);
+
+/// <summary>A member of a linked prefab instance: the role of its template section and the nickname of its section in
+/// the script.</summary>
+public sealed record InstanceMember(string Role, string Nickname);
+
+/// <summary>The value of a field of a linked prefab instance: the text form of each row (see
+/// <see cref="Prefabs.PrefabRow"/>). A list field can have no row.</summary>
+public sealed record InstanceValue(string Field, IReadOnlyList<string> Rows)
+{
+    public bool Equals(InstanceValue? other) =>
+        other is not null && Field == other.Field && Rows.SequenceEqual(other.Rows, StringComparer.Ordinal);
+
+    public override int GetHashCode() => HashCode.Combine(Field, Rows.Count);
+}
+
+/// <summary>A link of a port of a linked prefab instance to an outside trigger.</summary>
+public sealed record InstancePort(string Port, string Trigger);
+
+/// <summary>
+/// The <c>[Instance]</c> record of a linked prefab instance in the graph file (section 5.5 of the M6b design): the
+/// prefab, its hash at the last compile, the members, the per-instance values, the overrides, the removed members, the
+/// port links and the hash of the compiled lines. The record never changes: an edit makes a new one.
+/// </summary>
+/// <param name="Id">The id of the instance in the script.</param>
+/// <param name="Prefab">The prefab: <c>builtin:&lt;id&gt;</c> or <c>mod:&lt;id&gt;</c>.</param>
+public sealed record InstanceRecord(string Id, string Prefab)
+{
+    /// <summary>The hash of the prefab at the last compile (<c>prefab_hash</c>), or null.</summary>
+    public string? PrefabHash { get; init; }
+
+    public IReadOnlyList<InstanceMember> Members { get; init; } = [];
+
+    /// <summary>The values of the per-instance fields.</summary>
+    public IReadOnlyList<InstanceValue> Values { get; init; } = [];
+
+    /// <summary>The fields whose value differs from the default of the prefab.</summary>
+    public IReadOnlyList<InstanceValue> Overrides { get; init; } = [];
+
+    /// <summary>The roles of the members that the user deleted: the removed-member overrides (decision D676 c, the rule
+    /// of Unity 2022.2 and later).</summary>
+    public IReadOnlyList<string> Removed { get; init; } = [];
+
+    public IReadOnlyList<InstancePort> Ports { get; init; } = [];
+
+    /// <summary>The hash of the compiled lines (<c>lines_hash</c>), or null. Other lines of the members are a hand
+    /// edit (rule P01).</summary>
+    public string? LinesHash { get; init; }
+
+    /// <summary>The nickname of the member of a role, or null.</summary>
+    public string? Member(string role) => Members.FirstOrDefault(m => m.Role == role)?.Nickname;
+
+    /// <summary>The value or the override of a field, or null.</summary>
+    public InstanceValue? ValueOf(string field) =>
+        Values.FirstOrDefault(v => v.Field == field) ?? Overrides.FirstOrDefault(v => v.Field == field);
+
+    public bool Equals(InstanceRecord? other) =>
+        other is not null && Id == other.Id && Prefab == other.Prefab && PrefabHash == other.PrefabHash &&
+        LinesHash == other.LinesHash && Members.SequenceEqual(other.Members) && Values.SequenceEqual(other.Values) &&
+        Overrides.SequenceEqual(other.Overrides) && Removed.SequenceEqual(other.Removed) && Ports.SequenceEqual(other.Ports);
+
+    public override int GetHashCode() => HashCode.Combine(Id, Prefab, Members.Count, Overrides.Count);
+}
 
 /// <summary>
 /// The graph file of a mission script, <c>graphs\&lt;install path&gt;.ini</c> in the mod folder (section 6.8 of the M6b
 /// design, decisions D404 and D679). It holds the nodes that the user moved or placed, the acts after the first act
-/// edit, and the records of other kinds. The game, the merge and the packages ignore the file. The record never changes:
-/// an edit makes a new one.
+/// edit, the records of the linked prefab instances, and the records of other kinds. The game, the merge and the
+/// packages ignore the file. The record never changes: an edit makes a new one.
 /// </summary>
 public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyList<GraphAct> Acts,
     IReadOnlyList<GraphRawSection> Others)
@@ -45,13 +107,20 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
     /// <summary>A graph file without records.</summary>
     public static readonly GraphFile Empty = new([], [], []);
 
+    /// <summary>The records of the linked prefab instances of the script (section 5.5 of the M6b design).</summary>
+    public IReadOnlyList<InstanceRecord> Instances { get; init; } = [];
+
+    /// <summary>The record of a linked instance, without letter case, or null.</summary>
+    public InstanceRecord? Instance(string id) =>
+        Instances.FirstOrDefault(i => i.Id.Equals(id.Trim(), StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Why the editor cannot write the file, or null. A file of another format reads as no records, and a
     /// command does not write over it (review finding 12 of M6b-2).</summary>
     public string? Unreadable { get; init; }
 
     /// <summary>True when the file has a record. A file without a record is not written (section 6.8 of the M6b
     /// design).</summary>
-    public bool HasRecords => Nodes.Count + Acts.Count + Others.Count > 0;
+    public bool HasRecords => Nodes.Count + Acts.Count + Instances.Count + Others.Count > 0;
 
     /// <summary>The path of the graph file of a script, relative to the mod folder.</summary>
     /// <param name="script">The install path of the script.</param>
@@ -121,6 +190,7 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
 
         var nodes = new List<GraphNodePlace>();
         var acts = new List<GraphAct>();
+        var instances = new List<InstanceRecord>();
         var others = new List<GraphRawSection>();
         foreach (var (type, line, entries) in sections)
         {
@@ -137,7 +207,8 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
                     nodes.Add(new GraphNodePlace(trigger, x, y));
                     continue;
                 }
-                // A node of a prefab instance comes with milestone M6b-3, so this editor keeps it as it is.
+                // This editor places a prefab instance by the nodes of its member triggers. So it keeps the node of an
+                // instance from another editor as it is.
                 if (Value(entries, "instance") != null)
                 {
                     others.Add(new GraphRawSection(type, entries.Select(e => (e.Key, e.Value)).ToList()));
@@ -157,9 +228,94 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
                     entries.Where(e => Is(e.Key, "member") && e.Value.Length > 0).Select(e => e.Value).ToList()));
                 continue;
             }
+            if (Is(type, "Instance"))
+            {
+                if (ReadInstance(entries, line, found) is { } record)
+                {
+                    if (instances.Any(i => Is(i.Id, record.Id)))
+                        found.Add(Problem(line, $"The id '{record.Id}' of an [Instance] record repeats. The editor keeps the first record."));
+                    else
+                        instances.Add(record);
+                }
+                continue;
+            }
             others.Add(new GraphRawSection(type, entries.Select(e => (e.Key, e.Value)).ToList()));
         }
-        return new GraphFile(nodes, acts, others);
+        return new GraphFile(nodes, acts, others) { Instances = instances };
+    }
+
+    /// <summary>Reads an <c>[Instance]</c> record (section 5.5 of the M6b design), or null with a problem.</summary>
+    private static InstanceRecord? ReadInstance(List<(string Key, string Value, int Line)> entries, int line, List<string> found)
+    {
+        var id = Value(entries, "id");
+        var prefab = Value(entries, "prefab");
+        if (id is not { Length: > 0 } || prefab is not { Length: > 0 })
+        {
+            found.Add(Problem(line, "An [Instance] record has an 'id' line and a 'prefab' line."));
+            return null;
+        }
+        var members = new List<InstanceMember>();
+        var values = new List<InstanceValue>();
+        var overrides = new List<InstanceValue>();
+        var removed = new List<string>();
+        var ports = new List<InstancePort>();
+        foreach (var (key, value, at) in entries)
+        {
+            switch (key.ToLowerInvariant())
+            {
+                case "id" or "prefab" or "prefab_hash" or "lines_hash":
+                    break;
+                case "member" when Pair(value) is var (role, nickname) && nickname.Length > 0:
+                    members.Add(new InstanceMember(role, nickname));
+                    break;
+                case "value":
+                    AddRow(values, value);
+                    break;
+                case "override":
+                    AddRow(overrides, value);
+                    break;
+                case "removed" when value.Length > 0:
+                    removed.Add(value);
+                    break;
+                case "port" when Pair(value) is var (port, trigger) && trigger.Length > 0:
+                    ports.Add(new InstancePort(port, trigger));
+                    break;
+                default:
+                    found.Add(Problem(at, $"An [Instance] record has no '{key} = {value}' line. The editor drops the line."));
+                    break;
+            }
+        }
+        return new InstanceRecord(id, prefab)
+        {
+            PrefabHash = Value(entries, "prefab_hash"),
+            LinesHash = Value(entries, "lines_hash"),
+            Members = members,
+            Values = values,
+            Overrides = overrides,
+            Removed = removed,
+            Ports = ports,
+        };
+    }
+
+    /// <summary>The two parts of a value 'a, b': the text before the first comma and the rest.</summary>
+    private static (string First, string Second) Pair(string value)
+    {
+        var comma = value.IndexOf(',');
+        return comma < 0 ? (value.Trim(), "") : (value[..comma].Trim(), value[(comma + 1)..].Trim());
+    }
+
+    /// <summary>Adds the row of a 'value' or an 'override' line to the value of its field. A line without a row gives a
+    /// field without rows.</summary>
+    private static void AddRow(List<InstanceValue> values, string text)
+    {
+        var (field, row) = Pair(text);
+        if (field.Length == 0)
+            return;
+        var at = values.FindIndex(v => v.Field == field);
+        if (at < 0)
+            values.Add(new InstanceValue(field, text.Contains(',') ? [row] : []));
+        else if (text.Contains(','))
+            values[at] = values[at] with { Rows = [.. values[at].Rows, row] };
     }
 
     /// <summary>The text of the file for a script, or null for a file without a record. A save then deletes the
@@ -190,6 +346,24 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
             foreach (var member in act.Members)
                 text.Append("member = ").Append(member).Append('\n');
         }
+        foreach (var record in Instances)
+        {
+            text.Append("\n[Instance]\n");
+            text.Append("id = ").Append(record.Id).Append('\n');
+            text.Append("prefab = ").Append(record.Prefab).Append('\n');
+            if (record.PrefabHash != null)
+                text.Append("prefab_hash = ").Append(record.PrefabHash).Append('\n');
+            foreach (var member in record.Members)
+                text.Append("member = ").Append(member.Role).Append(", ").Append(member.Nickname).Append('\n');
+            WriteValues(text, "value", record.Values);
+            WriteValues(text, "override", record.Overrides);
+            foreach (var role in record.Removed)
+                text.Append("removed = ").Append(role).Append('\n');
+            foreach (var port in record.Ports)
+                text.Append("port = ").Append(port.Port).Append(", ").Append(port.Trigger).Append('\n');
+            if (record.LinesHash != null)
+                text.Append("lines_hash = ").Append(record.LinesHash).Append('\n');
+        }
         foreach (var section in Others)
         {
             text.Append('\n').Append('[').Append(section.Type).Append("]\n");
@@ -197,6 +371,19 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
                 text.Append(key).Append(" = ").Append(value).Append('\n');
         }
         return text.ToString();
+    }
+
+    /// <summary>The 'value' or 'override' lines of values: one line for each row, or one line without a row for a field
+    /// without rows.</summary>
+    private static void WriteValues(StringBuilder text, string key, IReadOnlyList<InstanceValue> values)
+    {
+        foreach (var value in values)
+        {
+            if (value.Rows.Count == 0)
+                text.Append(key).Append(" = ").Append(value.Field).Append('\n');
+            foreach (var row in value.Rows)
+                text.Append(key).Append(" = ").Append(value.Field).Append(", ").Append(OneLine(row)).Append('\n');
+        }
     }
 
     /// <summary>
@@ -229,7 +416,7 @@ public sealed record GraphFile(IReadOnlyList<GraphNodePlace> Nodes, IReadOnlyLis
 
     public bool Equals(GraphFile? other) =>
         other is not null && Nodes.SequenceEqual(other.Nodes) && Acts.SequenceEqual(other.Acts) &&
-        Others.Count == other.Others.Count && Others.Zip(other.Others).All(p =>
+        Instances.SequenceEqual(other.Instances) && Others.Count == other.Others.Count && Others.Zip(other.Others).All(p =>
             p.First.Type == p.Second.Type && p.First.Lines.SequenceEqual(p.Second.Lines));
 
     public override int GetHashCode() => HashCode.Combine(Nodes.Count, Acts.Count, Others.Count);

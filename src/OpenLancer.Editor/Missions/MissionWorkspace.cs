@@ -264,7 +264,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
         }
 
         changedDuringRun.Clear();
-        Result = newer;
+        Result = Linked(newer, missions);
         rawTexts.Clear();
         marks.Clear();
         window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
@@ -356,14 +356,35 @@ internal sealed class MissionWorkspace(EditorWindow window)
     }
 
     /// <summary>Starts a run after a change of a ship build file, because the run reads the ship builds of all
-    /// scripts.</summary>
+    /// scripts. A change of a graph file or of a prefab asset links the prefab instances of each script again, and the
+    /// Console gets the warnings P01 to P03 again (section 5 of the M6b design).</summary>
     private void FilesChanged(EditChange change)
     {
-        if (followed is { } edits && change.Files.Any(f => !IsScript(f) && edits.Missions.IsMissionFile(f)))
+        if (followed is not { } edits)
+        {
+            return;
+        }
+
+        if (change.Files.Any(f => !IsScript(f) && edits.Missions.IsMissionFile(f)))
         {
             Run();
+            return;
+        }
+
+        if (change.ModFiles.Count > 0 && Result is { } result)
+        {
+            Result = Linked(result, edits.Missions);
+            window.Log.ReplaceSet(MissionChecks.Source, Result.Problems.ToList());
         }
     }
+
+    /// <summary>A run result with the linked prefab instances of the graph files of the active mod in each analysis
+    /// (section 5.1 of the M6b design).</summary>
+    internal static MissionRunResult Linked(MissionRunResult result, MissionEditor missions) =>
+        result with
+        {
+            Analyses = result.Analyses.ToDictionary(p => p.Key, p => missions.Linked(p.Value), VfsPath.Comparer),
+        };
 
     /// <summary>
     /// Runs a raw edit of the whole text of a mission file, or of the INI block of a page (section 8.8 of the M6b
@@ -490,6 +511,9 @@ internal sealed class MissionWorkspace(EditorWindow window)
                 return new MissionRef(script, MissionItemKind.Label, Key: parsed.Name);
             case ItemRefKind.Act when acts?.Acts.FirstOrDefault(a => MissionIndex.Is(a.Nickname, parsed.Name)) is { } act:
                 return new MissionRef(script, MissionItemKind.Act, Key: MissionActs.KeyOf(act));
+            case ItemRefKind.Instance when analysis.Prefabs?.Instances.FirstOrDefault(i =>
+                                                  i.Id.Equals(parsed.Name, StringComparison.OrdinalIgnoreCase)) is { } instance:
+                return new MissionRef(script, MissionItemKind.PrefabInstance, Key: instance.Key);
             default:
                 return null;
         }

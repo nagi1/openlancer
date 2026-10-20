@@ -120,14 +120,28 @@ public sealed class MissionInverseTests
     }
 
     [Fact]
-    public void EachCommandKindOfTheCatalogOfStepsOneToFiveHasASample()
+    public void EachCommandKindOfTheCatalogHasASample()
     {
         // DeleteScript, RevertSection, AcceptBase and RemoveAct need an edit before them, so they have their own tests.
+        // The prefab commands need an instance, so PrefabInstanceTests has their samples and their inverse tests.
         var kinds = MissionJson.Kinds.Keys.Where(k => k is not ("delete_script" or "revert_section" or "accept_base" or "remove_act"))
             .ToHashSet();
-        var samples = Commands.Values.Select(c => MissionJson.KindOf(c().GetType())).ToHashSet();
+        var samples = Commands.Values.Concat(PrefabInstanceTests.Commands.Values)
+            .SelectMany(Kinds).ToHashSet();
 
         Assert.Empty(kinds.Except(samples));
+    }
+
+    /// <summary>The kinds of a command and of the commands of a group.</summary>
+    private static IEnumerable<string> Kinds(Func<MissionCommand> make)
+    {
+        var command = make();
+        yield return MissionJson.KindOf(command.GetType());
+        if (command is CommandGroup group)
+        {
+            foreach (var inner in group.Commands)
+                yield return MissionJson.KindOf(inner.GetType());
+        }
     }
 
     [Fact]

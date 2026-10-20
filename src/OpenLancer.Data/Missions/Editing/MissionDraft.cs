@@ -249,10 +249,15 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         return r;
     }
 
-    /// <summary>Refuses a section that a patch cannot change (section 4.6 of the M6b design).</summary>
-    /// <exception cref="EditException"><c>RepeatedNickname</c> or <c>ReadOnlySection</c>.</exception>
-    public void Editable(EditDocument document, int index)
+    /// <summary>Refuses a section that a patch cannot change (section 4.6 of the M6b design), and a member of a linked
+    /// prefab instance (decision D676).</summary>
+    /// <param name="members">True for a delete: a delete of a member is a removed-member override (decision D676 c), so
+    /// it passes.</param>
+    /// <exception cref="EditException"><c>RepeatedNickname</c>, <c>ReadOnlySection</c> or <c>PrefabMember</c>.</exception>
+    public void Editable(EditDocument document, int index, bool members = false)
     {
+        if (!members)
+            RefuseMember(document, index);
         if (document.ReadOnlyReasonAt(index) is not { } reason)
             return;
         var id = document.IdentityAt(index);
@@ -344,13 +349,17 @@ internal sealed partial class MissionDraft(MissionEditor editor, EditSession.Com
         $"The place of a [{type}] section in the file has no effect in the game. A patch adds a new section at the end " +
         "of the file, so the editor put it there.";
 
-    /// <summary>Removes the section at an index, and gives it.</summary>
+    /// <summary>Removes the section at an index, and gives it. The delete of a member of a linked prefab instance
+    /// becomes a removed-member override of its record (decision D676 c).</summary>
     public Section Remove(EditDocument document, int index)
     {
+        var member = InstanceOps == 0 ? MemberAt(document, index) : null;
         var old = document.Working[index];
         var reference = new SectionRef(document.Path, document.IdentityAt(index));
         document.Remove(index, 1);
         scope.Changed(reference, structural: true);
+        if (member is var (record, role))
+            MemberRemoved(document, record, role);
         return old;
     }
 

@@ -163,6 +163,10 @@ public sealed record MissionAnalysis(MissionScriptInfo Script, byte[] Bytes, Mis
     /// bytes, so its raw text is the canonical text.</summary>
     public bool HasFileBytes { get; init; } = true;
 
+    /// <summary>The analysis before the linked prefab instances of the graph file joined it (section 5.1 of the M6b
+    /// design), or null for an analysis without them. The editor links an analysis again from it.</summary>
+    public MissionAnalysis? Matched { get; init; }
+
     /// <summary>The raw text of the script (decision D529): the file text with its comments for a text script that no
     /// mod changes, else the canonical text.</summary>
     public RawText RawText() => OpenLancer.Data.Editing.Fields.RawText.Of(Script.Path, Document.Sections.Select(s => s.Section).ToList(),

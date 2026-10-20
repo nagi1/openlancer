@@ -207,9 +207,13 @@ public sealed partial class MissionEditor
             .SelectMany(p => Model(p).Problems.Where(d => d.Severity == DiagnosticSeverity.Error)).ToList();
     }
 
-    /// <summary>The model of a state of a script, from the cache or a new analysis.</summary>
+    /// <summary>The model of a state of a script, from the cache or a new analysis, with the linked prefab instances of
+    /// the graph file (section 5 of the M6b design).</summary>
     /// <param name="names">The names of the game data, or null for the names now.</param>
-    internal MissionModel ModelOf(EditDocument document, DocumentState state, MissionInputs? names = null)
+    /// <param name="modText">Gives the text of an editor file of the active mod, or null for W now. The commit check of
+    /// a batch gives the texts before the batch, so the problems before the batch have the records before it.</param>
+    internal MissionModel ModelOf(EditDocument document, DocumentState state, MissionInputs? names = null,
+        Func<string, string?>? modText = null)
     {
         var snapshot = names ?? world.Inputs();
         cache.Use(snapshot);
@@ -220,11 +224,11 @@ public sealed partial class MissionEditor
             analysis = Analyze(snapshot, document, state);
             cache.Put(path, state, analysis);
         }
-        var graphText = GraphFileText(path);
-        return new MissionModel(path, Version(path), analysis)
+        var graphText = modText != null ? modText(GraphFile.PathOf(path)) : GraphFileText(path);
+        return new MissionModel(path, Version(path), Linked(analysis, modText))
         {
             GraphFile = graphText,
-            Graph = GraphOf(path, graphText),
+            Graph = modText != null ? GraphFile.Read(graphText, out _) : GraphOf(path, graphText),
             ReadOnlyReason = session.ReadOnlyReason ?? document.ReadOnlyReason,
         };
     }
