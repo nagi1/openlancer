@@ -35,7 +35,7 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
     private readonly Dictionary<string, ListField> lists = [];
     private (MissionRunResult? Result, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer, string? NoEdit,
-        MissionPageModel? Model) page;
+        GraphFile? File, MissionPageModel? Model) page;
     private (MissionRunResult? Result, string? Key, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
         block = (null, null, false, null, []);
 
@@ -128,9 +128,12 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         var showBaseGame = window.Missions.ShowBaseGame;
         var hidesOpenLancer = session.Edits.HidesOpenLancer;
         var noEdit = window.Missions.NoEditReason(item.Script);
+        // The graph file holds the acts, so a change of it makes the page again.
+        var file = window.Missions.GraphOf(item.Script);
         changed = !Equals(page.Item, item);
         if (page.Model is { } known && ReferenceEquals(page.Result, result) && !changed &&
-            page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer && page.NoEdit == noEdit)
+            page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer && page.NoEdit == noEdit &&
+            ReferenceEquals(page.File, file))
         {
             return known;
         }
@@ -142,9 +145,10 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             SystemName = session.SystemName,
             NameOf = NameOf,
             ReadOnlyOf = section => window.Missions.NoEditReason(section.Path) ?? session.Edits.Missions.ReadOnlyReason(section),
+            Acts = window.Missions.ActsOf(analysis),
         };
         var model = MissionPageModel.For(context, item);
-        page = (result, item, showBaseGame, hidesOpenLancer, noEdit, model);
+        page = (result, item, showBaseGame, hidesOpenLancer, noEdit, file, model);
         if (changed)
         {
             lists.Clear();

@@ -32,6 +32,9 @@ internal sealed record PageContext(MissionRunResult Result, MissionAnalysis Anal
     /// <summary>Gives the name text of an item of the game data of a kind, for example a faction, or null.</summary>
     public Func<MissionValueKind, string, string?> NameOf { get; init; } = (_, _) => null;
 
+    /// <summary>The acts of the graph file, or null for the acts of the analysis (decision D679).</summary>
+    public MissionActs? Acts { get; init; }
+
     /// <summary>
     /// Gives why a section cannot change, or null when the user can edit it (section 8.1 of the M6b design). The Inspector
     /// gives the reasons of the session. Without a function, each section is read-only, as in a view without an edit
@@ -1058,7 +1061,7 @@ internal sealed partial record MissionPageModel
     private static MissionPageModel Act(PageContext context, string key)
     {
         var analysis = context.Analysis;
-        var acts = analysis.Acts ?? MissionActs.Propose(analysis.Index);
+        var acts = context.Acts ?? analysis.Acts ?? MissionActs.Propose(analysis.Index);
         var script = analysis.Script.Path;
         var frame = key == MissionActs.NotStartedKey;
         var act = acts.Act(key);
@@ -1068,16 +1071,73 @@ internal sealed partial record MissionPageModel
             : key;
         var walkthrough = MissionGraph.Walkthrough(triggers.Count, act?.Checkpoints ?? 0);
         var (kind, glyph, help) = KindOf(MissionItemKind.Act, key, MissionSchema.Retail);
+        // The fields of an act edit its record in the graph file (section 8.4 of the M6b design). The first act edit
+        // writes all proposed acts (decision D679).
+        var editable = act != null && context.Editable(new SectionRef(script, new SectionIdentity("Mission", null)));
+        var reference = act != null ? new ActRef(script, MissionActs.NicknameOf(act)) : null;
         PageField Link(MissionTrigger t) => new(t.Nickname, t.Condition?.Sentence() ?? "No condition", null,
-            new MissionRef(script, MissionItemKind.Trigger, t.Section.Ref));
+            new MissionRef(script, MissionItemKind.Trigger, t.Section.Ref))
+        {
+            Actions = editable
+                ? [new PageAction("Remove", One($"Remove {t.Nickname} from {title}", new SetActMembers(reference!,
+                    triggers.Where(x => x != t).Select(x => x.Nickname).ToList())))]
+                : [],
+        };
+        var actFields = new List<PageField>
+        {
+            new("Name", title)
+            {
+                Edit = editable
+                    ? new FieldEdit(EditWidget.Text, "Set the name of the act")
+                    {
+                        Value = title, Make = value => One("Set the name of the act", new SetAct(reference!) { Name = value.Scalar }),
+                    }
+                    : null,
+            },
+            new("Walkthrough", walkthrough),
+        };
+        if (editable)
+        {
+            actFields.Add(new PageField("Walkthrough text", act!.Text ?? "", "The walkthrough of the act in plain words.")
+            {
+                Edit = new FieldEdit(EditWidget.Text, "Set the walkthrough text")
+                {
+                    Value = act.Text ?? "", Make = value => One("Set the walkthrough text", new SetAct(reference!) { Text = value.Scalar }),
+                },
+            });
+        }
+
+        var triggerFields = triggers.Select(Link).ToList();
+        if (editable)
+        {
+            triggerFields.Add(new PageField("Add", "", "Pick a trigger. It moves into this act.")
+            {
+                Edit = new FieldEdit(EditWidget.Triggers, "Add a trigger to the act")
+                {
+                    List = MissionSchema.ListOf(MissionValueKind.Trigger),
+                    Scope = script,
+                    Add = name => One($"Add {name} to {title}", new SetActMembers(reference!,
+                        [.. triggers.Select(t => t.Nickname), name])),
+                },
+            });
+        }
+
         var sections = new List<PageSection>
         {
-            new("act", kind, glyph, help, [new PageField("Name", title), new PageField("Walkthrough", walkthrough)], []),
-            new("triggers", "Triggers", EditorIcons.Bolt, null, triggers.Select(Link).ToList(), []),
+            new("act", kind, glyph, help, actFields, []),
+            new("triggers", "Triggers", EditorIcons.Bolt, null, triggerFields, []),
             new("checkpoints", "Checkpoints", EditorIcons.Save, null,
                 triggers.Where(t => t.ActionsOf("Act_Save").Any()).Select(Link).ToList(), []),
         };
-        return new MissionPageModel(title, kind, glyph, help, null, sections, null);
+        return new MissionPageModel(title, kind, glyph, help, null, sections, null)
+        {
+            PageActions = editable ? [new PageAction("Delete", One($"Delete act {title}", new RemoveAct(reference!)))] : [],
+            Rename = editable
+                ? name => name.Trim().Length == 0 || name.Trim() == title
+                    ? null
+                    : One("Set the name of the act", new SetAct(reference!) { Name = name.Trim() })
+                : null,
+        };
     }
 
     // ---- The prefab pages (sections 10.4 and 10.5).

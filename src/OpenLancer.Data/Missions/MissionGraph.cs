@@ -375,7 +375,11 @@ public sealed class GraphIds
 public sealed record GraphOptions(GraphLens Lens = GraphLens.Beats, bool ShowLines = false,
     IReadOnlyDictionary<string, bool>? Collapse = null, IReadOnlySet<string>? LinesOf = null,
     IReadOnlySet<string>? AllRowsOf = null, bool ShowBaseGame = false, bool HidesOpenLancer = false,
-    Func<string, string?>? SystemName = null, GraphIds? Ids = null);
+    Func<string, string?>? SystemName = null, GraphIds? Ids = null)
+{
+    /// <summary>The acts of the graph file (decision D679), or null for the acts of the analysis.</summary>
+    public MissionActs? Acts { get; init; }
+}
 
 /// <summary>
 /// The model of the mission graph (section 6 of the M6a design). It has one node for each trigger, the act frames, the
@@ -521,6 +525,9 @@ public sealed class MissionGraph
     };
 
     /// <summary>Builds the graph of an analysis.</summary>
+    /// <summary>The acts of the graph: the acts of the options, of the analysis, or the proposed acts.</summary>
+    public MissionActs ActsOf() => Options.Acts ?? Analysis.Acts ?? MissionActs.Propose(Index);
+
     public static MissionGraph Build(MissionAnalysis analysis, GraphOptions? options = null)
     {
         var graph = new MissionGraph(analysis, options ?? new GraphOptions());
@@ -545,7 +552,7 @@ public sealed class MissionGraph
     /// <summary>The frames and the trigger nodes in them.</summary>
     private void BuildFrames()
     {
-        var acts = Analysis.Acts ?? MissionActs.Propose(Index);
+        var acts = ActsOf();
         var triggers = Index.Triggers;
         var top = new List<GraphFrame>();
         var actFrames = new Dictionary<MissionAct, GraphFrame>();
@@ -638,6 +645,8 @@ public sealed class MissionGraph
     /// <param name="systemName">Gives the name of a system, or null.</param>
     public static string ActTitle(MissionAct act, Func<string, string?>? systemName)
     {
+        if (act.Name is { Length: > 0 } actName)
+            return actName;
         var number = act.Number.ToString(CultureInfo.InvariantCulture);
         if (act.System is not { } system)
             return $"Act {number}";

@@ -187,8 +187,9 @@ internal sealed class MissionEdits : IDisposable
     public static string Line(Entry entry) =>
         entry.Count == 0 ? $"{entry.Name} =" : $"{entry.Name} = {string.Join(", ", MissionValues.TextsOf(entry))}";
 
-    /// <summary>The engine form of W of the mission files that exist, and the text of the active mod: each section as its
-    /// type and its lines. Two states with the same form are engine-equal.</summary>
+    /// <summary>The engine form of W of the mission files that exist, the text of the active mod and the graph file of the
+    /// script: each section as its type and its lines. Two states with the same form are engine-equal and have the same
+    /// editor files.</summary>
     public string State() => string.Join("\n---\n", new[] { Script, Ships, SharedShips }
         .Concat(Session.EditedPaths.Where(p => p.StartsWith(@"DATA\MISSIONS", StringComparison.OrdinalIgnoreCase)))
         .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)
@@ -196,7 +197,8 @@ internal sealed class MissionEdits : IDisposable
         .Select(path => $"{path}\n" + string.Join("\n", Session.OpenDocument(path)!.Working.Select(s =>
             $"[{s.Name}]\n" + string.Join("\n", s.Select(e => e.Name.ToLowerInvariant() + " = " +
                 string.Join(", ", e.Select(EngineText)))))))
-        .Append("text\n" + string.Join("\n", Session.CurrentText.Strings.Select(p => $"{p.Key} = {p.Value}"))));
+        .Append("text\n" + string.Join("\n", Session.CurrentText.Strings.Select(p => $"{p.Key} = {p.Value}")))
+        .Append("graph\n" + Session.ModFileText(GraphFile.PathOf(Script))));
 
     /// <summary>The text of a value as the engine reads it: numbers by value.</summary>
     private static string EngineText(ValueBase value) => value switch

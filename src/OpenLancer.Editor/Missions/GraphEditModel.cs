@@ -60,7 +60,14 @@ internal enum QuickAddFilter
 /// <param name="From">The output pin of a drag to an empty place, or null.</param>
 /// <param name="Trigger">The trigger that takes an action or a condition, or null.</param>
 /// <param name="Group">The action group of the "+" of a group of the Trigger page, or null for all groups.</param>
-internal sealed record QuickAddContext(GraphEnd? From, MissionTrigger? Trigger, QuickAddFilter Filter, string? Group = null);
+internal sealed record QuickAddContext(GraphEnd? From, MissionTrigger? Trigger, QuickAddFilter Filter, string? Group = null)
+{
+    /// <summary>The place of a new node in the canvas, or null for the automatic layout.</summary>
+    public GraphPoint? Place { get; init; }
+
+    /// <summary>The act of a new trigger, or null.</summary>
+    public ActRef? Act { get; init; }
+}
 
 /// <summary>
 /// The edit gestures of the mission graph as mission commands (section 8.2 of the M6b design). Each gesture gives one
@@ -302,29 +309,77 @@ internal sealed class GraphEditModel
 
     /// <summary>
     /// The gesture of Delete with nodes selected (section 8.2 of the M6b design): one batch with
-    /// <see cref="RemoveTrigger"/> for each trigger node. Each line that names a removed trigger stays and shows
-    /// "Missing" (decision D81). A duplicate trigger, which the game never runs (TR4), goes by its section. Frames and
-    /// missing nodes give nothing. Null when the selection has no trigger.
+    /// <see cref="RemoveTrigger"/> for each trigger node, and <see cref="RemoveAct"/> for each act frame. The triggers of
+    /// an act stay. Each line that names a removed trigger stays and shows "Missing" (decision D81). A duplicate trigger,
+    /// which the game never runs (TR4), goes by its section. Prefab frames and missing nodes give nothing. Null when the
+    /// selection has no trigger and no act.
     /// </summary>
     public MissionBatch? Delete(IEnumerable<GraphBlock> selection)
     {
+        var blocks = selection.ToList();
         var commands = new List<MissionCommand>();
-        foreach (var trigger in selection.OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>().Distinct())
+        foreach (var trigger in blocks.OfType<GraphNode>().Select(n => n.Trigger).OfType<MissionTrigger>().Distinct())
             commands.Add(trigger.IsDuplicate ? new RemoveSection(ItemOf(trigger.Section)) : new RemoveTrigger(RefOf(trigger)));
+        var acts = blocks.Select(b => b as GraphFrame ?? (b as GraphNode)?.Frame).OfType<GraphFrame>()
+            .Where(f => f is { Kind: GraphFrameKind.Act, Act: not null }).Distinct().ToList();
+        commands.AddRange(acts.Select(f => new RemoveAct(ActRefOf(f.Act!))));
         return commands.Count switch
         {
             0 => null,
             1 => new MissionBatch(commands[0].HistoryLabel, commands),
-            _ => new MissionBatch($"Delete {commands.Count.ToString(CultureInfo.InvariantCulture)} triggers", commands),
+            _ => new MissionBatch(acts.Count == 0
+                ? $"Delete {commands.Count.ToString(CultureInfo.InvariantCulture)} triggers"
+                : $"Delete {commands.Count.ToString(CultureInfo.InvariantCulture)} items", commands),
         };
+    }
+
+    /// <summary>The reference of an act of the graph: its nickname in the graph file, or the nickname that the first
+    /// act edit gives a proposed act (decision D679).</summary>
+    public ActRef ActRefOf(MissionAct act) => new(Script, MissionActs.NicknameOf(act));
+
+    /// <summary>The graph menu "New act from selection" (section 8.11 of the M6b design): a new act with the selected
+    /// triggers. Null when the selection has no trigger.</summary>
+    public MissionBatch? NewAct(IEnumerable<GraphBlock> selection)
+    {
+        var triggers = selection.OfType<GraphNode>().SelectMany(n => n.Triggers).Distinct().OrderBy(t => t.Section.Index)
+            .Select(t => t.Nickname).ToList();
+        return triggers.Count == 0 ? null : Batch("New act from selection", new AddAct(new ScriptRef(Script)) { Members = triggers });
+    }
+
+    /// <summary>
+    /// The gesture of a drag of nodes (section 8.2 of the M6b design): one batch with <see cref="MoveNodes"/> for the new
+    /// places of the trigger nodes, and <see cref="SetActMembers"/> for each node that the drag puts into another act
+    /// frame. So each drag is one undo entry. Null when no trigger node moved.
+    /// </summary>
+    /// <param name="moved">Each moved node, its new top-left corner, and the act frame under its center, or null.</param>
+    public MissionBatch? Moved(IReadOnlyList<(GraphNode Node, System.Numerics.Vector2 Position, GraphFrame? Act)> moved)
+    {
+        var places = moved.Where(m => m.Node.Trigger != null)
+            .Select(m => new NodePlace(m.Node.Trigger!.Nickname, Math.Round(m.Position.X), Math.Round(m.Position.Y))).ToList();
+        if (places.Count == 0)
+            return null;
+        var commands = new List<MissionCommand> { new MoveNodes(new ScriptRef(Script), places) };
+        var acts = Graph.ActsOf();
+        foreach (var group in moved.Where(m => m is { Node.Trigger: not null, Act.Act: not null } &&
+                                               acts.ActOf(m.Node.Trigger!) != m.Act.Act)
+                     .GroupBy(m => m.Act!))
+        {
+            var act = group.Key.Act!;
+            var members = act.Triggers.Select(t => t.Nickname).Concat(group.Select(m => m.Node.Trigger!.Nickname)).ToList();
+            commands.Add(new SetActMembers(ActRefOf(act), members));
+        }
+        return new MissionBatch(places.Count == 1 ? $"Move {places[0].Trigger}" : "Move nodes", commands);
     }
 
     /// <summary>The gesture of Ctrl+D: <see cref="DuplicateTrigger"/> with a free name after the name of the
     /// trigger.</summary>
-    public MissionBatch? Duplicate(MissionTrigger trigger) =>
+    /// <param name="place">The place of the node of the copy beside the original, or null for the automatic
+    /// layout.</param>
+    public MissionBatch? Duplicate(MissionTrigger trigger, GraphPoint? place = null) =>
         Batch($"Duplicate trigger {trigger.Nickname}", new DuplicateTrigger(RefOf(trigger))
         {
             NewName = MissionNaming.Free(Script, "Trigger", TakenNames(), trigger.Nickname),
+            Place = place,
         });
 
     /// <summary>The gesture of F2: <see cref="RenameTrigger"/>. The lines that name the trigger change too. Null when the
@@ -433,14 +488,14 @@ internal sealed class GraphEditModel
     public static string? EmptyDropRefusal(LibraryItem item) =>
         item.MakesTrigger ? null : "Drop an action on a trigger.";
 
-    /// <summary>The gesture of a drop of an event or a condition on an empty place: a new trigger with the condition.
-    /// Null for an action.</summary>
-    public MissionBatch? DropOnEmpty(LibraryItem item, string? name = null) =>
+    /// <summary>The gesture of a drop of an event or a condition on an empty place or into an act frame: a new trigger
+    /// with the condition, its node at the place and in the act. Null for an action.</summary>
+    public MissionBatch? DropOnEmpty(LibraryItem item, GraphPoint? place = null, ActRef? act = null) =>
         EmptyDropRefusal(item) != null
             ? null
             : Batch($"Add trigger: {item.Name}", new AddTrigger(new ScriptRef(Script))
             {
-                Nickname = name ?? NewTriggerName(), Condition = MissionLibrary.Line(item),
+                Nickname = NewTriggerName(), Condition = MissionLibrary.Line(item), Place = place, Act = act,
             });
 
     /// <summary>
@@ -492,7 +547,10 @@ internal sealed class GraphEditModel
             if (NewNodeRefusal(from) != null || !item.MakesTrigger)
                 return null;
             var name = NewTriggerName();
-            var add = new AddTrigger(new ScriptRef(Script)) { Nickname = name, Condition = MissionLibrary.Line(item) };
+            var add = new AddTrigger(new ScriptRef(Script))
+            {
+                Nickname = name, Condition = MissionLibrary.Line(item), Place = context.Place, Act = context.Act,
+            };
             MissionCommand link = from.Pin is { Kind: GraphPinKind.Row, Line: { } line }
                 ? new RetargetLink(RowOf(line), name)
                 : new LinkTriggers(RefOf(from.Node.Trigger!), name,
@@ -501,7 +559,7 @@ internal sealed class GraphEditModel
         }
         if (context.Trigger is { } trigger && (item.Kind == LibraryKind.Action || context.Filter == QuickAddFilter.Conditions))
             return AddTo(trigger, item);
-        return DropOnEmpty(item);
+        return DropOnEmpty(item, context.Place, context.Act);
     }
 
     /// <summary>The batch that adds an item to a trigger: an action goes to its end, and a condition or an event becomes

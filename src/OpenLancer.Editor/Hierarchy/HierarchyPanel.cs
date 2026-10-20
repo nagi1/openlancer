@@ -141,7 +141,7 @@ internal sealed class HierarchyPanel(EditorWindow window)
             }
 
             tree = HierarchyModel.ForMission(analysis, id => session.Name(id), window.Missions.ShowBaseGame, missionModel,
-                session.SystemName);
+                session.SystemName, window.Missions.ActsOf(analysis));
             Show(tree, missionModel);
             missionModel = tree;
             tree.SetSearch(missionSearch);

@@ -155,11 +155,44 @@ public sealed partial class MissionEditor
             analysis = Analyze(snapshot, document, state);
             cache.Put(path, state, analysis);
         }
+        var graphText = GraphFileText(path);
         return new MissionModel(path, Version(path), analysis)
         {
-            GraphFile = GraphFileText(path),
+            GraphFile = graphText,
+            Graph = GraphOf(graphText),
             ReadOnlyReason = session.ReadOnlyReason ?? document.ReadOnlyReason,
         };
+    }
+
+    // The last graph file that the editor read, by its text.
+    private (string? Text, GraphFile File)? lastGraph;
+
+    /// <summary>The records of the text of a graph file. The same text gives the same record, so a view that keys on
+    /// the record builds again only after a change of the file.</summary>
+    private GraphFile GraphOf(string? text)
+    {
+        if (lastGraph is var (known, file) && string.Equals(known, text, StringComparison.Ordinal))
+            return file;
+        file = GraphFile.Read(text, out _);
+        lastGraph = (text, file);
+        return file;
+    }
+
+    /// <summary>
+    /// The records of the graph file of a script in W (section 6.8 of the M6b design): the node places, the acts and
+    /// the other records. <see cref="GraphFile.Empty"/> when the active mod has no graph file for the script.
+    /// </summary>
+    /// <param name="script">The install path of the script, in any letter case.</param>
+    public GraphFile Graph(string script) =>
+        InstallPaths.TryParse(script) is { } path ? GraphOf(GraphFileText(path)) : GraphFile.Empty;
+
+    /// <summary>The problems of the graph file of a script: the lines that the editor cannot read.</summary>
+    public IReadOnlyList<string> GraphProblems(string script)
+    {
+        if (InstallPaths.TryParse(script) is not { } path)
+            return [];
+        GraphFile.Read(GraphFileText(path), out var problems);
+        return problems;
     }
 
     /// <summary>
@@ -227,7 +260,7 @@ public sealed partial class MissionEditor
     {
         try
         {
-            return session.ModFileText($@"graphs\{path}");
+            return session.ModFileText(GraphFile.PathOf(path));
         }
         catch (Exception e) when (e is ArgumentException or System.IO.IOException or UnauthorizedAccessException)
         {

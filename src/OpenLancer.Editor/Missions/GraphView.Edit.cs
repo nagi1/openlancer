@@ -211,7 +211,8 @@ internal sealed partial class GraphView
                 }
                 else if (NodeEditor.AcceptNewItem(new Color4(EditorTheme.TextDim), 2))
                 {
-                    quickAddAt = (new QuickAddContext(from, null, QuickAddFilter.Triggers), ImGui.GetMousePos());
+                    quickAddAt = (Placed(new QuickAddContext(from, null, QuickAddFilter.Triggers), ImGui.GetMousePos()),
+                        ImGui.GetMousePos());
                 }
             }
         }
@@ -358,7 +359,8 @@ internal sealed partial class GraphView
         EditorTheme.PushMenuColors();
         if (ImGui.MenuItem("Add...", "Space"))
         {
-            quickAddAt = (new QuickAddContext(null, SelectedTrigger(script), QuickAddFilter.All), ImGui.GetMousePos());
+            quickAddAt = (Placed(new QuickAddContext(null, SelectedTrigger(script), QuickAddFilter.All), ImGui.GetMousePos()),
+                ImGui.GetMousePos());
         }
 
         ImGui.SetItemTooltip("Add a trigger, a prefab, an action or a condition. Shortcut: Space.");
@@ -366,6 +368,14 @@ internal sealed partial class GraphView
         {
             Paste();
         }
+
+        var newAct = edit.NewAct(selectedBlocks);
+        if (ImGui.MenuItem("New act from selection", "", false, newAct != null))
+        {
+            Run(newAct);
+        }
+
+        ImGui.SetItemTooltip("Put the selected triggers into a new act.");
 
         EditorTheme.PopMenuColors();
         ImGui.EndPopup();
@@ -435,7 +445,7 @@ internal sealed partial class GraphView
 
         if (ImGui.MenuItem("Duplicate", "Ctrl+D"))
         {
-            Run(edit.Duplicate(trigger));
+            Run(edit.Duplicate(trigger, BesidePlace(node)));
         }
 
         if (ImGui.MenuItem("Delete", "Delete"))
@@ -513,7 +523,10 @@ internal sealed partial class GraphView
         }
         else if (item != null)
         {
-            batch = node != null ? edit.DropOnNode(item, node, item.Kind == LibraryKind.Action ? before : null) : edit.DropOnEmpty(item);
+            var place = Placed(new QuickAddContext(null, null, QuickAddFilter.All), ImGui.GetMousePos());
+            batch = node != null
+                ? edit.DropOnNode(item, node, item.Kind == LibraryKind.Action ? before : null)
+                : edit.DropOnEmpty(item, place.Place, place.Act);
             refusal = node == null ? GraphEditModel.EmptyDropRefusal(item) : null;
         }
         else if (node?.Trigger is { } target)
@@ -621,7 +634,7 @@ internal sealed partial class GraphView
 
         if (io.KeyCtrl && ImGui.IsKeyPressed(ImGuiKey.D, false) && SelectedTrigger(script) is { } duplicated)
         {
-            Run(edit.Duplicate(duplicated));
+            Run(edit.Duplicate(duplicated, Graph?.TriggerNode(duplicated) is { } original ? BesidePlace(original) : null));
         }
 
         if (io.KeyCtrl || io.KeyAlt)
@@ -662,8 +675,50 @@ internal sealed partial class GraphView
     {
         if (editable)
         {
-            quickAddAt = (new QuickAddContext(null, SelectedTrigger(script), QuickAddFilter.All), at);
+            quickAddAt = (Placed(new QuickAddContext(null, SelectedTrigger(script), QuickAddFilter.All), at), at);
         }
+    }
+
+    /// <summary>The canvas point of a screen point of the graph, or null outside the graph.</summary>
+    private Vector2? CanvasOf(Vector2 screen)
+    {
+        var span = View.Max - View.Min;
+        var size = Screen.Max - Screen.Min;
+        if (span.X <= 0 || size.X <= 0 || size.Y <= 0 || screen.X < Screen.Min.X || screen.Y < Screen.Min.Y ||
+            screen.X > Screen.Max.X || screen.Y > Screen.Max.Y)
+        {
+            return null;
+        }
+
+        return View.Min + (screen - Screen.Min) * span / size;
+    }
+
+    /// <summary>A quick add context with the place of a new node at a screen point, and the act frame there (section 8.2
+    /// of the M6b design).</summary>
+    private QuickAddContext Placed(QuickAddContext context, Vector2 screen)
+    {
+        if (CanvasOf(screen) is not { } canvas || edit == null)
+        {
+            return context;
+        }
+
+        return context with
+        {
+            Place = new GraphPoint(canvas.X, canvas.Y),
+            Act = ActAt(canvas)?.Act is { } act ? edit.ActRefOf(act) : null,
+        };
+    }
+
+    /// <summary>The place of a copy beside its original node: below it, with the gap of the layout.</summary>
+    private GraphPoint? BesidePlace(GraphNode node)
+    {
+        if (Layout == null)
+        {
+            return null;
+        }
+
+        var (min, max) = Layout.RectOf(node);
+        return new GraphPoint(min.X, max.Y + GraphLayout.BlockGap);
     }
 
     /// <summary>A double-click on a library item (section 8.3 of the M6b design): an action or a condition goes to the
@@ -681,7 +736,10 @@ internal sealed partial class GraphView
         }
         else if (item.MakesTrigger)
         {
-            Run(edit.DropOnEmpty(item));
+            // A double-click places the item at the center of the view.
+            var center = (Screen.Min + Screen.Max) / 2;
+            var place = Placed(new QuickAddContext(null, null, QuickAddFilter.All), center);
+            Run(edit.DropOnEmpty(item, place.Place, place.Act));
         }
         else
         {

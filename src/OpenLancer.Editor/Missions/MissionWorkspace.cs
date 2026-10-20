@@ -107,6 +107,28 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// node.</summary>
     public void FrameInScene(MissionRef item) => PendingSceneFrame = item;
 
+    // The acts of the graph file of the last analysis that asked, with the graph file that gave them.
+    private (MissionAnalysis Analysis, GraphFile File, MissionActs? Acts)? acts;
+
+    /// <summary>The records of the graph file of a script in W (section 6.8 of the M6b design), or
+    /// <see cref="GraphFile.Empty"/>. The same file gives the same record.</summary>
+    public GraphFile GraphOf(string path) => window.Session?.Edits.Missions.Graph(path) ?? GraphFile.Empty;
+
+    /// <summary>The acts of the graph file of an analysis after the first act edit, or null for the proposed acts
+    /// (decision D679). The graph, the Hierarchy and the Act page use them.</summary>
+    public MissionActs? ActsOf(MissionAnalysis analysis)
+    {
+        var file = GraphOf(analysis.Script.Path);
+        if (acts is var (known, knownFile, made) && ReferenceEquals(known, analysis) && ReferenceEquals(knownFile, file))
+        {
+            return made;
+        }
+
+        made = file.Acts.Count > 0 ? MissionActs.FromFile(analysis.Index, file.Acts) : null;
+        acts = (analysis, file, made);
+        return made;
+    }
+
     /// <summary>The field that waits for "Pick in Scene", or null (section 8.9 of the M6b design).</summary>
     public ScenePick? PendingPick { get; private set; }
 
@@ -367,7 +389,7 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
         var selection = window.Selection;
         var next = result.Select is { } select && Result?.Of(ScriptOf(select) ?? "") is { } analysis
-            ? SelectionOf(analysis, select)
+            ? SelectionOf(analysis, select, ActsOf(analysis))
             : null;
         next ??= Followed(selection, result.Renames.Select(r => (r.From, r.To)).ToList(), result.RowMoves);
         if (next != null && !Equals(next, selection))
@@ -393,9 +415,10 @@ internal sealed class MissionWorkspace(EditorWindow window)
 
     /// <summary>
     /// The selection of a reference of a result (section 4.0.7 of the M6b design) in an analysis: a trigger, a section,
-    /// a line of a trigger or the script. Null for a reference that the analysis does not have.
+    /// a line of a trigger, a label, an act or the script. Null for a reference that the analysis does not have.
     /// </summary>
-    internal static MissionRef? SelectionOf(MissionAnalysis analysis, string reference)
+    /// <param name="acts">The acts of the graph file, for the reference of an act, or null.</param>
+    internal static MissionRef? SelectionOf(MissionAnalysis analysis, string reference, MissionActs? acts = null)
     {
         ItemReference parsed;
         try
@@ -424,6 +447,8 @@ internal sealed class MissionWorkspace(EditorWindow window)
                 return MissionRef.OfSection(section.Ref, parsed.Kind == ItemRefKind.Line ? parsed.Row ?? -1 : -1);
             case ItemRefKind.Label:
                 return new MissionRef(script, MissionItemKind.Label, Key: parsed.Name);
+            case ItemRefKind.Act when acts?.Acts.FirstOrDefault(a => MissionIndex.Is(a.Nickname, parsed.Name)) is { } act:
+                return new MissionRef(script, MissionItemKind.Act, Key: MissionActs.KeyOf(act));
             default:
                 return null;
         }
@@ -550,7 +575,13 @@ internal sealed class MissionWorkspace(EditorWindow window)
     /// <param name="show">True to show the Mission tab.</param>
     public void OpenMission(string path, bool show)
     {
+        var opened = !string.Equals(OpenPath, VfsPath.Normalize(path) ?? path, StringComparison.OrdinalIgnoreCase);
         OpenPath = VfsPath.Normalize(path) ?? path;
+        if (opened)
+        {
+            GraphNotes(OpenPath);
+        }
+
         if (window.Scene.System == null && Analysis(OpenPath)?.Index is { } index &&
             MissionSummary.StartSystem(index) is { } nickname &&
             window.Session?.GameData?.Items.Systems.Get(nickname) is { } system)
@@ -563,6 +594,26 @@ internal sealed class MissionWorkspace(EditorWindow window)
         if (show)
         {
             window.ShowPanel(PanelId);
+        }
+    }
+
+    /// <summary>The Console notes of the graph file of a mission when it opens (section 6.8 of the M6b design): the lines
+    /// that the editor cannot read, and the records of triggers that the script does not have.</summary>
+    private void GraphNotes(string path)
+    {
+        if (window.Session?.Edits.Missions is not { } editor || Analysis(path) is not { } analysis)
+        {
+            return;
+        }
+
+        foreach (var problem in editor.GraphProblems(path))
+        {
+            window.Log.Add(ConsoleSeverity.Warning, MissionChecks.Source, problem);
+        }
+
+        foreach (var note in GraphOf(path).Notes(path, name => analysis.Index.Trigger(name) != null))
+        {
+            window.Log.Add(ConsoleSeverity.Info, MissionChecks.Source, note);
         }
     }
 

@@ -111,23 +111,30 @@ internal sealed partial class HierarchyModel
     /// <param name="showBaseGame">True while the base-game messages show. The rows then mark base-game problems with
     /// the lock glyph.</param>
     /// <param name="systemName">Gives the name of a system for the act titles, or null.</param>
+    /// <param name="acts">The acts of the graph file, or null for the proposed acts (decision D679).</param>
     public static HierarchyModel ForMission(MissionAnalysis analysis, Func<int, string> text, bool showBaseGame,
-        HierarchyModel? previous, Func<string, string?>? systemName = null) =>
-        previous != null && ReferenceEquals(previous.Analysis, analysis) && previous.ShowsBaseGame == showBaseGame
+        HierarchyModel? previous, Func<string, string?>? systemName = null, MissionActs? acts = null) =>
+        previous != null && ReferenceEquals(previous.Analysis, analysis) && previous.ShowsBaseGame == showBaseGame &&
+        ReferenceEquals(previous.Acts, acts)
             ? previous
-            : new HierarchyModel(MissionTree(analysis, text, showBaseGame, systemName), analysis.Script.Path.ToUpperInvariant(),
-                MissionTypes, previous)
+            : new HierarchyModel(MissionTree(analysis, text, showBaseGame, systemName, acts),
+                analysis.Script.Path.ToUpperInvariant(), MissionTypes, previous)
             {
                 Analysis = analysis,
                 ShowsBaseGame = showBaseGame,
+                Acts = acts,
                 SystemUnknown = MissionPlacements.SystemUnknown(analysis.Index).Select(s => s.Ref).ToHashSet(),
             };
+
+    /// <summary>The acts of the graph file that the tree of a mission shows, or null for the proposed acts.</summary>
+    public MissionActs? Acts { get; private init; }
 
     /// <summary>The tree of a mission.</summary>
     /// <param name="systemName">Gives the name of a system for the act titles, or null. The graph uses the same
     /// titles.</param>
+    /// <param name="acts">The acts of the graph file, or null for the proposed acts.</param>
     internal static HierarchyNode MissionTree(MissionAnalysis analysis, Func<int, string> text, bool showBaseGame,
-        Func<string, string?>? systemName = null)
+        Func<string, string?>? systemName = null, MissionActs? acts = null)
     {
         var index = analysis.Index;
         var script = analysis.Script.Path;
@@ -151,7 +158,7 @@ internal sealed partial class HierarchyModel
 
         // Logic: the acts and the frame "Not started by the mission", with their prefab instances and plain triggers.
         // The order is the layout order: by layer, and in a layer from the top (section 9 of the M6a design).
-        var graph = MissionGraph.Build(analysis, new GraphOptions(GraphLens.Logic, SystemName: systemName));
+        var graph = MissionGraph.Build(analysis, new GraphOptions(GraphLens.Logic, SystemName: systemName) { Acts = acts });
         var layout = GraphLayout.Of(graph);
         var logic = new HierarchyNode("logic", MissionKinds.Group, "Logic");
         foreach (var act in graph.Acts)

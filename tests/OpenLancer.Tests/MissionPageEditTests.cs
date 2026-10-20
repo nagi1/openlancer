@@ -245,4 +245,23 @@ public sealed class MissionPageEditTests
         var pick = new ScenePick("Start position", _ => { });
         Assert.Equal("Click a point in the Scene to set Start position. Esc cancels.", pick.Hint);
     }
+    [Fact]
+    public void TheActPageSetsItsNameItsTextAndItsTriggers()
+    {
+        using var m = Create();
+        var page = Page(m, new MissionRef(Script, MissionItemKind.Act, Key: "a:1"));
+
+        Run(m, Field(page, "act", "Name").Edit!.Make!("The launch"));
+        page = MissionPageModel.For(new PageContext(MissionRun.Execute(m.Missions.RunInputs()), m.Missions.Model(Script).Analysis,
+            false, false) { ReadOnlyOf = m.Missions.ReadOnlyReason, Acts = m.Missions.Model(Script).Acts },
+            new MissionRef(Script, MissionItemKind.Act, Key: "a:1"));
+        Assert.Equal("The launch", page.Title);
+        Run(m, Field(page, "act", "Walkthrough text").Edit!.Make!("The player launches."));
+        Run(m, page.Section("triggers")!.Fields.First(f => f.Label == "ol_end").Actions.Single().Batch);
+
+        var act = Assert.Single(m.Missions.Graph(Script).Acts);
+        Assert.Equal(("The launch", "The player launches."), (act.Name, act.Text));
+        Assert.DoesNotContain("ol_end", act.Members);
+        Assert.Equal(["Delete"], page.PageActions.Select(a => a.Label));
+    }
 }

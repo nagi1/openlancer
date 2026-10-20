@@ -10,6 +10,7 @@ using LibreLancer.ImUI.NodeEditor;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
 
@@ -65,6 +66,8 @@ internal sealed partial class GraphView : IDisposable
 
     private MissionAnalysis? builtAnalysis;
     private (int Version, bool ShowLines, bool ShowBaseGame, bool HidesOpenLancer) built;
+    private GraphFile file = GraphFile.Empty;
+    private GraphFile? builtFile;
     private bool placeNodes;
     private object? syncedSelection;
 
@@ -247,16 +250,22 @@ internal sealed partial class GraphView : IDisposable
     {
         var settings = window.Settings;
         var hides = window.Session?.Edits.HidesOpenLancer == true;
+        // A change of the graph file, for example a drag of a node or its Undo, builds the graph again (section 6.8 of
+        // the M6b design).
+        file = missions.GraphOf(analysis.Script.Path);
         var key = (state.Version, settings.MissionShowLines, missions.ShowBaseGame, hides);
-        if (Graph != null && ReferenceEquals(builtAnalysis, analysis) && built == key)
+        if (Graph != null && ReferenceEquals(builtAnalysis, analysis) && built == key && ReferenceEquals(builtFile, file))
         {
             return;
         }
 
         var options = state.Options(analysis.Script.Path, settings.MissionShowLines, missions.ShowBaseGame, hides,
-            SystemName);
+            SystemName) with
+        {
+            Acts = missions.ActsOf(analysis),
+        };
         Graph = MissionGraph.Build(analysis, options);
-        Layout = GraphLayout.Of(Graph, state.Offsets(analysis.Script.Path));
+        Layout = GraphLayout.Of(Graph, state.Offsets(analysis.Script.Path), GraphLayout.PlacesOf(Graph, file));
         // The path view and the neighbor view hold the triggers of one analysis, so a new analysis ends them. Another
         // mission shows the whole graph first, with all its systems.
         if (!ReferenceEquals(builtAnalysis, analysis))
@@ -272,6 +281,7 @@ internal sealed partial class GraphView : IDisposable
 
         builtAnalysis = analysis;
         built = key;
+        builtFile = file;
         keys.Clear();
         blocks.Clear();
         foreach (var frame in Graph.Frames)
@@ -299,12 +309,17 @@ internal sealed partial class GraphView : IDisposable
     /// <summary>The name of a system of the game data, or null.</summary>
     private string? SystemName(string nickname) => window.Session?.SystemName(nickname);
 
-    /// <summary>The node editor reports the moves of a drag. The view keeps them as session offsets.</summary>
+    /// <summary>The node editor reports the moves of a drag at its end. A trigger node gets its place in the graph file
+    /// while the session takes edits. The view keeps another move as a session offset.</summary>
     private void Dragged(NodeId id, float oldX, float oldY, float newX, float newY, IntPtr user)
     {
         if (keys.TryGetValue((int)(IntPtr)id, out var key))
         {
             drags.Add((key, new Vector2(newX - oldX, newY - oldY)));
+            if (blocks.GetValueOrDefault((int)(IntPtr)id) is GraphNode { Trigger: not null } node)
+            {
+                moved.Add((node, new Vector2(newX, newY)));
+            }
         }
     }
 
@@ -399,16 +414,55 @@ internal sealed partial class GraphView : IDisposable
         EditOverlays();
         if (drags.Count > 0)
         {
+            // While the session takes edits, the drag of trigger nodes writes their places into the graph file, one undo
+            // entry for each drag (section 8.2 of the M6b design). The node editor keeps the nodes where the drag left
+            // them, and the new graph puts them at their places.
+            var placed = editable && edit != null ? MovedNodes() : null;
             foreach (var (key, delta) in drags)
             {
-                state.Dragged(analysis.Script.Path, key, delta);
+                if (placed == null || !moved.Any(m => m.Node.Key == key))
+                {
+                    state.Dragged(analysis.Script.Path, key, delta);
+                }
             }
 
             drags.Clear();
+            moved.Clear();
+            Run(placed);
             // The node editor keeps the nodes where the drag left them, so the new layout only updates the places
             // that the view reads.
             Layout = GraphLayout.Of(graph, state.Offsets(analysis.Script.Path));
         }
+    }
+
+    // The trigger nodes of the drag that ended in this frame, with their new top-left corners.
+    private readonly List<(GraphNode Node, Vector2 Position)> moved = [];
+
+    /// <summary>The batch of the drag of trigger nodes that ended in this frame: their places, and the act frame under
+    /// the center of each node.</summary>
+    private MissionBatch? MovedNodes() =>
+        moved.Count == 0 || edit == null
+            ? null
+            : edit.Moved(moved.Select(m => (m.Node, m.Position, ActAt(m.Position + m.Node.Size / 2, m.Node))).ToList());
+
+    /// <summary>The open act frame that holds a canvas point, or null. A node in the frame of its own act stays in it.</summary>
+    private GraphFrame? ActAt(Vector2 point, GraphNode? node = null)
+    {
+        if (Graph == null || Layout == null)
+        {
+            return null;
+        }
+
+        foreach (var frame in Graph.Acts.Where(f => f is { Kind: GraphFrameKind.Act, Collapsed: false }))
+        {
+            var (min, max) = Layout.RectOf(frame);
+            if (point.X >= min.X && point.X <= max.X && point.Y >= min.Y && point.Y <= max.Y)
+            {
+                return frame;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Puts each node and each open frame that shows at its place of the layout, and gives each open frame its

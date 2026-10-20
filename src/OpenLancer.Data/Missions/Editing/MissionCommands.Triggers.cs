@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using LibreLancer.Data;
 using LibreLancer.Data.Ini;
+using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 
 namespace OpenLancer.Data.Missions.Editing;
@@ -26,6 +27,14 @@ public sealed record AddTrigger(ScriptRef Script) : MissionCommand
 
     /// <summary>The system hint of the trigger, or null. The game does not read it (TR3).</summary>
     public string? System { get; init; }
+
+    /// <summary>The place of the node in the graph, or null for the automatic layout (section 6.8 of the M6b
+    /// design).</summary>
+    public GraphPoint? Place { get; init; }
+
+    /// <summary>The act that the trigger joins, or null. The first act edit writes all proposed acts (decision
+    /// D679).</summary>
+    public ActRef? Act { get; init; }
 
     protected override string Describe() => $"Add trigger {Nickname}".TrimEnd();
 
@@ -59,9 +68,36 @@ public sealed record AddTrigger(ScriptRef Script) : MissionCommand
         var trigger = new TriggerRef(document.Path, name);
         d.Adds.Add(trigger.ToString());
         d.Select = trigger.ToString();
-        d.Inverse(new RemoveTrigger(trigger));
+        d.Inverse(GraphRecords(d, document, name) is { } acts ? new CommandGroup([new RemoveTrigger(trigger), acts])
+            : new RemoveTrigger(trigger));
+    }
+
+    /// <summary>Writes the node place and the act of the new trigger into the graph file. Returns the inverse of the
+    /// acts that the first act edit wrote, or null.</summary>
+    private MissionCommand? GraphRecords(MissionDraft d, EditDocument document, string name)
+    {
+        if (Place == null && Act == null)
+            return null;
+        var graph = d.Graph(document);
+        MissionCommand? inverse = null;
+        if (Place is { } place)
+            graph = graph with { Nodes = [.. graph.Nodes, new GraphNodePlace(name, (float)Math.Round(place.X), (float)Math.Round(place.Y))] };
+        if (Act is { } act)
+        {
+            var acts = d.ActsForEdit(document, graph, out var written);
+            var at = d.ActIndex(document, acts, act);
+            acts[at] = acts[at] with { Members = [.. acts[at].Members, name] };
+            graph = graph with { Acts = acts };
+            if (written)
+                inverse = new CommandGroup(acts.Select(a => (MissionCommand)new RemoveAct(new ActRef(document.Path, a.Nickname))).ToList());
+        }
+        d.SetGraph(document, graph);
+        return inverse;
     }
 }
+
+/// <summary>A point of the canvas of the mission graph, in points.</summary>
+public sealed record GraphPoint(double X, double Y);
 
 /// <summary>Removes a trigger. Each line that names it stays and shows "Missing", or goes with
 /// <see cref="ReferencesMode.Remove"/> (section 4.10 of the M6b design).</summary>
@@ -87,6 +123,14 @@ public sealed record RemoveTrigger(TriggerRef Trigger) : MissionCommand
         var position = index;
         var removed = d.Remove(document, index);
         inverse.Insert(0, new RestoreSection(new ScriptRef(document.Path), position, MissionDraft.RawSection(removed)));
+        // The node place and the act place of the trigger go with it (section 4.9 of the M6b design).
+        var graph = d.Graph(document);
+        if (graph.Place(name) is { } place)
+            inverse.Add(new MoveNodes(new ScriptRef(document.Path), [new NodePlace(place.Trigger, place.X, place.Y)]));
+        if (graph.ActOf(name) is { } act)
+            inverse.Add(new SetActMembers(new ActRef(document.Path, act.Nickname), act.Members));
+        if (graph.Place(name) != null || graph.ActOf(name) != null)
+            d.SetGraph(document, graph);
         d.Deletes.Add(new ResultDelete(reference, OpenLancer.Data.Editing.Scene.DeleteReason.Target, null));
         d.Inverse(inverse.Count == 1 ? inverse[0] : new CommandGroup(inverse));
     }
@@ -147,6 +191,19 @@ public sealed record RenameTrigger(TriggerRef Trigger, string NewName) : Mission
             changed.Add(d.NewEntry(document, index, entries[r].Name, texts, changed));
         }
         d.SetBody(document, index, changed);
+        // The node place, the act place and the records of the graph file follow the trigger, also without a change of
+        // the lines that name it.
+        var graph = d.Graph(document);
+        if (graph.Place(old) != null || graph.ActOf(old) != null)
+        {
+            string Renamed(string trigger) => trigger.Equals(old, StringComparison.OrdinalIgnoreCase) ? name : trigger;
+            d.SetGraph(document, graph with
+            {
+                Nodes = graph.Nodes.Select(n => n with { Trigger = Renamed(n.Trigger) }).ToList(),
+                Acts = graph.Acts.Select(a => a with { Members = a.Members.Select(Renamed).ToList() }).ToList(),
+            });
+        }
+
         var renamed = new TriggerRef(document.Path, name);
         // The inverse gives the own lines that named the trigger their old text first, then the lines of the other
         // sections in reverse order, then the old nickname. So the rename back finds no line that names the new name
@@ -170,6 +227,10 @@ public sealed record DuplicateTrigger(TriggerRef Trigger) : MissionCommand
 {
     public string? NewName { get; init; }
 
+    /// <summary>The place of the node of the copy in the graph, or null for the automatic layout. The gesture gives a
+    /// place beside the original.</summary>
+    public GraphPoint? Place { get; init; }
+
     protected override string Describe() => $"Duplicate trigger {Trigger.Name}";
 
     internal override void Run(MissionDraft d)
@@ -182,6 +243,15 @@ public sealed record DuplicateTrigger(TriggerRef Trigger) : MissionCommand
         for (var r = 0; r < section.Count; r++)
             entries.Add(r == nickname ? d.NewEntry(document, null, section[r].Name, [name], 0) : section[r]);
         d.Insert(document, document.Working.Count, MissionDraft.NewSection(section.Name, entries));
+        if (Place is { } place)
+        {
+            var graph = d.Graph(document);
+            d.SetGraph(document, graph with
+            {
+                Nodes = [.. graph.Nodes, new GraphNodePlace(name, (float)Math.Round(place.X), (float)Math.Round(place.Y))],
+            });
+        }
+
         var copy = new TriggerRef(document.Path, name);
         d.Adds.Add(copy.ToString());
         d.Select = copy.ToString();

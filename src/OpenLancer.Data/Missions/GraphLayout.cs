@@ -19,6 +19,8 @@ namespace OpenLancer.Data.Missions;
 /// one.</item>
 /// <item>A drag of a node moves it for the session only. The layout adds the offset of each dragged node to its place, so
 /// a later layout keeps the drag.</item>
+/// <item>A node with a place in the graph file of the script (section 6.8 of the M6b design) stands at that place. Its
+/// frame keeps the size of the automatic layout.</item>
 /// </list>
 /// The class makes no ImGui call. Positions and sizes are in canvas points.
 /// </summary>
@@ -61,11 +63,27 @@ public sealed class GraphLayout
 
     /// <summary>Lays out a graph.</summary>
     /// <param name="offsets">The drag offsets of the nodes and frames of the session, by key, or null.</param>
-    public static GraphLayout Of(MissionGraph graph, IReadOnlyDictionary<string, Vector2>? offsets = null)
+    /// <param name="places">The places of the nodes of the graph file, by node key, or null.</param>
+    public static GraphLayout Of(MissionGraph graph, IReadOnlyDictionary<string, Vector2>? offsets = null,
+        IReadOnlyDictionary<string, Vector2>? places = null)
     {
-        var layout = new GraphLayout(graph);
+        var layout = new GraphLayout(graph) { places = places ?? new Dictionary<string, Vector2>() };
         layout.Place(offsets ?? new Dictionary<string, Vector2>());
         return layout;
+    }
+
+    private IReadOnlyDictionary<string, Vector2> places = new Dictionary<string, Vector2>();
+
+    /// <summary>The places of the trigger nodes of a graph file, by node key (section 6.8 of the M6b design).</summary>
+    public static IReadOnlyDictionary<string, Vector2> PlacesOf(MissionGraph graph, GraphFile file)
+    {
+        var result = new Dictionary<string, Vector2>(StringComparer.Ordinal);
+        foreach (var node in file.Nodes)
+        {
+            if (graph.Index.Trigger(node.Trigger) is { } trigger && graph.TriggerNode(trigger) is { } shown)
+                result[shown.Key] = new Vector2(node.X, node.Y);
+        }
+        return result;
     }
 
     /// <summary>The top-left corner of a block: of the node of a collapsed frame, else of the node or the frame.</summary>
@@ -137,7 +155,7 @@ public sealed class GraphLayout
             sizes[collapsed.Node.Key] = collapsed.Node.Size;
             return;
         }
-        positions[block.Key] = at + offsets.GetValueOrDefault(block.Key);
+        positions[block.Key] = places.TryGetValue(block.Key, out var place) ? place : at + offsets.GetValueOrDefault(block.Key);
         if (block is GraphNode node)
         {
             sizes[block.Key] = node.Size;

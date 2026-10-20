@@ -385,6 +385,28 @@ When the active mod has a whole mission file and a patch for the same path, the 
 
 The editor keeps the graph of each mission script in `graphs/<install path>`, and each mission prefab of the mod in `prefabs/missions/<id>.ini`. The game, the merge, `oltool deploy`, the validation and the packages ignore these folders. The editor writes them at the save of the mod, in the same save as the patches. Undo and the recovery file of unsaved edits cover them. A graph file without content is not written, and the save deletes an old one with the empty folders below `graphs/`. The editor files of the lower mods are read-only.
 
+A graph file holds a `[Node]` record for each trigger node that you moved or placed. The other nodes take the automatic layout. It holds the `[Act]` records after your first edit of an act. That edit writes all acts that the editor proposed, so you start from them. A trigger is in one act. A trigger that no act names takes the act that the editor proposes for it. The collapse state of the frames and the lens are not in the file.
+
+```ini
+; OpenLancer mission graph, format 1. The game does not read this file.
+[Graph]
+script = DATA\MISSIONS\OL_TEST\ol_test.ini
+format = 1
+
+[Node]
+trigger = ol_wave_spawn
+pos = 1200, 340
+
+[Act]
+nickname = act_1
+name = The ambush
+text = The escort meets the player at the gate.
+member = ol_launch
+member = ol_wave_spawn
+```
+
+When the script has no trigger with the name of a record, the editor tells it when the mission opens. The editor removes that record when it writes the file again.
+
 ## Prop groups
 
 A prop group is a set of separate objects, zones and lights. The editor saves it in the `props/` folder of a mod, as Unity saves a prefab asset. The editor places a group again in any system, and each member becomes a separate item. The merge, the game, `oltool deploy` and the validation ignore the folder. So a group changes no game data until you place it.

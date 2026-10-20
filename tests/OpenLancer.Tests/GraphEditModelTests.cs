@@ -331,4 +331,61 @@ public sealed class GraphEditModelTests
         Assert.Equal(4, moved!.Row);
         Assert.Null(MissionWorkspace.Followed(moved, [], []));
     }
+    /// <summary>The model of the test script with the acts of its graph file, as the view builds it.</summary>
+    private static GraphEditModel FileModel(MissionEdits m)
+    {
+        var model = m.Missions.Model(Script);
+        return new(MissionGraph.Build(model.Analysis, new GraphOptions(GraphLens.Logic, ShowLines: true) { Acts = model.Acts }));
+    }
+
+    [Fact]
+    public void ADragOfNodesWritesTheirPlacesAndADropIntoAnotherActFrameMovesTheTrigger()
+    {
+        using var m = Create();
+        m.Apply(new AddAct(TestScript) { Name = "The end", Members = ["ol_end"] });
+        var model = FileModel(m);
+        var endFrame = model.Graph.Acts.Single(f => f.Act?.Name == "The end");
+
+        var batch = model.Moved([(Node(model, "ol_wave"), new System.Numerics.Vector2(50, 60), endFrame),
+            (Node(model, "ol_start"), new System.Numerics.Vector2(-10, 0), null)])!;
+        Run(m, batch);
+
+        Assert.Equal(2, batch.Commands.Count);
+        var graph = m.Missions.Graph(Script);
+        Assert.Equal([new GraphNodePlace("ol_wave", 50, 60), new GraphNodePlace("ol_start", -10, 0)], graph.Nodes);
+        Assert.Equal(["ol_end", "ol_wave"], graph.Act("act_2")!.Members);
+        var layout = GraphLayout.Of(FileModel(m).Graph, null, GraphLayout.PlacesOf(FileModel(m).Graph, graph));
+        Assert.Equal(new System.Numerics.Vector2(50, 60), layout.PositionOf(Node(FileModel(m), "ol_wave")));
+    }
+
+    [Fact]
+    public void NewActFromSelectionAndDeleteOfAnActFrame()
+    {
+        using var m = Create();
+        var model = FileModel(m);
+
+        Run(m, model.NewAct([Node(model, "ol_end")]));
+        model = FileModel(m);
+        Assert.Equal(["Act 1", "Act 2"], model.Graph.Acts.Where(f => f.Kind == GraphFrameKind.Act).Select(f => f.Title));
+        var second = model.Graph.Acts.First(f => f.Act?.Number == 2);
+        Run(m, model.Delete([second]));
+
+        Assert.Equal(["act_1"], m.Missions.Graph(Script).Acts.Select(a => a.Nickname));
+        Assert.True(m.Has("ol_end"));
+    }
+
+    [Fact]
+    public void ADropOnAnEmptyPlaceAndCtrlDPlaceTheNewNode()
+    {
+        using var m = Create();
+        var model = FileModel(m);
+        var item = MissionLibrary.Sections(null)[0].Items.Single(i => i.Id == "atOnce");
+
+        Run(m, model.DropOnEmpty(item, new GraphPoint(400, 500), model.ActRefOf(model.Graph.ActsOf().Acts[0])));
+        Run(m, FileModel(m).Duplicate(FileModel(m).Graph.Index.Trigger("ol_end")!, new GraphPoint(10, 900)));
+
+        var graph = m.Missions.Graph(Script);
+        Assert.Equal([new GraphNodePlace("ol_test_trigger_1", 400, 500), new GraphNodePlace("ol_end_2", 10, 900)], graph.Nodes);
+        Assert.Contains("ol_test_trigger_1", graph.Act("act_1")!.Members);
+    }
 }
