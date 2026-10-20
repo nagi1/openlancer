@@ -27,43 +27,58 @@ public enum TraceChangeKind
 
 /// <summary>One change of a step: one row of the Run log under its step.</summary>
 /// <param name="Trigger">The nickname of the trigger that changed, or of the trigger of the line of an Ignored, a
-/// Checkpoint, an Effect or an End change. Empty for a note.</param>
+/// Checkpoint, an Effect or an End change. For a note, the trigger that the note is about, or empty.</param>
 public sealed record TraceChange(TraceChangeKind Kind, string Trigger)
 {
-    /// <summary>The trigger name of an Ignored or a Checkpoint change, else null.</summary>
+    /// <summary>The trigger name of an Ignored or a Checkpoint change, and of a note about a trigger, else
+    /// null.</summary>
     public string? Name { get; init; }
 
-    /// <summary>The text of an Effect ("{plain action name}: {values}"), an End, a Stop or a Note change, else
-    /// null.</summary>
+    /// <summary>The text of an Effect ("{plain action name}: {values}"), an End, a Stop or a Note change, else null. A
+    /// note with a <see cref="Name"/> shows as "{text}: {name}", for example "Missing: t_wave".</summary>
     public string? Text { get; init; }
 
     /// <summary>The index of the action line in its section, or -1.</summary>
     public int Row { get; init; } = -1;
 
     /// <summary>How many times the change happened in the step. A step of many heartbeats folds the same change into one
-    /// row (section 4.4 of the M6c design).</summary>
+    /// row at the place of its last time (section 4.4 of the M6c design). So the last row of a trigger gives its
+    /// state.</summary>
     public int Count { get; init; } = 1;
 
     /// <summary>The text of the row of the Run log (section 8.2 of the M6c design), or null for a change without a
     /// row.</summary>
-    public string? LogText => Kind switch
+    public string? LogText => TextWith(static name => name);
+
+    /// <summary>The text of the row of the Run log with the names that a function gives for the triggers, for example
+    /// "Spawn wave: tr_wave2" for a trigger of a prefab instance (UI rule 5). Null for a change without a row.</summary>
+    /// <param name="name">The name of a trigger nickname in the row.</param>
+    public string? TextWith(Func<string, string> name) => Kind switch
     {
-        TraceChangeKind.Started => Times($"Started {Trigger}"),
-        TraceChangeKind.Ran => Times($"Ran {Trigger}"),
-        TraceChangeKind.Stopped => Times($"Stopped {Trigger}"),
+        TraceChangeKind.Started => Times($"Started {name(Trigger)}"),
+        TraceChangeKind.Ran => Times($"Ran {name(Trigger)}"),
+        TraceChangeKind.Stopped => Times($"Stopped {name(Trigger)}"),
         // The log shows no row for a re-arm or a cancelled start. The state of the trigger shows them.
         TraceChangeKind.Rearmed or TraceChangeKind.Cancelled => null,
         TraceChangeKind.Ignored => Times($"Ignored: no trigger '{Name}'"),
-        TraceChangeKind.Checkpoint => Times($"Checkpoint: {Name}"),
+        TraceChangeKind.Checkpoint => Times($"Checkpoint: {name(Name ?? "")}"),
+        TraceChangeKind.Note when Name != null => Times($"{Text}: {name(Name)}"),
         _ => Times(Text ?? ""),
     };
 
+    /// <summary>A note of a step, for example "No trigger waits for this event.".</summary>
+    public static TraceChange Note(string text) => new(TraceChangeKind.Note, "") { Text = text };
+
+    /// <summary>A note about a trigger: "{text}: {name}", for example "Not active: t_wave". A trigger of the script
+    /// gives the row its trigger, so a click on the row selects it.</summary>
+    /// <param name="known">True when the script has the trigger.</param>
+    public static TraceChange Note(string text, string name, bool known) =>
+        new(TraceChangeKind.Note, known ? name : "") { Text = text, Name = name };
+
     /// <summary>The note of a live view whose game dropped changes because its queue was full (section 6.2 of the M6c
     /// design).</summary>
-    public static TraceChange Dropped(int count) => new(TraceChangeKind.Note, "")
-    {
-        Text = $"The game dropped {count.ToString(CultureInfo.InvariantCulture)} changes.",
-    };
+    public static TraceChange Dropped(int count) =>
+        Note($"The game dropped {count.ToString(CultureInfo.InvariantCulture)} changes.");
 
     private string Times(string text) =>
         Count > 1 ? $"{text}, {Count.ToString(CultureInfo.InvariantCulture)} times" : text;
@@ -84,11 +99,26 @@ public sealed record TraceStep(int Number, string Cause, IReadOnlyList<TraceChan
     /// <summary>The time of the step in seconds since the start of the play, for the live view, or null.</summary>
     public double? Time { get; init; }
 
+    /// <summary>The nickname of the trigger that the cause names at its end, for example "t_wave" of "Run trigger
+    /// t_wave", or null.</summary>
+    public string? CauseTrigger { get; init; }
+
     /// <summary>The title of the step in the Run log: "Step {n}: {cause}" in the dry run, "{m}:{ss}.{t}" in the live
     /// view.</summary>
-    public string Title => Time is { } time
-        ? Clock(time)
-        : $"Step {Number.ToString(CultureInfo.InvariantCulture)}: {Cause}";
+    public string Title => TitleWith(static name => name);
+
+    /// <summary>The title of the step with the name that a function gives for the trigger of the cause (UI rule
+    /// 5).</summary>
+    /// <param name="name">The name of a trigger nickname.</param>
+    public string TitleWith(Func<string, string> name)
+    {
+        if (Time is { } time)
+            return Clock(time);
+        var cause = CauseTrigger is { } trigger && Cause.EndsWith(trigger, StringComparison.Ordinal)
+            ? Cause[..^trigger.Length] + name(trigger)
+            : Cause;
+        return $"Step {Number.ToString(CultureInfo.InvariantCulture)}: {cause}";
+    }
 
     /// <summary>A time as "{m}:{ss}.{t}".</summary>
     public static string Clock(double seconds)

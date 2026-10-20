@@ -81,6 +81,9 @@ internal sealed class MachineProgram
     /// <summary>The heartbeats of one second (TR11).</summary>
     public const int HeartbeatsPerSecond = 30;
 
+    /// <summary>The count of <see cref="CountNeeded"/> that no event reaches: the condition never runs.</summary>
+    public const int Never = 0;
+
     private static readonly ConditionalWeakTable<MissionIndex, MachineProgram> Programs = new();
 
     private readonly Dictionary<MissionTrigger, int> slotOf = [];
@@ -141,7 +144,8 @@ internal sealed class MachineProgram
 
     public WatchState[] WatchStates { get; }
 
-    /// <summary>The matches that a counting condition needs. 1 for each other condition.</summary>
+    /// <summary>The matches that a counting condition needs, or <see cref="Never"/>. 1 for each other
+    /// condition.</summary>
     public int[] CountNeeded { get; }
 
     /// <summary>The actions of each slot, in file order.</summary>
@@ -216,9 +220,12 @@ internal sealed class MachineProgram
     }
 
     /// <summary>The kind of a condition line of the schema (section 3.5 of the M6c design).</summary>
-    internal static ConditionKind KindOf(MissionLine? condition)
+    internal static ConditionKind KindOf(MissionLine? condition) => KindOf(condition?.Name);
+
+    /// <summary>The kind of a condition of the schema, or <see cref="ConditionKind.None"/> for another name.</summary>
+    internal static ConditionKind KindOf(MissionName? name)
     {
-        if (condition?.Name is not { Kind: MissionNameKind.Condition } name)
+        if (name is not { Kind: MissionNameKind.Condition })
             return ConditionKind.None;
         var key = name.Name;
         if (key.Equals("Cnd_True", StringComparison.OrdinalIgnoreCase))
@@ -234,15 +241,24 @@ internal sealed class MachineProgram
 
     /// <summary>
     /// The matches that a counting condition needs (section 3.5 of the M6c design): the value <c>count</c> of
-    /// <c>Cnd_Destroyed</c>, <c>Cnd_ProjHit</c>, <c>Cnd_ProjHitShipToLbl</c> and <c>Cnd_LootAcquired</c>. A count of 1 or
-    /// less, or no count, needs one match. <c>Cnd_Destroyed</c> with -1 waits for the last ship, which is one event of
-    /// the dry run.
+    /// <c>Cnd_Destroyed</c>, <c>Cnd_ProjHit</c>, <c>Cnd_ProjHitShipToLbl</c> and <c>Cnd_LootAcquired</c>. No count needs
+    /// one match. The game runs <c>Cnd_ProjHit</c> and <c>Cnd_ProjHitShipToLbl</c> at a count of hits at or above the
+    /// value, so a value of 1 or less needs one match. It runs <c>Cnd_Destroyed</c> and <c>Cnd_LootAcquired</c> only
+    /// when the count is equal to the value, so 0 gives <see cref="Never"/>. <c>Cnd_Destroyed</c> reads a value below -1
+    /// as -1, and -1 waits for the last ship, which is one event of the dry run. <c>Cnd_LootAcquired</c> with -1 waits for
+    /// the last loot, and a value below -1 never runs.
     /// </summary>
-    internal static int CountOf(MissionLine condition) =>
-        condition.Name?.Value("count") is { Kind: MissionValueKind.WholeNumber } spec &&
-        int.TryParse(condition.ValueOf(spec), NumberStyles.Integer, CultureInfo.InvariantCulture, out var count) && count > 1
-            ? count
-            : 1;
+    internal static int CountOf(MissionLine condition)
+    {
+        if (condition.Name?.Value("count") is not { Kind: MissionValueKind.WholeNumber } spec ||
+            !int.TryParse(condition.ValueOf(spec), NumberStyles.Integer, CultureInfo.InvariantCulture, out var count))
+            return 1;
+        var name = condition.Name.Name;
+        var equal = MissionIndex.Is(name, "Cnd_Destroyed") || MissionIndex.Is(name, "Cnd_LootAcquired");
+        if ((equal && count == 0) || (MissionIndex.Is(name, "Cnd_LootAcquired") && count < -1))
+            return Never;
+        return Math.Max(1, count);
+    }
 
     /// <summary>The heartbeats of a time in seconds: the first heartbeat at or after the time (TR11). A text that is not
     /// a number reads as 0, as the game reads it.</summary>

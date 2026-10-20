@@ -247,6 +247,48 @@ public sealed class TriggerMachineTests
         Assert.Equal(["t_there"], Of(machine.Dispatch(TestWorld.Event("Cnd_SystemEnter = ol_sys_b")), MachineChangeKind.Ran));
     }
 
+    [Theory]
+    [InlineData("ACTIVE")]
+    [InlineData("COMPLETE")]
+    [InlineData("OFF")]
+    public void TR8_AWatchWhoseStateHoldsRunsAtItsStart(string state)
+    {
+        // t_target is active (ACTIVE), complete (COMPLETE) or never started (OFF) when t_watch starts.
+        var target = state switch
+        {
+            "ACTIVE" => Start("t_target", "Cnd_BaseEnter = ol_base"),
+            "COMPLETE" => Start("t_target", "Cnd_True = no_params"),
+            _ => Trigger("t_target", "Cnd_BaseEnter = ol_base"),
+        };
+        var machine = Machine(target + Start("t_go", "Cnd_True = no_params", "Act_ActTrig = t_watch") +
+                              Trigger("t_watch", $"Cnd_WatchTrigger = t_target, {state}", "Act_ActTrig = t_after") +
+                              Trigger("t_after", "Cnd_True = no_params"));
+        machine.StartMission();
+
+        var pass = machine.Heartbeat();
+
+        // The watch runs in the pass that starts it, so its own start comes in the same drain.
+        Assert.Equal(["t_watch", "t_after"], Of(pass, MachineChangeKind.Ran));
+    }
+
+    [Fact]
+    public void TR8_ATimerOfZeroRunsAtItsStartWhereItCounts()
+    {
+        var world = new TestWorld { InSpace = false };
+        var machine = Machine(Start("t_now", "Cnd_Timer = 0") + Start("t_negative", "Cnd_Timer = -1") +
+                              Start("t_space", "Cnd_Timer = 0, 0, RUN_IN_SPACE_ONLY"), world);
+
+        var start = machine.StartMission();
+        var base_ = machine.Heartbeat();
+        world.InSpace = true;
+        var space = machine.Heartbeat();
+
+        Assert.Equal(ById("t_now", "t_negative"), Of(start, MachineChangeKind.Ran));
+        // A timer that counts only in space does not run on a base, also at a time of 0.
+        Assert.Empty(base_.Changes);
+        Assert.Equal(["t_space"], Of(space, MachineChangeKind.Ran));
+    }
+
     [Fact]
     public void TR8_APollConditionTestsAtTheNextHeartbeat()
     {
@@ -416,25 +458,42 @@ public sealed class TriggerMachineTests
     [InlineData("COMPLETE", new[] { false, false, true })]
     public void TheWatchedStatesFollowTheTarget(string state, bool[] expected)
     {
-        // Inactive, then active, then complete.
+        // Inactive, then active, then complete. The watch starts after the change of the target, so its test at the
+        // start reads the state (TR8).
         var script = Trigger("t_target", "Cnd_BaseEnter = ol_base_2") +
                      Start("t_arm", "Cnd_BaseEnter = ol_base_1", "Act_ActTrig = t_target") +
-                     Trigger("t_watch", $"Cnd_WatchTrigger = t_target, {state}");
+                     Trigger("t_watch", $"Cnd_WatchTrigger = t_target, {state}") +
+                     Start("t_start_watch", "Cnd_CommComplete = line_w", "Act_ActTrig = t_watch");
         var seen = new List<bool>();
         foreach (var step in new[] { 0, 1, 2 })
         {
-            var machine = Machine(script + Start("t_start_watch", "Cnd_True = no_params", "Act_ActTrig = t_watch"));
+            var machine = Machine(script);
             machine.StartMission();
-            machine.Heartbeat();
             if (step >= 1)
                 machine.Dispatch(TestWorld.Event("Cnd_BaseEnter = ol_base_1"));
             if (step >= 2)
                 machine.Dispatch(TestWorld.Event("Cnd_BaseEnter = ol_base_2"));
-            machine.Heartbeat();
+            machine.Dispatch(TestWorld.Event("Cnd_CommComplete = line_w"));
             seen.Add(Status(machine, "t_watch") == TriggerStatus.Complete);
         }
 
         Assert.Equal(expected, seen);
+    }
+
+    [Fact]
+    public void AWatchThatWaitsRunsAtTheHeartbeatAfterTheChange()
+    {
+        var machine = Machine(Trigger("t_target", "Cnd_BaseEnter = ol_base_2") +
+                              Start("t_arm", "Cnd_BaseEnter = ol_base_1", "Act_ActTrig = t_target") +
+                              Start("t_watch", "Cnd_WatchTrigger = t_target, ACTIVE"));
+        machine.StartMission();
+        Assert.Equal(TriggerStatus.Active, Status(machine, "t_watch"));
+
+        var change = machine.Dispatch(TestWorld.Event("Cnd_BaseEnter = ol_base_1"));
+        var beat = machine.Heartbeat();
+
+        Assert.DoesNotContain("t_watch", Of(change, MachineChangeKind.Ran));
+        Assert.Equal(["t_watch"], Of(beat, MachineChangeKind.Ran));
     }
 
     // ---- The start set, the load, the end, the chain limit and the snapshots.
@@ -450,7 +509,7 @@ public sealed class TriggerMachineTests
         var start = machine.StartMission();
 
         Assert.Equal(names, Of(start, MachineChangeKind.Ran));
-        Assert.Empty(Of(start, MachineChangeKind.Started).Where(n => n == "t_child"));
+        Assert.DoesNotContain("t_child", Of(start, MachineChangeKind.Started));
         Assert.Equal(["t_child"], machine.Pending.Select(t => t.Nickname));
         Assert.Equal(["t_child"], Of(machine.Heartbeat(), MachineChangeKind.Ran));
     }
@@ -543,6 +602,82 @@ public sealed class TriggerMachineTests
         var third = machine.Dispatch(kill);
 
         Assert.Equal(["t_kills"], Of(third, MachineChangeKind.Ran));
+    }
+
+    [Theory]
+    [InlineData("Cnd_Destroyed = ol_wing, 0", false)]
+    [InlineData("Cnd_LootAcquired = ol_loot, ol_ship, 0", false)]
+    [InlineData("Cnd_LootAcquired = ol_loot, ol_ship, -2", false)]
+    [InlineData("Cnd_Destroyed = ol_wing, -2", true)]
+    [InlineData("Cnd_ProjHit = ol_wing, 0", true)]
+    [InlineData("Cnd_ProjHitShipToLbl = ol_wing, -1", true)]
+    public void ACountThatTheGameNeverReachesNeverRuns(string condition, bool runs)
+    {
+        // The game runs a kill or a loot count only at the count, and a hit count at the count or above it.
+        var machine = Machine(Start("t_count", condition));
+        machine.StartMission();
+        var line = TestWorld.Event(condition);
+
+        var ran = Enumerable.Range(0, 5).Sum(_ => Of(machine.Dispatch(line), MachineChangeKind.Ran).Count);
+
+        Assert.Equal(runs ? 1 : 0, ran);
+        Assert.Null(machine.CountOf(T(machine, "t_count")));
+    }
+
+    // ---- The stop point of the start plan (MachineOptions.StopBefore).
+
+    [Fact]
+    public void AStopPointStopsBeforeItsTestAndKeepsTheRestOfTheDrain()
+    {
+        var (p, q, r) = ById("ol_stop_p", "ol_stop_q", "ol_stop_r") is [var a, var b, var c] ? (a, b, c) : default;
+        var script = Start("t_go", "Cnd_True = no_params", $"Act_ActTrig = {r}", $"Act_ActTrig = {q}", $"Act_ActTrig = {p}") +
+                     Trigger(p, "Cnd_BaseEnter = ol_base") + Trigger(q, "Cnd_True = no_params") +
+                     Trigger(r, "Cnd_BaseEnter = ol_base");
+        var index = Index(script);
+        var machine = new TriggerMachine(index, new TestWorld(), new MachineOptions { StopBefore = index.Trigger(q) });
+        machine.StartMission();
+
+        var pass = machine.Heartbeat();
+
+        Assert.Equal(MachineHaltKind.StopPoint, machine.Halt!.Kind);
+        Assert.Equal(q, machine.Halt.Trigger.Nickname);
+        // The stop point did not test its condition, so it did not run.
+        Assert.Empty(Of(pass, MachineChangeKind.Ran));
+        Assert.Equal([p], machine.Active.Select(t => t.Nickname));
+        // The game starts r in the same drain, so the stop keeps it.
+        Assert.Equal([r], machine.Pending.Select(t => t.Nickname));
+        Assert.True(machine.Heartbeat().IsRefused);
+    }
+
+    [Fact]
+    public void AStopPointInTheStartSetKeepsTheRestOfTheSet()
+    {
+        var (p, q, r) = ById("ol_root_p", "ol_root_q", "ol_root_r") is [var a, var b, var c] ? (a, b, c) : default;
+        var script = Start(p, "Cnd_True = no_params", "Act_ActTrig = t_child") + Start(q, "Cnd_BaseEnter = ol_base") +
+                     Start(r, "Cnd_BaseEnter = ol_base") + Trigger("t_child", "Cnd_BaseEnter = ol_base");
+        var index = Index(script);
+        var machine = new TriggerMachine(index, new TestWorld(), new MachineOptions { StopBefore = index.Trigger(q) });
+
+        machine.StartMission();
+
+        Assert.Equal(MachineHaltKind.StopPoint, machine.Halt!.Kind);
+        Assert.Equal(new[] { "t_child", r }.OrderBy(FLHash.CreateID), machine.Pending.Select(t => t.Nickname));
+    }
+
+    [Fact]
+    public void AStopForAnotherReasonClearsThePendingSet()
+    {
+        // The trigger without a condition starts first, so the other start is still pending at the stop.
+        var (empty, next) = ById("ol_halt_a", "ol_halt_b") is [var a, var b] ? (a, b) : default;
+        var machine = Machine(Start("t_go", "Cnd_True = no_params", $"Act_ActTrig = {next}", $"Act_ActTrig = {empty}") +
+                              Trigger(empty, "") + Trigger(next, "Cnd_True = no_params"));
+        machine.StartMission();
+
+        machine.Heartbeat();
+
+        Assert.Equal(MachineHaltKind.NoCondition, machine.Halt!.Kind);
+        Assert.Equal(empty, machine.Halt.Trigger.Nickname);
+        Assert.Empty(machine.Pending);
     }
 
     [Fact]

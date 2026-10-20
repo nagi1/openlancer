@@ -85,6 +85,14 @@ internal static class ToolbarItems
         return clicked ? !value : value;
     }
 
+    /// <summary>
+    /// A flat toggle with a glyph and a word, for a toggle that a glyph alone does not name clearly (UI rule 9), for
+    /// example "Dry run" beside the Play glyph of the game. When it is on, it has the pressed color. Returns the new
+    /// value.
+    /// </summary>
+    public static bool LabelToggle(string id, char icon, string label, string tooltip, bool value) =>
+        CountToggle(id, icon, ImGui.GetStyle().Colors[(int)ImGuiCol.Text], label, tooltip, value);
+
     /// <summary>The width of a <see cref="CountToggle"/>, in pixels.</summary>
     public static float CountToggleWidth(char icon, string count)
     {

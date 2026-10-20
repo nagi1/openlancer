@@ -16,10 +16,6 @@ public enum DryRunInputKind
     /// <summary>Starts a new run: the restore trigger of a checkpoint starts, as a load of a saved game does.</summary>
     LoadCheckpoint,
 
-    /// <summary>Starts a new run at a trigger, with the triggers that wait there. It comes with the start plan of
-    /// M6c-2.</summary>
-    StartAt,
-
     /// <summary>An active trigger runs as if its condition is met now.</summary>
     RunTrigger,
 
@@ -43,7 +39,7 @@ public enum DryRunInputKind
 /// case.</summary>
 public sealed record DryRunInput(DryRunInputKind Kind)
 {
-    /// <summary>The trigger of a Load checkpoint, a Start at trigger or a Run trigger input, else null.</summary>
+    /// <summary>The trigger of a Load checkpoint or a Run trigger input, else null.</summary>
     public string? Trigger { get; init; }
 
     /// <summary>The line of an Event or a Fact input: the condition and the values that it gives (section 7.3 of the
@@ -63,10 +59,7 @@ public sealed record DryRunInput(DryRunInputKind Kind)
     public string? System { get; init; }
 
     /// <summary>True for an input that starts a new run. It removes the inputs before it.</summary>
-    public bool BeginsRun => Kind is DryRunInputKind.StartMission or DryRunInputKind.LoadCheckpoint or DryRunInputKind.StartAt;
-
-    /// <summary>True for an input that changes only the world: a fact or a fact about the player.</summary>
-    public bool IsWorld => Kind is DryRunInputKind.Fact or DryRunInputKind.PlayerSystem or DryRunInputKind.PlayerInSpace;
+    public bool BeginsRun => Kind is DryRunInputKind.StartMission or DryRunInputKind.LoadCheckpoint;
 
     /// <summary>The heartbeats that the input can run at most.</summary>
     public int MostHeartbeats => Kind != DryRunInputKind.Heartbeats ? 0 : UntilTimer ? DryRun.MaxHeartbeats : Count;
@@ -74,8 +67,6 @@ public sealed record DryRunInput(DryRunInputKind Kind)
     public static DryRunInput StartMission() => new(DryRunInputKind.StartMission);
 
     public static DryRunInput LoadCheckpoint(string trigger) => new(DryRunInputKind.LoadCheckpoint) { Trigger = trigger };
-
-    public static DryRunInput StartAt(string trigger) => new(DryRunInputKind.StartAt) { Trigger = trigger };
 
     public static DryRunInput RunTrigger(string trigger) => new(DryRunInputKind.RunTrigger) { Trigger = trigger };
 
@@ -170,16 +161,15 @@ public sealed class DryRun
     /// <summary>
     /// Adds an input and folds it. An input that starts a new run removes the inputs before it (section 4.2 of the M6c
     /// design), except the facts and the facts about the player: the world stays, as it stays when a game loads. They
-    /// stay before the new input in their net form.
+    /// stay before the new input in their net form (<see cref="FoldInputs(MissionIndex, IEnumerable{DryRunInput})"/>).
     /// </summary>
     public void Add(DryRunInput input)
     {
         if (input.BeginsRun)
         {
-            var kept = WorldInputs(inputs);
+            var kept = FoldInputs(Index, [.. inputs, input]);
             inputs.Clear();
             inputs.AddRange(kept);
-            inputs.Add(input);
             Refold();
             return;
         }
@@ -242,23 +232,47 @@ public sealed class DryRun
     }
 
     /// <summary>
-    /// Folds a list of inputs over a new machine (section 4.2 of the M6c design). The same inputs give the same trace.
-    /// An input that starts a new run makes a new machine, and the world stays.
+    /// Folds a list of inputs over a new machine (section 4.2 of the M6c design). The same inputs give the same trace,
+    /// and the Run panel gives the same steps for them: an input that starts a new run removes the inputs before it, as
+    /// <see cref="Add"/> does (<see cref="FoldInputs(MissionIndex, IEnumerable{DryRunInput})"/>). So a removed input gives
+    /// no step and no error.
     /// </summary>
     /// <param name="strict">True for a request of the command layer. An input that does not resolve then throws an
     /// <see cref="EditException"/>. Without it, the step shows "Missing: {name}" and does nothing, so the dry run
     /// follows the edits of the modder.</param>
     /// <exception cref="EditException">With <paramref name="strict"/>: <see cref="EditErrorKind.NotFound"/> for a trigger
-    /// or a system that does not resolve, <see cref="EditErrorKind.InvalidArgument"/> for a line that matches two
-    /// waiting lines or no condition of the script, and <see cref="EditErrorKind.NotAvailable"/> for Start at
-    /// trigger.</exception>
+    /// or a system that does not resolve, and <see cref="EditErrorKind.InvalidArgument"/> for a line that matches two
+    /// waiting lines or no condition of the script.</exception>
     public static DryRunState Fold(MissionIndex index, IReadOnlyList<DryRunInput> inputs,
         TimerBound timers = TimerBound.Shortest, bool strict = false)
     {
         var folder = new Folder(index, Options(timers), strict);
-        foreach (var input in inputs)
+        foreach (var input in FoldInputs(index, inputs))
             folder.Apply(input);
         return folder.State;
+    }
+
+    /// <summary>
+    /// The inputs that a fold uses (section 4.2 of the M6c design). An input that starts a new run removes the inputs
+    /// before it, except the world inputs, which stay before it in their net form: the last system and the last place of
+    /// the player, and each fact that is true, in the order of its first input. Two fact inputs are one fact when they
+    /// name the same fact line of the script.
+    /// </summary>
+    internal static List<DryRunInput> FoldInputs(MissionIndex index, IEnumerable<DryRunInput> inputs)
+    {
+        var result = new List<DryRunInput>();
+        IReadOnlyList<MissionLine>? factLines = null;
+        foreach (var input in inputs)
+        {
+            if (input.BeginsRun)
+            {
+                var kept = WorldInputs(result, factLines ??= WorldEvents.FactLines(index));
+                result.Clear();
+                result.AddRange(kept);
+            }
+            result.Add(input);
+        }
+        return result;
     }
 
     private static MachineOptions Options(TimerBound timers) => new() { Timers = timers };
@@ -282,12 +296,13 @@ public sealed class DryRun
     }
 
     /// <summary>The net form of the world inputs: the last system and the last place of the player, and each fact that
-    /// is true at the end, in the order of its first input.</summary>
-    internal static IReadOnlyList<DryRunInput> WorldInputs(IEnumerable<DryRunInput> list)
+    /// is true at the end, in the order of its first input. A fact input names its fact by the first fact line of the
+    /// script that it matches, as the fold does. A fact input that matches no line keeps its own line.</summary>
+    private static IReadOnlyList<DryRunInput> WorldInputs(IEnumerable<DryRunInput> list, IReadOnlyList<MissionLine> factLines)
     {
         DryRunInput? system = null;
         DryRunInput? space = null;
-        var facts = new List<DryRunInput>();
+        var facts = new List<(object Key, DryRunInput Input)>();
         foreach (var input in list)
         {
             switch (input.Kind)
@@ -299,15 +314,18 @@ public sealed class DryRun
                     space = input;
                     break;
                 case DryRunInputKind.Fact:
-                    var at = facts.FindIndex(f => Equals(f.Line, input.Line));
+                    object key = WorldEvents.Match(input.Line!, factLines) is [var line, ..]
+                        ? WorldEvents.KeyOf(line)
+                        : input.Line!;
+                    var at = facts.FindIndex(f => f.Key.Equals(key));
                     if (at >= 0)
-                        facts[at] = input;
+                        facts[at] = (key, input);
                     else
-                        facts.Add(input);
+                        facts.Add((key, input));
                     break;
             }
         }
-        return [.. new[] { system, space }.OfType<DryRunInput>(), .. facts.Where(f => f.Value)];
+        return [.. new[] { system, space }.OfType<DryRunInput>(), .. facts.Select(f => f.Input).Where(f => f.Value)];
     }
 
     /// <summary>The state of the fold after a number of inputs.</summary>
@@ -365,7 +383,6 @@ public sealed class DryRun
             {
                 DryRunInputKind.StartMission => StartMission(changes),
                 DryRunInputKind.LoadCheckpoint => LoadCheckpoint(input.Trigger!, changes),
-                DryRunInputKind.StartAt => StartAt(input.Trigger!, changes),
                 DryRunInputKind.RunTrigger => RunTrigger(input.Trigger!, changes),
                 DryRunInputKind.Event => Event(input.Line!, changes),
                 DryRunInputKind.Fact => Fact(input.Line!, input.Value, changes),
@@ -373,74 +390,68 @@ public sealed class DryRun
                 DryRunInputKind.PlayerSystem => PlayerSystem(input.System),
                 _ => PlayerInSpace(input.Value),
             };
-            State.Trace.Append(new TraceStep(number, cause, changes.Changes(Machine))
+            State.Trace.Append(new TraceStep(number, cause.Text, changes.Changes(Machine))
             {
+                CauseTrigger = cause.Trigger,
                 Pending = Machine.Pending.Select(t => t.Nickname).ToList(),
                 Heartbeats = Machine.Heartbeats,
             });
         }
 
-        private string StartMission(StepChanges changes)
+        private Cause StartMission(StepChanges changes)
         {
             NewRun();
-            changes.Add(Machine, Machine.StartMission());
-            return "Start mission";
+            changes.Add(Machine.StartMission());
+            return new Cause("Start mission");
         }
 
-        private string LoadCheckpoint(string name, StepChanges changes)
+        private Cause LoadCheckpoint(string name, StepChanges changes)
         {
-            var cause = $"Load checkpoint {name}";
             if (Find(name, changes) is not { } trigger)
-                return cause;
+                return Cause.Of("Load checkpoint", name);
             if (strict && !Checkpoints(Index).Contains(trigger))
                 throw new EditException(new EditError(EditErrorKind.InvalidArgument, "NotACheckpoint",
                     $"Trigger '{trigger.Nickname}' is not a checkpoint. No Act_Save line names it. Use a trigger that an " +
                     "Act_Save line names.") { Field = "trigger" });
             NewRun();
-            changes.Add(Machine, Machine.Load([trigger]));
-            return $"Load checkpoint {trigger.Nickname}";
+            changes.Add(Machine.Load([trigger]));
+            return Cause.Of("Load checkpoint", trigger.Nickname);
         }
 
-        private string StartAt(string name, StepChanges changes)
-        {
-            const string message = "Start at trigger is not available in this version. Use Start mission or Load checkpoint.";
-            if (strict)
-                throw new EditException(new EditError(EditErrorKind.NotAvailable, "StartAtNotAvailable", message)
-                {
-                    Field = "kind",
-                });
-            changes.Note(message);
-            return $"Start at {name}";
-        }
-
-        private string RunTrigger(string name, StepChanges changes)
+        private Cause RunTrigger(string name, StepChanges changes)
         {
             if (Find(name, changes) is not { } trigger)
-                return $"Run trigger {name}";
+                return Cause.Of("Run trigger", name);
+            var cause = Cause.Of("Run trigger", trigger.Nickname);
+            if (Over(changes))
+                return cause;
             if (Machine.StateOf(trigger).Status != TriggerStatus.Active || !Machine.Active.Contains(trigger))
             {
-                changes.Note($"Not active: {trigger.Nickname}", trigger.Nickname);
-                return $"Run trigger {trigger.Nickname}";
+                changes.Note(TraceChange.Note("Not active", trigger.Nickname, known: true));
+                return cause;
             }
-            changes.Add(Machine, Machine.Force(trigger));
-            return $"Run trigger {trigger.Nickname}";
+            changes.Add(Machine.Force(trigger));
+            return cause;
         }
 
-        private string Event(LineSpec pattern, StepChanges changes)
+        private Cause Event(LineSpec pattern, StepChanges changes)
         {
             var lines = WorldEvents.Match(pattern, WorldEvents.EventLines(Machine));
-            if (lines.Count == 0)
-            {
-                changes.Note("No trigger waits for this event.");
-                return PatternCause(pattern);
-            }
             if (lines.Count > 1 && strict)
                 throw Ambiguous(pattern, lines);
-            changes.Add(Machine, Machine.Dispatch(WorldEvents.Of(lines[0])));
-            return CauseOf(lines[0]);
+            var cause = new Cause(lines.Count == 0 ? PatternCause(pattern) : CauseOf(lines[0]));
+            if (Over(changes))
+                return cause;
+            if (lines.Count == 0)
+            {
+                changes.Note(TraceChange.Note(NoWaitText));
+                return cause;
+            }
+            changes.Add(Machine.Dispatch(WorldEvents.Of(lines[0])));
+            return cause;
         }
 
-        private string Fact(LineSpec pattern, bool on, StepChanges changes)
+        private Cause Fact(LineSpec pattern, bool on, StepChanges changes)
         {
             var lines = WorldEvents.Match(pattern, WorldEvents.FactLines(Index));
             if (lines.Count == 0)
@@ -449,17 +460,32 @@ public sealed class DryRun
                     throw new EditException(new EditError(EditErrorKind.InvalidArgument, "NoSuchFact",
                         $"No trigger of the script tests the fact {pattern}. Use a condition that the game tests at " +
                         "each heartbeat, for example Cnd_InSpace.") { Field = "line" });
-                changes.Note("No trigger waits for this event.");
-                return (on ? "Is true: " : "Is not true: ") + PatternCause(pattern);
+                changes.Note(TraceChange.Note(NoWaitText));
+                return new Cause((on ? "Is true: " : "Is not true: ") + PatternCause(pattern));
             }
             if (lines.Count > 1 && strict)
                 throw Ambiguous(pattern, lines);
             World.SetFact(WorldEvents.KeyOf(lines[0]), on);
-            return (on ? "Is true: " : "Is not true: ") + Lower(CauseOf(lines[0]));
+            return new Cause((on ? "Is true: " : "Is not true: ") + Lower(CauseOf(lines[0])));
         }
 
-        private string Heartbeats(DryRunInput input, StepChanges changes)
+        /// <summary>True when the run is over: the mission ended or the run stopped. The step then does nothing and
+        /// shows why.</summary>
+        private bool Over(StepChanges changes)
         {
+            if (!Machine.IsOver)
+                return false;
+            changes.Note(TraceChange.Note(OverText));
+            return true;
+        }
+
+        private Cause Heartbeats(DryRunInput input, StepChanges changes)
+        {
+            var cause = new Cause(input.UntilTimer ? "Next timer"
+                : input.Count == 1 ? "Heartbeat"
+                : $"{input.Count.ToString(CultureInfo.InvariantCulture)} heartbeats");
+            if (Over(changes))
+                return cause;
             var target = input.MostHeartbeats;
             var done = 0;
             while (done < target && !Machine.IsOver)
@@ -469,13 +495,11 @@ public sealed class DryRun
                     break;
                 var pass = Machine.Heartbeat();
                 done++;
-                changes.Add(Machine, pass);
+                changes.Add(pass);
                 if (input.UntilTimer && RanTimer(pass))
                     break;
             }
-            return input.UntilTimer ? "Next timer"
-                : input.Count == 1 ? "Heartbeat"
-                : $"{input.Count.ToString(CultureInfo.InvariantCulture)} heartbeats";
+            return cause;
         }
 
         /// <summary>True when a timer ran in a pass.</summary>
@@ -490,20 +514,20 @@ public sealed class DryRun
             return false;
         }
 
-        private string PlayerSystem(string? system)
+        private Cause PlayerSystem(string? system)
         {
             if (strict && system != null && Index.World.Knows(MissionValueKind.System) &&
                 !Index.World.Has(MissionValueKind.System, system))
                 throw new EditException(new EditError(EditErrorKind.NotFound, ItemRefs.NotFound,
                     $"The game data has no system '{system}'. Pick a system of the game data.") { Field = "system" });
             World.PlayerSystem = system;
-            return system == null ? "Player system: none" : $"Player system: {system}";
+            return new Cause(system == null ? "Player system: none" : $"Player system: {system}");
         }
 
-        private string PlayerInSpace(bool value)
+        private Cause PlayerInSpace(bool value)
         {
             World.InSpace = value;
-            return value ? "Player is in space" : "Player is not in space";
+            return new Cause(value ? "Player is in space" : "Player is not in space");
         }
 
         /// <summary>A new run: a new machine, and the world without the records of the run before.</summary>
@@ -521,7 +545,7 @@ public sealed class DryRun
                 return trigger;
             if (strict)
                 throw new EditException(MissionErrors.TriggerNotFoundError(Index.Document.Path, name) with { Field = "trigger" });
-            changes.Note($"Missing: {name}");
+            changes.Note(TraceChange.Note("Missing", name, known: false));
             return null;
         }
 
@@ -550,50 +574,75 @@ public sealed class DryRun
 
     private static string Lower(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text[1..];
 
-    /// <summary>The changes of one step. A step of many heartbeats folds the same change into one row with a count
-    /// (section 4.4 of the M6c design).</summary>
+    /// <summary>The note of a step whose event no active trigger waits for (section 8.2 of the M6c design).</summary>
+    public const string NoWaitText = "No trigger waits for this event.";
+
+    /// <summary>The note of a step after the end of the mission or a stop of the run.</summary>
+    public const string OverText =
+        "The run is over, so this step does nothing. Start a new run with Start mission or Load checkpoint.";
+
+    /// <summary>The cause of a step, and the trigger that it names at its end, or null.</summary>
+    private readonly record struct Cause(string Text, string? Trigger = null)
+    {
+        /// <summary>A cause that names a trigger: "{text} {trigger}".</summary>
+        public static Cause Of(string text, string trigger) => new($"{text} {trigger}", trigger);
+    }
+
+    /// <summary>
+    /// The changes of one step. A step of many heartbeats folds the same change into one row with a count (section 4.4
+    /// of the M6c design). The row takes the place of the last time of its change, so the rows of a trigger keep the
+    /// order of its last changes, and the last row of a trigger gives its state. Example: a trigger that starts, stops
+    /// and starts again in one step gives "Stopped", then "Started, 2 times".
+    /// </summary>
     private sealed class StepChanges(bool fold)
     {
         // A row is a change of the machine, or a note. The step makes the rows of the log at its end, so a change that
         // repeats in many heartbeats makes its text once.
-        private readonly List<(MachineChange Change, TraceChange? Note)> rows = [];
-        private readonly List<int> counts = [];
+        private readonly List<Row> rows = [];
         private readonly Dictionary<MachineChange, int> places = [];
+        private int time;
+        private bool moved;
 
-        public void Note(string text, string trigger = "")
-        {
-            rows.Add((default, new TraceChange(TraceChangeKind.Note, trigger) { Text = text }));
-            counts.Add(1);
-        }
+        public void Note(TraceChange note) => rows.Add(new Row(default, note) { Count = 1, Last = time++ });
 
-        public void Add(TriggerMachine machine, MachinePass pass)
+        public void Add(MachinePass pass)
         {
-            if (pass.Changes.Count == 0)
-                return;
             foreach (var change in pass.Changes)
             {
                 if (fold && places.TryGetValue(change, out var at))
                 {
-                    counts[at]++;
+                    var row = rows[at];
+                    rows[at] = row with { Count = row.Count + 1, Last = time++ };
+                    moved = true;
                     continue;
                 }
                 if (fold)
                     places[change] = rows.Count;
-                rows.Add((change, null));
-                counts.Add(1);
+                rows.Add(new Row(change, null) { Count = 1, Last = time++ });
             }
         }
 
-        /// <summary>The rows of the step, with the end and the stop of the machine after the step.</summary>
+        /// <summary>The rows of the step in the order of the last time of each change, with the end and the stop of
+        /// the machine after the step.</summary>
         public IReadOnlyList<TraceChange> Changes(TriggerMachine machine)
         {
-            var result = new List<TraceChange>(rows.Count);
-            for (var i = 0; i < rows.Count; i++)
+            var ordered = moved ? rows.OrderBy(r => r.Last).ToList() : rows;
+            var result = new List<TraceChange>(ordered.Count);
+            foreach (var row in ordered)
             {
-                var change = rows[i].Note ?? Of(machine, rows[i].Change);
-                result.Add(counts[i] > 1 ? change with { Count = counts[i] } : change);
+                var change = row.Note ?? Of(machine, row.Change);
+                result.Add(row.Count > 1 ? change with { Count = row.Count } : change);
             }
             return result;
+        }
+
+        /// <summary>A row of the step: a change of the machine or a note, how many times it happened, and the time of
+        /// its last change in the step.</summary>
+        private readonly record struct Row(MachineChange Change, TraceChange? Note)
+        {
+            public int Count { get; init; }
+
+            public int Last { get; init; }
         }
 
         private static TraceChange Of(TriggerMachine machine, MachineChange change)

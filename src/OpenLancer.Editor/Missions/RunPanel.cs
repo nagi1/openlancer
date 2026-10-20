@@ -58,17 +58,25 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
     internal const string FollowTip = "Frame the trigger of each new change.";
     internal const string LogTip = "The changes of the run, in order. Click a change to select its trigger.";
 
+    /// <summary>The tooltip of a step button after the end of the mission or a stop of the run.</summary>
+    internal const string OverTip = "The run is over. Click Start mission or Load checkpoint to start a new run.";
+
+    /// <summary>The note of a fact that is true while no active trigger tests it.</summary>
+    internal const string IdleFactNote = "No active trigger tests this fact now.";
+
     private readonly ValuePicker systemPicker = new();
     private bool pickSystem;
     private (int Version, DryRun Run, List<LogRow> Rows, IReadOnlyList<PanelRow> Waiting,
         IReadOnlyList<MissionTrigger> Checkpoints)? cache;
-    private int scrolledVersion = -1;
+    private int scrolledSteps = -1;
 
     /// <summary>One row of the Run log: the title of a step, or a change under it.</summary>
     internal sealed record LogRow(string Text, bool Title, string? Trigger, bool Dim);
 
     /// <summary>One row of the world panel: a line that the active triggers wait for, or a fact that is true.</summary>
-    private sealed record PanelRow(MissionLine Line, string Sentence, WorldLineKind Kind, string? Note);
+    /// <param name="Waits">True when an active trigger waits for the line. A fact that is true while no active trigger
+    /// tests it has a row too, so the modder can clear it.</param>
+    private sealed record PanelRow(MissionLine Line, string Sentence, WorldLineKind Kind, string? Note, bool Waits);
 
     /// <summary>Draws the panel into a region at the cursor.</summary>
     public void Draw(MissionAnalysis analysis, DryRun run, Vector2 size)
@@ -99,7 +107,7 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
     private void Header()
     {
         ImGui.AlignTextToFramePadding();
-        ImGui.Text($"{EditorIcons.Play}  Dry run");
+        ImGui.Text($"{EditorIcons.Flask}  Dry run");
         ImGui.SameLine();
         InfoIcon.Draw("run-help", Help);
         ImGui.Separator();
@@ -127,7 +135,7 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
             EditorTheme.PushMenuColors();
             foreach (var checkpoint in checkpoints)
             {
-                if (ImGui.MenuItem(Display(analysis, checkpoint.Nickname)))
+                if (ImGui.MenuItem(RunOverlay.TriggerName(analysis, checkpoint.Nickname)))
                 {
                     missions.AddDryRunInput(DryRunInput.LoadCheckpoint(checkpoint.Nickname));
                 }
@@ -137,29 +145,33 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
             ImGui.EndPopup();
         }
 
+        // After the end of the mission or a stop, a step does nothing, so the step buttons tell why and stay off.
+        var over = run.State.Machine.IsOver;
         var selected = SelectedTrigger(analysis);
-        ImGui.BeginDisabled(selected == null);
+        ImGui.BeginDisabled(selected == null || over);
         if (ImGui.Button("Run trigger") && selected != null)
         {
             missions.AddDryRunInput(DryRunInput.RunTrigger(selected.Nickname));
         }
 
         ImGui.EndDisabled();
-        DisabledTip(RunTip);
+        DisabledTip(over ? OverTip : RunTip);
         ImGui.SameLine();
+        ImGui.BeginDisabled(over);
         if (ImGui.Button("Heartbeat"))
         {
             missions.AddDryRunInput(DryRunInput.Heartbeats(1));
         }
 
-        ImGui.SetItemTooltip(HeartbeatTip);
+        DisabledTip(over ? OverTip : HeartbeatTip);
         ImGui.SameLine();
         if (ImGui.Button("Next timer"))
         {
             missions.AddDryRunInput(DryRunInput.NextTimer());
         }
 
-        ImGui.SetItemTooltip(NextTimerTip);
+        DisabledTip(over ? OverTip : NextTimerTip);
+        ImGui.EndDisabled();
         ImGui.BeginDisabled(run.Inputs.Count == 0);
         if (ImGui.Button($"{EditorIcons.StepBackward} Back"))
         {
@@ -176,8 +188,11 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
         DisabledTip(ResetTip);
         ImGui.EndDisabled();
         ImGui.SameLine();
-        ImGui.SetNextItemWidth(130 * ImGuiHelper.Scale);
-        if (ImGui.BeginCombo("##timers", $"Timer ranges: {(run.Timers == TimerBound.Shortest ? "Shortest" : "Longest")}"))
+        // The combo fits its longest text and its arrow.
+        var timerTexts = new[] { "Timer ranges: Shortest", "Timer ranges: Longest" };
+        ImGui.SetNextItemWidth(timerTexts.Max(t => ImGui.CalcTextSize(t).X) + ImGui.GetStyle().FramePadding.X * 2 +
+                               ImGui.GetFrameHeight());
+        if (ImGui.BeginCombo("##timers", timerTexts[run.Timers == TimerBound.Shortest ? 0 : 1]))
         {
             EditorTheme.PushMenuColors();
             foreach (var (bound, label) in new[] { (TimerBound.Shortest, "Shortest"), (TimerBound.Longest, "Longest") })
@@ -261,11 +276,11 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
     private static string Name(EditorSession session, ListEntry entry) =>
         entry.Section != null && session.SectionName(entry.Section) is { Length: > 0 } name ? name : entry.Name ?? entry.Value;
 
-    /// <summary>The group "Waiting events ({n})": one row for each line that the active triggers wait for, and for each
-    /// fact that is true.</summary>
+    /// <summary>The group "Waiting events ({n})": one row for each line that the active triggers wait for. The count
+    /// holds only these rows. After them, one row for each fact that is true while no active trigger tests it.</summary>
     private void Waiting(IReadOnlyList<PanelRow> rows, DryRun run)
     {
-        var count = rows.Count.ToString(CultureInfo.InvariantCulture);
+        var count = rows.Count(r => r.Waits).ToString(CultureInfo.InvariantCulture);
         var open = ImGui.CollapsingHeader($"Waiting events ({count})###waiting", ImGuiTreeNodeFlags.DefaultOpen);
         ImGui.SetItemTooltip(WaitingTip);
         if (!open)
@@ -274,6 +289,7 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
         }
 
         var world = run.State.World;
+        var over = run.State.Machine.IsOver;
         ImGui.PushTextWrapPos(0);
         for (var i = 0; i < rows.Count; i++)
         {
@@ -286,14 +302,21 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
                 ImGui.SetItemTooltip(CauseTip);
             }
 
+            if (!row.Waits)
+            {
+                ImGui.TextDisabled(IdleFactNote);
+            }
+
             if (row.Kind is WorldLineKind.Event or WorldLineKind.EventAndFact)
             {
+                ImGui.BeginDisabled(over);
                 if (ImGui.SmallButton("Happens"))
                 {
                     missions.AddDryRunInput(DryRunInput.Event(WorldEvents.PatternOf(row.Line)));
                 }
 
-                ImGui.SetItemTooltip(HappensTip);
+                ImGui.EndDisabled();
+                DisabledTip(over ? OverTip : HappensTip);
                 if (row.Kind == WorldLineKind.EventAndFact)
                 {
                     ImGui.SameLine();
@@ -373,10 +396,10 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
             }
 
             clipper.End();
-            // A new step scrolls the log to its end.
-            if (scrolledVersion != missions.DryRuns.Version)
+            // A new step scrolls the log to its end. A fold after an edit adds no step, so the log stays where it is.
+            if (scrolledSteps != missions.DryRuns.Steps)
             {
-                scrolledVersion = missions.DryRuns.Version;
+                scrolledSteps = missions.DryRuns.Steps;
                 ImGui.SetScrollHereY(1);
             }
         }
@@ -425,52 +448,39 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
     }
 
     /// <summary>The rows of the Run log (section 8.2 of the M6c design). A trigger of a prefab instance shows the name of
-    /// the prefab first (UI rule 5).</summary>
+    /// the prefab first (UI rule 5), in the rows of the changes, the notes and the step causes.</summary>
     internal static List<LogRow> LogRows(MissionAnalysis analysis, MissionTrace trace)
     {
+        string Name(string nickname) => RunOverlay.TriggerName(analysis, nickname);
         var rows = new List<LogRow>();
         foreach (var step in trace.Steps)
         {
-            rows.Add(new LogRow(step.Title, true, null, false));
+            rows.Add(new LogRow(step.TitleWith(Name), true, null, false));
             foreach (var change in step.Changes)
             {
-                if (change.LogText is not { } text)
+                if (change.TextWith(Name) is { } text)
                 {
-                    continue;
+                    rows.Add(new LogRow(text, false, change.Trigger.Length > 0 ? change.Trigger : null,
+                        change.Kind == TraceChangeKind.Note));
                 }
-
-                var trigger = change.Trigger.Length > 0 ? change.Trigger : null;
-                if (trigger != null && change.Kind is TraceChangeKind.Started or TraceChangeKind.Ran or TraceChangeKind.Stopped)
-                {
-                    text = text.Replace(trigger, Display(analysis, trigger));
-                }
-
-                rows.Add(new LogRow(text, false, trigger, change.Kind == TraceChangeKind.Note));
             }
         }
 
         return rows;
     }
 
-    /// <summary>The name of a trigger in the log: "{prefab name}: {trigger}" for a trigger of a prefab instance, else
-    /// the nickname.</summary>
-    internal static string Display(MissionAnalysis analysis, string nickname) =>
-        analysis.Index.Trigger(nickname) is { } trigger && analysis.Prefabs?.Of(trigger) is { } instance
-            ? $"{instance.Definition.Name}: {nickname}"
-            : nickname;
-
     /// <summary>The rows of the world panel: the waiting lines, then each fact that is true and that no active trigger
     /// waits for, so the modder can clear it.</summary>
     private static IReadOnlyList<PanelRow> PanelRows(DryRun run)
     {
         var state = run.State;
-        var rows = state.Waiting.Select(w => new PanelRow(w.Line, w.Sentence, w.Kind, w.Cause?.Text)).ToList();
+        var rows = state.Waiting.Select(w => new PanelRow(w.Line, w.Sentence, w.Kind, w.Cause?.Text, true)).ToList();
         var keys = rows.Select(r => WorldEvents.KeyOf(r.Line)).ToHashSet(StringComparer.Ordinal);
         foreach (var line in WorldEvents.FactLines(run.Index).Where(state.World.IsFact))
         {
             if (keys.Add(WorldEvents.KeyOf(line)))
             {
-                rows.Add(new PanelRow(line, line.Sentence(), WorldLineKind.Fact, null));
+                rows.Add(new PanelRow(line, line.Sentence(), WorldLineKind.Fact, null, false));
             }
         }
 

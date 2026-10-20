@@ -46,9 +46,6 @@ public sealed class DryRunWorld : ITriggerWorld
     /// <summary>The number of the step that runs now. The world records it with each comm line and spawn.</summary>
     public int Step { get; set; }
 
-    /// <summary>The keys of the facts that are true.</summary>
-    public IReadOnlyCollection<string> Facts => facts;
-
     /// <summary>True when the fact of a line is true.</summary>
     public bool IsFact(MissionLine line) => facts.Contains(WorldEvents.KeyOf(line));
 

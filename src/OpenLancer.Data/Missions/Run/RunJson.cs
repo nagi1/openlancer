@@ -117,7 +117,6 @@ public static class RunJson
     {
         ["start_mission"] = (DryRunInputKind.StartMission, []),
         ["load_checkpoint"] = (DryRunInputKind.LoadCheckpoint, ["trigger"]),
-        ["start_at"] = (DryRunInputKind.StartAt, ["trigger"]),
         ["run_trigger"] = (DryRunInputKind.RunTrigger, ["trigger"]),
         ["event"] = (DryRunInputKind.Event, ["line"]),
         ["fact"] = (DryRunInputKind.Fact, ["line", "on"]),
@@ -158,7 +157,6 @@ public static class RunJson
         {
             DryRunInputKind.StartMission => DryRunInput.StartMission(),
             DryRunInputKind.LoadCheckpoint => DryRunInput.LoadCheckpoint(Trigger(input, script, index)),
-            DryRunInputKind.StartAt => DryRunInput.StartAt(Trigger(input, script, index)),
             DryRunInputKind.RunTrigger => DryRunInput.RunTrigger(Trigger(input, script, index)),
             DryRunInputKind.Event => DryRunInput.Event(Line(input, index, fact: false)),
             DryRunInputKind.Fact => DryRunInput.Fact(Line(input, index, fact: true), Bool(input, "on", index)),
@@ -176,7 +174,7 @@ public static class RunJson
         var result = new JsonObject { ["kind"] = kind };
         switch (input.Kind)
         {
-            case DryRunInputKind.LoadCheckpoint or DryRunInputKind.StartAt or DryRunInputKind.RunTrigger:
+            case DryRunInputKind.LoadCheckpoint or DryRunInputKind.RunTrigger:
                 result["trigger"] = new TriggerRef(script, input.Trigger!).ToString();
                 break;
             case DryRunInputKind.Event:
@@ -317,7 +315,7 @@ public static class RunJson
             throw Bad(index, "line", "The input needs a line {key, values}, for example {\"key\": \"Cnd_Destroyed\", " +
                                      "\"values\": {\"target\": \"my_ship\"}}.");
         var name = MissionSchema.Retail.Name(line.Key);
-        var kind = name is { Kind: MissionNameKind.Condition } ? WorldKindOf(name) : null;
+        var kind = WorldEvents.KindOf(name);
         if (kind == null || fact && kind == WorldLineKind.Event || !fact && kind == WorldLineKind.Fact)
             throw Bad(index, "line", fact
                 ? $"{line.Key} is not a condition that the game tests at each heartbeat for the world. A fact names such a " +
@@ -332,15 +330,6 @@ public static class RunJson
         }
         return line with { Key = name!.Name };
     }
-
-    /// <summary>The kind of a condition of the world, or null for a condition that the machine tests itself.</summary>
-    private static WorldLineKind? WorldKindOf(MissionName name) => name.Name.ToLowerInvariant() switch
-    {
-        "cnd_true" or "cnd_timer" or "cnd_watchtrigger" => null,
-        _ when name.Polls && name.Wake.Count > 0 => WorldLineKind.EventAndFact,
-        _ when name.Polls => WorldLineKind.Fact,
-        _ => WorldLineKind.Event,
-    };
 
     private static DryRunInput Heartbeats(JsonObject input, int index)
     {

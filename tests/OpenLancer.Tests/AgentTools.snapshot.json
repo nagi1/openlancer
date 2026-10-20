@@ -4861,7 +4861,6 @@
                   "enum": [
                     "start_mission",
                     "load_checkpoint",
-                    "start_at",
                     "run_trigger",
                     "event",
                     "fact",
@@ -4917,7 +4916,7 @@
               ],
               "additionalProperties": false
             },
-            "description": "The inputs in order, at most 1000, with at most 108000 heartbeats in all. Each input is an object with a kind. The kinds are start_mission, load_checkpoint {trigger}, run_trigger {trigger}, event {line} and fact {line, on}. The other kinds are heartbeats {count} or {until_timer: true}, player_system {system} and player_in_space {value}. A trigger is a trg: reference. A line is {key, values} with the value names of describe_mission_name. A value that the line does not give matches any value. start_at comes in a later version."
+            "description": "The inputs in order, at most 1000, with at most 108000 heartbeats in all. Each input is an object with a kind. The kinds are start_mission, load_checkpoint {trigger}, run_trigger {trigger}, event {line} and fact {line, on}. The other kinds are heartbeats {count} or {until_timer: true}, player_system {system} and player_in_space {value}. A trigger is a trg: reference. A line is {key, values} with the value names of describe_mission_name. A value that the line does not give matches any value. When it matches two waiting lines, the line whose values it gives in full is the event. Else the call gives invalid_argument. start_mission and load_checkpoint start a new run and remove the inputs before them. The fact and player inputs before them stay, in their net form."
           },
           "timer_bound": {
             "type": "string",
@@ -4954,7 +4953,7 @@
           },
           "total_steps": {
             "type": "integer",
-            "description": "The number of all steps of the run: one step for each input."
+            "description": "The number of all steps of the run: one step for each input that the run keeps."
           },
           "steps": {
             "type": "array",
@@ -4963,7 +4962,7 @@
               "properties": {
                 "step": {
                   "type": "integer",
-                  "description": "The number of the step, from 1. Each input gives one step."
+                  "description": "The number of the step, from 1. Each input that the run keeps gives one step."
                 },
                 "cause": {
                   "type": "string",
@@ -4995,7 +4994,7 @@
                           "string",
                           "null"
                         ],
-                        "description": "The trg: reference of the trigger of the change, or none for a note."
+                        "description": "The trg: reference of the trigger of the change or of the note. None for a note without a trigger."
                       },
                       "text": {
                         "type": [
@@ -5009,7 +5008,7 @@
                           "string",
                           "null"
                         ],
-                        "description": "The trigger name of an ignored start or stop and of a checkpoint, as the line writes it, else none."
+                        "description": "The trigger name of an ignored start or stop, of a checkpoint or of a note, as the line or the input writes it. Else none."
                       },
                       "line": {
                         "type": [
@@ -5020,14 +5019,14 @@
                       },
                       "count": {
                         "type": "integer",
-                        "description": "How many times the change happened in the step. A step of many heartbeats gives the same change one row."
+                        "description": "How many times the change happened in the step."
                       }
                     },
                     "required": [
                       "kind"
                     ]
                   },
-                  "description": "The changes of the step in the order of the game."
+                  "description": "The changes of the step in the order of the game. A change that repeats in a step of many heartbeats has one row, at the place of its last time."
                 },
                 "heartbeats": {
                   "type": "integer",

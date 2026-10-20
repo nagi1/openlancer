@@ -104,10 +104,10 @@ internal sealed partial class GraphView : IDisposable
     private int pendingCenter;
 
     // The run overlay of the dry run of this frame, or null (section 4.5 of the M6c design), the strength of the flash
-    // of the last step from 1 to 0, and the version of the dry runs that "Follow" framed last.
+    // of the last step from 1 to 0, and the step count of the dry runs that "Follow" framed last.
     private RunOverlay? runOverlay;
     private float runFlash;
-    private int followedVersion = -1;
+    private int followedSteps = -1;
 
     /// <summary>A view move that waits for the next frame of the node editor.</summary>
     private enum Navigation
@@ -1237,8 +1237,9 @@ internal sealed partial class GraphView : IDisposable
         }
     }
 
-    /// <summary>The run overlay of the dry run of the open mission in this frame, and "Follow": a new change frames its
-    /// trigger (section 4.5 of the M6c design). Prefab mode has no dry run.</summary>
+    /// <summary>The run overlay of the dry run of the open mission in this frame, and "Follow": a new step frames the
+    /// trigger of its last change (section 4.5 of the M6c design). A fold after an edit adds no step, so it does not
+    /// frame. Prefab mode has no dry run.</summary>
     private void RunState(MissionAnalysis analysis, MissionGraph graph)
     {
         var runs = missions.DryRuns;
@@ -1246,12 +1247,12 @@ internal sealed partial class GraphView : IDisposable
             ? runs.Overlay(graph, run.State.Trace)
             : null;
         runFlash = runOverlay == null ? 0 : (float)Math.Clamp(1 - (runs.Now - runs.ChangedAt) / RunOverlay.FlashSeconds, 0, 1);
-        if (runOverlay == null || !runs.Follow || followedVersion == runs.Version)
+        if (runOverlay == null || !runs.Follow || followedSteps == runs.Steps)
         {
             return;
         }
 
-        followedVersion = runs.Version;
+        followedSteps = runs.Steps;
         if (runOverlay.Follow is { } key && graph.Nodes.FirstOrDefault(n => n.Key == key) is { } node)
         {
             FrameBlock(node);
@@ -1523,7 +1524,8 @@ internal sealed partial class GraphView : IDisposable
         }
 
         ImGui.Separator();
-        var waits = run.State.Machine.StateOf(trigger).Status == TriggerStatus.Active;
+        var machine = run.State.Machine;
+        var waits = !machine.IsOver && machine.StateOf(trigger).Status == TriggerStatus.Active;
         if (ImGui.MenuItem("Run this trigger (dry run)", "", false, waits))
         {
             missions.AddDryRunInput(DryRunInput.RunTrigger(trigger.Nickname));
@@ -1531,7 +1533,7 @@ internal sealed partial class GraphView : IDisposable
 
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
         {
-            ImGui.SetTooltip(RunThisTip);
+            ImGui.SetTooltip(machine.IsOver ? RunPanel.OverTip : RunThisTip);
         }
     }
 

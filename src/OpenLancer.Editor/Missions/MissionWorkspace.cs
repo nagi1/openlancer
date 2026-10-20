@@ -77,6 +77,14 @@ internal sealed class MissionWorkspace
     /// run.</summary>
     public DryRun? DryRun => DryRuns.On && OpenPrefab == null && Open is { } analysis ? DryRuns.For(analysis) : null;
 
+    /// <summary>The trace of the dry run of a script while the graph shows the run (section 4.5 of the M6c design): the
+    /// toggle "Dry run" is on, the script is the open mission in the graph view, and the run started. Else null. The
+    /// Trigger page shows the section "Run" only then.</summary>
+    public MissionTrace? ShownRun(string script) =>
+        !ShowRaw && DryRun is { Started: true } run && string.Equals(OpenPath, script, StringComparison.OrdinalIgnoreCase)
+            ? run.State.Trace
+            : null;
+
     /// <summary>Folds the dry run of the open mission again when its model changed, for example after an edit, an Undo
     /// or a Redo. The Mission tab calls it in each frame.</summary>
     public void SyncDryRun()

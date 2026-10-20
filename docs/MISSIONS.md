@@ -10,6 +10,9 @@ This version has these limits:
 - In prefab mode, the Raw INI view does not show, and the INI block of a page is read-only. The Prefab page shows the text of the prefab file.
 - The Scene part does not drag mission items yet. Use "Pick in Scene" to set a position.
 - The editor writes the lines of a mission. OpenLancer does not run each line yet. The column OpenLancer of the Missions tab tells what it runs.
+- The dry run starts only at the mission start or at a checkpoint. It cannot start at another trigger yet, and the node menu has no item "Dry run from here".
+- Prefab mode has no dry run.
+- The graph shows the chips of the dry run only at full detail. Zoom in to see them.
 
 ## Open a mission
 
@@ -97,12 +100,16 @@ The dry run runs the trigger rules of the retail game on the graph of the open m
 ### Start a dry run
 
 1. Open a mission.
-2. In the toolbar of the Mission tab, click the toggle "Dry run". The Run panel opens at the right of the graph.
+2. In the toolbar of the Mission tab, click the toggle "Dry run". It has a flask glyph, so it does not look like Play. The Run panel opens at the right of the graph.
 3. Click "Start mission". The start triggers start.
-4. Or click "Load checkpoint", then click a checkpoint. Its restore trigger starts, as a load of a saved game does.
-5. Click "Heartbeat". The triggers that the start triggers start become active at the first heartbeat.
-6. In the group "Waiting events", click "Happens" on the event that happens in your test.
-7. To remove the last step, click "Back".
+4. Click "Heartbeat". The triggers that the start triggers start become active at the first heartbeat.
+5. In the group "Waiting events", click "Happens" on the event that happens in your test.
+6. To remove the last step, click "Back".
+
+### Start a dry run at a checkpoint
+
+1. In the Run panel, click "Load checkpoint". A menu with the checkpoints of the script opens.
+2. Click a checkpoint. The steps before it go, and its restore trigger starts, as a load of a saved game does.
 
 ### The Run panel
 
@@ -117,8 +124,8 @@ The dry run runs the trigger rules of the retail game on the graph of the open m
 | Timer ranges | Shortest or Longest: the time of a timer with a range. The game picks a time in the range when the mission loads. |
 | Follow | The graph frames the trigger of each new change. |
 | Player system, Player is in space | The facts about the player. Cnd_SystemEnter is true at once in the system of the player. A timer with RUN_IN_SPACE_ONLY counts only in space. |
-| Waiting events | One row for each condition line that the active triggers wait for. "Happens" makes the event happen. "Is true" sets a fact that the game tests at each heartbeat. A fact stays true until you clear it. |
-| Run log | One row for each step and each change. Click a change to select its trigger. |
+| Waiting events | One row for each condition line that the active triggers wait for. "Happens" makes the event happen. "Is true" sets a fact that the game tests at each heartbeat. A fact stays true until you clear it. A fact that is true while no active trigger tests it stays in the list with a note, so you can clear it. The count of the group does not count it. |
+| Run log | One row for each step and each change. Click a change to select its trigger. A trigger of a prefab instance shows the name of the prefab first, for example "Spawn wave: tr_wave2". |
 
 A row of "Waiting events" that the run made likely comes first, with "Sent at step {n}" or "Spawned at step {n}". An example is a comm line that the run sent. A condition that counts shows its count, for example "(1 of 3)".
 
@@ -135,16 +142,19 @@ Each state has a chip above the node, with a glyph and a word.
 | Starts next ({k}) | The game starts this trigger at the next event or heartbeat. The number gives the order. |
 | {n} wait | A collapsed frame has {n} triggers that wait. |
 
-The Trigger page of the Inspector gets the section "Run" during a dry run. It shows the state of the trigger, the step of its last start, its runs, and its last change with its cause.
+The Trigger page of the Inspector gets the section "Run" while the graph shows a dry run that started. It shows the state of the trigger, the step of its last start, its runs, and its last change with its cause.
 
 ### Rules of the dry run
 
 - The dry run uses the order of the retail game. A trigger that another trigger starts becomes active after the actions of the pass, smallest game id first. The OpenLancer game runs the triggers with its own rules. In some cases they differ.
+- When a trigger starts, the game tests its condition once. The dry run does this test for Cnd_True, Cnd_Timer, Cnd_WatchTrigger and Cnd_SystemEnter. It tests a fact of the world, for example Cnd_InSpace, at the next heartbeat. The game tests some of these facts at once, so the trigger can run one heartbeat earlier in the game.
 - Start mission and Load checkpoint start a new run. The steps before them go. The facts and the facts about the player stay.
+- A step of many heartbeats gives one row to a change that repeats, with a count. The row has the place of the last time of the change, so the last row of a trigger tells its state.
+- After the mission ends or the run stops, a step does nothing. "Run trigger", "Heartbeat", "Next timer" and "Happens" are off. Click "Start mission" or "Load checkpoint" to start a new run.
 - The dry run follows each change of the script, also Undo and Redo. A rename moves the steps to the new name. A step whose trigger the script does not have now shows "Missing: {name}".
 - One event of the game can match two lines, for example Cnd_BaseEnter of a base and Cnd_BaseEnter ANY. The dry run lists them as two events.
 - A chain of starts that does not end stops the run with a message. A trigger without a condition stops the run too, as it stops the game.
-- An agent can run the same dry run with the agent tool `mission_dry_run`.
+- An agent can run the same dry run with the agent tool `mission_dry_run`. The same inputs give the same steps as in the Run panel.
 
 ## The Hierarchy and the Inspector
 

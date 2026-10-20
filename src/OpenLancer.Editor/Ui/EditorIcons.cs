@@ -118,6 +118,10 @@ internal static class EditorIcons
     public const char StepForward = '\uf051';
     public const char History = '\uf1da';
 
+    // The dry run of the Mission tab has a test glyph, so it does not look like the Play of the game (section 8.1 of
+    // the M6c design).
+    public const char Flask = '\uf0c3';
+
     // The entity types of a cutscene, and the tools of the Timeline and the Cutscene view.
     public const char User = '\uf007';
     public const char VolumeUp = '\uf028';

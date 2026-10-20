@@ -32,7 +32,6 @@ public sealed class RunJsonTests
         [
             DryRunInput.StartMission(),
             DryRunInput.LoadCheckpoint("ol_end"),
-            DryRunInput.StartAt("ol_wave"),
             DryRunInput.RunTrigger("ol_wave"),
             DryRunInput.Event(LineSpec.Of("Cnd_Destroyed", ("target", "ol_ship_1"), ("count", -1))),
             DryRunInput.Fact(LineSpec.Of("Cnd_InSpace", ("inSpace", true)), true),
@@ -51,14 +50,15 @@ public sealed class RunJsonTests
             """{"kind":"load_checkpoint","trigger":"trg:DATA\\MISSIONS\\OL_TEST\\ol_test.ini#ol_end"}""",
             json[1]!.ToJsonString());
         Assert.Equal("""{"kind":"event","line":{"key":"Cnd_Destroyed","values":{"target":"ol_ship_1","count":-1}}}""",
-            json[4]!.ToJsonString());
-        Assert.Equal("""{"kind":"heartbeats","until_timer":true}""", json[7]!.ToJsonString());
-        Assert.Equal("""{"kind":"player_system","system":"system:ol_system"}""", json[8]!.ToJsonString());
+            json[3]!.ToJsonString());
+        Assert.Equal("""{"kind":"heartbeats","until_timer":true}""", json[6]!.ToJsonString());
+        Assert.Equal("""{"kind":"player_system","system":"system:ol_system"}""", json[7]!.ToJsonString());
         Assert.Equal(RunJson.KindNames.Count, inputs.Select(i => i.Kind).Distinct().Count());
     }
 
     [Theory]
     [InlineData("""{"kind":"jump"}""", "kind")]
+    [InlineData("""{"kind":"start_at","trigger":"x"}""", "kind")]
     [InlineData("""{"kind":"start_mission","trigger":"x"}""", "inputs[0].trigger")]
     [InlineData("""{"kind":"run_trigger"}""", "inputs[0].trigger")]
     [InlineData("""{"kind":"run_trigger","trigger":"trg:DATA\\MISSIONS\\OTHER\\other.ini#ol_wave"}""", "inputs[0].trigger")]
@@ -203,12 +203,10 @@ public sealed class RunJsonTests
         var trigger = Error(() => m.Missions.Queries.DryRun(new DryRunRequest(Script, [DryRunInput.RunTrigger("ol_none")])));
         var script = Error(() => m.Missions.Queries.DryRun(new DryRunRequest(@"DATA\MISSIONS\NONE\none.ini", [])));
         var system = Error(() => m.Missions.Queries.DryRun(new DryRunRequest(Script, [DryRunInput.PlayerSystem("ol_none")])));
-        var later = Error(() => m.Missions.Queries.DryRun(new DryRunRequest(Script, [DryRunInput.StartAt("ol_wave")])));
 
         Assert.Equal(EditErrorKind.NotFound, trigger.Kind);
         Assert.Equal(EditErrorKind.NotFound, script.Kind);
         Assert.Equal(EditErrorKind.NotFound, system.Kind);
-        Assert.Equal(EditErrorKind.NotAvailable, later.Kind);
     }
 
     [Fact]

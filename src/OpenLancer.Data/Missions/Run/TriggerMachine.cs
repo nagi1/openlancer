@@ -39,8 +39,12 @@ public sealed record MachineOptions
     /// <summary>The most starts in one pass. A pass with more starts stops, because the chain does not end.</summary>
     public int ChainLimit { get; init; } = 10_000;
 
-    /// <summary>A trigger whose start stops the pass, before its test at the start, or null. The start plan of M6c-2
-    /// uses it.</summary>
+    /// <summary>
+    /// A trigger whose start stops the pass, before its test at the start, or null. A start of the trigger while it is
+    /// active does nothing, as in the game, so it does not stop the pass. The stop keeps the starts that the pass did
+    /// not make yet in <see cref="TriggerMachine.Pending"/>: the rest of the start set, of the load or of the drain. The
+    /// start plan of M6c-2 uses it.
+    /// </summary>
     public MissionTrigger? StopBefore { get; init; }
 }
 
@@ -250,7 +254,8 @@ public sealed class TriggerMachine
     /// <summary>The active list, in the order in which the triggers became active.</summary>
     public IReadOnlyList<MissionTrigger> Active => activeView ??= active.Select(s => program.Triggers[s]).ToArray();
 
-    /// <summary>The pending starts in the order of the next drain: smallest id first.</summary>
+    /// <summary>The pending starts in the order of the next drain: smallest id first. After a stop at the stop point,
+    /// the starts that the pass did not make (<see cref="MachineOptions.StopBefore"/>).</summary>
     public IReadOnlyList<MissionTrigger> Pending => pending.Select(id => program.Triggers[program.SlotById(id)]).ToList();
 
     /// <summary>The heartbeats since the start of the run.</summary>
@@ -288,15 +293,11 @@ public sealed class TriggerMachine
 
     /// <summary>The heartbeats that a timer of an active trigger still needs, or null for another trigger. A timer
     /// that counts only in space needs the same while the player is not in space.</summary>
-    public int? TimerLeft(MissionTrigger trigger) =>
+    internal int? TimerLeft(MissionTrigger trigger) =>
         program.SlotOf(trigger) is >= 0 and var slot && program.Kinds[slot] == ConditionKind.Timer &&
         status[slot] == TriggerStatus.Active && listed[slot]
             ? Math.Max(0, TimerNeeded(slot) - ticks[slot])
             : null;
-
-    /// <summary>True when the pending set holds a start of the trigger.</summary>
-    public bool IsPending(MissionTrigger trigger) =>
-        program.SlotOf(trigger) is >= 0 and var slot && pending.Contains(program.Ids[slot]);
 
     /// <summary>
     /// Starts the mission (section 3.3 item 5): the start triggers start in id order (TR7). Their own
@@ -329,8 +330,10 @@ public sealed class TriggerMachine
             var trigger = program.Triggers[slot];
             if (!world.Matches(trigger, trigger.Condition!, worldEvent))
                 continue;
-            // A counting condition counts its matches (section 3.5 of the M6c design).
-            if (++counts[slot] >= program.CountNeeded[slot])
+            // A counting condition counts its matches (section 3.5 of the M6c design). A count that the game never
+            // reaches never runs the trigger.
+            var needed = program.CountNeeded[slot];
+            if (needed != MachineProgram.Never && ++counts[slot] >= needed)
                 Run(slot);
         }
         Drain();
@@ -432,11 +435,16 @@ public sealed class TriggerMachine
             throw new InvalidOperationException("The machine started before. A start or a load uses a new machine.");
         started = true;
         Begin();
-        foreach (var slot in slots)
+        for (var i = 0; i < slots.Length; i++)
         {
             if (Halt != null)
+            {
+                // A stop at the stop point keeps the rest of the set, because the game starts it in the same pass.
+                if (Halt.Kind == MachineHaltKind.StopPoint)
+                    pending.UnionWith(slots[i..].Select(s => program.Ids[s]));
                 break;
-            Start(slot);
+            }
+            Start(slots[i]);
         }
         return Finish();
     }
@@ -478,8 +486,10 @@ public sealed class TriggerMachine
             case ConditionKind.True:
                 return true;
             case ConditionKind.Timer:
-                if (!program.InSpaceOnly[slot] || world.InSpace)
-                    ticks[slot]++;
+                // The game tests the place of the player first: a timer that counts only in space is false on a base.
+                if (!TimerCounts(slot))
+                    return false;
+                ticks[slot]++;
                 return ticks[slot] >= TimerNeeded(slot);
             case ConditionKind.Watch:
                 return Watched(slot);
@@ -493,6 +503,10 @@ public sealed class TriggerMachine
 
     private int TimerNeeded(int slot) =>
         Options.Timers == TimerBound.Longest ? program.TimerLongest[slot] : program.TimerShortest[slot];
+
+    /// <summary>True when a timer counts now: always, or only in space for a timer with
+    /// <c>RUN_IN_SPACE_ONLY</c>.</summary>
+    private bool TimerCounts(int slot) => !program.InSpaceOnly[slot] || world.InSpace;
 
     /// <summary>The test of a <c>Cnd_WatchTrigger</c> line: the state of the watched trigger (CN-15).</summary>
     private bool Watched(int slot)
@@ -517,14 +531,14 @@ public sealed class TriggerMachine
     /// </summary>
     private void Start(int slot)
     {
+        if (listed[slot])
+            return;
         var trigger = program.Triggers[slot];
         if (Options.StopBefore is { } stop && program.SlotOf(stop) == slot)
         {
             Stop(MachineHaltKind.StopPoint, trigger);
             return;
         }
-        if (listed[slot])
-            return;
         if (program.Kinds[slot] == ConditionKind.None)
         {
             Stop(MachineHaltKind.NoCondition, trigger);
@@ -540,18 +554,28 @@ public sealed class TriggerMachine
         ticks[slot] = 0;
         counts[slot] = 0;
         Record(new MachineChange(MachineChangeKind.Started, trigger));
-        var test = program.Kinds[slot] switch
-        {
-            ConditionKind.True => true,
-            ConditionKind.StartTest => world.TestAtStart(trigger, trigger.Condition!),
-            _ => false,
-        };
-        if (test)
+        if (TestAtStart(slot))
             Run(slot);
         // A trigger that is complete after its run does not join the list. A repeatable trigger joined at its re-arm.
         if (status[slot] == TriggerStatus.Active && !listed[slot])
             Join(slot);
     }
+
+    /// <summary>
+    /// The one test at the start of a trigger (TR8). The game tests each condition once without an event. The machine
+    /// knows the result of the conditions that need no world: <c>Cnd_True</c> is true, a <c>Cnd_WatchTrigger</c> is
+    /// true when the watched state holds now, and a <c>Cnd_Timer</c> of 0 s or less is true where the timer counts. The
+    /// world gives the result of <c>Cnd_SystemEnter</c>. Each other condition waits for its event or for the next
+    /// heartbeat.
+    /// </summary>
+    private bool TestAtStart(int slot) => program.Kinds[slot] switch
+    {
+        ConditionKind.True => true,
+        ConditionKind.Watch => Watched(slot),
+        ConditionKind.Timer => TimerNeeded(slot) <= 0 && TimerCounts(slot),
+        ConditionKind.StartTest => world.TestAtStart(program.Triggers[slot], program.Triggers[slot].Condition!),
+        _ => false,
+    };
 
     /// <summary>The run of a trigger: it becomes complete, and its actions run in file order. A repeatable trigger then
     /// becomes active again with a reset condition (TR10). A complete trigger leaves the list.</summary>
@@ -643,10 +667,13 @@ public sealed class TriggerMachine
         }
     }
 
+    /// <summary>Stops the run. A stop at the stop point keeps the pending set, so the caller can read the starts that
+    /// the pass did not make. The game stops at each other stop, so its pending set goes.</summary>
     private void Stop(MachineHaltKind kind, MissionTrigger trigger)
     {
         Halt = new MachineHalt(kind, trigger);
-        pending.Clear();
+        if (kind != MachineHaltKind.StopPoint)
+            pending.Clear();
         Record(new MachineChange(MachineChangeKind.Stop, trigger));
     }
 

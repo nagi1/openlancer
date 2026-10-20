@@ -438,8 +438,7 @@ public sealed class MissionQueries
     /// </summary>
     /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/>: the script, a trigger or a system does not
     /// resolve. <see cref="EditErrorKind.InvalidArgument"/>: a line matches two waiting lines or no condition of the
-    /// script. <see cref="EditErrorKind.Limit"/>: the request has too many inputs or heartbeats.
-    /// <see cref="EditErrorKind.NotAvailable"/>: an input of a later version.</exception>
+    /// script. <see cref="EditErrorKind.Limit"/>: the request has too many inputs or heartbeats.</exception>
     public DryRunView DryRun(DryRunRequest request, DryRunLimits? limits = null)
     {
         RunJson.CheckLimits(request.Inputs, limits ?? DryRunLimits.Default);

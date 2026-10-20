@@ -161,9 +161,11 @@ internal sealed partial record MissionPageModel
         "ran, and its last change with its cause.", "Nothing.");
 
     /// <summary>The section "Run" of the Trigger page while a run exists (section 4.5 of the M6c design): the state,
-    /// the step of the last start, the runs, and the last change with its cause.</summary>
-    internal static PageSection RunSection(MissionTrace trace, MissionTrigger trigger)
+    /// the step of the last start, the runs, and the last change with its cause. A trigger of a prefab instance shows
+    /// the name of the prefab first, as in the Run log.</summary>
+    internal static PageSection RunSection(MissionTrace trace, MissionTrigger trigger, MissionAnalysis analysis)
     {
+        string Name(string nickname) => RunOverlay.TriggerName(analysis, nickname);
         var state = trace.StateOf(trigger.Nickname);
         var chips = state == null ? [] : RunOverlay.ChipsOf(state, trace);
         var fields = new List<PageField>
@@ -179,19 +181,18 @@ internal sealed partial record MissionPageModel
             if (state.ActiveSinceTime is { } time)
                 fields.Add(new PageField("Became active at", TraceStep.Clock(time), "The time of the last start of the trigger."));
             else if (state.ActiveSinceStep > 0)
-                fields.Add(new PageField("Became active at", $"Step {RunNumber(state.ActiveSinceStep)}",
+                fields.Add(new PageField("Became active at", $"Step {Number(state.ActiveSinceStep)}",
                     "The step of the last start of the trigger."));
-            fields.Add(new PageField("Ran", state.Runs == 1 ? "1 time" : $"{RunNumber(state.Runs)} times",
+            fields.Add(new PageField("Ran", state.Runs == 1 ? "1 time" : $"{Number(state.Runs)} times",
                 "How many times the trigger ran in the run."));
-            if (state.LastChange?.LogText is { } last)
+            if (state.LastChange?.TextWith(Name) is { } last)
                 fields.Add(new PageField("Last change", last, "The last start, run or stop of the trigger."));
             if (state.LastStep > 0 && state.LastStep <= trace.Steps.Count)
-                fields.Add(new PageField("Cause", trace.Steps[state.LastStep - 1].Title, "The step of the last change."));
+                fields.Add(new PageField("Cause", trace.Steps[state.LastStep - 1].TitleWith(Name),
+                    "The step of the last change."));
         }
-        return new PageSection("run", "Run", EditorIcons.Play, RunHelp, fields, []);
+        return new PageSection("run", "Run", EditorIcons.Flask, RunHelp, fields, []);
     }
-
-    private static string RunNumber(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     // ---- The trigger page (section 10.3).
 
@@ -263,7 +264,7 @@ internal sealed partial record MissionPageModel
         sections.Add(new PageSection("startsWhen", "Starts when", MissionGlyphs.OfEvent(trigger.Condition?.Name?.Group),
             schema.Help["startsWhen"], startsWhen, []));
         if (context.Run is { } trace)
-            sections.Add(RunSection(trace, trigger));
+            sections.Add(RunSection(trace, trigger, context.Analysis));
 
         // One section for each action group, in group order. Each line shows its line number, so the order stays
         // visible.

@@ -90,7 +90,28 @@ public sealed class MissionDryRunsTests
     }
 
     [Fact]
-    public void TheButtonsChangeTheVersionAndTheTimeOfTheFlash()
+    public void OnlyANewStepStartsTheFlashAndFollow()
+    {
+        using var m = Create();
+        var runs = Runs();
+        var analysis = m.Missions.Model(Script).Analysis;
+        now = 12;
+
+        runs.On = true;
+        Assert.Equal((0, double.NegativeInfinity), (runs.Steps, runs.ChangedAt));
+        runs.Add(analysis, DryRunInput.StartMission());
+        Assert.Equal((1, 12.0), (runs.Steps, runs.ChangedAt));
+
+        // A fold after an edit makes the views again, but it adds no step: no new flash, no frame of Follow.
+        now = 12.5;
+        m.Apply(new SetTriggerStart(T("ol_wave"), true));
+        var version = runs.Version;
+        Assert.True(runs.Sync(m.Missions.Model(Script).Analysis, inTransaction: false));
+        Assert.Equal((version + 1, 1, 12.0), (runs.Version, runs.Steps, runs.ChangedAt));
+    }
+
+    [Fact]
+    public void BackAndResetEndTheFlashAndAddNoStep()
     {
         using var m = Create();
         var runs = Runs();
@@ -105,7 +126,7 @@ public sealed class MissionDryRunsTests
         runs.Reset(analysis);
 
         Assert.Equal(version + 3, runs.Version);
-        Assert.Equal(12, runs.ChangedAt);
+        Assert.Equal((1, double.NegativeInfinity), (runs.Steps, runs.ChangedAt));
         Assert.Empty(runs.Of(Script)!.Inputs);
         Assert.Equal(TimerBound.Longest, runs.Of(Script)!.Timers);
         runs.Clear();

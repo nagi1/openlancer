@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using OpenLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Studio.Agent;
 using Xunit;
 using static OpenLancer.Tests.AgentCalls;
@@ -294,6 +295,27 @@ public sealed class AgentQueryTests
         Assert.Equal(("invalid_argument", "BadJson"), Code(bad));
         Assert.Equal(("invalid_argument", "BadJson"), Code(field));
         Assert.Contains("count of heartbeats", field.Message);
+    }
+
+    /// <summary>The tool and the JSON host read a dry run request with one reader, so they give the same result.</summary>
+    [Fact]
+    public void TheDryRunToolAndTheJsonHostReadOneRequestInOneWay()
+    {
+        using var m = MissionEdits.Create();
+        var host = new TestAgentHost(m.Session);
+        var request = $$"""
+            { "script": {{Json("msn:" + MissionEdits.Script)}}, "timer_bound": "longest", "since_step": 1,
+              "inputs": [ { "kind": "start_mission" }, { "kind": "heartbeats", "count": 1 }, { "kind": "start_mission" } ] }
+            """;
+
+        var tool = Ok(host, "mission_dry_run", request);
+        var json = JsonNode.Parse(new MissionJsonHost(m.Session).DryRun(request).Json)!;
+
+        // The second start removes the steps before it, so the run has one step, and since_step 1 gives none.
+        Assert.Equal(1, (int)tool["total_steps"]!);
+        Assert.Empty(tool["steps"]!.AsArray());
+        Assert.Equal(json["total_steps"]!.ToJsonString(), tool["total_steps"]!.ToJsonString());
+        Assert.Equal(json["state"]!["active"]!.ToJsonString(), tool["state"]!["active"]!.ToJsonString());
     }
 
     [Fact]

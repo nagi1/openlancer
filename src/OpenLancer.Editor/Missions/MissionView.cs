@@ -222,11 +222,12 @@ internal sealed class MissionView : IDisposable
                                       "dry run has no game world. You decide what happens in the world.";
 
     /// <summary>The toggle "Dry run": the Run panel shows at the right of the graph, and the graph shows the run
-    /// states (section 4.1 of the M6c design).</summary>
+    /// states (section 4.1 of the M6c design). It shows its word beside a test glyph, so nobody takes it for the Play of
+    /// the game.</summary>
     private void DryRunToggle()
     {
         var on = missions.DryRuns.On;
-        if (ToolbarItems.Toggle("dry-run", EditorIcons.Play, DryRunTip, on) != on)
+        if (ToolbarItems.LabelToggle("dry-run", EditorIcons.Flask, "Dry run", DryRunTip, on) != on)
         {
             missions.DryRuns.On = !on;
         }

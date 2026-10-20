@@ -98,7 +98,11 @@ public static class WorldEvents
 
     /// <summary>The kind of a condition line in the world panel, or null for a condition that the machine tests itself
     /// (<c>Cnd_True</c>, <c>Cnd_Timer</c> and <c>Cnd_WatchTrigger</c>) and for a line without a known condition.</summary>
-    public static WorldLineKind? KindOf(MissionLine? condition) => MachineProgram.KindOf(condition) switch
+    public static WorldLineKind? KindOf(MissionLine? condition) => KindOf(condition?.Name);
+
+    /// <summary>The kind of a condition of the schema in the world panel, or null for a condition that the machine tests
+    /// itself and for another name.</summary>
+    public static WorldLineKind? KindOf(MissionName? name) => MachineProgram.KindOf(name) switch
     {
         ConditionKind.Event or ConditionKind.StartTest => WorldLineKind.Event,
         ConditionKind.Poll => WorldLineKind.Fact,

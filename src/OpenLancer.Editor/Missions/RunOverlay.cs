@@ -127,6 +127,14 @@ internal sealed class RunOverlay
         return chips;
     }
 
+    /// <summary>The name of a trigger in the Run log and in the section "Run" of the Trigger page: "{prefab name}:
+    /// {trigger}" for a trigger of a prefab instance, else the nickname (section 4.5 of the M6c design, UI rule
+    /// 5).</summary>
+    public static string TriggerName(MissionAnalysis analysis, string nickname) =>
+        analysis.Index.Trigger(nickname) is { } trigger && analysis.Prefabs?.Of(trigger) is { } instance
+            ? $"{instance.Definition.Name}: {nickname}"
+            : nickname;
+
     /// <summary>The chip of a collapsed frame: "{n} wait".</summary>
     public static RunChip FrameChip(int waiting) =>
         new(RunChipKind.FrameWaits, EditorIcons.DotCircle, $"{Number(waiting)} wait",

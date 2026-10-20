@@ -36,7 +36,7 @@ internal sealed class MissionDryRuns(Func<double> clock)
             if (on == value)
                 return;
             on = value;
-            Touch();
+            Version++;
         }
     }
 
@@ -48,8 +48,13 @@ internal sealed class MissionDryRuns(Func<double> clock)
     /// makes it again when the number changes.</summary>
     public int Version { get; private set; }
 
-    /// <summary>The time of the last change of a trace, in seconds of the clock. The flashes of the graph start
-    /// then.</summary>
+    /// <summary>A number that grows with each new step of a run (section 4.5 of the M6c design). "Follow" frames the
+    /// trigger of the last change, and the Run log scrolls to its end, when the number changes. A fold after an edit,
+    /// Back, Reset and the toggles add no step, so they do not change it.</summary>
+    public int Steps { get; private set; }
+
+    /// <summary>The time of the last new step, in seconds of the clock. The flashes of the graph start then. Back, Reset
+    /// and another timer bound end the flash, because the step that it shows is gone.</summary>
     public double ChangedAt { get; private set; } = double.NegativeInfinity;
 
     /// <summary>The time now, in seconds of the clock.</summary>
@@ -100,36 +105,38 @@ internal sealed class MissionDryRuns(Func<double> clock)
         lastFold = now;
         var moved = renames.Remove(path, out var list) ? list : [];
         run.Rebuild(analysis.Index, moved);
-        Touch();
+        Version++;
         return true;
     }
 
-    /// <summary>Adds an input to the dry run of a script.</summary>
+    /// <summary>Adds an input to the dry run of a script: a new step, so the graph flashes and "Follow" frames.</summary>
     public void Add(MissionAnalysis analysis, DryRunInput input)
     {
         For(analysis).Add(input);
-        Touch();
+        Version++;
+        Steps++;
+        ChangedAt = clock();
     }
 
     /// <summary>Removes the last input of the dry run of a script ("Back").</summary>
     public void Back(MissionAnalysis analysis)
     {
         if (For(analysis).Back())
-            Touch();
+            Removed();
     }
 
     /// <summary>Removes all inputs of the dry run of a script ("Reset").</summary>
     public void Reset(MissionAnalysis analysis)
     {
         For(analysis).Reset();
-        Touch();
+        Removed();
     }
 
     /// <summary>Sets the bound of the timer ranges of the dry run of a script ("Timer ranges").</summary>
     public void SetTimers(MissionAnalysis analysis, TimerBound timers)
     {
         For(analysis).SetTimers(timers);
-        Touch();
+        Removed();
     }
 
     /// <summary>The run overlay of a graph and a trace. The overlay stays until the graph, the trace or
@@ -151,12 +158,14 @@ internal sealed class MissionDryRuns(Func<double> clock)
         overlay = null;
         on = false;
         Follow = false;
-        Touch();
+        Removed();
     }
 
-    private void Touch()
+    /// <summary>A change that removes steps or folds them again: the views make their models again, and the flash of
+    /// the last step ends.</summary>
+    private void Removed()
     {
         Version++;
-        ChangedAt = clock();
+        ChangedAt = double.NegativeInfinity;
     }
 }

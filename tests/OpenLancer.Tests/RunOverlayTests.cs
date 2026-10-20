@@ -127,15 +127,16 @@ public sealed class RunOverlayTests
         var analysis = Analysis(Script);
         var state = DryRun.Fold(analysis.Index, [DryRunInput.StartMission(), DryRunInput.Heartbeats(1)]);
 
-        var section = MissionPageModel.RunSection(state.Trace, analysis.Index.Trigger("t_wait")!);
-        var start = MissionPageModel.RunSection(state.Trace, analysis.Index.Trigger("t_start")!);
+        var section = MissionPageModel.RunSection(state.Trace, analysis.Index.Trigger("t_wait")!, analysis);
+        var start = MissionPageModel.RunSection(state.Trace, analysis.Index.Trigger("t_start")!, analysis);
 
         Assert.Equal("Run", section.Title);
         Assert.Equal(["State", "Became active at", "Ran", "Last change", "Cause"], section.Fields.Select(f => f.Label));
         Assert.Equal(["Waits"], section.Fields[0].Chips.Select(c => c.Text));
         Assert.Equal("Step 2", section.Fields[1].Value);
         Assert.Equal("0 times", section.Fields[2].Value);
-        Assert.Equal("Started t_wait", section.Fields[3].Value);
+        // t_wait is a member of a "Mission success" prefab instance, so its name shows the prefab first (UI rule 5).
+        Assert.Equal("Started Mission success: t_wait", section.Fields[3].Value);
         Assert.Equal("Step 2: Heartbeat", section.Fields[4].Value);
         Assert.Equal("1 time", start.Fields.Single(f => f.Label == "Ran").Value);
     }

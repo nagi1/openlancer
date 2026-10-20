@@ -25,7 +25,8 @@ public sealed class DryRunTextsTests
                      ("reset", RunPanel.ResetTip), ("timers", RunPanel.TimersTip), ("player", RunPanel.PlayerTip),
                      ("system", RunPanel.SystemTip), ("space", RunPanel.SpaceTip), ("waiting", RunPanel.WaitingTip),
                      ("happens", RunPanel.HappensTip), ("is true", RunPanel.IsTrueTip), ("cause", RunPanel.CauseTip),
-                     ("follow", RunPanel.FollowTip), ("log", RunPanel.LogTip),
+                     ("follow", RunPanel.FollowTip), ("log", RunPanel.LogTip), ("over tip", RunPanel.OverTip),
+                     ("idle fact", RunPanel.IdleFactNote), ("over", DryRun.OverText), ("no wait", DryRun.NoWaitText),
                      ("waits", RunOverlay.WaitsTip), ("ran", RunOverlay.RanTip), ("has run", RunOverlay.HasRunTip),
                      ("stopped", RunOverlay.StoppedTip), ("starts next", RunOverlay.StartsNextTip),
                      ("stall", RunOverlay.StallTip(12)), ("frame", RunOverlay.FrameChip(2).Tooltip),
@@ -58,5 +59,27 @@ public sealed class DryRunTextsTests
         Assert.Equal(["Ran t_a", "Started t_b", "Stopped t_c", "Ignored: no trigger 't_x'", "Checkpoint: t_r",
             "No trigger waits for this event."], trace.Steps[0].Changes.Select(c => c.LogText));
         Assert.All(trace.Steps[0].Changes.Select(c => c.LogText!), text => Assert.Empty(SteLint.Problems(text)));
+    }
+
+    /// <summary>A trigger of a prefab instance shows the name of the prefab first in each row of the Run log: the
+    /// changes, the notes and the step causes (UI rule 5). A nickname that is a part of a word of the row does not
+    /// change the word.</summary>
+    [Fact]
+    public void TheLogRowsOfAPrefabTriggerShowThePrefabName()
+    {
+        // "ar" is a part of "Started". The Spawn wave prefab instance of the graph test data holds the trigger.
+        var analysis = GraphTestData.Analysis(GraphTestData.Script.Replace("t_spawn", "ar"));
+        var trace = DryRun.Fold(analysis.Index, [DryRunInput.StartMission(), DryRunInput.Heartbeats(1),
+            DryRunInput.RunTrigger("ar")]).Trace;
+        Assert.NotNull(analysis.Prefabs?.Of(analysis.Index.Trigger("ar")!));
+
+        var rows = RunPanel.LogRows(analysis, trace).Select(r => r.Text).ToList();
+
+        Assert.Contains("Ran Spawn wave: ar", rows);
+        Assert.Contains("Step 3: Run trigger Spawn wave: ar", rows);
+        Assert.Contains("Not active: Spawn wave: ar", rows);
+        Assert.DoesNotContain(rows, r => r.Contains("StSpawn", System.StringComparison.Ordinal));
+        Assert.Equal("Ran Spawn wave: ar", MissionPageModel.RunSection(trace, analysis.Index.Trigger("ar")!, analysis)
+            .Fields.Single(f => f.Label == "Last change").Value);
     }
 }

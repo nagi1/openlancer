@@ -86,12 +86,15 @@ public sealed class DryRunRetailTests(ITestOutputHelper output)
         Assert.Equal(14, scripts.Count);
     }
 
-    /// <summary>The 38 restart pairs of the base game: after a run of the source, the target is active again with a new
-    /// start heartbeat (TR9).</summary>
+    /// <summary>
+    /// The 38 restart pairs of the base game (TR9). The source and the target start in one load, and the time advances
+    /// while both wait. Then the source runs. A target that waited stops and starts again in that pass, with a new start
+    /// heartbeat. The test counts the pairs whose target waited, and the pairs whose start heartbeat changed.
+    /// </summary>
     [Fact]
     public void EachRestartPairStartsItsTargetAgain()
     {
-        var pairs = 0;
+        var (pairs, restarts, later) = (0, 0, 0);
         foreach (var analysis in Vanilla())
         {
             var index = analysis.Index;
@@ -102,33 +105,61 @@ public sealed class DryRunRetailTests(ITestOutputHelper output)
                 var source = link.Source;
                 var target = link.Target!;
                 MachinePass pass;
+                bool waited;
+                int since;
                 if (source.ConditionIs("Cnd_True"))
                 {
-                    // A Cnd_True source runs at the load. Its starts wait for the next pass.
+                    // A Cnd_True source runs at its start, in the load, so no time goes by before it runs. Its starts
+                    // wait for the next pass. The test checks the start of the target only.
                     machine.Load([source]);
+                    (waited, since) = (false, -1);
                     pass = machine.Heartbeat();
                 }
                 else
                 {
                     machine.Load([source, target]);
-                    // A source that waits for an event does not run in a heartbeat of an empty world, so the time can
-                    // advance first. Then the restart gives the target a new start heartbeat.
-                    if (WorldEvents.KindOf(source.Condition) == WorldLineKind.Event)
-                    {
-                        for (var i = 0; i < 10; i++)
-                            machine.Heartbeat();
-                    }
+                    machine = Advance(machine, index, world, source, target);
                     Assert.Equal(TriggerStatus.Active, machine.StateOf(source).Status);
+                    waited = machine.StateOf(target).Status == TriggerStatus.Active;
+                    since = machine.StateOf(target).ActiveSince;
                     pass = machine.Force(source);
                 }
 
-                Assert.Contains(pass.Changes, c => c.Kind == MachineChangeKind.Started && c.Trigger == target);
+                var stopped = pass.Changes.ToList().FindIndex(c => c.Kind == MachineChangeKind.Stopped && c.Trigger == target);
+                var started = pass.Changes.ToList().FindLastIndex(c => c.Kind == MachineChangeKind.Started && c.Trigger == target);
+                Assert.True(started >= 0, $"{source.Nickname}: the target {target.Nickname} did not start.");
                 Assert.Equal(machine.Heartbeats, machine.StateOf(target).ActiveSince);
+                if (waited)
+                {
+                    // A target that waited stops first, then starts again (TR9).
+                    Assert.True(stopped >= 0 && stopped < started, $"{source.Nickname}: {target.Nickname} did not restart.");
+                    restarts++;
+                    if (machine.StateOf(target).ActiveSince > since)
+                        later++;
+                }
                 pairs++;
             }
         }
-        output.WriteLine($"{pairs} restart pairs");
-        Assert.Equal(38, pairs);
+        output.WriteLine($"{pairs} restart pairs, {restarts} with a target that waited, {later} with a new start heartbeat");
+        // The 2 other pairs have a Cnd_True source, which runs at its start, so their target cannot wait before it.
+        Assert.Equal((38, 36, 36), (pairs, restarts, later));
+    }
+
+    /// <summary>Advances the time by up to 10 heartbeats while the source and the target of a restart pair wait. A
+    /// heartbeat that makes one of them run or stop is undone, so the pair stays as it was.</summary>
+    private static TriggerMachine Advance(TriggerMachine machine, MissionIndex index, DryRunWorld world,
+        MissionTrigger source, MissionTrigger target)
+    {
+        var targetWaits = machine.StateOf(target).Status == TriggerStatus.Active;
+        for (var i = 0; i < 10; i++)
+        {
+            var before = machine.Snapshot();
+            machine.Heartbeat();
+            if (machine.IsOver || machine.StateOf(source).Status != TriggerStatus.Active ||
+                targetWaits && machine.StateOf(target).Status != TriggerStatus.Active)
+                return TriggerMachine.From(before, index, world);
+        }
+        return machine;
     }
 
     /// <summary>A trigger that starts two or more Cnd_True triggers: their runs come in id order (TR7).</summary>
@@ -215,19 +246,20 @@ public sealed class DryRunRetailTests(ITestOutputHelper output)
     /// <summary>
     /// The two performance gates of section 4.4 of the M6c design over M10, the script with the most triggers: a fold of
     /// 300 inputs with 18,000 heartbeats in all takes at most 16 ms, and Back after 1,000 inputs takes at most 5 ms.
-    /// Other builds can run on the machine at the same time, so run the test again alone before you judge a
-    /// failure.
+    /// Other builds can run on the machine at the same time, so the test measures 10 runs of each and takes the best.
+    /// Run the test again alone before you judge a failure.
     /// </summary>
     [Fact]
     public void TheFoldGatesOverM10()
     {
+        const int Runs = 10;
         var index = RetailMissions.Slot("M10").Index;
         var fold = Inputs(index, 300, 120);
         Assert.Equal(300, fold.Count);
         Assert.Equal(18_000, fold.Sum(i => i.MostHeartbeats));
         DryRun.Fold(index, fold);
         var foldTimes = new List<double>();
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < Runs; i++)
         {
             var watch = Stopwatch.StartNew();
             var state = DryRun.Fold(index, fold);
@@ -241,7 +273,7 @@ public sealed class DryRunRetailTests(ITestOutputHelper output)
             run.Add(input);
         var last = run.Inputs[^1];
         var backTimes = new List<double>();
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < Runs; i++)
         {
             var watch = Stopwatch.StartNew();
             run.Back();
@@ -250,6 +282,7 @@ public sealed class DryRunRetailTests(ITestOutputHelper output)
             run.Add(last);
         }
 
+        // The best time of the runs is the cost of the fold. A slower run waited for other work of the machine.
         var foldBest = foldTimes.Min();
         var backBest = backTimes.Min();
         output.WriteLine($"Fold of 300 inputs, 18,000 heartbeats: {string.Join(", ", foldTimes.Select(t => t.ToString("F2")))} ms");

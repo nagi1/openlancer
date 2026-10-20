@@ -153,17 +153,17 @@ internal static class MissionQueryTools
     };
 
     /// <summary>The dry run query (section 7.2 of the M6c design): the inputs fold over the model of the script now. The
-    /// query keeps no state, so the agent sends all inputs each time.</summary>
+    /// query keeps no state, so the agent sends all inputs each time. The request reader of the JSON host reads the
+    /// arguments, so the tool and the host read one request in one way.</summary>
     public static ToolStep DryRun(ToolCall call)
     {
-        var script = ScriptRef.Parse(call.Args.Text("script")!).Path;
-        var inputs = RunJson.ReadInputs(call.Args.Node("inputs")!.AsArray(), script);
-        var request = new DryRunRequest(script, inputs)
+        var request = new JsonObject();
+        foreach (var name in new[] { "script", "inputs", "timer_bound", "since_step" })
         {
-            Timers = call.Args.Text("timer_bound") == "longest" ? TimerBound.Longest : TimerBound.Shortest,
-            SinceStep = (int)Math.Min(int.MaxValue, call.Args.Whole("since_step") ?? 0),
-        };
-        return ToolResult.Of(call.Session.Missions.Queries.DryRun(request));
+            if (call.Args.Node(name) is { } value)
+                request[name] = value.DeepClone();
+        }
+        return ToolResult.Of(call.Session.Missions.Queries.DryRun(RunJson.ReadRequest(request)));
     }
 
     /// <summary>A trigger in summary form: the sentence of its condition and one chip for each action group, in the

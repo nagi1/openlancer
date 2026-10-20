@@ -37,7 +37,7 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
     private readonly Dictionary<string, ListField> lists = [];
     private (MissionRunResult? Result, MissionAnalysis? Analysis, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer,
-        string? NoEdit, GraphFile? File, (long Revision, bool Dirty, int Run) Session, MissionPageModel? Model) page;
+        string? NoEdit, GraphFile? File, (long Revision, bool Dirty, int Run, bool Shown) Session, MissionPageModel? Model) page;
     private (MissionRunResult? Result, string? Key, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
         block = (null, null, false, null, []);
 
@@ -221,8 +221,10 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         // The graph file holds the acts and the records of the prefab instances, so a change of it makes the page again.
         // A save takes the blue bar of an override away, so a save makes the page again too.
         var file = window.Missions.GraphOf(item.Script);
-        // A change of the dry run makes the section "Run" of the Trigger page again (section 4.5 of the M6c design).
-        var state = (session.Edits.Revision, session.Edits.IsDirty, window.Missions.DryRuns.Version);
+        // A change of the dry run, and a change of the view that shows it, make the section "Run" of the Trigger page
+        // again (section 4.5 of the M6c design).
+        var run = window.Missions.ShownRun(item.Script);
+        var state = (session.Edits.Revision, session.Edits.IsDirty, window.Missions.DryRuns.Version, run != null);
         changed = !Equals(page.Item, item);
         if (page.Model is { } known && ReferenceEquals(page.Result, result) && ReferenceEquals(page.Analysis, analysis) &&
             !changed && page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer &&
@@ -250,10 +252,7 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             ChangedOf = session.Edits.Missions.ChangedLines,
             BaseOf = session.Edits.Missions.ChangedBase,
             SharedBuildFile = session.Edits.Missions.IsSharedBuildFile,
-            Run = window.Missions.DryRun is { } run &&
-                  string.Equals(window.Missions.OpenPath, item.Script, StringComparison.OrdinalIgnoreCase)
-                ? run.State.Trace
-                : null,
+            Run = run,
         };
         var model = MissionPageModel.For(context, item);
         page = (result, analysis, item, showBaseGame, hidesOpenLancer, noEdit, file, state, model);

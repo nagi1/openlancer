@@ -139,10 +139,116 @@ public sealed class DryRunTests
         run.Add(DryRunInput.StartMission());
         Assert.Equal(DryRunInputKind.StartMission, run.Inputs[^1].Kind);
         Assert.DoesNotContain(run.Inputs, i => i.Kind == DryRunInputKind.LoadCheckpoint);
+    }
 
-        run.Add(DryRunInput.StartAt("t_kills"));
-        Assert.Equal(DryRunInputKind.StartAt, run.Inputs[^1].Kind);
-        Assert.DoesNotContain(run.Inputs, i => i.Kind == DryRunInputKind.StartMission);
+    [Fact]
+    public void TheQueryAndThePanelGiveTheSameStepsForAStartAfterOtherInputs()
+    {
+        var index = Index(Script);
+        DryRunInput[] inputs =
+        [
+            DryRunInput.StartMission(), DryRunInput.Heartbeats(1), DryRunInput.PlayerSystem("ol_system"),
+            DryRunInput.Event(Comm), DryRunInput.StartMission(), DryRunInput.Heartbeats(1),
+        ];
+
+        var query = DryRun.Fold(index, inputs);
+        var panel = RunOf(Script, inputs);
+
+        Assert.Equal(Text(panel.State), Text(query));
+        // The second start removes the steps before it. The player system stays before it.
+        Assert.Equal(["Step 1: Player system: ol_system", "Step 2: Start mission", "Step 3: Heartbeat"],
+            query.Trace.Steps.Select(s => s.Title));
+        Assert.Equal(3, DryRun.Fold(index, [DryRunInput.StartMission(), DryRunInput.Heartbeats(1), DryRunInput.StartMission(),
+            DryRunInput.Heartbeats(1), DryRunInput.Heartbeats(1)]).Trace.Steps.Count);
+    }
+
+    [Fact]
+    public void AFactKeepsItsStateOverANewRunWhenItsInputsNameItInTwoWays()
+    {
+        var script = Script.Replace("Act_ActTrig = t_tick", "Act_ActTrig = t_tick\nAct_ActTrig = t_space");
+        var index = Index(script);
+        var line = index.Trigger("t_space")!.Condition!;
+        // The first input names the fact by its key alone, the second by its key and its value.
+        DryRunInput[] inputs =
+        [
+            DryRunInput.Fact(LineSpec.Of("Cnd_InSpace"), true),
+            DryRunInput.Fact(LineSpec.Of("Cnd_InSpace", ("inSpace", "true")), false),
+            DryRunInput.StartMission(),
+        ];
+
+        var query = DryRun.Fold(index, inputs);
+        var panel = RunOf(script, inputs);
+
+        Assert.False(query.World.IsFact(line));
+        Assert.False(panel.State.World.IsFact(line));
+        Assert.Equal([DryRunInputKind.StartMission], panel.Inputs.Select(i => i.Kind));
+    }
+
+    [Fact]
+    public void ARestartInAStepOfManyHeartbeatsGivesTheStateOfTheMachine()
+    {
+        // The timer stops t_watch and starts it again (the restart pair), so t_watch waits after the step.
+        const string script = """
+            [Trigger]
+            nickname = t_start
+            InitState = ACTIVE
+            Cnd_True = no_params
+            Act_ActTrig = t_watch
+            Act_ActTrig = t_timer
+
+            [Trigger]
+            nickname = t_watch
+            Cnd_CommComplete = ol_line_1
+
+            [Trigger]
+            nickname = t_timer
+            Cnd_Timer = 2
+            Act_DeactTrig = t_watch
+            Act_ActTrig = t_watch
+            """;
+        foreach (var step in new[] { DryRunInput.NextTimer(), DryRunInput.Heartbeats(100) })
+        {
+            var run = RunOf(script, DryRunInput.StartMission(), step);
+            var watch = run.Index.Trigger("t_watch")!;
+
+            var state = run.State.Trace.StateOf("t_watch")!;
+            var rows = run.State.Trace.Steps[^1].Changes.Where(c => c.Trigger == "t_watch").Select(c => c.LogText).ToList();
+
+            Assert.Equal(TriggerStatus.Active, run.State.Machine.StateOf(watch).Status);
+            Assert.True(state.Waits);
+            Assert.False(state.Stopped);
+            Assert.Equal(["Stopped t_watch", "Started t_watch, 2 times"], rows);
+        }
+    }
+
+    [Fact]
+    public void AStepAfterTheEndDoesNothingAndSaysWhy()
+    {
+        var run = RunOf(Script, DryRunInput.LoadCheckpoint("t_restore"), DryRunInput.Event(LineSpec.Of("Cnd_SpaceEnter")),
+            DryRunInput.Heartbeats(1), DryRunInput.Event(Kill), DryRunInput.Event(Kill));
+        Assert.NotNull(run.State.Machine.End);
+
+        run.Add(DryRunInput.Heartbeats(1));
+        run.Add(DryRunInput.RunTrigger("t_restore"));
+        run.Add(DryRunInput.Event(Comm));
+
+        Assert.All(run.State.Trace.Steps.Skip(5), step => Assert.Equal([DryRun.OverText], step.Changes.Select(c => c.LogText)));
+    }
+
+    [Fact]
+    public void TheCauseAndTheNotesNameTheirTrigger()
+    {
+        var run = RunOf(Script, DryRunInput.StartMission(), DryRunInput.RunTrigger("t_kills"), DryRunInput.RunTrigger("t_gone"));
+
+        var notActive = Assert.Single(run.State.Trace.Steps[1].Changes);
+        var missing = Assert.Single(run.State.Trace.Steps[2].Changes);
+
+        Assert.Equal("t_kills", run.State.Trace.Steps[1].CauseTrigger);
+        Assert.Equal("Step 2: Run trigger [t_kills]", run.State.Trace.Steps[1].TitleWith(n => $"[{n}]"));
+        Assert.Equal(("t_kills", "t_kills", "Not active: [t_kills]"),
+            (notActive.Trigger, notActive.Name, notActive.TextWith(n => $"[{n}]")));
+        // A name that the script does not have gives no trigger to select.
+        Assert.Equal(("", "t_gone", "Missing: t_gone"), (missing.Trigger, missing.Name, missing.LogText));
     }
 
     [Fact]
@@ -241,10 +347,11 @@ public sealed class DryRunTests
         run.Add(DryRunInput.Heartbeats(1));
         run.Add(DryRunInput.Heartbeats(1));
 
+        var line = run.Index.Trigger("t_space")!.Condition!;
         Assert.Equal(TriggerStatus.Complete, run.State.Machine.StateOf(run.Index.Trigger("t_space")!).Status);
-        Assert.True(run.State.World.Facts.Count == 1);
+        Assert.True(run.State.World.IsFact(line));
         run.Add(DryRunInput.Fact(fact, false));
-        Assert.Empty(run.State.World.Facts);
+        Assert.False(run.State.World.IsFact(line));
     }
 
     [Fact]
@@ -274,6 +381,6 @@ public sealed class DryRunTests
 
         Assert.NotNull(run.State.Machine.End);
         Assert.Equal("The mission ends with success at trigger 't_kills'.", run.State.Trace.Steps[4].Changes[^1].LogText);
-        Assert.Equal(["No trigger waits for this event."], run.State.Trace.Steps[5].Changes.Select(c => c.LogText));
+        Assert.Equal([DryRun.OverText], run.State.Trace.Steps[5].Changes.Select(c => c.LogText));
     }
 }
