@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\OpenLancer.Runtime\OpenLancer.Runtime.csproj" />
+    <!-- oltool mcp: the agent server without a window, the replay and the tool list (milestone MCP1). -->
+    <ProjectReference Include="..\OpenLancer.Mcp\OpenLancer.Mcp.csproj" />
   </ItemGroup>
 
 </Project>

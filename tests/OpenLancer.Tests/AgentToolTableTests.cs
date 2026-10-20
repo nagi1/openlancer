@@ -81,6 +81,7 @@ public sealed class AgentToolTableTests
     {
         Assert.InRange(AgentTexts.Instructions.Count, 3, 10);
         Assert.StartsWith("Call studio_status first.", AgentTexts.Instructions[0]);
+        Assert.Equal(string.Join("\n", AgentTexts.Instructions), AgentResources.Instructions);
     }
 
     private static string[] Problems(string where, string text, int words = SteLint.DescriptionWords) =>

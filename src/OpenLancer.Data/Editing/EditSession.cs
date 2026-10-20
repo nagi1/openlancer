@@ -206,7 +206,22 @@ public sealed partial class EditSession : IDisposable
     /// <exception cref="ArgumentException">The profile has no mod with the id.</exception>
     /// <exception cref="ModLoadException">A mod or its text is not valid.</exception>
     public static EditSession Open(ModProfile profile, string? activeModId, IStringResourceWriter strings,
-        IThnEvaluator thn)
+        IThnEvaluator thn) => Open(profile, activeModId, strings, thn, readOnly: null);
+
+    /// <summary>
+    /// Opens a session that shows the edit view of the active mod and takes no edits. It takes no lock, completes no
+    /// save and reads no recovery file, so it writes no file. The headless agent server opens a profile in this way when
+    /// the user starts it only to read (section 6.2 of the MCP1 design).
+    /// </summary>
+    /// <param name="reason">Why the session takes no edits. <see cref="ReadOnlyReason"/> gives it.</param>
+    /// <exception cref="ArgumentException">The profile has no mod with the id.</exception>
+    /// <exception cref="ModLoadException">A mod or its text is not valid.</exception>
+    public static EditSession OpenReadOnly(ModProfile profile, string activeModId, IStringResourceWriter strings,
+        IThnEvaluator thn, string reason) => Open(profile, activeModId, strings, thn, reason);
+
+    /// <param name="readOnly">Why the session must not write, or null for a session that takes the lock.</param>
+    private static EditSession Open(ModProfile profile, string? activeModId, IStringResourceWriter strings,
+        IThnEvaluator thn, string? readOnly)
     {
         var active = -1;
         if (activeModId != null)
@@ -217,8 +232,9 @@ public sealed partial class EditSession : IDisposable
         }
         // OpenLancer never writes into the game folder (decisions D204 and D214). The lock and the recovery write into
         // the active mod, and a save, Play and New mod write next to the profile file. So when one of them is in the
-        // base folder, the session takes no lock, completes no save, and is read-only.
-        var guardReason = WriteGuard(profile, active);
+        // base folder, the session takes no lock, completes no save, and is read-only. A session that only reads takes
+        // the same path.
+        var guardReason = readOnly ?? WriteGuard(profile, active);
         // The lock comes before the recovery, so that the session never completes or deletes the files of a save that
         // another editor runs now.
         string? lockReason = guardReason;
@@ -247,7 +263,10 @@ public sealed partial class EditSession : IDisposable
                 if (guardReason != null || modInGame)
                 {
                     if (SaveTransaction.HasJournal(mod.Folder))
-                        NotComplete(GameTexts.SaveNotRecovered(mod.Id, modInGame));
+                        NotComplete(readOnly != null && !modInGame
+                            ? $"A save of mod '{mod.Id}' is not complete. The session only reads, so OpenLancer did " +
+                              "not complete the save."
+                            : GameTexts.SaveNotRecovered(mod.Id, modInGame));
                     mods.Add(mod);
                     continue;
                 }

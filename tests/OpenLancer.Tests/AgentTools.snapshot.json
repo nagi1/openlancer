@@ -1,0 +1,3799 @@
+{
+  "tools": [
+    {
+      "name": "studio_status",
+      "title": "Get the status of the studio",
+      "description": "Gives the state of the agent server: the profile, the active mod, the revision, the undo and redo steps, the tool groups and the limits. This tool changes nothing. Call it first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "enum": [
+              "editor",
+              "headless"
+            ]
+          },
+          "profile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "active_mod": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "can_edit": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dirty": {
+            "type": "boolean"
+          },
+          "rev": true,
+          "undo": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "origin": {
+                "enum": [
+                  "user",
+                  "agent",
+                  "recovery"
+                ]
+              }
+            },
+            "required": [
+              "label",
+              "origin"
+            ]
+          },
+          "redo": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "origin": {
+                "enum": [
+                  "user",
+                  "agent",
+                  "recovery"
+                ]
+              }
+            },
+            "required": [
+              "label",
+              "origin"
+            ]
+          },
+          "view": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "system": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "mission": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cutscene": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "tool_groups": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "studio",
+                "scene",
+                "missions",
+                "cutscenes"
+              ]
+            }
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "list_rows": {
+                "type": "integer"
+              },
+              "max_list_rows": {
+                "type": "integer"
+              },
+              "result_kilobytes": {
+                "type": "integer"
+              },
+              "calls_per_second": {
+                "type": "integer"
+              },
+              "wait_seconds": {
+                "type": "integer"
+              },
+              "tail_seconds": {
+                "type": "integer"
+              },
+              "request_megabytes": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "required": [
+          "host"
+        ]
+      },
+      "annotations": {
+        "title": "Get the status of the studio",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_systems",
+      "title": "List the star systems",
+      "description": "Lists the star systems of the profile with their nicknames, names and files. This tool changes nothing. Use the references of the result in the other tools.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the systems whose nickname or name holds this text, without letter case."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The next_cursor of the previous page. Without it, the list starts at the first row."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most rows of the page. studio_status gives the default and the largest value."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "nickname": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "file": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "origin": {
+                      "enum": [
+                        "base",
+                        "lower_mod",
+                        "active_mod"
+                      ]
+                    },
+                    "mod": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "unsaved": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "origin",
+                    "unsaved"
+                  ]
+                }
+              },
+              "required": [
+                "ref",
+                "nickname",
+                "name",
+                "origin"
+              ]
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "total"
+        ]
+      },
+      "annotations": {
+        "title": "List the star systems",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_system",
+      "title": "Get a star system",
+      "description": "Gives one star system: its fields, the number of items of each kind, its bases, connections, nebulae, asteroid fields and problems. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The nickname of the system, for example my_system."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "system"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "values": {
+                  "type": "array"
+                }
+              },
+              "required": [
+                "key",
+                "values"
+              ]
+            }
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "object_kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "bases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "to_system": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "to_object": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "previous": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "next": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "ref",
+                "kind"
+              ]
+            }
+          },
+          "nebulae": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "asteroid_fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "enum": [
+                    "warning",
+                    "error"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rule": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "origin": {
+                  "enum": [
+                    "base_game",
+                    "mod",
+                    "some_mod",
+                    "openlancer",
+                    "unknown",
+                    "pending"
+                  ]
+                },
+                "mod_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fixes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "severity",
+                "message"
+              ]
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "name"
+        ]
+      },
+      "annotations": {
+        "title": "Get a star system",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_items",
+      "title": "List the items of a system",
+      "description": "Lists the items of one system: objects, zones, lights, nebulae and fields. This tool changes nothing. Use the references of the result in the other tools.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The nickname of the system, for example my_system."
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "object",
+                "zone",
+                "light",
+                "nebula",
+                "field"
+              ]
+            },
+            "uniqueItems": true,
+            "description": "Show only the items of these kinds."
+          },
+          "object_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "station",
+                "planet",
+                "sun",
+                "satellite",
+                "wreck",
+                "gate",
+                "hole",
+                "lane_ring",
+                "other"
+              ]
+            },
+            "uniqueItems": true,
+            "description": "Show only the objects of these kinds. A wreck is an object whose archetype has the type MISSION_SATELLITE."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the items whose nickname, name or archetype holds this text, without letter case."
+          },
+          "near": {
+            "type": "object",
+            "properties": {
+              "point": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "The center of the sphere in meters: X, Y and Z."
+              },
+              "radius": {
+                "type": "number",
+                "minimum": 0,
+                "description": "The radius of the sphere in meters."
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "point",
+              "radius"
+            ],
+            "description": "Show only the items in a sphere."
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "base",
+              "lower_mod",
+              "active_mod"
+            ],
+            "description": "Show only the items from this layer: the base data, a lower mod or the active mod."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The next_cursor of the previous page. Without it, the list starts at the first row."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most rows of the page. studio_status gives the default and the largest value."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "system"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "nickname": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "object_kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "archetype": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "pos": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "rotate": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "size": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                "components": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "solar",
+                      "loadout_user",
+                      "dockable_station",
+                      "base_object",
+                      "faction_member",
+                      "jump_connection",
+                      "trade_lane_ring",
+                      "planet_ring",
+                      "field_references",
+                      "encounter_zone"
+                    ]
+                  }
+                },
+                "origin": {
+                  "type": "object",
+                  "properties": {
+                    "origin": {
+                      "enum": [
+                        "base",
+                        "lower_mod",
+                        "active_mod"
+                      ]
+                    },
+                    "mod": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "unsaved": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "origin",
+                    "unsaved"
+                  ]
+                }
+              },
+              "required": [
+                "ref",
+                "name",
+                "kind",
+                "origin"
+              ]
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "total"
+        ]
+      },
+      "annotations": {
+        "title": "List the items of a system",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_item",
+      "title": "Get an item",
+      "description": "Gives one item by its reference: its fields with their values, origins and problems. A reference of a mission, a cutscene element, a prop group or an asset gives the view of that item. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "An item reference, for example obj:my_station_1 or sec:DATA\\SHIPS\\loadouts.ini#Loadout/my_loadout."
+          },
+          "include_raw": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also give the INI text of the section."
+          },
+          "include_used_by": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also give the lines that name the item and the files that name it as text."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "ref"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "section": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "file": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "origin": {
+                "type": "object",
+                "properties": {
+                  "origin": {
+                    "enum": [
+                      "base",
+                      "lower_mod",
+                      "active_mod"
+                    ]
+                  },
+                  "mod": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unsaved": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "origin",
+                  "unsaved"
+                ]
+              },
+              "read_only_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "array"
+                      }
+                    },
+                    "label": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "origin": {
+                      "enum": [
+                        "base",
+                        "lower_mod",
+                        "active_mod"
+                      ]
+                    },
+                    "mod": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "locked": {
+                      "type": "boolean"
+                    },
+                    "unsaved": {
+                      "type": "boolean"
+                    },
+                    "problems": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "severity": {
+                            "enum": [
+                              "warning",
+                              "error"
+                            ]
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "ref": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "rule": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "origin": {
+                            "enum": [
+                              "base_game",
+                              "mod",
+                              "some_mod",
+                              "openlancer",
+                              "unknown",
+                              "pending"
+                            ]
+                          },
+                          "mod_id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "fixes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "severity",
+                          "message"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "lines",
+                    "origin",
+                    "locked",
+                    "unsaved",
+                    "problems"
+                  ]
+                }
+              },
+              "components": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "solar",
+                        "loadout_user",
+                        "dockable_station",
+                        "base_object",
+                        "faction_member",
+                        "jump_connection",
+                        "trade_lane_ring",
+                        "planet_ring",
+                        "field_references",
+                        "encounter_zone"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "problems": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/properties/section/properties/fields/items/properties/problems/items"
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "name",
+                    "problems"
+                  ]
+                }
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "used_by": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "line": {
+                      "type": "integer"
+                    },
+                    "value": {
+                      "type": "integer"
+                    },
+                    "list": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "key",
+                    "line",
+                    "value",
+                    "list"
+                  ]
+                }
+              },
+              "mentions": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "pending": {
+                    "type": "boolean"
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "count": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "count"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "pending",
+                  "files"
+                ]
+              },
+              "raw": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/properties/section/properties/fields/items/properties/problems/items"
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "type",
+              "file",
+              "name",
+              "origin"
+            ]
+          },
+          "mission_script": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "slot": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "base_game",
+                  "changed",
+                  "replaced",
+                  "missing"
+                ]
+              },
+              "read_only_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start_triggers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "acts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer"
+                    },
+                    "system": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "triggers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "triggers"
+                  ]
+                }
+              },
+              "not_started": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "instances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "string"
+                    },
+                    "prefab": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "core": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "prefab",
+                    "name"
+                  ]
+                }
+              },
+              "cast": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "mission",
+                        "trigger",
+                        "ship",
+                        "formation",
+                        "solar",
+                        "loot",
+                        "order_list",
+                        "objective",
+                        "npc",
+                        "conversation",
+                        "random_encounter",
+                        "meta_behavior",
+                        "other"
+                      ]
+                    },
+                    "system": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "kind"
+                  ]
+                }
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/properties/section/properties/fields/items/properties/problems/items"
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "version"
+            ]
+          },
+          "trigger": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "nickname": {
+                "type": "string"
+              },
+              "starts_with_mission": {
+                "type": "boolean"
+              },
+              "repeats": {
+                "type": "boolean"
+              },
+              "system": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "event": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "instance": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "links_in": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "start",
+                        "stop",
+                        "load",
+                        "watch"
+                      ]
+                    },
+                    "line": {
+                      "type": "string"
+                    },
+                    "trigger": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "line",
+                    "trigger"
+                  ]
+                }
+              },
+              "links_out": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/properties/trigger/properties/links_in/items"
+                }
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "string"
+                    },
+                    "row": {
+                      "type": "integer"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "plain": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "values": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "texts": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "names": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "integer"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "enum": [
+                              "trigger",
+                              "object",
+                              "group",
+                              "ship",
+                              "formation",
+                              "solar",
+                              "loot",
+                              "obj_list",
+                              "dialog",
+                              "objective",
+                              "npc",
+                              "random_encounter",
+                              "meta_behavior",
+                              "system",
+                              "base",
+                              "room",
+                              "system_object",
+                              "faction",
+                              "ship_arch",
+                              "loadout",
+                              "pilot",
+                              "voice",
+                              "sound",
+                              "good",
+                              "equipment",
+                              "head",
+                              "body",
+                              "accessory",
+                              "npc_ship_arch",
+                              "formation_shape",
+                              "comm_line",
+                              "fuse",
+                              "space_cutscene",
+                              "base_scene",
+                              "ambient_script",
+                              "file",
+                              "position",
+                              "rotation",
+                              "number",
+                              "whole_number",
+                              "attitude",
+                              "text_id",
+                              "bool",
+                              "token",
+                              "text"
+                            ]
+                          },
+                          "state": {
+                            "enum": [
+                              "found",
+                              "missing",
+                              "wrong_case",
+                              "token",
+                              "empty",
+                              "unknown"
+                            ]
+                          },
+                          "ref": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "value",
+                          "name",
+                          "kind",
+                          "state"
+                        ]
+                      }
+                    },
+                    "problems": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/properties/section/properties/fields/items/properties/problems/items"
+                      }
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "row",
+                    "key",
+                    "values",
+                    "texts",
+                    "names",
+                    "problems"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "version",
+              "nickname"
+            ]
+          },
+          "mission_item": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/properties/trigger/properties/lines/items"
+                }
+              },
+              "users": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "version",
+              "lines",
+              "users"
+            ]
+          },
+          "prefab_instance": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "prefab": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "members": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/properties/prefab_instance/properties/fields/additionalProperties"
+                }
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "done",
+                        "missing",
+                        "hidden"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "state",
+                    "reason"
+                  ]
+                }
+              },
+              "core": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ref",
+              "version",
+              "prefab",
+              "name",
+              "fields",
+              "members",
+              "steps"
+            ]
+          },
+          "prefab": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "beat",
+                  "order"
+                ]
+              },
+              "help": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "help": {
+                      "type": "string"
+                    },
+                    "list": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "help",
+                    "list"
+                  ]
+                }
+              },
+              "roles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "name",
+              "kind",
+              "help",
+              "fields",
+              "roles",
+              "steps"
+            ]
+          },
+          "cutscene_element": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "element": {
+                "type": "string"
+              },
+              "type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "template": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "time": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "length": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "targets": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "element"
+            ]
+          },
+          "prop_group": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "nickname": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "mod": {
+                "type": "string"
+              },
+              "editable": {
+                "type": "boolean"
+              },
+              "members": {
+                "type": "integer"
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "nickname",
+              "name",
+              "mod",
+              "editable",
+              "members",
+              "problems"
+            ]
+          },
+          "asset": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "nickname": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "origin": {
+                "enum": [
+                  "base",
+                  "lower_mod",
+                  "active_mod"
+                ]
+              },
+              "mod": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "marks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "not_placeable": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ref",
+              "nickname",
+              "detail",
+              "category",
+              "origin",
+              "marks"
+            ]
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "annotations": {
+        "title": "Get an item",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "find_references",
+      "title": "Find the references to an item",
+      "description": "Finds each line that names an item, also in the mission scripts, and each file that names it as text. Give a reference or a name. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "An item reference, for example obj:my_station_1 or sec:DATA\\SHIPS\\loadouts.ini#Loadout/my_loadout."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A nickname. The tool finds the lines of each data list that name it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "value": {
+                  "type": "integer"
+                },
+                "list": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ref",
+                "key",
+                "line",
+                "value",
+                "list"
+              ]
+            }
+          },
+          "mission_lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "line",
+                "key",
+                "value"
+              ]
+            }
+          },
+          "mentions": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "pending": {
+                "type": "boolean"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "count"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "pending",
+              "files"
+            ]
+          }
+        },
+        "required": [
+          "lines",
+          "mission_lines"
+        ]
+      },
+      "annotations": {
+        "title": "Find the references to an item",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_values",
+      "title": "List the values of a data list",
+      "description": "Lists the values that a field can take, from one data list, for example the archetypes or the loadouts. The text filter also reads the detail, so the text MISSION_SATELLITE finds the wreck archetypes. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "list": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The id of a data list, for example solar_archetype, loadout or faction. The resource openlancer://catalog/lists has all ids."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the values whose name, label or detail holds this text, without letter case."
+          },
+          "system": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The nickname of the system of a list of one system, for example the list object_of_system."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The next_cursor of the previous page. Without it, the list starts at the first row."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most rows of the page. studio_status gives the default and the largest value."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "list"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "origin": {
+                  "enum": [
+                    "base",
+                    "lower_mod",
+                    "active_mod"
+                  ]
+                },
+                "mod": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "unsaved": {
+                  "type": "boolean"
+                },
+                "problem": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "value",
+                "label",
+                "detail",
+                "origin",
+                "unsaved"
+              ]
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "total"
+        ]
+      },
+      "annotations": {
+        "title": "List the values of a data list",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "search_assets",
+      "title": "Search the assets",
+      "description": "Searches the assets of the Assets panel: archetypes, ships, equipment, models and prop groups. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "prop_group",
+              "solar_archetype",
+              "ship",
+              "asteroid",
+              "equipment",
+              "effect",
+              "loadout",
+              "faction",
+              "model"
+            ],
+            "description": "Show only the assets of this kind."
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The id of a category of the Assets panel, for example solars/station. The default is all."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the rows that hold this text, without letter case."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The next_cursor of the previous page. Without it, the list starts at the first row."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most rows of the page. studio_status gives the default and the largest value."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "nickname": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "origin": {
+                  "enum": [
+                    "base",
+                    "lower_mod",
+                    "active_mod"
+                  ]
+                },
+                "mod": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "marks": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "not_placeable": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "ref",
+                "nickname",
+                "detail",
+                "category",
+                "origin",
+                "marks"
+              ]
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "total"
+        ]
+      },
+      "annotations": {
+        "title": "Search the assets",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_prop_groups",
+      "title": "List the prop groups",
+      "description": "Lists the prop groups of the mods with their members and problems. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the groups whose nickname or name holds this text, without letter case."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "nickname": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "mod": {
+                  "type": "string"
+                },
+                "editable": {
+                  "type": "boolean"
+                },
+                "members": {
+                  "type": "integer"
+                },
+                "problems": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "ref",
+                "nickname",
+                "name",
+                "mod",
+                "editable",
+                "members",
+                "problems"
+              ]
+            }
+          }
+        },
+        "required": [
+          "groups"
+        ]
+      },
+      "annotations": {
+        "title": "List the prop groups",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_missions",
+      "title": "List the mission scripts",
+      "description": "Lists the mission scripts: the story slots and the other scripts, with their state in the mod, their counts and their versions. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "scripts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "slot": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "base_game",
+                    "changed",
+                    "replaced",
+                    "missing"
+                  ]
+                },
+                "mod_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "triggers": {
+                  "type": "integer"
+                },
+                "errors": {
+                  "type": "integer"
+                },
+                "warnings": {
+                  "type": "integer"
+                },
+                "version": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "ref",
+                "state",
+                "triggers",
+                "errors",
+                "warnings",
+                "version"
+              ]
+            }
+          }
+        },
+        "required": [
+          "scripts"
+        ]
+      },
+      "annotations": {
+        "title": "List the mission scripts",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_mission",
+      "title": "Get a mission script",
+      "description": "Gives the summary of one mission script: the start triggers, the acts, the prefab instances, the cast and the problems. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reference of the mission script, for example msn:DATA\\MISSIONS\\M01A\\m01a.ini."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "summary",
+              "triggers"
+            ],
+            "default": "summary",
+            "description": "summary gives the summary. triggers also gives each trigger with its condition and its actions."
+          },
+          "include_lines": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also give the raw values of each line by their position."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "script"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              },
+              "slot": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "enum": [
+                  "base_game",
+                  "changed",
+                  "replaced",
+                  "missing"
+                ]
+              },
+              "read_only_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "start_triggers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "acts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer"
+                    },
+                    "system": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "triggers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "triggers"
+                  ]
+                }
+              },
+              "not_started": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "instances": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "string"
+                    },
+                    "prefab": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "core": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "prefab",
+                    "name"
+                  ]
+                }
+              },
+              "cast": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "ref": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "mission",
+                        "trigger",
+                        "ship",
+                        "formation",
+                        "solar",
+                        "loot",
+                        "order_list",
+                        "objective",
+                        "npc",
+                        "conversation",
+                        "random_encounter",
+                        "meta_behavior",
+                        "other"
+                      ]
+                    },
+                    "system": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ref",
+                    "kind"
+                  ]
+                }
+              },
+              "problems": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "severity": {
+                      "enum": [
+                        "warning",
+                        "error"
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "rule": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "origin": {
+                      "enum": [
+                        "base_game",
+                        "mod",
+                        "some_mod",
+                        "openlancer",
+                        "unknown",
+                        "pending"
+                      ]
+                    },
+                    "mod_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "fixes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "severity",
+                    "message"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "ref",
+              "version"
+            ]
+          },
+          "triggers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "nickname": {
+                  "type": "string"
+                },
+                "starts_with_mission": {
+                  "type": "boolean"
+                },
+                "repeats": {
+                  "type": "boolean"
+                },
+                "system": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "event": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "instance": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "links_in": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "start",
+                          "stop",
+                          "load",
+                          "watch"
+                        ]
+                      },
+                      "line": {
+                        "type": "string"
+                      },
+                      "trigger": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "line",
+                      "trigger"
+                    ]
+                  }
+                },
+                "links_out": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/properties/triggers/items/properties/links_in/items"
+                  }
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "ref": {
+                        "type": "string"
+                      },
+                      "row": {
+                        "type": "integer"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "plain": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "values": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "texts": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "names": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "value": {
+                              "type": "integer"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "enum": [
+                                "trigger",
+                                "object",
+                                "group",
+                                "ship",
+                                "formation",
+                                "solar",
+                                "loot",
+                                "obj_list",
+                                "dialog",
+                                "objective",
+                                "npc",
+                                "random_encounter",
+                                "meta_behavior",
+                                "system",
+                                "base",
+                                "room",
+                                "system_object",
+                                "faction",
+                                "ship_arch",
+                                "loadout",
+                                "pilot",
+                                "voice",
+                                "sound",
+                                "good",
+                                "equipment",
+                                "head",
+                                "body",
+                                "accessory",
+                                "npc_ship_arch",
+                                "formation_shape",
+                                "comm_line",
+                                "fuse",
+                                "space_cutscene",
+                                "base_scene",
+                                "ambient_script",
+                                "file",
+                                "position",
+                                "rotation",
+                                "number",
+                                "whole_number",
+                                "attitude",
+                                "text_id",
+                                "bool",
+                                "token",
+                                "text"
+                              ]
+                            },
+                            "state": {
+                              "enum": [
+                                "found",
+                                "missing",
+                                "wrong_case",
+                                "token",
+                                "empty",
+                                "unknown"
+                              ]
+                            },
+                            "ref": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "value",
+                            "name",
+                            "kind",
+                            "state"
+                          ]
+                        }
+                      },
+                      "problems": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/properties/summary/properties/problems/items"
+                        }
+                      }
+                    },
+                    "required": [
+                      "ref",
+                      "row",
+                      "key",
+                      "values",
+                      "texts",
+                      "names",
+                      "problems"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "ref",
+                "version",
+                "nickname"
+              ]
+            }
+          }
+        },
+        "required": [
+          "summary"
+        ]
+      },
+      "annotations": {
+        "title": "Get a mission script",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_trigger",
+      "title": "Get a mission trigger",
+      "description": "Gives one trigger: the sentence of its condition, its actions with plain names and labeled values, its links in and out, and its problems. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reference of the trigger, for example trg:DATA\\MISSIONS\\M01A\\m01a.ini#my_trigger."
+          },
+          "include_lines": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also give the raw values of each line by their position."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "ref"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "nickname": {
+            "type": "string"
+          },
+          "starts_with_mission": {
+            "type": "boolean"
+          },
+          "repeats": {
+            "type": "boolean"
+          },
+          "system": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "instance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "links_in": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "start",
+                    "stop",
+                    "load",
+                    "watch"
+                  ]
+                },
+                "line": {
+                  "type": "string"
+                },
+                "trigger": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "line",
+                "trigger"
+              ]
+            }
+          },
+          "links_out": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/links_in/items"
+            }
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "row": {
+                  "type": "integer"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "plain": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "values": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "texts": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "names": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "integer"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "trigger",
+                          "object",
+                          "group",
+                          "ship",
+                          "formation",
+                          "solar",
+                          "loot",
+                          "obj_list",
+                          "dialog",
+                          "objective",
+                          "npc",
+                          "random_encounter",
+                          "meta_behavior",
+                          "system",
+                          "base",
+                          "room",
+                          "system_object",
+                          "faction",
+                          "ship_arch",
+                          "loadout",
+                          "pilot",
+                          "voice",
+                          "sound",
+                          "good",
+                          "equipment",
+                          "head",
+                          "body",
+                          "accessory",
+                          "npc_ship_arch",
+                          "formation_shape",
+                          "comm_line",
+                          "fuse",
+                          "space_cutscene",
+                          "base_scene",
+                          "ambient_script",
+                          "file",
+                          "position",
+                          "rotation",
+                          "number",
+                          "whole_number",
+                          "attitude",
+                          "text_id",
+                          "bool",
+                          "token",
+                          "text"
+                        ]
+                      },
+                      "state": {
+                        "enum": [
+                          "found",
+                          "missing",
+                          "wrong_case",
+                          "token",
+                          "empty",
+                          "unknown"
+                        ]
+                      },
+                      "ref": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "name",
+                      "kind",
+                      "state"
+                    ]
+                  }
+                },
+                "problems": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "enum": [
+                          "warning",
+                          "error"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "ref": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "rule": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "origin": {
+                        "enum": [
+                          "base_game",
+                          "mod",
+                          "some_mod",
+                          "openlancer",
+                          "unknown",
+                          "pending"
+                        ]
+                      },
+                      "mod_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "fixes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "severity",
+                      "message"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "ref",
+                "row",
+                "key",
+                "values",
+                "texts",
+                "names",
+                "problems"
+              ]
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "version",
+          "nickname"
+        ]
+      },
+      "annotations": {
+        "title": "Get a mission trigger",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "describe_mission_name",
+      "title": "Describe a condition or an action",
+      "description": "Gives the plain name, the group, the values and the OpenLancer coverage of one condition, action or order of the mission scripts. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The key, for example Cnd_Timer or Act_ActTrig."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "key"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "plain": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "condition",
+              "action",
+              "directive"
+            ]
+          },
+          "group": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "trigger",
+                    "object",
+                    "group",
+                    "ship",
+                    "formation",
+                    "solar",
+                    "loot",
+                    "obj_list",
+                    "dialog",
+                    "objective",
+                    "npc",
+                    "random_encounter",
+                    "meta_behavior",
+                    "system",
+                    "base",
+                    "room",
+                    "system_object",
+                    "faction",
+                    "ship_arch",
+                    "loadout",
+                    "pilot",
+                    "voice",
+                    "sound",
+                    "good",
+                    "equipment",
+                    "head",
+                    "body",
+                    "accessory",
+                    "npc_ship_arch",
+                    "formation_shape",
+                    "comm_line",
+                    "fuse",
+                    "space_cutscene",
+                    "base_scene",
+                    "ambient_script",
+                    "file",
+                    "position",
+                    "rotation",
+                    "number",
+                    "whole_number",
+                    "attitude",
+                    "text_id",
+                    "bool",
+                    "token",
+                    "text"
+                  ]
+                },
+                "index": {
+                  "type": "integer"
+                },
+                "width": {
+                  "type": "integer"
+                },
+                "optional": {
+                  "type": "boolean"
+                },
+                "rest": {
+                  "type": "boolean"
+                },
+                "default": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "words": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "help": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "label",
+                "kind",
+                "index",
+                "width",
+                "optional",
+                "rest",
+                "words"
+              ]
+            }
+          },
+          "mark": {
+            "enum": [
+              "runs",
+              "no_effect",
+              "cannot_load",
+              "never_runs"
+            ]
+          },
+          "no_retail_example": {
+            "type": "boolean"
+          },
+          "base_count": {
+            "type": "integer"
+          },
+          "checked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "plain",
+          "kind",
+          "group",
+          "values",
+          "mark",
+          "no_retail_example",
+          "base_count",
+          "checked"
+        ]
+      },
+      "annotations": {
+        "title": "Describe a condition or an action",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "list_cutscenes",
+      "title": "List the cutscenes",
+      "description": "Lists the cutscene scripts with their folder group, the layer that gives them and their duration. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "bases",
+              "story",
+              "gcs",
+              "missions",
+              "extras",
+              "vendors",
+              "intro",
+              "mods",
+              "other"
+            ],
+            "description": "Show only the cutscenes of this folder group."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the cutscenes whose path holds this text, without letter case."
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The next_cursor of the previous page. Without it, the list starts at the first row."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most rows of the page. studio_status gives the default and the largest value."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "category": {
+                  "enum": [
+                    "bases",
+                    "story",
+                    "gcs",
+                    "missions",
+                    "extras",
+                    "vendors",
+                    "intro",
+                    "mods",
+                    "other"
+                  ]
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "duration": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "unsaved": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ref",
+                "path",
+                "category",
+                "kind",
+                "unsaved"
+              ]
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "total"
+        ]
+      },
+      "annotations": {
+        "title": "List the cutscenes",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_cutscene",
+      "title": "Get a cutscene",
+      "description": "Gives one cutscene script: its duration, its entities, its events with their times and targets, and its errors. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reference of the cutscene, for example thn:DATA\\MODS\\my_mod\\CUTSCENES\\my_scene.thn."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "ref"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "number"
+          },
+          "read_only_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": {
+                  "type": "string"
+                },
+                "element": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "template": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "time": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "length": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "targets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "fields": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "ref",
+                "element"
+              ]
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/properties/entities/items"
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "enum": [
+                    "warning",
+                    "error"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rule": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "origin": {
+                  "enum": [
+                    "base_game",
+                    "mod",
+                    "some_mod",
+                    "openlancer",
+                    "unknown",
+                    "pending"
+                  ]
+                },
+                "mod_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fixes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "severity",
+                "message"
+              ]
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "duration",
+          "entities",
+          "events",
+          "problems"
+        ]
+      },
+      "annotations": {
+        "title": "Get a cutscene",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_raw_ini",
+      "title": "Get the raw INI text",
+      "description": "Gives the INI text of a section or of a whole file of the edit view, with the problems of each line. Give a reference or a file. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reference of a section, for example obj:my_station_1."
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The install path of an INI file, for example DATA\\SHIPS\\loadouts.ini."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "marks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "integer"
+                },
+                "severity": {
+                  "enum": [
+                    "warning",
+                    "error"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "base_game": {
+                  "type": "boolean"
+                },
+                "note": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "line",
+                "severity",
+                "message",
+                "base_game",
+                "note"
+              ]
+            }
+          }
+        },
+        "required": [
+          "file",
+          "text",
+          "marks"
+        ]
+      },
+      "annotations": {
+        "title": "Get the raw INI text",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "check",
+      "title": "Check the data",
+      "description": "Runs the checks of the editor and gives the problems with their counts. A problem is data, not a tool error. This tool changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "all",
+              "item",
+              "mission",
+              "cutscene"
+            ],
+            "default": "all",
+            "description": "all gives the errors that stop a save of the active mod. item, mission and cutscene give the problems of the item of ref."
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The reference of the item of the scope item, mission or cutscene."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "vanilla-1.1",
+              "hde-0.7.1"
+            ],
+            "description": "Merge all mods of the profile on the files of this retail game, then give the problems. This check reads the saved files only."
+          },
+          "include_base_game": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also give the problems and the messages that the base game gives without mods."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "warnings": {
+            "type": "integer"
+          },
+          "save_blocked": {
+            "type": "boolean"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "enum": [
+                    "warning",
+                    "error"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rule": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "origin": {
+                  "enum": [
+                    "base_game",
+                    "mod",
+                    "some_mod",
+                    "openlancer",
+                    "unknown",
+                    "pending"
+                  ]
+                },
+                "mod_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fixes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "severity",
+                "message"
+              ]
+            }
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "scope",
+          "errors",
+          "warnings",
+          "save_blocked",
+          "problems"
+        ]
+      },
+      "annotations": {
+        "title": "Check the data",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "get_console",
+      "title": "Read the Console",
+      "description": "Gives the newest entries of the Console of the editor. This tool changes nothing. Only the editor host has a Console.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Show only the entries of this source, for example Editor or Agent."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "default": "info",
+            "description": "The lowest severity to show."
+          },
+          "include_base_game": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also give the entries that the base game gives without mods."
+          },
+          "since": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Give only the entries after this sequence number."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most rows of the page. studio_status gives the default and the largest value."
+          }
+        },
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sequence": {
+                  "type": "integer"
+                },
+                "time": {
+                  "type": "string"
+                },
+                "severity": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "origin": {
+                  "enum": [
+                    "base_game",
+                    "mod",
+                    "some_mod",
+                    "openlancer",
+                    "unknown",
+                    "pending"
+                  ]
+                }
+              },
+              "required": [
+                "sequence",
+                "time",
+                "severity",
+                "source",
+                "message",
+                "origin"
+              ]
+            }
+          }
+        },
+        "required": [
+          "entries"
+        ]
+      },
+      "annotations": {
+        "title": "Read the Console",
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      }
+    }
+  ]
+}

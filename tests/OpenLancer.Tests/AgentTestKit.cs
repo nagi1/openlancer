@@ -33,7 +33,18 @@ internal sealed class TestAgentHost(EditSession? session, AgentHostKind kind = A
 
     public AgentView? TestView { get; set; }
 
-    public override AgentView? View => TestView;
+    /// <summary>Runs in each read of <see cref="View"/>. studio_status reads the view, so a test sees each session part
+    /// of the tool with it.</summary>
+    public Action? Probe { get; set; }
+
+    public override AgentView? View
+    {
+        get
+        {
+            Probe?.Invoke();
+            return TestView;
+        }
+    }
 
     /// <summary>The result of <see cref="CheckTarget"/>, or null for a host without target checks.</summary>
     public Func<string, ToolStep>? Target { get; set; }
