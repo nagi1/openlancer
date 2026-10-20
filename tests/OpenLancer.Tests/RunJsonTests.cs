@@ -76,6 +76,22 @@ public sealed class RunJsonTests
         Assert.EndsWith(field, error.Field);
     }
 
+    [Theory]
+    [InlineData("timer_bound", "5")]
+    [InlineData("timer_bound", "\"long\"")]
+    [InlineData("since_step", "\"x\"")]
+    [InlineData("since_step", "-1")]
+    [InlineData("inputs", "{}")]
+    public void ARequestFieldOfAnotherTypeGivesInvalidArgument(string field, string value)
+    {
+        var request = Request();
+        request[field] = JsonNode.Parse(value);
+
+        var error = Error(() => RunJson.ReadRequest(request));
+
+        Assert.Equal((EditErrorKind.InvalidArgument, field), (error.Kind, error.Field));
+    }
+
     [Fact]
     public void TheQueryFoldsTheInputsAndGivesTheStepsAndTheState()
     {

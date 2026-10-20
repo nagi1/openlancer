@@ -220,14 +220,14 @@ public static class RunJson
             : request["inputs"] is null ? []
             : throw new EditException(new EditError(EditErrorKind.InvalidArgument, MissionErrors.BadJson,
                 "The inputs are a list of input objects.") { Field = "inputs" });
-        var timers = (request["timer_bound"] as JsonValue)?.GetValue<string>() switch
-        {
-            null or "shortest" => TimerBound.Shortest,
-            "longest" => TimerBound.Longest,
-            _ => throw new EditException(new EditError(EditErrorKind.InvalidArgument, MissionErrors.BadJson,
-                "The timer bound is shortest or longest.") { Field = "timer_bound" }),
-        };
-        var since = request["since_step"] is JsonValue sinceValue && sinceValue.TryGetValue(out int step) ? step : 0;
+        var bound = request["timer_bound"];
+        var timers = bound == null ? TimerBound.Shortest
+            : bound is JsonValue boundValue && boundValue.TryGetValue(out string? word) && word is "shortest" or "longest"
+                ? word == "longest" ? TimerBound.Longest : TimerBound.Shortest
+                : throw new EditException(new EditError(EditErrorKind.InvalidArgument, MissionErrors.BadJson,
+                    "The timer bound is shortest or longest.") { Field = "timer_bound" });
+        var sinceNode = request["since_step"];
+        var since = sinceNode == null ? 0 : sinceNode is JsonValue sinceValue && sinceValue.TryGetValue(out int step) ? step : -1;
         if (since < 0)
             throw new EditException(new EditError(EditErrorKind.InvalidArgument, MissionErrors.BadJson,
                 "The step since_step is 0 or more.") { Field = "since_step" });

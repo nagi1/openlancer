@@ -60,7 +60,8 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
 
     private readonly ValuePicker systemPicker = new();
     private bool pickSystem;
-    private (int Version, DryRun Run, List<LogRow> Rows, IReadOnlyList<PanelRow> Waiting)? cache;
+    private (int Version, DryRun Run, List<LogRow> Rows, IReadOnlyList<PanelRow> Waiting,
+        IReadOnlyList<MissionTrigger> Checkpoints)? cache;
     private int scrolledVersion = -1;
 
     /// <summary>One row of the Run log: the title of a step, or a change under it.</summary>
@@ -79,7 +80,7 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
         {
             var rows = Rows(analysis, run);
             Header();
-            Buttons(analysis, run);
+            Buttons(analysis, run, rows.Checkpoints);
             if (!run.Started)
             {
                 ImGui.PushTextWrapPos(0);
@@ -104,7 +105,7 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
         ImGui.Separator();
     }
 
-    private void Buttons(MissionAnalysis analysis, DryRun run)
+    private void Buttons(MissionAnalysis analysis, DryRun run, IReadOnlyList<MissionTrigger> checkpoints)
     {
         if (ImGui.Button("Start mission"))
         {
@@ -113,7 +114,6 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
 
         ImGui.SetItemTooltip(StartTip);
         ImGui.SameLine();
-        var checkpoints = DryRun.Checkpoints(analysis.Index);
         ImGui.BeginDisabled(checkpoints.Count == 0);
         if (ImGui.Button($"Load checkpoint {EditorIcons.CaretDown}"))
         {
@@ -406,19 +406,22 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
             ? analysis.Index.Triggers.FirstOrDefault(t => t.Section.Ref.Equals(section) && !t.IsDuplicate)
             : null;
 
-    /// <summary>The rows of the log and of the world panel. They stay until the dry run changes.</summary>
-    private (List<LogRow> Rows, IReadOnlyList<PanelRow> Waiting) Rows(MissionAnalysis analysis, DryRun run)
+    /// <summary>The rows of the log and of the world panel, and the checkpoints of the script. They stay until the dry
+    /// run changes.</summary>
+    private (List<LogRow> Rows, IReadOnlyList<PanelRow> Waiting, IReadOnlyList<MissionTrigger> Checkpoints) Rows(
+        MissionAnalysis analysis, DryRun run)
     {
         var version = missions.DryRuns.Version;
-        if (cache is var (v, r, rows, waiting) && v == version && ReferenceEquals(r, run))
+        if (cache is var (v, r, rows, waiting, checkpoints) && v == version && ReferenceEquals(r, run))
         {
-            return (rows, waiting);
+            return (rows, waiting, checkpoints);
         }
 
         rows = LogRows(analysis, run.State.Trace);
         waiting = PanelRows(run);
-        cache = (version, run, rows, waiting);
-        return (rows, waiting);
+        checkpoints = DryRun.Checkpoints(run.Index);
+        cache = (version, run, rows, waiting, checkpoints);
+        return (rows, waiting, checkpoints);
     }
 
     /// <summary>The rows of the Run log (section 8.2 of the M6c design). A trigger of a prefab instance shows the name of
