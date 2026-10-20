@@ -149,8 +149,8 @@ internal static class SceneQueries
         var session = call.Session;
         var args = call.Args;
         var (_, _, path) = System(session, args.Text("system")!);
-        var kinds = args.Choices("kinds");
-        var objectKinds = args.Choices("object_kinds");
+        var kinds = args.Texts("kinds");
+        var objectKinds = args.Texts("object_kinds");
         var text = args.Text("text");
         var origin = args.Text("origin");
         var near = args.Group("near");
@@ -247,7 +247,8 @@ internal static class SceneQueries
     /// <summary>The JSON name of an enum value, as the arguments take it.</summary>
     private static string Name<T>(T value) where T : struct, Enum => AgentTools.Snake(value.ToString());
 
-    private static string SystemRef(string nickname) => ItemRefs.Format(new ItemReference(ItemRefKind.System, nickname));
+    /// <summary>The <c>system:</c> reference of a system.</summary>
+    internal static string SystemRef(string nickname) => ItemRefs.Format(new ItemReference(ItemRefKind.System, nickname));
 
     private static string ObjectRef(string nickname) => ItemRefs.Format(new ItemReference(ItemRefKind.Object, nickname));
 

@@ -586,7 +586,8 @@ internal sealed partial class EditorWindow : Game
         // The game shows the data of one profile and one active mod, so it cannot follow another session (decision
         // D48). A change of the active mod and a new mod open the profile again, so they close it here too.
         Play.SessionEnding(windowClose: false);
-        // The images of the agent use the resources of the session, so they end before the panels close.
+        // The images of the agent and the system that they keep use the resources of the session, so they end before
+        // the panels close.
         agentRender.Reset();
         // The panels forget the game data of the profile, so that it does not stay in memory while no profile is
         // open. The panels do not draw while the Welcome screen shows, so they cannot do this themselves.

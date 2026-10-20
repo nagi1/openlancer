@@ -23,26 +23,32 @@ internal sealed class SceneSync : ISceneHost, IDisposable
     private readonly SystemRenderer renderer;
     private readonly Action<SceneEffect> indexChanged;
     private readonly SceneApplier applier;
+    private readonly bool mainView;
 
-    /// <summary>Starts the sync of a system that the world just loaded, and catches up the unsaved edits of W.</summary>
+    /// <summary>Starts the sync of a system that the world just loaded. Call <see cref="CatchUp"/> next, so that the
+    /// scene shows the unsaved edits of W.</summary>
     /// <param name="items">The game data that <paramref name="system"/> came from.</param>
     /// <param name="system">The clone of the system that the scene shows.</param>
     /// <param name="indexChanged">Builds the index of the scene again, or reads the names again (see
     /// <see cref="ISceneHost.IndexChanged"/>).</param>
     /// <param name="objects">The world object of each object of the system. The applier adds and removes entries for new
     /// and deleted objects, so the views that share the map see them.</param>
+    /// <param name="mainView">True for the scene of the Scene panel: the names of the session items come from its
+    /// sections, and the Console shows its problems. The scene of an image of the agent does neither, so it does not
+    /// change what the user sees.</param>
     public SceneSync(EditorWindow window, EditorSession session, GameItemDb items, ResourceManager resources,
         StarSystem system, GameWorld world, SystemRenderer renderer, IDictionary<SystemObject, GameObject> objects,
-        Action<SceneEffect> indexChanged)
+        Action<SceneEffect> indexChanged, bool mainView)
     {
         this.window = window;
         this.session = session;
         this.renderer = renderer;
         this.indexChanged = indexChanged;
+        this.mainView = mainView;
         applier = new SceneApplier(session.Edits, items, resources, system, world, objects, this);
         session.Edits.Changed += applier.Note;
-        session.Texts.SceneSections = applier.SectionOf;
-        CatchUp();
+        if (mainView)
+            session.Texts.SceneSections = applier.SectionOf;
     }
 
     /// <summary>
@@ -90,13 +96,18 @@ internal sealed class SceneSync : ISceneHost, IDisposable
 
     public void IndexChanged(SceneEffect effects) => indexChanged(effects);
 
-    public void ProblemFound(Diagnostic problem) => window.Log.Add(problem);
+    public void ProblemFound(Diagnostic problem)
+    {
+        if (mainView)
+            window.Log.Add(problem);
+    }
 
     /// <summary>Stops the sync. The names of the scene items then come from the game data again.</summary>
     public void Dispose()
     {
         session.Edits.Changed -= applier.Note;
-        session.Texts.SceneSections = null;
+        if (mainView)
+            session.Texts.SceneSections = null;
     }
 
     /// <summary>
@@ -105,6 +116,6 @@ internal sealed class SceneSync : ISceneHost, IDisposable
     /// The lines of the system load show as before. The catch-up runs in the Console batch of the open of the system
     /// (see <see cref="SceneView.Open"/>), so each of its lines still counts for the comparison with the base run.
     /// </summary>
-    private void CatchUp() =>
+    public void CatchUp() =>
         window.Log.SkipKnownEngineLinesOf(() => applier.CatchUp(), window, () => window.Session?.IsReloading == true);
 }

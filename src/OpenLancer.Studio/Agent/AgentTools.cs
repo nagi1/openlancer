@@ -97,8 +97,8 @@ public static class AgentTools
         View("render_scene", ToolGroup.Scene, ToolHints.Query, new ToolInput(
                 Text("system"),
                 new GroupParam("camera", [
-                    new PointParam("position", true),
-                    new PointParam("look_at", true),
+                    new PointParam("position", true, ShotCamera.MaxCoordinate),
+                    new PointParam("look_at", true, ShotCamera.MaxCoordinate),
                     new NumberParam("fov", false, ShotCamera.MinFov, ShotCamera.MaxFov),
                 ]),
                 new TextListParam("frame", false),
@@ -133,10 +133,7 @@ public static class AgentTools
         if ((tool.Hosts & hosts) == 0)
             return ToolResult.Failure(EditErrorKind.NotAvailable, "EditorOnly", AgentTexts.Error("editor_only", ("tool", name)));
         if (host.HiddenGroups.Contains(tool.Group))
-        {
-            return ToolResult.Failure(EditErrorKind.NotAvailable, "GroupHidden",
-                AgentTexts.Error("group_hidden", ("group", Snake(tool.Group.ToString()))));
-        }
+            return ToolResult.Failure(GroupHidden(tool.Group));
         ToolStep step;
         try
         {
@@ -170,6 +167,11 @@ public static class AgentTools
             }
         });
     }
+
+    /// <summary>The error of a tool of a group that the user hides (decision D725 of the MCP1 design). A view tool also
+    /// gives it for an item of such a group.</summary>
+    internal static EditError GroupHidden(ToolGroup group) => new(EditErrorKind.NotAvailable, "GroupHidden",
+        AgentTexts.Error("group_hidden", ("group", Snake(group.ToString()))));
 
     /// <summary>The error of a call whose handler or tail failed with an exception (see <see cref="Run"/>).</summary>
     internal static ToolResult Failed(string tool, Exception e) => ToolResult.Failure(EditErrorKind.StepFailed, "ToolFailed",

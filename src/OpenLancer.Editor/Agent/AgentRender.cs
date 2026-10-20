@@ -3,10 +3,15 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
 using LibreLancer;
+using LibreLancer.Data.GameData.World;
 using LibreLancer.Graphics;
+using LibreLancer.Render.Cameras;
 using LibreLancer.Thn;
+using LibreLancer.World;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Editor.Cutscene;
+using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Scene;
 using OpenLancer.Runtime.Thn;
 using OpenLancer.Studio.Agent;
 using OpenLancer.Studio.Commands;
@@ -27,15 +32,19 @@ internal sealed record CutsceneShotDone(double Time, string Camera, ToolImage Im
 internal sealed record CutsceneShotJob(Task<CutsceneShotDone> Result, Action Cancel);
 
 /// <summary>
-/// The offscreen render service of the agent server (section 12.3 of the MCP1 design, decision D721): the images of the
-/// Scene and of the cutscene preview from a camera of the agent, and the capture of a panel as the user sees it. It
-/// runs on the UI thread. An image never moves the camera of the user and never changes the preview of the user.
+/// The offscreen render service of the agent server (section 12.3 of the MCP1 design, decision D721). It makes the images
+/// of a system and of the cutscene preview from a camera of the agent. It also captures a panel as the user sees it. It
+/// runs on the UI thread. An image never moves the camera of the user, never opens a system in the Scene and never
+/// changes the preview of the user.
 /// </summary>
 /// <remarks>
-/// <para>The read-back of the pixels ends in a later frame (<c>Texture2D.GetDataAsync</c>), and the PNG encode runs on a
-/// worker. So a caller awaits the image in the tail of its call (decision D765).</para>
-/// <para>A cutscene image builds a player of its own and steps it to the time of the call over several frames, with a
-/// time budget in each frame, as the preview of the user catches up (section 8.4 of the M8 design).</para>
+/// <para>The read of the pixels of an image runs on the UI thread and waits for the GPU (see <see cref="ReadBack"/>). The
+/// PNG encode runs on a worker, so a caller awaits the image in the tail of its call (decision D765).</para>
+/// <para>An image of the open system uses the stage of the Scene. An image of another system uses a stage of the service,
+/// which the service keeps for the next image of that system.</para>
+/// <para>A cutscene image builds a player of its own. The player steps to the time of the call over several frames,
+/// with a time budget in each frame, as the preview of the user catches up (section 8.4 of the M8 design). One cutscene
+/// image steps at a time, and the others wait for their turn.</para>
 /// <para>A capture asks the window for its back buffer. The window reads the buffer at the end of the frame, after the
 /// panels drew, so the capture shows the panel of that frame with its overlays and marks.</para>
 /// </remarks>
@@ -45,13 +54,23 @@ internal sealed class AgentRender : IDisposable
     /// the user drags.</summary>
     internal static readonly TimeSpan FrameBudget = TimeSpan.FromMilliseconds(12);
 
+    /// <summary>The most cutscene images that wait or render at a time. Each one keeps the scripts of its call, and a
+    /// call over this number gives <c>busy</c>.</summary>
+    internal const int MaxCutsceneImages = 4;
+
     /// <summary>The file name of a screenshot of the window that a capture asks for. The window gives each screenshot to
     /// each handler, so the service takes only its own.</summary>
     private const string CaptureTag = "OpenLancer.AgentCapture";
 
     private readonly EditorWindow window;
-    private readonly List<CutsceneJob> jobs = [];
+    private readonly FrameJobs cutscenes = new(MaxCutsceneImages, FrameBudget, e => new EditError(
+        EditErrorKind.StepFailed, "ToolFailed",
+        AgentTexts.Error("tool_failed", ("tool", "render_cutscene"), ("reason", e.Message))));
+
     private readonly List<(string PanelId, TaskCompletionSource<(byte[] Bgra, int Width, int Height)> Done)> captures = [];
+
+    // The stage of the last system that an image showed and the Scene did not show, or null.
+    private SceneStage? kept;
 
     public AgentRender(EditorWindow window)
     {
@@ -60,13 +79,53 @@ internal sealed class AgentRender : IDisposable
     }
 
     /// <summary>
-    /// Renders the open system of the Scene from a camera and starts the read-back. The image has the view toggles of
-    /// the user, except the Zones toggle (see <see cref="Scene.SceneView.RenderShot"/>).
+    /// The stage that an image of a system renders. It is the stage of the Scene when the Scene shows the system, else a
+    /// stage of the service. The service loads that stage on the UI thread and keeps it. So the next image of the system
+    /// does not load it again.
     /// </summary>
-    /// <returns>The image. It ends in a later frame.</returns>
-    /// <exception cref="InvalidOperationException">No system is open.</exception>
-    public Task<ToolImage> RenderScene(ShotCamera camera, int width, int height, bool zones) =>
-        ReadBack(window.Scene.RenderShot(camera, width, height, zones), width, height);
+    /// <param name="system">A system of the loaded game data.</param>
+    public SceneStage StageOf(StarSystem system)
+    {
+        if (window.Scene.Stage is { } open && Same(open, system.Nickname))
+            return open;
+        var session = window.Session ?? throw new InvalidOperationException("No profile is open.");
+        if (kept != null && Same(kept, system.Nickname) && ReferenceEquals(kept.Data, session.GameData))
+            return kept;
+        kept?.Dispose();
+        kept = null;
+        // The engine lines of the load form a batch of the Console, as the open of a system in the Scene does.
+        var batch = window.BeginConsoleBatch();
+        try
+        {
+            var stage = new SceneStage(window, system, session, new LookAtCamera(), window.Scene.Grid,
+                new Dictionary<SystemObject, GameObject>(), mainView: false, indexChanged: null);
+            try
+            {
+                stage.CatchUp();
+            }
+            catch
+            {
+                stage.Dispose();
+                throw;
+            }
+
+            kept = stage;
+        }
+        finally
+        {
+            ConsoleLog.EndBatch(batch);
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// Renders a stage from a camera and reads the image. The image has the view toggles of the user, except the Zones
+    /// toggle (see <see cref="SceneStage.RenderShot"/>).
+    /// </summary>
+    /// <returns>The image. Its PNG encode ends on a worker.</returns>
+    public static Task<ToolImage> RenderScene(SceneStage stage, ShotCamera camera, int width, int height, bool zones) =>
+        ReadBack(stage.RenderShot(camera, width, height, zones), width, height);
 
     /// <summary>
     /// Starts an image of a cutscene at a time. The image steps a player of its own to the time over the next frames,
@@ -75,11 +134,20 @@ internal sealed class AgentRender : IDisposable
     /// </summary>
     /// <param name="camera">The name of a CAMERA entity, or null for the active camera at the time.</param>
     /// <exception cref="InvalidOperationException">No profile is open.</exception>
+    /// <exception cref="EditException"><see cref="EditErrorKind.Busy"/> while <see cref="MaxCutsceneImages"/> images
+    /// wait or render.</exception>
     public CutsceneShotJob RenderCutscene(CutsceneShotPlan plan, double time, string? camera, int width, int height)
     {
         var session = window.Session ?? throw new InvalidOperationException("No profile is open.");
+        // The job builds its player in its first frame, so a job that does not get a place costs little.
         var job = new CutsceneJob(window, session, plan, time, camera, width, height);
-        jobs.Add(job);
+        if (!cutscenes.TryAdd(job))
+        {
+            job.Dispose();
+            throw new EditException(new EditError(EditErrorKind.Busy, "CutsceneImages",
+                AgentTexts.Error("render_cutscene_busy", ("count", MaxCutsceneImages))));
+        }
+
         return new CutsceneShotJob(job.Result, job.Cancel);
     }
 
@@ -87,62 +155,46 @@ internal sealed class AgentRender : IDisposable
     /// Asks for an image of a panel as the user sees it at the end of this frame. Call it before the panels draw.
     /// </summary>
     /// <param name="panelId">The id of the panel in the layout, for example <c>scene</c>.</param>
+    /// <param name="maxSide">The most pixels on each side of the image. A larger panel gives a smaller image.</param>
     /// <returns>The image. It ends with an <see cref="EditException"/> when the panel does not show at the end of the
     /// frame.</returns>
-    public Task<ToolImage> Capture(string panelId)
+    public Task<ToolImage> Capture(string panelId, int maxSide)
     {
         var done = new TaskCompletionSource<(byte[] Bgra, int Width, int Height)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         captures.Add((panelId, done));
         window.Screenshot(CaptureTag);
-        return Encode(done.Task);
+        return Encode(done.Task, maxSide);
     }
 
-    /// <summary>Steps the cutscene images within the budget of the frame, and renders each one that reached its time.
-    /// Call it once in each frame, before the panels draw.</summary>
+    /// <summary>
+    /// Steps the first cutscene image within the budget of the frame, and renders it when it reached its time. It also
+    /// frees the kept stage when the Scene shows its system or the game data loaded again. Call it once in each frame,
+    /// before the panels draw.
+    /// </summary>
     public void Frame()
     {
-        var start = TimeProvider.System.GetTimestamp();
-        for (var i = 0; i < jobs.Count; i++)
+        if (kept != null && (!ReferenceEquals(kept.Data, window.Session?.GameData) ||
+                             window.Scene.Stage is { } open && Same(open, kept.System.Nickname)))
         {
-            var job = jobs[i];
-            var left = FrameBudget - TimeProvider.System.GetElapsedTime(start);
-            bool ended;
-            try
-            {
-                // Each image steps at least a little, so a busy frame does not stop the others.
-                ended = job.Frame(left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1));
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                // A fault of an image ends its call, and the window draws on.
-                job.Fail(EditErrorKind.StepFailed, "ToolFailed",
-                    AgentTexts.Error("tool_failed", ("tool", "render_cutscene"), ("reason", e.Message)));
-                ended = true;
-            }
-
-            if (!ended)
-                continue;
-            job.Dispose();
-            jobs.RemoveAt(i--);
+            kept.Dispose();
+            kept = null;
         }
+
+        cutscenes.Frame();
     }
 
-    /// <summary>Ends each image that waits, for example when the profile closes. Their calls give an error.</summary>
+    /// <summary>Ends each image that waits, and frees the kept stage, for example when the profile closes. The calls of
+    /// the images give an error.</summary>
     public void Reset()
     {
-        foreach (var job in jobs)
-        {
-            job.Fail(EditErrorKind.NotAvailable, "ProfileClosed", AgentTexts.Error("render_closed"));
-            job.Dispose();
-        }
-        jobs.Clear();
+        var closed = new EditError(EditErrorKind.NotAvailable, "ProfileClosed", AgentTexts.Error("render_closed"));
+        cutscenes.Fail(closed);
         foreach (var (_, done) in captures)
-        {
-            done.TrySetException(new EditException(new EditError(EditErrorKind.NotAvailable, "ProfileClosed",
-                AgentTexts.Error("render_closed"))));
-        }
+            done.TrySetException(new EditException(closed));
         captures.Clear();
+        kept?.Dispose();
+        kept = null;
     }
 
     public void Dispose()
@@ -157,31 +209,38 @@ internal sealed class AgentRender : IDisposable
         Math.Floor(time / CutsceneClock.StepSeconds + 1e-6) * CutsceneClock.StepSeconds;
 
     /// <summary>
-    /// The PNG image of a texture of a render: the read-back starts now, on the UI thread, and the texture goes at once.
-    /// The read copies the pixels into a buffer of the GPU first, so the texture is not necessary after the call. The
-    /// encode runs on a worker.
+    /// The PNG image of a texture of a render. The read of the pixels runs now, on the UI thread, and waits for the GPU to
+    /// finish the image. So the session part of a call holds the whole GPU time of its image, and the render bench
+    /// measures it. The texture goes at once. The PNG encode runs on a worker.
     /// </summary>
-    internal static async Task<ToolImage> ReadBack(Texture2D texture, int width, int height)
+    /// <remarks>The read does not use <c>Texture2D.GetDataAsync</c>. That read of the engine never deletes its pixel
+    /// buffer. So each image would keep width by height by 4 bytes of the memory of the driver.</remarks>
+    internal static Task<ToolImage> ReadBack(Texture2D texture, int width, int height)
     {
-        Task<byte[]> pixels;
+        var pixels = new byte[4 * width * height];
         try
         {
-            pixels = texture.GetDataAsync();
+            texture.GetData(pixels);
         }
         finally
         {
             texture.Dispose();
         }
-        // The fence of the read ends in a later frame, on the UI thread. The encode then moves to a worker.
-        var data = await pixels.ConfigureAwait(false);
-        return await Task.Run(() => AgentImages.Png(width, height, data)).ConfigureAwait(false);
+
+        return Task.Run(() => AgentImages.Png(width, height, pixels));
     }
 
-    /// <summary>The PNG image of the pixels of a capture, encoded on a worker.</summary>
-    private static async Task<ToolImage> Encode(Task<(byte[] Bgra, int Width, int Height)> pixels)
+    /// <summary>True when a stage shows the system with a nickname.</summary>
+    private static bool Same(SceneStage stage, string nickname) =>
+        stage.System.Nickname.Equals(nickname, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The PNG image of the pixels of a capture, made smaller to the largest side and encoded on a
+    /// worker.</summary>
+    private static async Task<ToolImage> Encode(Task<(byte[] Bgra, int Width, int Height)> pixels, int maxSide)
     {
         var (bgra, width, height) = await pixels.ConfigureAwait(false);
-        return AgentImages.Png(width, height, bgra);
+        var (fit, w, h) = AgentImages.Fit(bgra, width, height, maxSide);
+        return AgentImages.Png(w, h, fit);
     }
 
     /// <summary>The window read its back buffer at the end of a frame. Each capture of that frame gets the part of its
@@ -203,7 +262,7 @@ internal sealed class AgentRender : IDisposable
             else
             {
                 done.TrySetException(new EditException(new EditError(EditErrorKind.Refused, "PanelHidden",
-                    AgentTexts.Error("capture_hidden", ("panel", panelId)))));
+                    AgentTexts.Error("capture_hidden", ("panel", panelId))) { Field = "panel" }));
             }
         }
         captures.Clear();
@@ -214,7 +273,7 @@ internal sealed class AgentRender : IDisposable
     /// scripts of the call, so an edit of the user after the call does not change the image. When the game data loads
     /// again, the image stops, because the player uses the resources of the session.
     /// </summary>
-    private sealed class CutsceneJob : IDisposable
+    private sealed class CutsceneJob : IFrameJob
     {
         private readonly EditorWindow window;
         private readonly EditorSession session;
@@ -249,16 +308,17 @@ internal sealed class AgentRender : IDisposable
 
         public Task<CutsceneShotDone> Result => done.Task;
 
+        public bool Cancelled => cancelled;
+
         /// <summary>Notes a cancel of the call. It can run on any thread.</summary>
         public void Cancel() => cancelled = true;
 
-        /// <summary>Steps the player within a budget. Gives true when the image ended: rendered, refused or
-        /// cancelled.</summary>
+        /// <summary>Steps the player within a budget, and renders it when it reached its time.</summary>
         public bool Frame(TimeSpan budget)
         {
             if (cancelled)
             {
-                done.TrySetCanceled();
+                EndCancelled();
                 return true;
             }
 
@@ -285,31 +345,38 @@ internal sealed class AgentRender : IDisposable
             return true;
         }
 
-        public void Fail(EditErrorKind kind, string detail, string message) =>
-            done.TrySetException(new EditException(new EditError(kind, detail, message)));
+        public void Fail(EditError error) => done.TrySetException(new EditException(error));
+
+        public void EndCancelled() => done.TrySetCanceled();
 
         public void Dispose() => clock.Dispose();
 
-        /// <summary>Renders the player through the camera of the call into a texture and starts the read-back.</summary>
+        private void Fail(EditErrorKind kind, string detail, string message, string? field = null) =>
+            Fail(new EditError(kind, detail, message) { Field = field });
+
+        /// <summary>Renders the player through the camera of the call into a texture and reads the image.</summary>
         private void Render(CutscenePlayer player)
         {
             if (camera != null)
             {
                 if (player.Find(camera) is not { } entity)
                 {
-                    Fail(EditErrorKind.NotFound, "CameraNotFound", AgentTexts.Error("render_camera_none", ("camera", camera)));
+                    Fail(EditErrorKind.NotFound, "CameraNotFound",
+                        AgentTexts.Error("render_camera_none", ("camera", camera)), "camera");
                     return;
                 }
 
                 if (entity.Type != EntityTypes.Camera || !player.UseCamera(camera))
                 {
-                    Fail(EditErrorKind.InvalidValue, "NotACamera", AgentTexts.Error("render_camera_type", ("camera", camera)));
+                    Fail(EditErrorKind.InvalidValue, "NotACamera",
+                        AgentTexts.Error("render_camera_type", ("camera", camera)), "camera");
                     return;
                 }
             }
             else if (player.CameraName == null)
             {
-                Fail(EditErrorKind.Refused, "NoCamera", AgentTexts.Error("render_no_camera", ("time", Seconds(player.Time))));
+                Fail(EditErrorKind.Refused, "NoCamera", AgentTexts.Error("render_no_camera", ("time", Seconds(player.Time))),
+                    "camera");
                 return;
             }
 

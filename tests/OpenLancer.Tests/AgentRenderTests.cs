@@ -8,6 +8,7 @@ using LibreLancer;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImageLib;
 using LibreLancer.Render.Cameras;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Agent;
 using OpenLancer.Editor.Cutscene;
@@ -36,11 +37,11 @@ public sealed class AgentRenderTests
         Assert.Equal(70, ShotCamera.SceneFov(4f / 3), 3);
         foreach (var aspect in new[] { 4f / 3, 1.6f, 16f / 9 })
         {
-            var scene = new LookAtCamera { GameFOV = true, ZRange = new Vector2(1, ShotCamera.Far) };
+            var scene = new LookAtCamera { GameFOV = true, ZRange = new Vector2(1, ShotCamera.SceneFar) };
             scene.Update(aspect * 100, 100, new Vector3(0, 0, 100), Vector3.Zero);
             var shot = new ShotCamera(new Vector3(0, 0, 100), Vector3.Zero, ShotCamera.SceneFov(aspect));
 
-            var projection = shot.Projection(aspect, 1, ShotCamera.Far);
+            var projection = shot.Projection(aspect, 1, ShotCamera.SceneFar);
             Assert.Equal(scene.Projection.M11, projection.M11, 4);
             Assert.Equal(scene.Projection.M22, projection.M22, 4);
             Assert.Equal(scene.View, shot.View);
@@ -209,13 +210,13 @@ public sealed class AgentRenderTests
     {
         static Zone Zone(ShapeKind shape, Vector3 size) => new() { Shape = shape, Size = size };
 
-        Assert.Equal(500, SceneView.ZoneRadius(Zone(ShapeKind.Sphere, new Vector3(500, 0, 0))));
-        Assert.Equal(900, SceneView.ZoneRadius(Zone(ShapeKind.Ellipsoid, new Vector3(100, 900, 300))));
-        Assert.Equal(new Vector3(100, 200, 300).Length() / 2, SceneView.ZoneRadius(Zone(ShapeKind.Box, new Vector3(100, 200, 300))), 3);
+        Assert.Equal(500, SceneStage.ZoneRadius(Zone(ShapeKind.Sphere, new Vector3(500, 0, 0))));
+        Assert.Equal(900, SceneStage.ZoneRadius(Zone(ShapeKind.Ellipsoid, new Vector3(100, 900, 300))));
+        Assert.Equal(new Vector3(100, 200, 300).Length() / 2, SceneStage.ZoneRadius(Zone(ShapeKind.Box, new Vector3(100, 200, 300))), 3);
         Assert.Equal(MathF.Sqrt(750 * 750 + 2000 * 2000),
-            SceneView.ZoneRadius(Zone(ShapeKind.Cylinder, new Vector3(750, 4000, 0))), 2);
+            SceneStage.ZoneRadius(Zone(ShapeKind.Cylinder, new Vector3(750, 4000, 0))), 2);
         Assert.Equal(MathF.Sqrt(5000 * 5000 + 100 * 100),
-            SceneView.ZoneRadius(Zone(ShapeKind.Ring, new Vector3(5000, 200, 3000))), 2);
+            SceneStage.ZoneRadius(Zone(ShapeKind.Ring, new Vector3(5000, 200, 3000))), 2);
     }
 
     /// <summary>The render bench turns the frame of the system about the vertical axis, one step for each image, and
@@ -272,5 +273,187 @@ public sealed class AgentRenderTests
         Assert.Contains("duration = 12", script);
         Assert.Equal(otherScript, Encoding.ASCII.GetString(file).ReplaceLineEndings("\n"));
         Assert.Contains("duration = 3", Encoding.ASCII.GetString(named));
+    }
+
+    /// <summary>The list of the visible items clips at the planes of the render, so it never names an item that the
+    /// image cannot show.</summary>
+    [Fact]
+    public void TheVisibleItemsStopAtTheFarPlane()
+    {
+        var shot = new ShotCamera(new Vector3(0, 0, 10_000), Vector3.Zero, 70);
+        (string, Vector3, float)[] items =
+        [
+            ("near", Vector3.Zero, 100),
+            ("beyond", new Vector3(0, 0, -20_000_000), 100),
+            ("across", new Vector3(0, 0, -9_990_500), 1000),
+        ];
+
+        var (visible, total) = shot.Visible(items, Width, Height, 10);
+
+        Assert.Equal(ShotCamera.SceneFar, shot.Far);
+        Assert.Equal(["near", "across"], visible.Select(i => i.Item));
+        Assert.Equal(2, total);
+    }
+
+    /// <summary>A camera farther away than the far plane of the Scene sees twice its distance. So a frame of a very
+    /// large system shows each framed item.</summary>
+    [Fact]
+    public void AFarCameraSeesTwiceItsDistance()
+    {
+        var far = new ShotCamera(new Vector3(0, 0, 100_000_000), Vector3.Zero, 70);
+        var framed = ShotCamera.Frame([(Vector3.Zero, 20_000_000f), (new Vector3(30_000_000, 0, 0), 10f)], 1.6f);
+
+        Assert.Equal(200_000_000, far.Far);
+        Assert.NotNull(far.Project(Vector3.Zero, 10, Width, Height));
+        Assert.True(framed.Far > ShotCamera.SceneFar);
+        Assert.NotNull(framed.Project(Vector3.Zero, 20_000_000, Width, Height));
+        Assert.NotNull(framed.Project(new Vector3(30_000_000, 0, 0), 10, Width, Height));
+    }
+
+    /// <summary>A panel larger than the image limit becomes smaller by a whole factor, and each pixel is the mean of
+    /// its square. A panel that fits stays as it is.</summary>
+    [Fact]
+    public void ALargePanelBecomesSmallerByAWholeFactor()
+    {
+        // Five by three pixels. Each pixel holds 10 times its column in B, its row in G, 200 in R and 255 in A.
+        const int w = 5, h = 3;
+        var bgra = new byte[4 * w * h];
+        for (var i = 0; i < w * h; i++)
+        {
+            bgra[4 * i] = (byte)(10 * (i % w));
+            bgra[4 * i + 1] = (byte)(i / w);
+            bgra[4 * i + 2] = 200;
+            bgra[4 * i + 3] = 255;
+        }
+
+        var (same, sameWidth, sameHeight) = AgentImages.Fit(bgra, w, h, 5);
+        var (small, width, height) = AgentImages.Fit(bgra, w, h, 3);
+
+        Assert.Same(bgra, same);
+        Assert.Equal((5, 3), (sameWidth, sameHeight));
+        Assert.Equal((3, 2), (width, height));
+        // The first pixel is the mean of columns 0 and 1 of rows 0 and 1. The last column and row hold the rest.
+        Assert.Equal([5, 0, 200, 255], small[..4]);
+        Assert.Equal([40, 0, 200, 255], small[8..12]);
+        Assert.Equal([5, 2, 200, 255], small[12..16]);
+        Assert.Equal([40, 2, 200, 255], small[20..24]);
+        Assert.Throws<ArgumentOutOfRangeException>(() => AgentImages.Fit(bgra, w, h, 0));
+    }
+
+    /// <summary>The jobs of the render service run one at a time, the first job with the whole budget of a frame. So many
+    /// cutscene images take no more time in a frame than one image.</summary>
+    [Fact]
+    public void OneFrameJobRunsAtATimeWithTheWholeBudget()
+    {
+        var jobs = new FrameJobs(3, TimeSpan.FromMilliseconds(12), Fault);
+        var first = new FakeFrameJob(frames: 2);
+        var second = new FakeFrameJob(frames: 1);
+
+        Assert.True(jobs.TryAdd(first));
+        Assert.True(jobs.TryAdd(second));
+        jobs.Frame();
+        jobs.Frame();
+        var afterFirst = (first.Budgets.Count, second.Budgets.Count, jobs.Count);
+        jobs.Frame();
+
+        Assert.Equal((2, 0, 1), afterFirst);
+        Assert.Equal([TimeSpan.FromMilliseconds(12), TimeSpan.FromMilliseconds(12)], first.Budgets);
+        Assert.Single(second.Budgets);
+        Assert.Equal(0, jobs.Count);
+        Assert.True(first.Disposed && second.Disposed);
+    }
+
+    /// <summary>A full queue takes no job, so an agent cannot start more images than the editor can render.</summary>
+    [Fact]
+    public void AFullQueueTakesNoJob()
+    {
+        var jobs = new FrameJobs(2, TimeSpan.FromMilliseconds(12), Fault);
+
+        Assert.True(jobs.TryAdd(new FakeFrameJob(frames: 5)));
+        Assert.True(jobs.TryAdd(new FakeFrameJob(frames: 5)));
+        Assert.False(jobs.TryAdd(new FakeFrameJob(frames: 5)));
+        Assert.Equal(2, jobs.Count);
+    }
+
+    /// <summary>A cancelled job ends in the next frame, also while it waits for its turn, and gives its place to a new
+    /// job.</summary>
+    [Fact]
+    public void ACancelledJobEndsWhileItWaits()
+    {
+        var jobs = new FrameJobs(2, TimeSpan.FromMilliseconds(12), Fault);
+        var running = new FakeFrameJob(frames: 5);
+        var waiting = new FakeFrameJob(frames: 5);
+        jobs.TryAdd(running);
+        jobs.TryAdd(waiting);
+
+        waiting.Cancelled = true;
+        jobs.Frame();
+
+        Assert.True(waiting.EndedCancelled && waiting.Disposed);
+        Assert.Empty(waiting.Budgets);
+        Assert.Single(running.Budgets);
+        Assert.Equal(1, jobs.Count);
+        Assert.True(jobs.TryAdd(new FakeFrameJob(frames: 1)));
+    }
+
+    /// <summary>A job that fails with an exception ends its call with step_failed. The window draws on, and the next job
+    /// runs in the next frame. Fail ends each job, for example when the profile closes.</summary>
+    [Fact]
+    public void AFaultEndsItsJobAndTheNextJobRuns()
+    {
+        var jobs = new FrameJobs(3, TimeSpan.FromMilliseconds(12), Fault);
+        var broken = new FakeFrameJob(frames: 1) { Throws = true };
+        var next = new FakeFrameJob(frames: 5);
+        var last = new FakeFrameJob(frames: 5);
+        jobs.TryAdd(broken);
+        jobs.TryAdd(next);
+        jobs.TryAdd(last);
+
+        jobs.Frame();
+        jobs.Frame();
+        jobs.Fail(new EditError(EditErrorKind.NotAvailable, "ProfileClosed", "closed"));
+
+        Assert.Equal(("step_failed", "ToolFailed"), (Snake(broken.Error!.Kind), broken.Error.Detail));
+        Assert.Contains("broken", broken.Error.Message);
+        Assert.True(broken.Disposed);
+        Assert.Single(next.Budgets);
+        Assert.Equal("ProfileClosed", next.Error!.Detail);
+        Assert.Equal("ProfileClosed", last.Error!.Detail);
+        Assert.True(next.Disposed && last.Disposed);
+        Assert.Equal(0, jobs.Count);
+    }
+
+    private static EditError Fault(Exception e) => new(EditErrorKind.StepFailed, "ToolFailed", e.Message);
+
+    private static string Snake(EditErrorKind kind) => AgentTools.Snake(kind.ToString());
+
+    /// <summary>A job that ends after a number of frames and notes each call.</summary>
+    private sealed class FakeFrameJob(int frames) : IFrameJob
+    {
+        public System.Collections.Generic.List<TimeSpan> Budgets { get; } = [];
+
+        public bool Cancelled { get; set; }
+
+        public bool Throws { get; init; }
+
+        public EditError? Error { get; private set; }
+
+        public bool EndedCancelled { get; private set; }
+
+        public bool Disposed { get; private set; }
+
+        public bool Frame(TimeSpan budget)
+        {
+            if (Throws)
+                throw new InvalidOperationException("The job is broken.");
+            Budgets.Add(budget);
+            return Budgets.Count >= frames;
+        }
+
+        public void Fail(EditError error) => Error = error;
+
+        public void EndCancelled() => EndedCancelled = true;
+
+        public void Dispose() => Disposed = true;
     }
 }

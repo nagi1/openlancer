@@ -83,13 +83,16 @@ internal sealed class FakeAgentViews : IAgentViews
 
     public AgentPanel? Panel { get; private set; }
 
+    /// <summary>The largest side of the last capture.</summary>
+    public int? PanelSide { get; private set; }
+
     public void Open(ViewKind kind, string target) => Opened.Add((kind, target));
 
     public SelectionView Select(SelectTarget target, bool frame)
     {
         Selected.Add((target, frame));
         return new SelectionView(target.Ref, target.Section != null ? SelectionPlace.Inspector : SelectionPlace.Mission,
-            frame);
+            true, frame);
     }
 
     public Func<CancellationToken, Task<(SceneShotView View, ToolImage Image)>> RenderScene(SceneShotRequest request)
@@ -110,9 +113,11 @@ internal sealed class FakeAgentViews : IAgentViews
         return _ => Task.FromResult((view, Image));
     }
 
-    public Func<CancellationToken, Task<(PanelShotView View, ToolImage Image)>> CapturePanel(AgentPanel panel)
+    public Func<CancellationToken, Task<(PanelShotView View, ToolImage Image)>> CapturePanel(AgentPanel panel,
+        int maxSide)
     {
         Panel = panel;
+        PanelSide = maxSide;
         return _ => Task.FromResult((new PanelShotView(panel, 2, 1), Image));
     }
 }

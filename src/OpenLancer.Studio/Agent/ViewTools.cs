@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
+using OpenLancer.Data.Ini;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Thn;
 
@@ -31,20 +32,20 @@ public enum ViewKind
     Cutscene,
 }
 
-/// <summary>Where the editor shows the item of <c>select_items</c>.</summary>
+/// <summary>Where the editor selects the item of <c>select_items</c>.</summary>
 public enum SelectionPlace
 {
-    /// <summary>The Scene shows the item, and the Inspector shows its fields.</summary>
+    /// <summary>The Scene selects the item, and the Inspector shows its fields.</summary>
     Scene,
 
-    /// <summary>Only the Inspector shows the item, for example a loadout or an object of a system that is not
-    /// open.</summary>
+    /// <summary>Only the Inspector shows the item, for example a loadout, or an object of a system that the Scene does
+    /// not show.</summary>
     Inspector,
 
-    /// <summary>The Mission tab shows the item.</summary>
+    /// <summary>The Mission tab selects the item.</summary>
     Mission,
 
-    /// <summary>The Cutscene tab shows the item.</summary>
+    /// <summary>The Cutscene tab selects the item.</summary>
     Cutscene,
 }
 
@@ -66,6 +67,9 @@ public sealed record SelectTarget(string Ref)
     /// file.</summary>
     public string? System { get; init; }
 
+    /// <summary>True when <see cref="Section"/> is a section of a mission script.</summary>
+    public bool InMission { get; init; }
+
     /// <summary>The row of a line of a mission section, or null for the whole section.</summary>
     public int? Row { get; init; }
 
@@ -80,9 +84,11 @@ public sealed record SelectTarget(string Ref)
 
 /// <summary>The selection after <c>select_items</c>.</summary>
 /// <param name="Ref">The reference of the selected item.</param>
-/// <param name="Shown">Where the editor shows the item.</param>
+/// <param name="Place">Where the editor selects the item: a center tab, or only the Inspector.</param>
+/// <param name="Shown">True when the user sees the selection after the call. False when the tab of the item does not
+/// show. That tab then selects the item when the user shows it.</param>
 /// <param name="Framed">True when the view moved to show the item.</param>
-public sealed record SelectionView(string Ref, SelectionPlace Shown, bool Framed);
+public sealed record SelectionView(string Ref, SelectionPlace Place, bool Shown, bool Framed);
 
 /// <summary>An item that a <c>render_scene</c> image frames.</summary>
 /// <param name="Ref">The reference of the call, for the error of an item that the Scene does not show.</param>
@@ -92,7 +98,8 @@ public sealed record SceneShotFrame(string Ref, SectionRef? Section);
 /// <summary>A call of <c>render_scene</c> after the check of its arguments.</summary>
 /// <param name="System">The nickname of the system.</param>
 /// <param name="Camera">The camera of the call, or null to frame <see cref="Frame"/>.</param>
-/// <param name="Frame">The items to frame. An empty list frames the objects of the whole system.</param>
+/// <param name="Frame">The items to frame, each one an item of the system. An empty list frames the objects of the
+/// whole system.</param>
 /// <param name="Zones">True to show the zone volumes and the patrol paths.</param>
 /// <param name="MaxVisible">The most rows of the visible items.</param>
 public sealed record SceneShotRequest(string System, ShotCamera? Camera, IReadOnlyList<SceneShotFrame> Frame, int Width,
@@ -126,8 +133,8 @@ public sealed record VisibleRow(string Ref, float X, float Y, float Radius, floa
 /// <summary>The result of <c>render_scene</c>, beside its image.</summary>
 /// <param name="System">The <c>system:</c> reference.</param>
 /// <param name="Zones">True when the image shows the zone volumes and the patrol paths.</param>
-/// <param name="Visible">The items that the image shows, the largest first.</param>
-/// <param name="VisibleTotal">The number of all items that the image shows.</param>
+/// <param name="Visible">The items in the view of the image, the largest first.</param>
+/// <param name="VisibleTotal">The number of all items in the view of the image.</param>
 public sealed record SceneShotView(string System, int Width, int Height, ShotView Camera, bool Zones,
     IReadOnlyList<VisibleRow> Visible, int VisibleTotal);
 
@@ -164,18 +171,23 @@ public interface IAgentViews
     /// <param name="target">The nickname of the system, or the install path of the script or of the cutscene.</param>
     void Open(ViewKind kind, string target);
 
-    /// <summary>Selects an item. With <paramref name="frame"/>, the view moves to show it: the Scene camera, the graph of
-    /// the Mission tab or the free camera of the Cutscene tab.</summary>
+    /// <summary>
+    /// Selects an item. With <paramref name="frame"/>, the editor opens the view of the item, shows its tab and moves the
+    /// view to it. The view is the Scene camera, the graph of the Mission tab or the free camera of the Cutscene tab.
+    /// Without it, the open views, the tabs and the cameras stay.
+    /// </summary>
     SelectionView Select(SelectTarget target, bool frame);
 
-    /// <summary>Renders the open system of the Scene from a camera. The camera of the user does not move.</summary>
+    /// <summary>Renders a system from a camera. The camera of the user does not move, and the Scene keeps its
+    /// system.</summary>
     Func<CancellationToken, Task<(SceneShotView View, ToolImage Image)>> RenderScene(SceneShotRequest request);
 
     /// <summary>Renders a cutscene at a time. The preview of the user does not change.</summary>
     Func<CancellationToken, Task<(CutsceneShotView View, ToolImage Image)>> RenderCutscene(CutsceneShotRequest request);
 
     /// <summary>Captures a panel as the user sees it, after the next frame.</summary>
-    Func<CancellationToken, Task<(PanelShotView View, ToolImage Image)>> CapturePanel(AgentPanel panel);
+    /// <param name="maxSide">The most pixels on each side of the image. A larger panel gives a smaller image.</param>
+    Func<CancellationToken, Task<(PanelShotView View, ToolImage Image)>> CapturePanel(AgentPanel panel, int maxSide);
 }
 
 /// <summary>
@@ -184,6 +196,8 @@ public interface IAgentViews
 /// references on the session. The views of the editor then do the work. No tool changes the data. <c>open_view</c> and
 /// <c>select_items</c> change what the user sees.
 /// </summary>
+/// <remarks>A view of an item of a tool group that the user hides gives <c>not_available</c>, as the tools of that group
+/// do (decision D725).</remarks>
 internal static class ViewTools
 {
     /// <summary>The width of an image when the call gives none.</summary>
@@ -209,14 +223,17 @@ internal static class ViewTools
         switch (given[0])
         {
             case "system":
+                RequireGroup(call, ToolGroup.Scene);
                 (kind, target) = (ViewKind.System, SceneQueries.System(session, text).Nickname);
-                reference = SystemRef(target);
+                reference = SceneQueries.SystemRef(target);
                 break;
             case "mission":
+                RequireGroup(call, ToolGroup.Missions);
                 var script = Existing(session, ScriptRef.Parse(text));
                 (kind, target, reference) = (ViewKind.Mission, script.Path, script.ToString());
                 break;
             default:
+                RequireGroup(call, ToolGroup.Cutscenes);
                 (kind, target) = (ViewKind.Cutscene, ItemRefs.ResolveCutscene(session, ItemRefs.Parse(text)));
                 reference = CutsceneQueries.Ref(target);
                 break;
@@ -237,6 +254,8 @@ internal static class ViewTools
             });
         }
         var target = Target(call.Session, refs[0]);
+        if (GroupOf(target) is { } group)
+            RequireGroup(call, group);
         return ToolResult.Of(Views(call, "select_items").Select(target, call.Args.Flag("frame")));
     }
 
@@ -267,7 +286,7 @@ internal static class ViewTools
             throw new EditException(new EditError(EditErrorKind.Limit, "FrameItems",
                 AgentTexts.Error("limit_frame", ("max", call.Limits.MaxListRows))) { Field = "frame" });
         }
-        var frame = refs.Select(r => Frame(session, r)).ToList();
+        var frame = refs.Select(r => Frame(session, system, r)).ToList();
         return Image(Views(call, "render_scene").RenderScene(
             new SceneShotRequest(system, camera, frame, width, height, args.Flag("zones"), call.Limits.MaxListRows)));
     }
@@ -292,7 +311,16 @@ internal static class ViewTools
     public static ToolStep CapturePanel(ToolCall call)
     {
         var panel = Enum.GetValues<AgentPanel>().First(p => AgentTools.Snake(p.ToString()) == call.Args.Text("panel"));
-        return Image(Views(call, "capture_panel").CapturePanel(panel));
+        var group = panel switch
+        {
+            AgentPanel.Scene => ToolGroup.Scene,
+            AgentPanel.Mission => ToolGroup.Missions,
+            AgentPanel.Timeline => ToolGroup.Cutscenes,
+            _ => (ToolGroup?)null,
+        };
+        if (group is { } hidden)
+            RequireGroup(call, hidden);
+        return Image(Views(call, "capture_panel").CapturePanel(panel, call.Limits.RenderPixels));
     }
 
     /// <summary>The tail of an image call: it waits for the image, then gives the result with the image.</summary>
@@ -303,18 +331,33 @@ internal static class ViewTools
             return ToolResult.Of(view, image);
         });
 
-    /// <summary>A script that the edit view has.</summary>
+    /// <summary>A script of the edit view, with its install path as the session stores it.</summary>
     /// <exception cref="EditException"><see cref="EditErrorKind.NotFound"/>: the edit view has no such script.</exception>
-    private static ScriptRef Existing(EditSession session, ScriptRef script)
-    {
-        _ = session.Missions.Model(script.Path);
-        return script;
-    }
+    private static ScriptRef Existing(EditSession session, ScriptRef script) =>
+        new(session.Missions.Model(script.Path).Script);
 
     /// <summary>The views of the host. The tool table gives <c>not_available</c> to a host without a window before the
     /// handler runs, so this is a guard.</summary>
     private static IAgentViews Views(ToolCall call, string tool) => call.Host.Views ?? throw new EditException(
         new EditError(EditErrorKind.NotAvailable, "EditorOnly", AgentTexts.Error("editor_only", ("tool", tool))));
+
+    /// <summary>Refuses a view of an item of a tool group that the user hides (decision D725 of the MCP1
+    /// design).</summary>
+    /// <exception cref="EditException"><see cref="EditErrorKind.NotAvailable"/> with the detail
+    /// <c>GroupHidden</c>.</exception>
+    private static void RequireGroup(ToolCall call, ToolGroup group)
+    {
+        if (call.Host.HiddenGroups.Contains(group))
+            throw new EditException(AgentTools.GroupHidden(group));
+    }
+
+    /// <summary>The tool group of an item of <c>select_items</c>, or null for an item of no group, for example a
+    /// loadout.</summary>
+    private static ToolGroup? GroupOf(SelectTarget target) =>
+        target.Element != null || target.Cutscene != null ? ToolGroup.Cutscenes
+        : target.Script != null || target.InMission ? ToolGroup.Missions
+        : target.System != null ? ToolGroup.Scene
+        : null;
 
     /// <summary>The size of the image of a call: the arguments <c>width</c> and <c>height</c>, or 1024 by 640.</summary>
     /// <exception cref="EditException"><see cref="EditErrorKind.Limit"/> for a side above the render limit (section 8.4
@@ -355,30 +398,58 @@ internal static class ViewTools
                 throw ToolInput.Bad("refs", AgentTexts.Error("select_kind", ("ref", text)));
             default:
                 var section = ItemRefs.ResolveSection(session, reference);
-                return reference.Kind == ItemRefKind.Line
-                    ? new SelectTarget(text) { Section = section, Row = reference.Row }
-                    : new SelectTarget(ItemRefs.Canonical(session, section))
+                var canonical = reference.Kind == ItemRefKind.Line
+                    ? ItemRefs.Format(new ItemReference(ItemRefKind.Line, "")
                     {
-                        Section = section,
-                        System = session.IsSystemFile(section.Path) ? session.SystemNicknameOf(section.Path) : null,
-                    };
+                        Path = section.Path,
+                        Section = section.Id,
+                        Row = reference.Row,
+                    })
+                    : ItemRefs.Canonical(session, section);
+                return new SelectTarget(canonical)
+                {
+                    Section = section,
+                    Row = reference.Kind == ItemRefKind.Line ? reference.Row : null,
+                    System = session.IsSystemFile(section.Path) ? session.SystemNicknameOf(section.Path) : null,
+                    InMission = SectionKeys.IsMissionFile(section.Path),
+                };
         }
     }
 
-    /// <summary>An item to frame: a reference of an item of a system file, or a <c>system:</c> reference for the whole
-    /// system.</summary>
-    private static SceneShotFrame Frame(EditSession session, string text)
+    /// <summary>An item to frame: a reference of an item of the system of the image, or the <c>system:</c> reference of
+    /// that system.</summary>
+    /// <param name="system">The nickname of the system of the image.</param>
+    /// <exception cref="EditException"><see cref="EditErrorKind.InvalidArgument"/> for a reference of another kind or
+    /// of an item of another system, or the error of a reference that does not resolve.</exception>
+    private static SceneShotFrame Frame(EditSession session, string system, string text)
     {
         var reference = ItemRefs.Parse(text);
         if (reference.Kind == ItemRefKind.System)
-            return new SceneShotFrame(text, null);
+        {
+            var named = SceneQueries.System(session, text).Nickname;
+            return named.Equals(system, StringComparison.OrdinalIgnoreCase)
+                ? new SceneShotFrame(text, null)
+                : throw OtherSystem(text, named, system);
+        }
         if (reference.Kind is not (ItemRefKind.Object or ItemRefKind.Zone or ItemRefKind.Light or ItemRefKind.Nebula
             or ItemRefKind.Field or ItemRefKind.Section))
         {
             throw ToolInput.Bad("frame", AgentTexts.Error("render_frame_kind", ("ref", text)));
         }
-        return new SceneShotFrame(text, ItemRefs.ResolveSection(session, reference));
+        var section = ItemRefs.ResolveSection(session, reference);
+        if (!session.IsSystemFile(section.Path) || session.SystemNicknameOf(section.Path) is not { } owner)
+            throw ToolInput.Bad("frame", AgentTexts.Error("render_frame_kind", ("ref", text)));
+        return owner.Equals(system, StringComparison.OrdinalIgnoreCase)
+            ? new SceneShotFrame(text, section)
+            : throw OtherSystem(text, owner, system);
     }
 
-    private static string SystemRef(string nickname) => ItemRefs.Format(new ItemReference(ItemRefKind.System, nickname));
+    /// <summary>The error of an item to frame that is in another system than the image.</summary>
+    private static EditException OtherSystem(string reference, string owner, string system) =>
+        new(new EditError(EditErrorKind.InvalidArgument, "OtherSystem", AgentTexts.Error("render_frame_other_system",
+            ("ref", reference), ("other", owner), ("system", system)))
+        {
+            Field = "frame",
+            Target = reference,
+        });
 }

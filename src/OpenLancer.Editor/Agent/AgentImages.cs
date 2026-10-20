@@ -34,6 +34,49 @@ internal static class AgentImages
     }
 
     /// <summary>
+    /// The pixels of an image with each side at most a number of pixels. An image that fits stays as it is. A larger
+    /// image becomes smaller by a whole factor: each pixel of the result is the mean of a square of pixels of the image.
+    /// The rows keep their order.
+    /// </summary>
+    /// <param name="maxSide">The most pixels on each side of the result, from 1.</param>
+    public static (byte[] Bgra, int Width, int Height) Fit(byte[] bgra, int width, int height, int maxSide)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxSide, 1);
+        var factor = (Math.Max(width, height) + maxSide - 1) / maxSide;
+        if (factor <= 1)
+            return (bgra, width, height);
+        // The last square of a row or a column can be smaller, so the result keeps each edge of the image.
+        var w = (width + factor - 1) / factor;
+        var h = (height + factor - 1) / factor;
+        var result = new byte[4 * w * h];
+        Span<int> sum = stackalloc int[4];
+        for (var y = 0; y < h; y++)
+        {
+            for (var x = 0; x < w; x++)
+            {
+                sum.Clear();
+                var count = 0;
+                for (var sy = y * factor; sy < Math.Min(height, (y + 1) * factor); sy++)
+                {
+                    for (var sx = x * factor; sx < Math.Min(width, (x + 1) * factor); sx++)
+                    {
+                        var i = 4 * (sy * width + sx);
+                        for (var c = 0; c < 4; c++)
+                            sum[c] += bgra[i + c];
+                        count++;
+                    }
+                }
+
+                var o = 4 * (y * w + x);
+                for (var c = 0; c < 4; c++)
+                    result[o + c] = (byte)(sum[c] / count);
+            }
+        }
+
+        return (result, w, h);
+    }
+
+    /// <summary>
     /// The pixels of a rectangle of the back buffer, with the bottom row first as the buffer has them. The rectangle has
     /// the coordinates of the window: the top-left corner and the size in pixels. The part outside the buffer is cut.
     /// Gives null when no part of the rectangle is in the buffer.

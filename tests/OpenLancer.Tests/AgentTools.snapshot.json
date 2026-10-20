@@ -202,7 +202,7 @@
               },
               "render_pixels": {
                 "type": "integer",
-                "description": "The most pixels on each side of an image of render_scene and render_cutscene."
+                "description": "The most pixels on each side of an image of render_scene and render_cutscene. A larger panel of capture_panel gives a smaller image."
               }
             },
             "description": "The limits of one call."
@@ -5985,7 +5985,7 @@
           "frame": {
             "type": "boolean",
             "default": true,
-            "description": "Move the view to the item: the camera of the Scene, the graph of the Mission tab or the free camera of the Cutscene tab."
+            "description": "Open the view of the item, show its tab and move the view to the item. The view is the camera of the Scene, the graph of the Mission tab or the free camera of the Cutscene tab. With false, the open views, the tabs and the cameras stay. An item of a system or a mission that is not open then shows only in the Inspector."
           }
         },
         "additionalProperties": false,
@@ -6000,14 +6000,18 @@
             "type": "string",
             "description": "The reference of the selected item."
           },
-          "shown": {
+          "place": {
             "enum": [
               "scene",
               "inspector",
               "mission",
               "cutscene"
             ],
-            "description": "Where the editor shows the item: scene, inspector, mission or cutscene."
+            "description": "Where the editor selects the item: scene, mission or cutscene for the item of a tab, else inspector."
+          },
+          "shown": {
+            "type": "boolean",
+            "description": "True when the user sees the selection after the call. False when the tab of the item does not show. That tab then selects the item when the user shows it."
           },
           "framed": {
             "type": "boolean",
@@ -6074,6 +6078,7 @@
           {
             "required": [
               "ref",
+              "place",
               "shown",
               "framed"
             ],
@@ -6100,7 +6105,7 @@
     {
       "name": "render_scene",
       "title": "Render an image of a system",
-      "description": "Renders an image of a system from a camera. The tool does not move the camera of the user. Only the editor host can render. The system must be the system that the Scene shows. The result gives the place of each item in the image.",
+      "description": "Renders an image of a system from a camera. The tool does not move the camera of the user and does not open the system in the Scene. Only the editor host can render. Y is up. The result gives the place of each item in the image.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6116,16 +6121,20 @@
               "position": {
                 "type": "array",
                 "items": {
-                  "type": "number"
+                  "type": "number",
+                  "minimum": -10000000,
+                  "maximum": 10000000
                 },
                 "minItems": 3,
                 "maxItems": 3,
-                "description": "The position of the camera in meters: X, Y and Z."
+                "description": "The position of the camera in meters: X, Y and Z. Y is up."
               },
               "look_at": {
                 "type": "array",
                 "items": {
-                  "type": "number"
+                  "type": "number",
+                  "minimum": -10000000,
+                  "maximum": 10000000
                 },
                 "minItems": 3,
                 "maxItems": 3,
@@ -6143,7 +6152,7 @@
               "position",
               "look_at"
             ],
-            "description": "The camera of the image. Without it, the camera frames the items of frame, or the whole system."
+            "description": "The camera of the image. Without it, the camera frames the items of frame, or the whole system. A view straight down has -Z at the top of the image."
           },
           "frame": {
             "type": "array",
@@ -6153,7 +6162,7 @@
               "maxLength": 1024
             },
             "minItems": 1,
-            "description": "The references of the items to show, for example obj:my_station_1. The camera looks at them from above and from the front, as the Scene frames an item."
+            "description": "The references of the items to show, for example obj:my_station_1. Each item must be in the system of the image. The camera looks at them from above and from the front, as the Scene frames an item."
           },
           "width": {
             "type": "integer",
@@ -6170,7 +6179,7 @@
           "zones": {
             "type": "boolean",
             "default": true,
-            "description": "Show the volumes of the zones, nebulae and asteroid fields, and the patrol paths."
+            "description": "Show the volumes of the zones, nebulae and asteroid fields, and the patrol paths. The visible items then also include the zones."
           }
         },
         "additionalProperties": false
@@ -6257,11 +6266,11 @@
                 "distance"
               ]
             },
-            "description": "The items in the image, the largest first, with their places in pixels."
+            "description": "The items whose bounding spheres are in the view, the largest first, with their places in pixels. Another item can hide an item of the list. An item whose center is behind the camera is not in the list."
           },
           "visible_total": {
             "type": "integer",
-            "description": "The number of all items in the image. The list can have fewer rows."
+            "description": "The number of all items in the view. The list can have fewer rows."
           },
           "rev": {
             "type": "string",
@@ -6515,7 +6524,7 @@
     {
       "name": "capture_panel",
       "title": "Capture a panel of the editor",
-      "description": "Gives an image of a panel of the editor as the user sees it, with its marks and labels, after the next frame. This tool changes nothing. Only the editor host has this tool.",
+      "description": "Gives an image of a panel of the editor as the user sees it, with its marks and labels, after the next frame. A panel larger than the image limit gives a smaller image. This tool changes nothing. Only the editor host has this tool.",
       "inputSchema": {
         "type": "object",
         "properties": {

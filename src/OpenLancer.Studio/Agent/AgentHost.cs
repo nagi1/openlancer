@@ -39,7 +39,7 @@ public sealed record AgentLimits
 
     /// <summary>The most pixels on each side of an image of <c>render_scene</c> and <c>render_cutscene</c>. A larger
     /// width or height gives the error <c>limit</c>, because a large image takes GPU time and memory in the frame of the
-    /// editor.</summary>
+    /// editor. A larger panel of <c>capture_panel</c> gives a smaller image.</summary>
     public int RenderPixels { get; init; } = 2048;
 
     /// <summary>The allowed range of <see cref="MaxListRows"/>. <see cref="ListRows"/> goes from 1 to
@@ -62,7 +62,8 @@ public sealed record AgentLimits
     public static readonly (int Min, int Max) RequestMegabytesRange = (1, 64);
 
     /// <summary>The allowed range of <see cref="RenderPixels"/>.</summary>
-    public static readonly (int Min, int Max) RenderPixelsRange = (256, 4096);
+    /// <remarks>Decision D722 of the MCP1 design allows at most 2048 pixels on each side.</remarks>
+    public static readonly (int Min, int Max) RenderPixelsRange = (256, 2048);
 
     /// <summary>The limits with each value in its allowed range: from the smallest useful value to the largest value
     /// that keeps the editor responsive and the result small enough for a model. The settings file can hold any

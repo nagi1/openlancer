@@ -16,7 +16,8 @@ namespace OpenLancer.Editor.Agent;
 /// data loads, it opens a system in the Scene and renders images of 1024 by 640 through the views of the agent tools, as
 /// <c>render_scene</c> does: one image to warm up, then one image from each of 10 directions around the system. For each
 /// image, it writes two times to the log: the session part of the call on the UI thread, and the time until the PNG is
-/// ready. The gate is a median session part under 100 ms. Then the editor closes. It needs no input.
+/// ready. The session part holds the whole GPU time of the image, because the read of the pixels waits for the GPU. The
+/// gate is a median session part under 100 ms. Then the editor closes. It needs no input.
 /// </summary>
 internal sealed class AgentRenderBench(EditorWindow window, IAgentViews views, string system)
 {
@@ -115,12 +116,18 @@ internal sealed class AgentRenderBench(EditorWindow window, IAgentViews views, s
         Start(next++);
     }
 
-    /// <summary>Starts an image: the session part of <c>render_scene</c> runs now, and the PNG ends in a later
-    /// frame.</summary>
+    /// <summary>Starts an image: the session part of <c>render_scene</c> runs now, with the render and the read of the
+    /// pixels. The PNG encode ends on a worker.</summary>
     private void Start(int index)
     {
-        var scene = window.Scene;
-        var framed = ShotCamera.Frame(scene.ShotItems(false).Select(i => (i.Center, i.Radius)), Width / (float)Height);
+        if (window.Scene.Stage is not { } stage)
+        {
+            Fail($"The Scene did not open the system {system}.");
+            Finish();
+            return;
+        }
+
+        var framed = ShotCamera.Frame(stage.ShotItems(false).Select(i => (i.Center, i.Radius)), Width / (float)Height);
         var start = Stopwatch.GetTimestamp();
         try
         {

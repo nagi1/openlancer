@@ -25,7 +25,7 @@ internal sealed class ShotLens : ICamera
 
     /// <summary>The camera of the image with the planes of the camera.</summary>
     public static ShotLens Of(ShotCamera shot, int width, int height) =>
-        new(shot, width, height, new Vector2(shot.Near, ShotCamera.Far));
+        new(shot, width, height, new Vector2(shot.Near, shot.Far));
 
     public Matrix4x4 ViewProjection { get; }
 

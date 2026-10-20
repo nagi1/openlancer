@@ -112,7 +112,8 @@ public sealed class AgentViewToolTests
         var empty = Error(host, "select_items", """{ "refs": [] }""");
 
         Assert.Equal("obj:Li01_01", (string?)station["ref"]);
-        Assert.Equal("inspector", (string?)station["shown"]);
+        Assert.Equal("inspector", (string?)station["place"]);
+        Assert.True((bool)station["shown"]!);
         Assert.True((bool)station["framed"]!);
         Assert.False((bool)unframed["framed"]!);
         var (target, frame) = views.Selected[0];
@@ -239,7 +240,8 @@ public sealed class AgentViewToolTests
         Assert.Equal(("not_available", "GroupHidden"), (hidden.Code, hidden.Detail));
         Assert.Null(views.Scene);
         Assert.Equal(256, new AgentLimits { RenderPixels = 1 }.Clamped().RenderPixels);
-        Assert.Equal(4096, new AgentLimits { RenderPixels = 100_000 }.Clamped().RenderPixels);
+        // Decision D722: at most 2048 pixels on each side, also as a setting.
+        Assert.Equal(2048, new AgentLimits { RenderPixels = 100_000 }.Clamped().RenderPixels);
     }
 
     [Fact]
@@ -279,6 +281,7 @@ public sealed class AgentViewToolTests
 
         Assert.False(console.IsError, console.Text);
         Assert.Equal(AgentPanel.Console, views.Panel);
+        Assert.Equal(new AgentLimits().RenderPixels, views.PanelSide);
         Assert.Equal("console", (string?)console.Content["panel"]);
         Assert.Equal([FakeAgentViews.Image], console.Images);
         Assert.Equal(("invalid_argument", "BadArgument"), (other.Code, other.Detail));
@@ -313,5 +316,199 @@ public sealed class AgentViewToolTests
         Assert.Same(result, limited);
         Assert.Equal([image], result.Images);
         Assert.Single(McpBinding.Protocol(ToolResult.Of(new PanelShotView(AgentPanel.Scene, 2, 1))).Content);
+    }
+
+    /// <summary>An image can show a system that the Scene does not show. The tool does not open it (section 7.7 of the
+    /// MCP1 design). So the agent checks a layout without a change to the view of the user.</summary>
+    [Fact]
+    public void RenderSceneRendersAnotherSystemWithoutAnOpen()
+    {
+        var (ws, host, views) = Editor();
+        using var _ = ws;
+
+        Ok(host, "render_scene", """{ "system": "li02", "frame": ["obj:Li02_01", "system:Li02"] }""");
+
+        Assert.Equal("Li02", views.Scene!.System);
+        Assert.Equal(["Li02_01", null], views.Scene.Frame.Select(f => f.Section?.Id.Key));
+        Assert.Empty(views.Opened);
+        Assert.Empty(views.Selected);
+    }
+
+    /// <summary>Each item of a frame is in the system of the image. So a frame never shows another system than the
+    /// system of the result.</summary>
+    [Fact]
+    public void EachItemOfAFrameIsInTheSystemOfTheImage()
+    {
+        var (ws, host, views) = Editor();
+        using var _ = ws;
+
+        var unknown = Error(host, "render_scene", """{ "frame": ["system:NoSuchSystem"] }""");
+        var otherSystem = Call(host, "render_scene", """{ "frame": ["system:Li02"] }""");
+        var otherItem = Error(host, "render_scene", """{ "frame": ["obj:Li01_01", "obj:Li02_01"] }""");
+        var named = Error(host, "render_scene", """{ "system": "Li02", "frame": ["zone:Zone_ring"] }""");
+        var notAnItem = Error(host, "render_scene", """{ "frame": ["base:Li01_01_Base"] }""");
+
+        Assert.Equal("not_found", unknown.Code);
+        Assert.True(otherSystem.IsError, otherSystem.Text);
+        Assert.Equal(("invalid_argument", "OtherSystem", "frame", "system:Li02"),
+            ((string?)otherSystem.Content["code"], (string?)otherSystem.Content["detail"],
+                (string?)otherSystem.Content["field"], (string?)otherSystem.Content["target"]));
+        Assert.Equal("The item system:Li02 is in the system Li02, not in Li01. Give system Li02, or frame only items of Li01.",
+            (string?)otherSystem.Content["message"]);
+        Assert.Equal(("invalid_argument", "OtherSystem"), (otherItem.Code, otherItem.Detail));
+        Assert.Equal("The item zone:Zone_ring is in the system Li01, not in Li02. Give system Li01, or frame only items of Li02.",
+            named.Message);
+        Assert.Equal(("invalid_argument", "BadArgument"), (notAnItem.Code, notAnItem.Detail));
+        Assert.Null(views.Scene);
+    }
+
+    /// <summary>One image frames at most the largest page limit of items (section 8.4 of the MCP1 design, decision
+    /// D724).</summary>
+    [Fact]
+    public void OneImageFramesAtMostThePageLimitOfItems()
+    {
+        var (ws, host, views) = Editor();
+        using var _ = ws;
+        host.TestLimits = new AgentLimits { ListRows = 2, MaxListRows = 2 };
+
+        Ok(host, "render_scene", """{ "frame": ["obj:Li01_01", "obj:Li01_dock"] }""");
+        var limited = Call(host, "render_scene", """{ "frame": ["obj:Li01_01", "obj:Li01_dock", "obj:Li01_child"] }""");
+
+        Assert.Equal(2, views.Scene!.Frame.Count);
+        Assert.Equal(2, views.Scene.MaxVisible);
+        Assert.True(limited.IsError, limited.Text);
+        Assert.Equal(("limit", "FrameItems", "frame"), ((string?)limited.Content["code"],
+            (string?)limited.Content["detail"], (string?)limited.Content["field"]));
+        Assert.Equal("One image can frame at most 2 items. Give fewer references in frame.",
+            (string?)limited.Content["message"]);
+    }
+
+    /// <summary>A camera has finite coordinates up to the far plane of the Scene. So the GPU never renders an image from
+    /// a camera that the result cannot give back.</summary>
+    [Theory]
+    [InlineData("[1e20, 0, 0]", "[0, 0, 0]")]
+    [InlineData("[1e39, 0, 0]", "[0, 0, 0]")]
+    [InlineData("[3e38, 0, 0]", "[-3e38, 0, 0]")]
+    [InlineData("[0, 0, 0]", "[0, -10000001, 0]")]
+    public void ACameraHasCoordinatesUpToTheFarPlaneOfTheScene(string position, string lookAt)
+    {
+        var (ws, host, views) = Editor();
+        using var _ = ws;
+
+        var error = Error(host, "render_scene", $$"""{ "camera": { "position": {{position}}, "look_at": {{lookAt}} } }""");
+        Ok(host, "render_scene", """{ "camera": { "position": [10000000, 0, -10000000], "look_at": [0, 0, 0] } }""");
+
+        Assert.Equal(("invalid_argument", "BadArgument"), (error.Code, error.Detail));
+        Assert.EndsWith("needs three numbers from -10000000 to 10000000.", error.Message);
+        Assert.Equal(new Vector3(1e7f, 0, -1e7f), views.Scene!.Camera!.Position);
+    }
+
+    /// <summary>Each path inside a reference of a view tool goes through the install path rule (decision D763 of the
+    /// MCP1 design). The views of the editor never see such a call.</summary>
+    [Fact]
+    public void EachPathOfAViewToolFollowsTheInstallPathRule()
+    {
+        var (ws, host, views) = Editor();
+        using var _ = ws;
+        string[] bad =
+        [
+            @"C:\Windows\win.ini", @"..\x.thn", @"..\..\x.thn", @"DATA\..\..\x.thn", @"\\server\share\x.thn",
+            @"\\?\C:\Windows\win.ini", @"\\.\CON", @"C:x.thn", @"\Windows\win.ini", "/etc/x.thn", @"DATA\x.thn:stream",
+            @"DATA\x.thn::$DATA", "CON", @"DATA\CON", @"DATA\NUL.thn", @"DATA\COM1.ini", @"DATA\LPT1", @"DATA\x.thn.",
+            @"DATA\x.thn ", "DATA\\x\u0000.thn",
+        ];
+        var failures = new System.Collections.Generic.List<string>();
+
+        foreach (var path in bad)
+        {
+            foreach (var (tool, arguments) in new[]
+                     {
+                         ("open_view", $$"""{ "mission": {{Json("msn:" + path)}} }"""),
+                         ("open_view", $$"""{ "cutscene": {{Json("thn:" + path)}} }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("msn:" + path)}}] }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("thn:" + path)}}] }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("thn:" + path + "#entity/x")}}] }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("thn:" + path + "#event/0")}}] }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("sec:" + path + "#Object/x")}}] }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("line:" + path + "#Trigger/t/0")}}] }"""),
+                         ("select_items", $$"""{ "refs": [{{Json("trg:" + path + "#t")}}] }"""),
+                         ("render_scene", $$"""{ "frame": [{{Json("sec:" + path + "#Object/x")}}] }"""),
+                         ("render_cutscene", $$"""{ "cutscene": {{Json("thn:" + path)}} }"""),
+                     })
+            {
+                var result = Call(host, tool, arguments);
+                if ((string?)result.Content["code"] != "invalid_argument")
+                    failures.Add($"{tool} {arguments}: {result.Text}");
+            }
+        }
+
+        Assert.Empty(failures);
+        Assert.Empty(views.Opened);
+        Assert.Empty(views.Selected);
+        Assert.Null(views.Scene);
+        Assert.Null(views.Cutscene);
+    }
+
+    /// <summary>A view of an item of a hidden tool group gives not_available, as the tools of that group do (decision
+    /// D725 of the MCP1 design). The panels without a group stay.</summary>
+    [Fact]
+    public void AViewOfAHiddenGroupGivesNotAvailable()
+    {
+        using var m = MissionEdits.Create();
+        var views = new FakeAgentViews();
+        var host = new TestAgentHost(m.Session, AgentHostKind.Editor) { TestViews = views };
+        using var thn = ThnSessions.Workspace();
+        var cutsceneViews = new FakeAgentViews();
+        var cutsceneHost = new TestAgentHost(thn.Session("act"), AgentHostKind.Editor) { TestViews = cutsceneViews };
+        var (ws, sceneHost, sceneViews) = Editor();
+        using var _ = ws;
+        foreach (var each in new[] { host, cutsceneHost, sceneHost })
+            each.Hidden.UnionWith([ToolGroup.Scene, ToolGroup.Missions, ToolGroup.Cutscenes]);
+        var cutscene = Json($"thn:{ThnSessions.ScriptPath}");
+
+        var hidden = new[]
+        {
+            Error(host, "open_view", $$"""{ "mission": {{Json("msn:" + MissionEdits.Script)}} }"""),
+            Error(host, "select_items", $$"""{ "refs": [{{Json($"trg:{MissionEdits.Script}#ol_wave")}}] }"""),
+            Error(host, "capture_panel", """{ "panel": "mission" }"""),
+            Error(cutsceneHost, "open_view", $$"""{ "cutscene": {{cutscene}} }"""),
+            Error(cutsceneHost, "select_items", $$"""{ "refs": [{{cutscene}}] }"""),
+            Error(cutsceneHost, "capture_panel", """{ "panel": "timeline" }"""),
+            Error(sceneHost, "open_view", """{ "system": "Li01" }"""),
+            Error(sceneHost, "select_items", """{ "refs": ["obj:Li01_01"] }"""),
+            Error(sceneHost, "capture_panel", """{ "panel": "scene" }"""),
+        };
+        Ok(sceneHost, "capture_panel", """{ "panel": "console" }""");
+
+        Assert.All(hidden, e => Assert.Equal(("not_available", "GroupHidden"), (e.Code, e.Detail)));
+        Assert.Equal("The user hid the tool group 'missions'. Ask the user to show it in the agent settings.",
+            hidden[0].Message);
+        Assert.Empty(views.Opened.Concat(cutsceneViews.Opened).Concat(sceneViews.Opened));
+        Assert.Empty(views.Selected.Concat(cutsceneViews.Selected).Concat(sceneViews.Selected));
+        Assert.Equal(AgentPanel.Console, sceneViews.Panel);
+    }
+
+    /// <summary>A result gives each reference in the canonical form (section 5.6 of the MCP1 design). The path and the
+    /// names are as the session stores them.</summary>
+    [Fact]
+    public void TheResultsGiveTheCanonicalReferences()
+    {
+        using var m = MissionEdits.Create();
+        var views = new FakeAgentViews();
+        var host = new TestAgentHost(m.Session, AgentHostKind.Editor) { TestViews = views };
+        var lower = MissionEdits.Script.ToLowerInvariant().Replace('\\', '/');
+
+        var opened = Ok(host, "open_view", $$"""{ "mission": {{Json("msn:" + lower)}} }""");
+        var script = Ok(host, "select_items", $$"""{ "refs": [{{Json("msn:" + lower)}}] }""");
+        var trigger = Ok(host, "select_items", $$"""{ "refs": [{{Json($"trg:{lower}#OL_WAVE")}}] }""");
+        var line = Ok(host, "select_items", $$"""{ "refs": [{{Json($"line:{lower}#trigger/OL_WAVE/1")}}] }""");
+
+        Assert.Equal("msn:" + MissionEdits.Script, (string?)opened["ref"]);
+        Assert.Equal("msn:" + MissionEdits.Script, (string?)script["ref"]);
+        Assert.Equal($"trg:{MissionEdits.Script}#ol_wave", (string?)trigger["ref"]);
+        Assert.Equal($"line:{MissionEdits.Script}#Trigger/ol_wave/1", (string?)line["ref"]);
+        Assert.Equal(1, views.Selected[2].Target.Row);
+        Assert.True(views.Selected[2].Target.InMission);
+        Assert.Equal(MissionEdits.Script, views.Opened.Single().Target);
     }
 }

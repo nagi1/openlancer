@@ -29,8 +29,12 @@ public sealed record ShotCamera(Vector3 Position, Vector3 LookAt, float Fov)
     /// <summary>The largest horizontal angle that a call can give, in degrees.</summary>
     public const float MaxFov = 150;
 
-    /// <summary>The far plane, as the Scene camera has it for a star system.</summary>
-    public const float Far = 10_000_000;
+    /// <summary>The far plane of the Scene camera for a star system, in meters. An image sees at least this far.</summary>
+    public const float SceneFar = 10_000_000;
+
+    /// <summary>The largest size of each coordinate of a camera that a call gives, in meters. The Scene camera sees
+    /// no farther.</summary>
+    public const float MaxCoordinate = SceneFar;
 
     /// <summary>The direction of a framed view, as the Scene frames a sphere: from the front and 0.6 radians above
     /// (<c>SceneCamera.Frame</c>).</summary>
@@ -96,6 +100,10 @@ public sealed record ShotCamera(Vector3 Position, Vector3 LookAt, float Fov)
     /// the Scene camera has it. So the depth stays precise at each distance.</summary>
     public float Near => Math.Clamp(Distance * 0.001f, 1, 1000);
 
+    /// <summary>The far plane: the far plane of the Scene, or twice the distance to the point that the camera looks at
+    /// when that is farther. So a framed view of a very large system still shows each framed item.</summary>
+    public float Far => Math.Max(SceneFar, 2 * Distance);
+
     /// <summary>The direction of the view, with the length 1.</summary>
     public Vector3 Forward => Vector3.Normalize(LookAt - Position);
 
@@ -118,15 +126,16 @@ public sealed record ShotCamera(Vector3 Position, Vector3 LookAt, float Fov)
         Matrix4x4.CreatePerspectiveFieldOfView(VerticalAngle(Fov, aspect), aspect, near, far);
 
     /// <summary>
-    /// The place of a sphere in an image of a size, or null when the image does not show it: its center is behind the
-    /// near plane, or its circle is outside the image.
+    /// The place of a sphere in an image of a size, or null when the image does not show it. That is the case when its
+    /// center is behind the near plane or all of it is behind the far plane. It is also the case when its circle is
+    /// outside the image. The render clips at the same planes.
     /// </summary>
     public ShotPoint? Project(Vector3 center, float radius, int width, int height)
     {
         var aspect = Aspect(width, height);
         var projection = Projection(aspect, Near, Far);
         var clip = Vector4.Transform(new Vector4(center, 1), View * projection);
-        if (clip.W <= Near)
+        if (clip.W <= Near || clip.W - radius > Far)
             return null;
         var x = (clip.X / clip.W + 1) * 0.5f * width;
         var y = (1 - clip.Y / clip.W) * 0.5f * height;

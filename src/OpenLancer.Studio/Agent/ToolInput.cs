@@ -112,8 +112,8 @@ internal sealed class NumberParam(string name, bool required, double minimum, do
         : $"a number from {Text(minimum)}";
 
     public override bool Fits(JsonNode value) =>
-        value.GetValueKind() == JsonValueKind.Number && value.GetValue<double>() is var number && number >= minimum &&
-        number <= maximum;
+        value.GetValueKind() == JsonValueKind.Number && value.AsValue().TryGetValue(out double number) &&
+        double.IsFinite(number) && number >= minimum && number <= maximum;
 
     private static string Text(double value) => value.ToString(CultureInfo.InvariantCulture);
 }
@@ -179,21 +179,36 @@ internal sealed class TextListParam(string name, bool required) : ToolParam(name
             item?.GetValueKind() == JsonValueKind.String && item.GetValue<string>() is { Length: > 0 and <= TextParam.MaxLength });
 }
 
-/// <summary>A point: three numbers, X, Y and Z in meters.</summary>
-internal sealed class PointParam(string name, bool required) : ToolParam(name, required)
+/// <summary>A point: three numbers, X, Y and Z in meters. Each number fits a <see cref="float"/>, and the argument can
+/// give a bound for each number.</summary>
+/// <param name="bound">The largest size of each number, or null for each number that a float holds.</param>
+internal sealed class PointParam(string name, bool required, float? bound = null) : ToolParam(name, required)
 {
-    public override JsonObject Schema(string tool) => new()
+    public override JsonObject Schema(string tool)
     {
-        ["type"] = "array",
-        ["items"] = new JsonObject { ["type"] = "number" },
-        ["minItems"] = 3,
-        ["maxItems"] = 3,
-    };
+        var item = new JsonObject { ["type"] = "number" };
+        if (bound is { } most)
+        {
+            item["minimum"] = -most;
+            item["maximum"] = most;
+        }
+        return new JsonObject
+        {
+            ["type"] = "array",
+            ["items"] = item,
+            ["minItems"] = 3,
+            ["maxItems"] = 3,
+        };
+    }
 
-    public override string Expected => "three numbers";
+    public override string Expected => bound is { } most
+        ? $"three numbers from {(-most).ToString(CultureInfo.InvariantCulture)} to {most.ToString(CultureInfo.InvariantCulture)}"
+        : "three numbers";
 
     public override bool Fits(JsonNode value) =>
-        value is JsonArray { Count: 3 } array && array.All(n => n?.GetValueKind() == JsonValueKind.Number);
+        value is JsonArray { Count: 3 } array && array.All(n =>
+            n?.GetValueKind() == JsonValueKind.Number && n.AsValue().TryGetValue(out double number) &&
+            float.IsFinite((float)number) && Math.Abs(number) <= (bound ?? float.MaxValue));
 }
 
 /// <summary>An object with arguments of its own.</summary>
@@ -314,11 +329,8 @@ internal sealed class ToolArgs(IReadOnlyList<ToolParam> parameters, IReadOnlyDic
         values.TryGetValue(name, out var value) ? value.GetValue<bool>()
         : parameters.OfType<FlagParam>().FirstOrDefault(p => p.Name == name)?.Default ?? false;
 
-    /// <summary>The words of a list, or null when the call does not give the list.</summary>
-    public IReadOnlyList<string>? Choices(string name) =>
-        values.TryGetValue(name, out var value) ? value.AsArray().Select(v => v!.GetValue<string>()).ToList() : null;
-
-    /// <summary>The texts of a list, or null when the call does not give the list.</summary>
+    /// <summary>The texts of a list, or null when the call does not give the list. Examples are the words of a
+    /// <see cref="ChoicesParam"/> and the references of a <see cref="TextListParam"/>.</summary>
     public IReadOnlyList<string>? Texts(string name) =>
         values.TryGetValue(name, out var value) ? value.AsArray().Select(v => v!.GetValue<string>()).ToList() : null;
 
