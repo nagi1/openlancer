@@ -20,7 +20,8 @@ public enum CompletenessState
 /// <param name="Reason">Why the step is necessary, in one sentence.</param>
 /// <param name="Detail">What is missing, for example the name of a trigger, or null.</param>
 /// <param name="GoTo">The item that "Go to" selects, or null.</param>
-/// <param name="Fix">The id of a fix command, or null. M6a has no fixes (decision D538).</param>
+/// <param name="Fix">The subject of the fix of the step, or null for a step without a fix that needs no choice. The
+/// page gives the fixes of the subject (section 8.7 of the M6b design).</param>
 /// <param name="IsError">True when a missing step is an error of the checks. The panel then shows the error glyph and opens
 /// the list of missing steps.</param>
 public sealed record CompletenessStep(string Name, CompletenessState State, string Reason, string? Detail = null,

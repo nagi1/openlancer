@@ -8,6 +8,7 @@ using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Editor.Ui;
+using OpenLancer.Editor.Ui.Fields;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -421,8 +422,19 @@ internal sealed partial record MissionPageModel(string Title, string Kind, char 
         new("problems", "Problems", EditorIcons.ExclamationTriangle, MissionSchema.Retail.Help["problems"],
             BaseGameMessages.Shown(problems, showBaseGame).Select(p => new PageField(PlaceOf(analysis, p), p.Message,
                 p.Origin?.Text, p.Target is { } t ? new LineLink(t, p.EntryIndex) : null, p.Origin?.IsBaseGame == true,
-                p.Severity)).ToList(),
+                p.Severity)
+            {
+                Actions = p.Subject is { } subject ? FixActions(analysis, subject) : [],
+            }).ToList(),
             BaseGameMessages.HiddenLine(BaseGameMessages.Hidden(problems, showBaseGame)) is { } line ? [line] : []);
+
+    /// <summary>The fixes of a problem or of a step by its subject, each as a <see cref="ApplyFix"/> batch (section 8.7
+    /// of the M6b design). A fix is one command and one undo entry.</summary>
+    internal static IReadOnlyList<PageAction> FixActions(MissionAnalysis analysis, string subject) =>
+        MissionFixes.OfSubject(analysis, subject)
+            .Select(f => new PageAction(f.Label, new MissionBatch($"Fix: {f.Label}",
+                [new ApplyFix(new ScriptRef(analysis.Script.Path), subject, f.Id)]), Tooltip: CompletenessPanel.FixTip))
+            .ToList();
 
     /// <summary>The place of a problem in plain words, for example "Trigger t_start, line 3", or "Mission" for a
     /// problem of the whole script.</summary>

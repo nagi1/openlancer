@@ -94,6 +94,7 @@ public sealed class MissionInverseTests
         ["add_act"] = () => new AddAct(TestScript) { Name = "The ambush", Text = "Two waves attack.", Members = ["ol_wave"] },
         ["set_act"] = () => new SetAct(new ActRef(Script, "act_1")) { Name = "The start", Text = "The player launches." },
         ["set_act_members"] = () => new SetActMembers(new ActRef(Script, "act_1"), ["ol_end", "ol_start"]),
+        ["apply_fix"] = () => new ApplyFix(TestScript, "M04|ol_wave|system", "move"),
     };
 
     [Theory]

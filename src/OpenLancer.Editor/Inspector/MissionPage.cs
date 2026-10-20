@@ -99,7 +99,8 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
 
             if (model.Completeness is { } report)
             {
-                CompletenessPanel.Draw("completeness", report, missions.ShowBaseGame, GoTo);
+                CompletenessPanel.Draw("completeness", report, missions.ShowBaseGame, GoTo,
+                    missions.ReadOnlyNote == null ? step => Fixes(analysis, step) : null);
             }
 
             ImGui.Unindent(padding);
@@ -397,6 +398,22 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
             }
 
             ImGui.SetItemTooltip("Open the mission at the line in the Mission tab.");
+            // The fixes of the problem (section 8.7 of the M6b design). Each fix is one undo entry.
+            if (window.Missions.ReadOnlyNote == null)
+            {
+                for (var i = 0; i < field.Actions.Count; i++)
+                {
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton(field.Actions.Count == 1 ? "Fix##fix" : $"{field.Actions[i].Label}##fix{i}"))
+                    {
+                        Run(field.Actions[i].Batch);
+                    }
+
+                    ImGui.SetItemTooltip(field.Actions.Count == 1
+                        ? $"{field.Actions[i].Label}. {CompletenessPanel.FixTip}"
+                        : CompletenessPanel.FixTip);
+                }
+            }
         });
     }
 
@@ -507,6 +524,12 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
                 break;
         }
     }
+
+    /// <summary>The fixes of a step of the completeness panel: one batch of <see cref="ApplyFix"/> for each fix.</summary>
+    private IReadOnlyList<(string Label, Action Run)> Fixes(MissionAnalysis analysis, CompletenessStep step) =>
+        step.Fix is { } subject
+            ? MissionPageModel.FixActions(analysis, subject).Select(a => (a.Label, (Action)(() => Run(a.Batch)))).ToList()
+            : [];
 
     /// <summary>The voices file of a comm line, from the comm line list of the edit view, or null.</summary>
     private string? CommFile(string line) =>
