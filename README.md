@@ -1,6 +1,6 @@
 # OpenLancer
 
-OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a load order, and an editor for the game content. The editor has data editors, a 3D scene editor for star systems, and a cutscene editor. OpenLancer runs on its own fork of the [Librelancer](https://codeberg.org/Librelancer/Librelancer) engine. The fork is a git submodule at `external/Librelancer` (see docs/UPSTREAM.md).
+OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a load order, and an editor for the game content. The editor has data editors, a 3D scene editor for star systems, a mission studio, and a cutscene editor. An MCP server lets AI agents read the game content and see the editor views, and edit tools for agents come next. OpenLancer runs on its own fork of the [Librelancer](https://codeberg.org/Librelancer/Librelancer) engine. The fork is a git submodule at `external/Librelancer` (see docs/UPSTREAM.md).
 
 ![The OpenLancer editor: the Scene view of New York (Li01) with the Hierarchy and the Assets panel](docs/images/editor-view.gif)
 
@@ -91,7 +91,15 @@ Run `start.bat` to build and start the editor. Open a profile and a system, then
 
 To play the mods in your own retail game, pick **Play > Play in HD Edition 0.7.1** (or another linked game), or press Ctrl+F5. The editor installs the mods into a play copy next to the game and starts the game of the play copy. Your game folder does not change. **Play > Host test server** starts FLServer of the play copy with the mods. See "Play in the game" in [docs/PLAY.md](docs/PLAY.md) and "Play copies" in [docs/GAME_LINK.md](docs/GAME_LINK.md).
 
-## Read missions
+## Build missions
+
+The mission studio shows each mission script of the game as a graph of triggers, beside the 3D Scene. You can read every story mission, edit it in a mod, use behavior prefabs, and test the trigger rules with a dry run. The game reads the result as normal mission INI, so a mission mod works on Freelancer 1.1 and HD Edition.
+
+![The mission studio: a mission is edited in the graph, a prefab is placed from the library, and the Inspector updates](docs/images/OpenLancerMissionEditorViewGif.gif)
+
+![The mission studio with Mission 4: the library of prefabs, events, actions and conditions, the graph of the act "New York" with Spawn wave, Objective and Offer mission nodes, the Hierarchy of the mission, and the Inspector with the story slot, the overview counts and the problems](docs/images/OpenLancerMissionEditorView.png)
+
+*The library at the left of the graph holds the behavior prefabs, the events, the actions and the conditions. The Inspector shows the story slot of the mission, the count of each part, and the problems. "All 7 steps complete" is the completeness panel.*
 
 Open the Missions tab of the editor to see the mission scripts of the game data and the mods. The 14 story missions come first, in the order of the game. Each row gives the start stage, the next mission, the problems and the lines that OpenLancer does not run. Double-click a mission to open it in the Mission tab.
 
@@ -108,6 +116,8 @@ With an active mod, you can edit the mission. Each gesture is one entry of the e
 - Use the "+" menu of the Hierarchy to add an item. Drag a ship from the Assets panel onto the group "Cast" to add a mission ship.
 - Drag a behavior prefab from the library into the graph, for example "Spawn wave", and set its fields in the Inspector. An override of a field is bold with a violet bar, with "Revert" and "Apply to prefab". "Open prefab" edits the prefab and each of its instances.
 
+To test the logic of a mission without the game, open the **Dry run** panel of the Mission tab. Start the mission, run a trigger, fire the world events that the active triggers wait for, or step the timers. The graph marks each trigger as waiting, ran, stopped or next. **Back** undoes one step. The dry run uses the trigger rules of the retail game.
+
 A graph file of the mod keeps the places of the nodes that you move, the acts that you edit and the prefab instances. The game does not read it. See "Editor files of missions" in [docs/MOD_FORMAT.md](docs/MOD_FORMAT.md). [docs/MISSIONS.md](docs/MISSIONS.md) is the help page of the mission studio.
 
 To measure the frame time of the Mission tab, start the editor with `OpenLancer.Editor <profile.json> --bench-mission <install path>...`. For example, give the scripts `DATA\MISSIONS\M10\m10.ini` and `DATA\MISSIONS\M06\m06.ini`. The bench opens the profile without an active mod and shows each mission with the Scene beside it. For each mission, it draws 300 frames in the Beats lens and 300 frames in the Logic lens with "Show lines". The frames pan and zoom the graph.
@@ -123,6 +133,43 @@ Open the Cutscenes tab of the editor to browse the retail cutscenes and the cuts
 
 ![The cutscene editor: the entities of the cutscene, the preview with cameras and markers, the timeline of events and the Inspector of a character](docs/images/cutscene-editor.png)
 
-## Agents
+## Agents (MCP)
 
-An agent program, for example Claude Code, can read the data of a profile through the agent server of OpenLancer (an MCP server). In the editor, the agent can also open views, select items and get images. No tool changes a file. To connect an agent, pick **Agent > Start agent server**, then **Agent > Connect an agent...**. See [docs/MCP.md](docs/MCP.md).
+OpenLancer has an agent server: an MCP (Model Context Protocol) server. An AI agent, for example Claude Code, uses it to read the game content of a profile and to see the views of the editor. The goal is that agents make content with the same tools as a modder: systems and areas, NPC ships, loot wrecks, missions and cutscenes. The edit tools come in parts, after the read and view tools that are in the editor now.
+
+**Connect an agent**
+
+1. In the editor, pick **Agent > Start agent server**.
+2. Pick **Agent > Connect an agent...**. It shows the `.mcp.json` entry for Claude Code, with the port and the folder of `oltool`, and a Copy button.
+3. Put the entry in the `.mcp.json` file of your agent, and start the agent.
+
+Without the editor, `oltool mcp serve <profile.json> --mod <id> --read-only` starts the same server over stdio, without the view tools. See [docs/MCP.md](docs/MCP.md) for the details.
+
+**Safety**
+
+- The server listens only on 127.0.0.1, on one fixed port. Each request needs the token of the session. No other computer can connect.
+- A tool reads the profile through the edit session of the editor. The path rules refuse each path outside the profile.
+- The edit tools will use the same commands, checks, save gate and undo as the editor. They will change only the active mod, never a game folder or another mod. You see each agent edit in the editor and can undo it.
+- When an agent starts Play and the mod has unsaved edits, the editor asks you to save first. A setting turns on an automatic save for agents.
+
+**Tools of the server now (read and view)**
+
+| Group | Tools | What they do |
+|---|---|---|
+| Status | `studio_status` | The profile, the active mod, the revision, the undo steps and the limits |
+| Systems and items | `list_systems`, `get_system`, `list_items`, `get_item`, `find_references` | The star systems, their objects, zones, lights, nebulae and fields, and each line that names an item |
+| Data | `list_values`, `search_assets`, `list_prop_groups`, `get_raw_ini` | The valid values of a field, the assets of the Assets panel, the prop groups, and the raw INI with its problems |
+| Missions | `list_missions`, `get_mission`, `get_trigger`, `describe_mission_name`, `mission_dry_run` | The mission scripts, their triggers in plain words, the meaning of each condition and action, and a dry run of the trigger rules |
+| Cutscenes | `list_cutscenes`, `get_cutscene` | The cutscene scripts with their entities and events |
+| Checks | `check`, `get_console` | The problems of the mod, and the Console of the editor |
+| Views (editor only) | `open_view`, `select_items`, `render_scene`, `render_cutscene`, `capture_panel` | Open a system, a mission or a cutscene, select an item, and get images of the Scene, a cutscene frame or a panel. The views of the user do not move. |
+
+**Tools that come next (edits)**
+
+| Part | Tools |
+|---|---|
+| Scene and data edits (MCP1-2) | `set_fields`, `set_text`, `rename_item`, `delete_items`, `duplicate_items`, `scene_create_object`, `scene_create_zone`, `scene_create_light`, `scene_spawn_asset`, `scene_transform`, `scene_set_component`, `scene_place_wreck`, `scene_place_patrol_route`, `scene_set_encounters`, `prop_group_place`, `create_loadout`, `create_from_template`, and `save`, `undo`, `redo`, `edit_batch`, `export_mod`, `publish_checklist`, `play`, `play_stop` |
+| Mission edits (MCP1-3) | `mission_edit`, `mission_add_trigger`, `mission_set_condition`, `mission_add_action`, `mission_set_action`, `mission_move_action`, `mission_link_triggers`, `mission_insert_trigger`, `mission_add_item`, `mission_place_prefab`, `mission_start_plan`, `mission_play`, `mission_play_trace` |
+| Cutscene edits (MCP1-4) | `cutscene_create`, `cutscene_add_entity`, `cutscene_add_event`, `cutscene_move_events`, `cutscene_set_duration`, `cutscene_set_flags` |
+
+Examples of requests to an agent now: "Show me an image of New York from above." "Which triggers of Mission 4 spawn ships, and when?" "Run Mission 1 in a dry run up to the first checkpoint, and tell me which triggers wait."
