@@ -6,6 +6,17 @@ OpenLancer makes Freelancer (2003) openly moddable. It adds a mod overlay with a
 
 > **No game files are in this repository.** It holds only OpenLancer's own code and documentation. There is no game data, no game executable and no game DLL. To use OpenLancer, you link your own copy of Freelancer (2003).
 
+## Supported games
+
+| Game | Edit and check mods | Export (drop-in zip and FLMM package) | Play the mod in the game (Ctrl+F5) |
+|---|---|---|---|
+| Freelancer 1.1 (retail) | Yes | Yes | Yes |
+| Freelancer: HD Edition 0.7.1 | Yes | Yes | Yes |
+| Freelancer 1.0 (retail) | Yes. It has the same INI files as 1.1. | Yes, for 1.1 | Patch the game to 1.1 first. The 1.0 program does not start on Windows 10 and 11. |
+| A source build of the Freelancer-Decomp project that you build yourself | Yes, with its INI files of 1.1 | Yes, for 1.1 | Yes, with **Play > Play in source build** |
+
+F5 plays the mod in the OpenLancer engine with the data of any linked game. The editor also identifies JFLP. Exports always hold only the changes of your mod, and they never write into a game folder. OpenLancer contains no code of the Freelancer-Decomp project.
+
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Fork the repository and open a pull request. The owner reviews each pull request before it goes into `master`. [ROADMAP.md](ROADMAP.md) shows the milestones.
 
 ## Legal
