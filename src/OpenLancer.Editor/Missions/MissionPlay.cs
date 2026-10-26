@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using LibreLancer.Data;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Missions;
@@ -70,6 +71,38 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
     /// <summary>The refusal of an agent request while another play runs (section 7.2 of the M6c design).</summary>
     public const string OtherPlayReason = "Another play runs, so the mission play did not start. Stop the other play " +
                                           "first.";
+
+    /// <summary>The reason of a start at the Scene camera while no system is open.</summary>
+    public const string NoCameraSystem = "The start place is the Scene camera, and no system is open. Open a system, or " +
+                                         "pick another start place on the Play start page.";
+
+    /// <summary>
+    /// Why a mission play cannot start at a start place, or null when it can (UI rule 2): a system or a base that the
+    /// game data does not have, or the Scene camera while no system is open. The Play start page shows the reason under
+    /// the start place, and Play gives it when it refuses. The check has no side effect: it writes nothing to the
+    /// Console.
+    /// </summary>
+    /// <param name="items">The game data of the profile, or null when it did not load.</param>
+    /// <param name="systemOpen">True while the Scene shows a system.</param>
+    internal static string? PlaceProblem(GameItemDb? items, bool systemOpen, StartPlace place)
+    {
+        if (items == null)
+        {
+            return "The game data of the profile did not load.";
+        }
+
+        return place.Kind switch
+        {
+            StartPlaceKind.Space when items.Systems.Get(place.System!) == null =>
+                $"The start place names the system '{place.System}', which is not in the game data. Pick a base or the " +
+                "Scene camera on the Play start page.",
+            StartPlaceKind.Base when items.Bases.Get(place.Base!) is not { System: not null } =>
+                $"The start place names the base '{place.Base}', which is not in the game data. Pick another base on the " +
+                "Play start page.",
+            StartPlaceKind.Camera when !systemOpen => NoCameraSystem,
+            _ => null,
+        };
+    }
 
     // The result of the agent request whose question is open, or null.
     private Task<PlayRequestResult>? asking;

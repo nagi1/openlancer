@@ -164,7 +164,7 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
         var open = Scene.System!;
         if (Scene.SpawnShapes(open.Nickname) is not { } shapes)
         {
-            problem = NoCameraSystem;
+            problem = MissionPlay.NoCameraSystem;
             return null;
         }
 
@@ -184,34 +184,10 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
         return check.Start;
     }
 
-    /// <summary>
-    /// Why a mission play cannot start at a start place, or null when it can (UI rule 2). The Play start page shows the
-    /// reason under the start place, and Play gives it when it refuses. The check has no side effect: it writes nothing
-    /// to the Console.
-    /// </summary>
-    internal string? StartPlaceProblem(StartPlace place)
-    {
-        if (Session?.GameData?.Items is not { } items)
-        {
-            return "The game data of the profile did not load.";
-        }
-
-        return place.Kind switch
-        {
-            StartPlaceKind.Space when items.Systems.Get(place.System!) == null =>
-                $"The start place names the system '{place.System}', which is not in the game data. Pick a base or the " +
-                "Scene camera on the Play start page.",
-            StartPlaceKind.Base when items.Bases.Get(place.Base!) is not { System: not null } =>
-                $"The start place names the base '{place.Base}', which is not in the game data. Pick another base on the " +
-                "Play start page.",
-            StartPlaceKind.Camera when Scene.System == null => NoCameraSystem,
-            _ => null,
-        };
-    }
-
-    /// <summary>The reason of a start at the Scene camera while no system is open.</summary>
-    internal const string NoCameraSystem = "The start place is the Scene camera, and no system is open. Open a system, or " +
-                                           "pick another start place on the Play start page.";
+    /// <summary>Why a mission play cannot start at a start place now, or null (see
+    /// <see cref="MissionPlay.PlaceProblem"/>).</summary>
+    internal string? StartPlaceProblem(StartPlace place) =>
+        MissionPlay.PlaceProblem(Session?.GameData?.Items, Scene.System != null, place);
 
     /// <summary>The Console note of a start point in space that Play cannot check, because the Scene does not show its
     /// system.</summary>

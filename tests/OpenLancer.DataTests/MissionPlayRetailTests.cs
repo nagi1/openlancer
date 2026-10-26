@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Threading;
 using LibreLancer;
 using LibreLancer.Data;
@@ -180,6 +181,31 @@ public sealed class MissionPlayRetailTests(ITestOutputHelper output) : IDisposab
         Assert.Equal([FLHash.CreateID(restore.Nickname)], save.TriggerSave.Select(t => (uint)t.Trigger));
         Assert.Equal(new HashValue(data.Items.GetShipPackage(FLHash.CreateID(package))!.Ship.Nickname),
             save.Player!.ShipArchetype);
+    }
+
+    /// <summary>The check of the start place of the Play start page (UI rule 2, review fix of M6c-2): a system or a base
+    /// that the game data does not have, and the Scene camera without an open system, give their reasons. A known place
+    /// gives none.</summary>
+    [Fact]
+    public void TheCheckOfTheStartPlaceGivesTheReasonOfEachPlace()
+    {
+        var items = RetailGame.Instance.Data.Items;
+        var home = HomeBase(items);
+        StartPlace Base(string dock) => new(StartPlaceKind.Base, null, dock, Vector3.Zero, Quaternion.Identity, "");
+        StartPlace Space(string system) => new(StartPlaceKind.Space, system, null, Vector3.Zero, Quaternion.Identity, "");
+
+        Assert.Null(Editor.Missions.MissionPlay.PlaceProblem(items, false, Base(home.Base!)));
+        Assert.Null(Editor.Missions.MissionPlay.PlaceProblem(items, false, Space(home.System)));
+        Assert.Null(Editor.Missions.MissionPlay.PlaceProblem(items, true, StartPlace.Camera("")));
+        Assert.Equal("The start place names the base 'ol_no_base', which is not in the game data. Pick another base on " +
+                     "the Play start page.", Editor.Missions.MissionPlay.PlaceProblem(items, true, Base("ol_no_base")));
+        Assert.Equal("The start place names the system 'ol_no_system', which is not in the game data. Pick a base or the " +
+                     "Scene camera on the Play start page.",
+            Editor.Missions.MissionPlay.PlaceProblem(items, true, Space("ol_no_system")));
+        Assert.Equal(Editor.Missions.MissionPlay.NoCameraSystem,
+            Editor.Missions.MissionPlay.PlaceProblem(items, false, StartPlace.Camera("")));
+        Assert.Equal("The game data of the profile did not load.",
+            Editor.Missions.MissionPlay.PlaceProblem(null, true, Base(home.Base!)));
     }
 
     [Fact]

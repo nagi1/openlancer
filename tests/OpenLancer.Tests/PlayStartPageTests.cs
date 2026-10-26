@@ -94,7 +94,7 @@ public sealed class PlayStartPageTests
             ("restart item", PlayMenu.RestartTip), ("stop", PlayMenu.StopTip(false)), ("force stop", PlayMenu.StopTip(true)),
             ("no slot banner", MissionView.NoSlotBanner), ("other banner", MissionView.OtherMissionBanner("M02", "M03")),
             ("play banner", MissionView.PlayBannerText("M02", "Checkpoint t_restore")),
-            ("no camera", EditorWindow.NoCameraSystem), ("unchecked point", EditorWindow.UncheckedPoint("New York (Li01)")),
+            ("no camera", MissionPlay.NoCameraSystem), ("unchecked point", EditorWindow.UncheckedPoint("New York (Li01)")),
             ("restart refused", MissionPlayTexts.RestartRefused(new NamedStart(), "The path is refused.", "save 2")),
             ("restart failed", MissionPlayTexts.RestartFailedInGame(new NamedStart(), "The start save does not load.")),
             ("ship", PlayShips.ShipText(null, null).Tooltip), ("ship missing", PlayShips.ShipText(null, "ol_package").Tooltip),
