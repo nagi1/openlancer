@@ -85,6 +85,10 @@ internal sealed record PageContext(MissionRunResult Result, MissionAnalysis Anal
     /// The Trigger page then shows the section "Run".</summary>
     public MissionTrace? Run { get; init; }
 
+    /// <summary>The time now in the live view, in seconds since the game loaded the mission, or 0 for the dry
+    /// run.</summary>
+    public double RunNow { get; init; }
+
     /// <summary>True when the active mod sets a line.</summary>
     public bool Changed(MissionLine line) => ChangedOf(line.Section.Ref).Contains(line.Entry);
 
@@ -163,11 +167,12 @@ internal sealed partial record MissionPageModel
     /// <summary>The section "Run" of the Trigger page while a run exists (section 4.5 of the M6c design): the state,
     /// the step of the last start, the runs, and the last change with its cause. A trigger of a prefab instance shows
     /// the name of the prefab first, as in the Run log.</summary>
-    internal static PageSection RunSection(MissionTrace trace, MissionTrigger trigger, MissionAnalysis analysis)
+    /// <param name="now">The time now in the live view, or 0 for the dry run.</param>
+    internal static PageSection RunSection(MissionTrace trace, MissionTrigger trigger, MissionAnalysis analysis, double now = 0)
     {
         string Name(string nickname) => RunOverlay.TriggerName(analysis, nickname);
         var state = trace.StateOf(trigger.Nickname);
-        var chips = state == null ? [] : RunOverlay.ChipsOf(state, trace);
+        var chips = state == null ? [] : RunOverlay.ChipsOf(state, trace, now);
         var fields = new List<PageField>
         {
             new("State", chips.Count == 0 ? "Not active" : string.Join(", ", chips.Select(c => c.Text)),
@@ -264,7 +269,7 @@ internal sealed partial record MissionPageModel
         sections.Add(new PageSection("startsWhen", "Starts when", MissionGlyphs.OfEvent(trigger.Condition?.Name?.Group),
             schema.Help["startsWhen"], startsWhen, []));
         if (context.Run is { } trace)
-            sections.Add(RunSection(trace, trigger, context.Analysis));
+            sections.Add(RunSection(trace, trigger, context.Analysis, context.RunNow));
 
         // One section for each action group, in group order. Each line shows its line number, so the order stays
         // visible.

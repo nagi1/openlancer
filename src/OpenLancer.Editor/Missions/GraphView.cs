@@ -103,11 +103,15 @@ internal sealed partial class GraphView : IDisposable
     private Navigation pending;
     private int pendingCenter;
 
-    // The run overlay of the dry run of this frame, or null (section 4.5 of the M6c design), the strength of the flash
-    // of the last step from 1 to 0, and the step count of the dry runs that "Follow" framed last.
+    // The run overlay of the dry run or of the live view of this frame, or null (section 4.5 of the M6c design), the
+    // strength of the flash of the last step from 1 to 0, and the step count of the run that "Follow" framed last.
     private RunOverlay? runOverlay;
     private float runFlash;
     private int followedSteps = -1;
+
+    // The node of the trigger of the play start of the open mission in this frame, or null (section 5.2 of the M6c
+    // design).
+    private GraphNode? playStartNode;
 
     /// <summary>A view move that waits for the next frame of the node editor.</summary>
     private enum Navigation
@@ -1243,16 +1247,25 @@ internal sealed partial class GraphView : IDisposable
     private void RunState(MissionAnalysis analysis, MissionGraph graph)
     {
         var runs = missions.DryRuns;
-        runOverlay = missions.DryRun is { } run && missions.OpenPrefab == null && ReferenceEquals(analysis, missions.Open)
-            ? runs.Overlay(graph, run.State.Trace)
+        var open = missions.OpenPrefab == null && ReferenceEquals(analysis, missions.Open);
+        playStartNode = open && missions.Plays.PlayStartOf(analysis.Script.Path).Start.Trigger is { } start &&
+                        graph.Index.Trigger(start) is { } startTrigger
+            ? graph.NodeOf(startTrigger)
             : null;
-        runFlash = runOverlay == null ? 0 : (float)Math.Clamp(1 - (runs.Now - runs.ChangedAt) / RunOverlay.FlashSeconds, 0, 1);
-        if (runOverlay == null || !runs.Follow || followedSteps == runs.Steps)
+        // The live view of a mission play comes before the dry run (section 6.3 of the M6c design).
+        var live = open && missions.ShownLive(analysis.Script.Path) != null;
+        runOverlay = live ? missions.LiveOverlay(graph)
+            : missions.DryRun is { } run && open ? runs.Overlay(graph, run.State.Trace)
+            : null;
+        var changedAt = live ? missions.Live.ChangedAt : runs.ChangedAt;
+        runFlash = runOverlay == null ? 0 : (float)Math.Clamp(1 - (runs.Now - changedAt) / RunOverlay.FlashSeconds, 0, 1);
+        var steps = live ? missions.Live.Version : runs.Steps;
+        if (runOverlay == null || !runs.Follow || followedSteps == steps)
         {
             return;
         }
 
-        followedSteps = runs.Steps;
+        followedSteps = steps;
         if (runOverlay.Follow is { } key && graph.Nodes.FirstOrDefault(n => n.Key == key) is { } node)
         {
             FrameBlock(node);
@@ -1263,7 +1276,7 @@ internal sealed partial class GraphView : IDisposable
     /// shows the tooltip of the state.</summary>
     private void DrawRunChips(MissionGraph graph, GraphLayout layout, float scale)
     {
-        if (runOverlay == null || scale < FullDetailScale)
+        if (runOverlay == null && playStartNode == null || scale < FullDetailScale)
         {
             return;
         }
@@ -1272,7 +1285,13 @@ internal sealed partial class GraphView : IDisposable
         var font = ImGuiHelper.Roboto;
         foreach (var node in graph.Nodes)
         {
-            if (runOverlay.Of(node) is not { Chips.Count: > 0 } state)
+            IReadOnlyList<RunChip> chips = runOverlay?.Of(node)?.Chips ?? [];
+            if (ReferenceEquals(node, playStartNode))
+            {
+                chips = [PlayStartChip, .. chips];
+            }
+
+            if (chips.Count == 0)
             {
                 continue;
             }
@@ -1280,7 +1299,7 @@ internal sealed partial class GraphView : IDisposable
             var origin = layout.PositionOf(node);
             var x = origin.X;
             var y = origin.Y - ChipHeight - 3;
-            foreach (var chip in state.Chips)
+            foreach (var chip in chips)
             {
                 var width = Chip.WidthOf(font, SmallSize, chip.Label);
                 var min = new Vector2(x, y);
@@ -1290,6 +1309,7 @@ internal sealed partial class GraphView : IDisposable
                     RunChipKind.Waits or RunChipKind.Ran or RunChipKind.FrameWaits => ChipLook.Filled(EditorTheme.MissionRun),
                     RunChipKind.StartsNext => ChipLook.Outline(EditorTheme.MissionRun),
                     RunChipKind.Stall => ChipLook.Filled(EditorTheme.Warning),
+                    RunChipKind.RulesDiffer => ChipLook.Outline(EditorTheme.Warning),
                     _ => ChipLook.Grey,
                 };
                 Chip.Paint(drawList, font, SmallSize, min, max, chip.Label, look);
@@ -1514,16 +1534,58 @@ internal sealed partial class GraphView : IDisposable
     internal const string RunThisTip = "Run this trigger: In the dry run, run this trigger now, as if its condition is met. " +
                                        "Only a trigger that waits can run.";
 
-    /// <summary>The item of the node menu of the dry run: "Run this trigger (dry run)". Only a trigger that waits can
-    /// run.</summary>
+    // The tooltips of the node menu items of Play from a trigger (section 8.1 of the M6c design).
+    internal const string PlayFromHereTip = "Play from here: Set this trigger as the play start, then play in OpenLancer.";
+    internal const string SetPlayStartTip = "Set as play start: Set this trigger as the play start, and do not play now.";
+    internal const string DryRunFromHereTip =
+        "Dry run from here: Start a dry run at this trigger, with the triggers that wait there.";
+
+    /// <summary>The chip of the trigger of the play start (section 8.1 of the M6c design).</summary>
+    internal static readonly RunChip PlayStartChip = new(RunChipKind.Waits, EditorIcons.Play, "Play start",
+        "Play start: Play starts this mission at this trigger.");
+
+    /// <summary>
+    /// The items of the node menu of the play start and the dry run (section 8.1 of the M6c design): "Play from here",
+    /// "Set as play start", "Dry run from here" and, while the dry run is on, "Run this trigger (dry run)". Only a
+    /// trigger that waits can run. Prefab mode has no play.
+    /// </summary>
     private void DryRunMenu(MissionTrigger trigger)
     {
+        if (missions.OpenPrefab == null && missions.OpenPath is { } script)
+        {
+            ImGui.Separator();
+            if (ImGui.MenuItem($"{EditorIcons.Play}  Play from here"))
+            {
+                missions.Plays.PlayFromHere(script, trigger.Nickname);
+            }
+
+            ImGui.SetItemTooltip(PlayFromHereTip);
+            var isStart = string.Equals(missions.Plays.PlayStartOf(script).Trigger, trigger.Nickname,
+                StringComparison.OrdinalIgnoreCase);
+            if (ImGui.MenuItem("Set as play start", "", isStart))
+            {
+                var current = missions.Plays.PlayStartOf(script);
+                missions.Plays.SetPlayStart(script, current with { Trigger = isStart ? "" : trigger.Nickname });
+            }
+
+            ImGui.SetItemTooltip(SetPlayStartTip);
+            if (ImGui.MenuItem("Dry run from here", "", false, !missions.MissionPlayRuns))
+            {
+                missions.DryRuns.On = true;
+                missions.AddDryRunInput(DryRunInput.StartAt(trigger.Nickname));
+            }
+
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(missions.MissionPlayRuns ? MissionView.DryRunPlayTip : DryRunFromHereTip);
+            }
+        }
+
         if (missions.DryRun is not { } run)
         {
             return;
         }
 
-        ImGui.Separator();
         var machine = run.State.Machine;
         var waits = !machine.IsOver && machine.StateOf(trigger).Status == TriggerStatus.Active;
         if (ImGui.MenuItem("Run this trigger (dry run)", "", false, waits))

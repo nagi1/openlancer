@@ -62,6 +62,7 @@ internal sealed class InspectorPanel : IDisposable
     private readonly ThnPage thnPage;
     private readonly AssetPage assetPage;
     private readonly MissionPage missionPage;
+    private readonly PlayStartPage playStartPage;
 
     public InspectorPanel(EditorWindow window)
     {
@@ -80,6 +81,7 @@ internal sealed class InspectorPanel : IDisposable
         thnPage = new ThnPage(window, grid);
         assetPage = new AssetPage(window);
         missionPage = new MissionPage(window, grid);
+        playStartPage = new PlayStartPage(window, grid);
     }
 
     /// <summary>True while a field edit or a drag of a curve point is open. The edit history waits for its end. A save
@@ -122,6 +124,14 @@ internal sealed class InspectorPanel : IDisposable
 
         // A mission item has the page of the mission studio, with its own header line (section 10.1 of the M6a
         // design).
+        // The play start of a mission has its own page (section 8.3 of the M6c design).
+        if (item is MissionRef { Kind: MissionItemKind.PlayStart } playStart)
+        {
+            missionPage.EndEdit();
+            playStartPage.Draw(playStart);
+            return;
+        }
+
         if (item is MissionRef mission)
         {
             missionPage.Draw(mission);

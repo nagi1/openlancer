@@ -6,6 +6,7 @@ using LibreLancer.ImUI;
 using OpenLancer.Data.Editing.Fields;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Editing;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
 
@@ -132,6 +133,12 @@ internal sealed class MissionView : IDisposable
         {
             ImGui.SameLine();
             DryRunToggle();
+            if (open != null)
+            {
+                ImGui.SameLine();
+                PlayStartChip(open);
+            }
+
             GraphToolbar(scale);
             EditToolbar();
         }
@@ -221,16 +228,124 @@ internal sealed class MissionView : IDisposable
     internal const string DryRunTip = "Dry run: Run the trigger rules of the retail game on this graph, step by step. The " +
                                       "dry run has no game world. You decide what happens in the world.";
 
+    /// <summary>The tooltip of the toggle "Dry run" while a mission play runs (section 6.3 of the M6c design).</summary>
+    internal const string DryRunPlayTip = "Play runs. The graph shows the state of the triggers in the game. Stop the " +
+                                          "game to use the dry run.";
+
     /// <summary>The toggle "Dry run": the Run panel shows at the right of the graph, and the graph shows the run
     /// states (section 4.1 of the M6c design). It shows its word beside a test glyph, so nobody takes it for the Play of
-    /// the game.</summary>
+    /// the game. While a mission play runs, the graph shows the live view, and the toggle is off.</summary>
     private void DryRunToggle()
     {
+        if (missions.MissionPlayRuns)
+        {
+            ImGui.BeginDisabled();
+            ToolbarItems.LabelToggle("dry-run", EditorIcons.Flask, "Dry run", DryRunPlayTip, false);
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(DryRunPlayTip);
+            }
+
+            return;
+        }
+
         var on = missions.DryRuns.On;
         if (ToolbarItems.LabelToggle("dry-run", EditorIcons.Flask, "Dry run", DryRunTip, on) != on)
         {
             missions.DryRuns.On = !on;
         }
+    }
+
+    /// <summary>The tooltip of the chip of the play start (section 8.1 of the M6c design). The sentence about Ctrl+F5
+    /// comes with the start in the linked game (milestone M6c-3).</summary>
+    internal const string PlayStartTip = "F5 plays this mission from this start in OpenLancer. Click to see the start.";
+
+    /// <summary>The chip "Play start: {start}" of the toolbar (section 5.2 of the M6c design). A click selects the play
+    /// start, and the Inspector shows the Play start page.</summary>
+    private void PlayStartChip(string script)
+    {
+        if (ImGui.Button($"{EditorIcons.Play}  Play start: {missions.Plays.StartNameOf(script)}##play-start"))
+        {
+            window.Selection = MissionRef.PlayStartOf(script);
+        }
+
+        ImGui.SetItemTooltip(PlayStartTip);
+    }
+
+    /// <summary>The info icon of the banner of the rules (section 8.5 of the M6c design).</summary>
+    internal static readonly HelpText RulesHelp = new("Rules differ",
+        "The OpenLancer engine reads some trigger lines in another way than the retail game. The differences are in two " +
+        "conditions, lines before the nickname, repeated nicknames, the order of starts, restarts, repeatable triggers, " +
+        "Cnd_SystemEnter and the COMPLETE state.", "Nothing.");
+
+    /// <summary>The text of the banner of the rules (section 8.1 of the M6c design).</summary>
+    internal const string RulesBanner = "OpenLancer runs the triggers with its own rules. In some cases they differ from the " +
+                                        "retail game. The dry run shows the retail rules.";
+
+    /// <summary>
+    /// The banners of a mission play (section 6.3 of the M6c design): the play with a Stop button, and the rules of
+    /// OpenLancer, while the graph shows the mission of the game. While it shows another mission, a banner tells it with
+    /// a button that opens the mission of the game.
+    /// </summary>
+    private void LiveBanners(MissionAnalysis analysis)
+    {
+        if (!missions.MissionPlayRuns || window.Play.Mission is not { } play)
+        {
+            return;
+        }
+
+        var width = ImGui.GetContentRegionAvail().X;
+        var size = new Vector2(width, EditorLayout.StripHeight);
+        var live = missions.LiveScript ?? (missions.Live.Mission == null ? play.Script : null);
+        if (live == null)
+        {
+            EditorLayout.Strip("##play-banner", () => BannerText(EditorIcons.Play,
+                "The game runs a mission that has no story slot."), size);
+            return;
+        }
+
+        if (!string.Equals(live, analysis.Script.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            var liveSlot = missions.Analysis(live)?.Script.Slot?.Slot ?? MissionFiles.Display(live);
+            var openSlot = analysis.Script.Slot?.Slot ?? MissionFiles.Display(analysis.Script.Path);
+            EditorLayout.Strip("##play-banner", () =>
+            {
+                BannerText(EditorIcons.Play, $"The game runs {liveSlot}. The graph shows {openSlot}.");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Open {liveSlot}"))
+                {
+                    missions.OpenMission(live, show: true);
+                }
+            }, size);
+            return;
+        }
+
+        EditorLayout.Strip("##play-banner", () =>
+        {
+            BannerText(EditorIcons.Play, $"Play runs {play.Slot} from {play.StartName}. The graph shows the state of the triggers in the game.");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Stop"))
+            {
+                PlayRequests.Stop(window.Play, window.GamePlay);
+            }
+
+            ImGui.SetItemTooltip("Stop the game (Shift+F5)");
+        }, size);
+        EditorLayout.Strip("##rules-banner", () =>
+        {
+            BannerText(EditorIcons.InfoCircle, RulesBanner);
+            ImGui.SameLine();
+            InfoIcon.Draw("rules-help", RulesHelp);
+        }, size);
+    }
+
+    private static void BannerText(char glyph, string text)
+    {
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextColored(EditorTheme.MissionRun, glyph.ToString());
+        ImGui.SameLine();
+        ImGui.Text(text);
     }
 
     /// <summary>The edit items of the graph toolbar (section 8.11 of the M6b design): the toggle "Library" and the button
@@ -525,6 +640,7 @@ internal sealed class MissionView : IDisposable
         if (missions.OpenPrefab == null)
         {
             links.UsesBar();
+            LiveBanners(analysis);
         }
 
         var path = analysis.Script.Path;
@@ -547,11 +663,18 @@ internal sealed class MissionView : IDisposable
             ImGui.SameLine(0, 0);
         }
 
-        // The Run panel takes the right of the graph part while the dry run is on (section 4.1 of the M6c design).
+        // The Run panel takes the right of the graph part while the dry run is on (section 4.1 of the M6c design), and
+        // while the graph shows the live view of a mission play (section 6.3).
         var region = ImGui.GetContentRegionAvail();
-        if (missions.OpenPrefab == null && missions.DryRun is { } run)
+        var panel = MathF.Min(MathF.Truncate(RunPanel.Width * ImGuiHelper.Scale), MathF.Max(1, region.X / 2));
+        if (missions.OpenPrefab == null && missions.ShownLive(path) != null)
         {
-            var panel = MathF.Min(MathF.Truncate(RunPanel.Width * ImGuiHelper.Scale), MathF.Max(1, region.X / 2));
+            Graph.Draw(analysis, new Vector2(MathF.Max(1, region.X - panel), region.Y));
+            ImGui.SameLine(0, 0);
+            runPanel.DrawLive(analysis, new Vector2(panel, region.Y));
+        }
+        else if (missions.OpenPrefab == null && missions.DryRun is { } run)
+        {
             Graph.Draw(analysis, new Vector2(MathF.Max(1, region.X - panel), region.Y));
             ImGui.SameLine(0, 0);
             runPanel.Draw(analysis, run, new Vector2(panel, region.Y));

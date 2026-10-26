@@ -5,7 +5,9 @@ using System.Numerics;
 using ImGuiNET;
 using LibreLancer.Data.GameData.World;
 using LibreLancer.ImUI;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Missions;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Runtime.Play;
 
@@ -67,19 +69,30 @@ internal sealed class PlayMenu(EditorWindow window)
         Request(new PlayStart.InSpace(scene.System!.Nickname, scene.CameraPosition, scene.CameraOrientation));
     }
 
-    /// <summary>Stops the game, or ends it at once when Stop is Force stop: the Stop button, Shift+F5 and Stop. The game
-    /// of Play in OpenLancer stops first. Else the game of the play copy stops (milestone M11).</summary>
-    public void Stop()
+    /// <summary>
+    /// F5 and the Play button (decision D744 of the M6c design): in the Mission tab with an open mission, a mission play
+    /// from the play start of the mission. Else Play from camera, as milestone M4 defines it.
+    /// </summary>
+    public void PlayF5()
     {
-        if (window.Play.Status != PlayStatus.Idle)
+        if (OpenMission is { } script)
         {
-            window.Play.Stop();
+            window.Missions.Plays.PlayFromPlayStart(script);
+            return;
         }
-        else
-        {
-            window.GamePlay.StopGame();
-        }
+
+        PlayFromCamera();
     }
+
+    /// <summary>The script of the open mission while the Mission tab shows it, else null. F5 then plays the
+    /// mission.</summary>
+    private string? OpenMission =>
+        window.CenterMode == CenterMode.Mission && window.Missions.OpenPrefab == null ? window.Missions.OpenPath : null;
+
+    /// <summary>Stops the game, or ends it at once when Stop is Force stop: the Stop button, Shift+F5 and Stop. The game
+    /// of Play in OpenLancer stops first. Else the game of the play copy stops (milestone M11). It is the stop request of
+    /// the shared command layer (<see cref="PlayRequests.Stop"/>).</summary>
+    public void Stop() => PlayRequests.Stop(window.Play, window.GamePlay);
 
     /// <summary>True while a game runs that Stop stops.</summary>
     private bool CanStop => window.Play.Status != PlayStatus.Idle || window.GamePlay.GameRuns;
@@ -99,6 +112,7 @@ internal sealed class PlayMenu(EditorWindow window)
 
         ImGui.SetItemTooltip(PlayTooltip(block));
         BaseMenu();
+        MissionMenu();
         ImGui.Separator();
         ShipItems();
         ImGui.Separator();
@@ -133,12 +147,17 @@ internal sealed class PlayMenu(EditorWindow window)
         ImGui.SetCursorPosX(Math.Max(ImGui.GetCursorPosX(), MathF.Truncate((ImGui.GetWindowWidth() - width) / 2)));
         EditorTheme.PushFlatButtonColors();
 
-        // The Play button shows pressed while a game runs. A click then closes the game and plays again.
+        // The Play button shows pressed while a game runs. A click then closes the game and plays again. In the Mission
+        // tab, it plays the open mission from its play start, as F5 does.
         var running = play.Status != PlayStatus.Idle;
-        var block = CameraBlock();
-        if (ToolbarItems.Toggle("play", EditorIcons.Play, PlayTooltip(block), running, block == null) != running)
+        var mission = OpenMission;
+        var block = mission == null ? CameraBlock() : null;
+        var tooltip = mission == null
+            ? PlayTooltip(block)
+            : $"Play the mission from its play start (F5): {window.Missions.Plays.StartNameOf(mission)}.";
+        if (ToolbarItems.Toggle("play", EditorIcons.Play, tooltip, running, block == null) != running)
         {
-            PlayFromCamera();
+            PlayF5();
         }
 
         ImGui.SameLine();
@@ -163,6 +182,70 @@ internal sealed class PlayMenu(EditorWindow window)
         }
 
         EditorTheme.PopFlatButtonColors();
+    }
+
+    /// <summary>
+    /// The submenu "Play mission" while a mission is open (section 5.2 of the M6c design): the play start with F5, the
+    /// mission start, one item for each checkpoint, and "Restart the mission" while a mission play runs. Only "Play from
+    /// here" and "Set as play start" change the play start.
+    /// </summary>
+    private void MissionMenu()
+    {
+        var plays = window.Missions.Plays;
+        var script = window.Missions.OpenPath;
+        var analysis = script == null ? null : window.Missions.Analysis(script);
+        if (!ImGui.BeginMenu($"{EditorIcons.Play}   Play mission", analysis != null && window.Session?.GameData != null))
+        {
+            ImGui.SetItemTooltip(analysis == null ? "Open a mission in the Mission tab." : "Play a mission in OpenLancer.");
+            return;
+        }
+
+        var setting = plays.PlayStartOf(script!);
+        var (place, dock) = setting.PlaceChoice;
+        if (ImGui.MenuItem($"From the play start ({plays.StartNameOf(script!)})", "F5"))
+        {
+            plays.PlayFromPlayStart(script!);
+        }
+
+        ImGui.SetItemTooltip("Play the mission from its play start in OpenLancer.");
+        if (ImGui.MenuItem("From the mission start"))
+        {
+            plays.Request(new MissionPlayRequest(script!, MissionStartPoint.MissionStart) { Place = place, PlaceBase = dock });
+        }
+
+        ImGui.SetItemTooltip("Play the mission from the start triggers in OpenLancer. The play start does not change.");
+        foreach (var checkpoint in DryRun.Checkpoints(analysis!.Index))
+        {
+            if (ImGui.MenuItem($"From checkpoint {RunOverlay.TriggerName(analysis, checkpoint.Nickname)}"))
+            {
+                plays.Request(new MissionPlayRequest(script!, MissionStartPoint.At(checkpoint.Nickname)) { Place = place, PlaceBase = dock });
+            }
+
+            ImGui.SetItemTooltip("Play the mission from this checkpoint in OpenLancer, as a load of a saved game does. The " +
+                                 "play start does not change.");
+        }
+
+        var restart = window.Play.RestartBlock;
+        if (restart != null)
+        {
+            // The item shows only while a mission play runs.
+            if (window.Play.Mission != null)
+            {
+                ImGui.MenuItem("Restart the mission", "", false, false);
+                ItemTooltip.Show(restart);
+            }
+        }
+        else if (ImGui.MenuItem("Restart the mission"))
+        {
+            window.Play.RestartMission();
+        }
+
+        if (restart == null)
+        {
+            ImGui.SetItemTooltip("Start the mission play again from its start, with the saved files.");
+        }
+
+        ImGui.EndMenu();
     }
 
     /// <summary>Why Play from camera cannot run now, or null when it can.</summary>

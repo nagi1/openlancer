@@ -526,7 +526,8 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
     /// <summary>
     /// The keys of the editor. Ctrl+S (File > Save) also works while a text field has the keyboard or a field edit is
     /// open, as in Unity (see <see cref="SaveCommand"/>). The keys of the Edit menu, Ctrl+Z and Ctrl+Y or Ctrl+Shift+Z,
-    /// and the keys of Play, F5, Ctrl+F5 (Play in the game) and Shift+F5, wait while a text field has the keyboard. So
+    /// and the keys of Play, F5 (a mission play in the Mission tab), Ctrl+F5 (Play in the game) and Shift+F5, wait while
+    /// a text field has the keyboard. So
     /// Ctrl+Z and Ctrl+Y stay the undo and redo of the text field. They also wait while a field edit or a dialog is open.
     /// </summary>
     private void Shortcuts()
@@ -560,7 +561,8 @@ internal sealed partial class EditorWindow : IClosePromptHost, ISaveCommandHost
         }
         else if (ImGui.Shortcut((int)ImGuiKey.F5, global))
         {
-            playMenu.PlayFromCamera();
+            // In the Mission tab, F5 plays the open mission from its play start (decision D744 of the M6c design).
+            playMenu.PlayF5();
         }
         else if (ImGui.Shortcut((int)(ImGuiKey.ImGuiMod_Shift | ImGuiKey.F5), global))
         {

@@ -64,8 +64,17 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
     /// <summary>The note of a fact that is true while no active trigger tests it.</summary>
     internal const string IdleFactNote = "No active trigger tests this fact now.";
 
+    /// <summary>The info icon of the live view (section 8.5 of the M6c design).</summary>
+    public static readonly HelpText LiveHelp = new("Live view",
+        "The state of the triggers in the running OpenLancer game: which triggers wait, which ran and which stopped.",
+        "Nothing.");
+
+    internal const string ClearTip = "Clear: Remove the live trace of the game. The next play starts a new trace.";
+
     private readonly ValuePicker systemPicker = new();
     private bool pickSystem;
+    private (int Version, MissionTrace Trace, List<LogRow> Rows)? liveCache;
+    private int scrolledLive = -1;
     private (int Version, DryRun Run, List<LogRow> Rows, IReadOnlyList<PanelRow> Waiting,
         IReadOnlyList<MissionTrigger> Checkpoints)? cache;
     private int scrolledSteps = -1;
@@ -98,10 +107,89 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
 
             Player(run);
             Waiting(rows.Waiting, run);
-            Log(analysis, rows.Rows);
+            Log(analysis, rows.Rows, missions.DryRuns.Steps, ref scrolledSteps);
         }
 
         ImGui.EndChild();
+    }
+
+    /// <summary>
+    /// Draws the panel of the live view into a region at the cursor (section 6.3 of the M6c design): the header with the
+    /// toggle "Follow" and the button "Clear", and the Run log of the live trace. A trigger of the test layer shows as
+    /// "Play setup: {trigger}", and a trigger that the graph does not have as "Not in the graph: {trigger}".
+    /// </summary>
+    public void DrawLive(MissionAnalysis analysis, Vector2 size)
+    {
+        ImGui.PushStyleColor(ImGuiCol.ChildBg, EditorTheme.Panel);
+        var visible = ImGui.BeginChild("##live-panel", size, ImGuiChildFlags.AlwaysUseWindowPadding);
+        ImGui.PopStyleColor();
+        if (visible)
+        {
+            var live = missions.Live;
+            ImGui.AlignTextToFramePadding();
+            ImGui.Text($"{EditorIcons.Play}  Live view");
+            ImGui.SameLine();
+            InfoIcon.Draw("live-help", LiveHelp);
+            ImGui.Separator();
+            var follow = missions.DryRuns.Follow;
+            if (ImGui.Checkbox("Follow", ref follow))
+            {
+                missions.DryRuns.Follow = follow;
+            }
+
+            ImGui.SetItemTooltip(FollowTip);
+            ImGui.SameLine();
+            if (ImGui.Button("Clear"))
+            {
+                live.Clear();
+            }
+
+            ImGui.SetItemTooltip(ClearTip);
+            if (live.Dropped > 0)
+            {
+                ImGui.TextDisabled(TraceChange.Dropped(live.Dropped).LogText);
+            }
+
+            var setup = live.Setup;
+            if (liveCache is not var (version, trace, rows) || version != live.Version || !ReferenceEquals(trace, live.Trace))
+            {
+                rows = LiveLogRows(analysis, live.Trace, setup);
+                liveCache = (live.Version, live.Trace, rows);
+            }
+
+            Log(analysis, rows, live.Version, ref scrolledLive);
+        }
+
+        ImGui.EndChild();
+    }
+
+    /// <summary>The rows of the Run log of the live view (section 6.3 of the M6c design). The title of each step is its
+    /// time.</summary>
+    /// <param name="setup">The setup triggers of the test layer of the play.</param>
+    internal static List<LogRow> LiveLogRows(MissionAnalysis analysis, MissionTrace trace, IReadOnlySet<string> setup)
+    {
+        string Name(string nickname) => RunOverlay.TriggerName(analysis, nickname);
+        var rows = new List<LogRow>();
+        foreach (var step in trace.Steps)
+        {
+            rows.Add(new LogRow(step.TitleWith(Name), true, null, false));
+            foreach (var change in step.Changes)
+            {
+                if (change.Trigger.Length > 0 && analysis.Index.Trigger(change.Trigger) == null)
+                {
+                    rows.Add(new LogRow(setup.Contains(change.Trigger)
+                        ? $"Play setup: {change.Trigger}"
+                        : $"Not in the graph: {change.Trigger}", false, null, true));
+                }
+                else if (change.TextWith(Name) is { } text)
+                {
+                    rows.Add(new LogRow(text, false, change.Trigger.Length > 0 ? change.Trigger : null,
+                        change.Kind == TraceChangeKind.Note));
+                }
+            }
+        }
+
+        return rows;
     }
 
     private void Header()
@@ -343,7 +431,9 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
 
     /// <summary>The group "Run log": one row for each step and each change. A click on a change selects its trigger and
     /// frames it in the graph.</summary>
-    private void Log(MissionAnalysis analysis, List<LogRow> rows)
+    /// <param name="steps">The count of the new steps of the run. The log scrolls to its end when it changes.</param>
+    /// <param name="scrolled">The count of the steps at the last scroll of the log.</param>
+    private void Log(MissionAnalysis analysis, List<LogRow> rows, int steps, ref int scrolled)
     {
         var open = ImGui.CollapsingHeader("Run log", ImGuiTreeNodeFlags.DefaultOpen);
         ImGui.SetItemTooltip(LogTip);
@@ -397,9 +487,9 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
 
             clipper.End();
             // A new step scrolls the log to its end. A fold after an edit adds no step, so the log stays where it is.
-            if (scrolledSteps != missions.DryRuns.Steps)
+            if (scrolled != steps)
             {
-                scrolledSteps = missions.DryRuns.Steps;
+                scrolled = steps;
                 ImGui.SetScrollHereY(1);
             }
         }
