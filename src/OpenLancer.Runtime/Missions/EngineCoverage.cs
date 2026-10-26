@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using LibreLancer.Data.Schema.Missions;
 using LibreLancer.Missions;
 using LibreLancer.Missions.Actions;
 using LibreLancer.Missions.Conditions;
 using OpenLancer.Data.Missions;
+using MissionTrigger = OpenLancer.Data.Missions.MissionTrigger;
 
 namespace OpenLancer.Runtime.Missions;
 
@@ -62,6 +64,65 @@ public sealed class EngineCoverage : IEngineCoverage
     public IReadOnlyDictionary<string, EngineMark> All => marks;
 
     public EngineMark Of(string name) => marks.GetValueOrDefault(name.Trim(), EngineMark.Runs);
+
+    /// <summary>
+    /// The trigger rules of the fork runtime that differ from the retail game for a trigger (section 6.4 of the M6c
+    /// design, decision D745). MF1 keeps the rules of the fork (decision D549 b), so this class is the one place that
+    /// knows them:
+    /// <list type="bullet">
+    /// <item>TR1: the fork needs each condition, and retail uses the last one.</item>
+    /// <item>TR2: the fork reads the lines before the nickname.</item>
+    /// <item>TR4: the fork keeps the last of two triggers with one name, and retail the first.</item>
+    /// <item>TR7: the fork starts a trigger at once, depth first, so a start of a Cnd_True trigger runs its actions before
+    /// the actions after the start.</item>
+    /// <item>TR8: the fork Cnd_SystemEnter waits for a jump into the system.</item>
+    /// <item>TR9: the fork does not start again a trigger that a stop marked in the same check.</item>
+    /// <item>TR10: the fork does not read <c>repeatable</c>.</item>
+    /// <item>CN-15: the fork keeps COMPLETE after a new start.</item>
+    /// </list>
+    /// </summary>
+    public IReadOnlyList<RuleDifference> RuleDifferences(MissionIndex index, MissionTrigger trigger)
+    {
+        var result = new List<RuleDifference>();
+        if (trigger.Conditions.Count > 1)
+            result.Add(RuleDifference.TwoConditions);
+        if (trigger.LinesBeforeNickname.Count > 0)
+            result.Add(RuleDifference.LinesBeforeNickname);
+        if (RepeatedNames(index).Contains(trigger.Nickname))
+            result.Add(RuleDifference.RepeatedNickname);
+        if (StartsAtOnceBeforeMore(index, trigger))
+            result.Add(RuleDifference.StartOrder);
+        if (trigger.ConditionIs("Cnd_SystemEnter"))
+            result.Add(RuleDifference.SystemEnter);
+        if (index.Restarts.Any(l => l.Target == trigger))
+            result.Add(RuleDifference.Restart);
+        if (trigger.Repeats)
+            result.Add(RuleDifference.Repeats);
+        if (index.LinksTo(trigger).Any(l => l.Kind == MissionLinkKind.Watch &&
+                                          string.Equals(l.State, "COMPLETE", StringComparison.OrdinalIgnoreCase)))
+            result.Add(RuleDifference.WatchComplete);
+        return result;
+    }
+
+    // The nicknames that two or more triggers of an index have. The live view asks for each node several times in a
+    // second, so the set stays with its index.
+    private static readonly ConditionalWeakTable<MissionIndex, HashSet<string>> Repeated = new();
+
+    private static HashSet<string> RepeatedNames(MissionIndex index) => Repeated.GetValue(index, i =>
+        i.Triggers.Where(t => t.IsDuplicate).Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>True when a trigger starts a trigger with Cnd_True and has more actions after that start.</summary>
+    private static bool StartsAtOnceBeforeMore(MissionIndex index, MissionTrigger trigger)
+    {
+        var actions = trigger.Actions;
+        for (var i = 0; i < actions.Count - 1; i++)
+        {
+            if (actions[i].Key.Trim().Equals("Act_ActTrig", StringComparison.OrdinalIgnoreCase) &&
+                actions[i].Value(0) is { } name && index.Trigger(name) is { } target && target.ConditionIs("Cnd_True"))
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>True when a class of the method declares it below the base class: the class or a base class between
     /// them overrides it.</summary>

@@ -17,6 +17,9 @@ public sealed class PlayFolderTests
         Assert.Equal(folder, PlayFolder.Of(profile));
         Assert.Equal(Path.Combine(folder, "lancer.ini"), PlayFolder.ConfigPath(profile));
         Assert.Equal(Path.Combine(folder, "saves"), PlayFolder.SavesPath(profile));
+        // The start save and the test layer of a mission play (sections 5.4 and 5.6 of the M6c design).
+        Assert.Equal(Path.Combine(folder, "start", "start.fl"), PlayFolder.StartSavePath(profile));
+        Assert.Equal(Path.Combine(folder, "start", "layer"), PlayFolder.TestLayerPath(profile));
         Assert.Equal(folder, PlayFolder.Of(Path.Combine(ws.Root, "my profiles", "..", "my profiles", "my.sample v2.json")));
     }
 

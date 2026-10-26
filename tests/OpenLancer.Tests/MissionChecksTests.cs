@@ -417,5 +417,7 @@ public sealed class MissionChecksTests
     {
         public EngineMark Of(string name) =>
             cannotLoad.Contains(name, System.StringComparer.OrdinalIgnoreCase) ? EngineMark.CannotLoad : EngineMark.Runs;
+
+        public IReadOnlyList<RuleDifference> RuleDifferences(MissionIndex index, MissionTrigger trigger) => [];
     }
 }

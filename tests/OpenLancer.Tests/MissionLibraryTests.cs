@@ -13,6 +13,9 @@ public sealed class MissionLibraryTests
     private sealed class NoEffect : IEngineCoverage
     {
         public EngineMark Of(string name) => MissionIndex.Is(name, "Act_PlayMusic") ? EngineMark.NoEffect : EngineMark.Runs;
+
+        public System.Collections.Generic.IReadOnlyList<RuleDifference> RuleDifferences(MissionIndex index,
+            MissionTrigger trigger) => [];
     }
 
     [Fact]

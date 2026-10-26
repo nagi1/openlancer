@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace OpenLancer.Data.Editing;
 
@@ -96,6 +98,20 @@ public sealed class EngineLineOrigins(EditSession session)
         var section = SectionOf(line);
         return new ResolvedLine(session.ModOfLine(section, line.File), section);
     }
+
+    /// <summary>The suffix of an engine line about a setup trigger of the test layer of a mission play (section 6.5 of
+    /// the M6c design).</summary>
+    public const string PlayStartSuffix = " (play start)";
+
+    /// <summary>
+    /// True when an engine line is about a section of the test layer of a mission play (section 6.5 of the M6c design):
+    /// its message names a setup trigger of the layer as a whole word. The base game and the mods do not have these
+    /// sections, so such a line gets the origin OpenLancer, with <see cref="PlayStartSuffix"/>.
+    /// </summary>
+    /// <param name="setupTriggers">The nicknames of the setup triggers of the layer of the run.</param>
+    public static bool InPlayLayer(EngineLine line, IReadOnlyCollection<string> setupTriggers) =>
+        setupTriggers.Any(name => name.Length > 0 && Regex.IsMatch(line.Message,
+            $"(?<![A-Za-z0-9_]){Regex.Escape(name)}(?![A-Za-z0-9_])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
 
     /// <summary>The count of a key in the base run: the count, 0 when the base run does not give it, or null when no
     /// comparison is possible. A profile without a mod file gives each line as often as its base run.</summary>

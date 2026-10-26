@@ -26,6 +26,10 @@ public enum MissionItemKind
     PrefabInstance,
     PrefabKind,
     OtherSection,
+
+    /// <summary>The play start of the mission (section 5.2 of the M6c design). The Inspector shows the Play start
+    /// page.</summary>
+    PlayStart,
 }
 
 /// <summary>
@@ -42,6 +46,10 @@ public sealed record MissionRef(string Script, MissionItemKind Kind, SectionRef?
 {
     /// <summary>The mission itself.</summary>
     public static MissionRef Of(string script) => new(VfsPath.Normalize(script) ?? script, MissionItemKind.Mission);
+
+    /// <summary>The play start of a mission (section 5.2 of the M6c design).</summary>
+    public static MissionRef PlayStartOf(string script) =>
+        new(VfsPath.Normalize(script) ?? script, MissionItemKind.PlayStart);
 
     /// <summary>The item of a section of a mission, or of a line of it. A line of a trigger is a row. A line of another
     /// section is its section, and the <c>[Mission]</c> section is the mission.</summary>
