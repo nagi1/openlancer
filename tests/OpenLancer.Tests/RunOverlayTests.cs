@@ -205,6 +205,26 @@ public sealed class RunOverlayTests
         Assert.Equal(RunOverlay.StallTip(11) + " " + RunOverlay.NoEffectStallTip, stall.Tooltip);
     }
 
+    /// <summary>The section "Run" of the Trigger page follows the time of the live view: "Ran" for one second, then "Has
+    /// run". The times of the game show as "{m}:{ss}.{t}". The Mission page makes the section again each second.</summary>
+    [Fact]
+    public void TheRunSectionOfTheLiveViewFollowsTheTime()
+    {
+        var analysis = Analysis(Script);
+        var trace = new MissionTrace(live: true);
+        trace.Append(new TraceStep(1, "", [new TraceChange(TraceChangeKind.Started, "t_wait")]) { Time = 60 });
+        trace.Append(new TraceStep(2, "", [new TraceChange(TraceChangeKind.Ran, "t_wait")]) { Time = 65.3 });
+        var trigger = analysis.Index.Trigger("t_wait")!;
+
+        var now = MissionPageModel.RunSection(trace, trigger, analysis, 65.5);
+        var later = MissionPageModel.RunSection(trace, trigger, analysis, 67);
+
+        Assert.Equal("Ran", now.Fields[0].Value);
+        Assert.Equal("Has run", later.Fields[0].Value);
+        Assert.Equal("1:00.0", now.Fields.Single(f => f.Label == "Became active at").Value);
+        Assert.Equal("1:05.3", now.Fields.Single(f => f.Label == "Cause").Value);
+    }
+
     /// <summary>The rules of a fake engine: each named trigger repeats in another way.</summary>
     private sealed class DifferentRules(params string[] names) : IEngineCoverage
     {

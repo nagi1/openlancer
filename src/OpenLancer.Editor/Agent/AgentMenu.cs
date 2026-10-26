@@ -115,7 +115,8 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
             ]);
     }
 
-    /// <summary>The agent settings: the port, the tool groups and the limits (section 10 of the MCP1 design).</summary>
+    /// <summary>The agent settings: the port, the setting of agent Play (user decision of 2026-10-20 of the M6c design),
+    /// the tool groups and the limits (section 10 of the MCP1 design).</summary>
     private void Settings(bool running)
     {
         var settings = window.Settings.Agent;

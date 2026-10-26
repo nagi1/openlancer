@@ -37,7 +37,8 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
     private readonly RawIniEditor ini = new(MissionWorkspace.Vocabulary);
     private readonly Dictionary<string, ListField> lists = [];
     private (MissionRunResult? Result, MissionAnalysis? Analysis, MissionRef? Item, bool ShowBaseGame, bool HidesOpenLancer,
-        string? NoEdit, GraphFile? File, (long Revision, bool Dirty, int Run, int Live, bool Shown) Session, MissionPageModel? Model) page;
+        string? NoEdit, GraphFile? File, (long Revision, bool Dirty, int Run, int Live, long LiveSecond, bool Shown) Session,
+        MissionPageModel? Model) page;
     private (MissionRunResult? Result, string? Key, bool ShowBaseGame, RawText? Text, IReadOnlyList<RawMark> Marks)
         block = (null, null, false, null, []);
 
@@ -222,10 +223,12 @@ internal sealed partial class MissionPage(EditorWindow window, PropertyGrid grid
         // A save takes the blue bar of an override away, so a save makes the page again too.
         var file = window.Missions.GraphOf(item.Script);
         // A change of the dry run or of the live view, and a change of the view that shows it, make the section "Run" of
-        // the Trigger page again (section 4.5 of the M6c design).
+        // the Trigger page again (section 4.5 of the M6c design). The states of the live view also change with the time,
+        // for example "Ran" for one second and the stall, so the page follows each second of the live view.
         var run = window.Missions.ShownRun(item.Script);
+        var liveSecond = run?.Live == true ? (long)window.Missions.Live.Now : 0;
         var state = (session.Edits.Revision, session.Edits.IsDirty, window.Missions.DryRuns.Version,
-            window.Missions.Live.Version, run != null);
+            window.Missions.Live.Version, liveSecond, run != null);
         changed = !Equals(page.Item, item);
         if (page.Model is { } known && ReferenceEquals(page.Result, result) && ReferenceEquals(page.Analysis, analysis) &&
             !changed && page.ShowBaseGame == showBaseGame && page.HidesOpenLancer == hidesOpenLancer &&
