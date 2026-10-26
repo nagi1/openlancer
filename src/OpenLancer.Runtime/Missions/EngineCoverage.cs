@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using LibreLancer.Data;
 using LibreLancer.Data.Schema.Missions;
 using LibreLancer.Missions;
 using LibreLancer.Missions.Actions;
@@ -73,9 +74,11 @@ public sealed class EngineCoverage : IEngineCoverage
     /// <item>TR1: the fork needs each condition, and retail uses the last one.</item>
     /// <item>TR2: the fork reads the lines before the nickname.</item>
     /// <item>TR4: the fork keeps the last of two triggers with one name, and retail the first.</item>
+    /// <item>TR6: the fork runs a trigger without a condition at the next check, and retail stops.</item>
     /// <item>TR7: the fork starts a trigger at once, depth first, so a start of a Cnd_True trigger runs its actions before
-    /// the actions after the start.</item>
+    /// the actions after the start. The fork also starts the start set in file order, and retail in id order.</item>
     /// <item>TR8: the fork Cnd_SystemEnter waits for a jump into the system.</item>
+    /// <item>The fork Cnd_SpaceEnter ignores its system.</item>
     /// <item>TR9: the fork does not start again a trigger that a stop marked in the same check.</item>
     /// <item>TR10: the fork does not read <c>repeatable</c>.</item>
     /// <item>CN-15: the fork keeps COMPLETE after a new start.</item>
@@ -90,10 +93,17 @@ public sealed class EngineCoverage : IEngineCoverage
             result.Add(RuleDifference.LinesBeforeNickname);
         if (RepeatedNames(index).Contains(trigger.Nickname))
             result.Add(RuleDifference.RepeatedNickname);
+        if (trigger.Conditions.Count == 0)
+            result.Add(RuleDifference.NoCondition);
         if (StartsAtOnceBeforeMore(index, trigger))
             result.Add(RuleDifference.StartOrder);
+        if (StartSetOutOfOrder(index).Contains(trigger))
+            result.Add(RuleDifference.StartSetOrder);
         if (trigger.ConditionIs("Cnd_SystemEnter"))
             result.Add(RuleDifference.SystemEnter);
+        if (trigger.ConditionIs("Cnd_SpaceEnter") && trigger.Condition!.Value(0) is { } system &&
+            !string.Equals(system.Trim(), "no_params", StringComparison.Ordinal))
+            result.Add(RuleDifference.SpaceEnterSystem);
         if (index.Restarts.Any(l => l.Target == trigger))
             result.Add(RuleDifference.Restart);
         if (trigger.Repeats)
@@ -110,6 +120,17 @@ public sealed class EngineCoverage : IEngineCoverage
 
     private static HashSet<string> RepeatedNames(MissionIndex index) => Repeated.GetValue(index, i =>
         i.Triggers.Where(t => t.IsDuplicate).Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase));
+
+    // The start triggers of an index when the fork starts them in another order than the game.
+    private static readonly ConditionalWeakTable<MissionIndex, HashSet<MissionTrigger>> OutOfOrder = new();
+
+    /// <summary>The start set of an index when its file order is not its id order, else an empty set. The fork starts
+    /// the start triggers in file order, and the game in id order, smallest id first.</summary>
+    private static HashSet<MissionTrigger> StartSetOutOfOrder(MissionIndex index) => OutOfOrder.GetValue(index, i =>
+    {
+        var ids = i.StartTriggers.Select(t => FLHash.CreateID(t.Nickname)).ToList();
+        return ids.Zip(ids.Skip(1)).Any(p => p.First > p.Second) ? [.. i.StartTriggers] : [];
+    });
 
     /// <summary>True when a trigger starts a trigger with Cnd_True and has more actions after that start.</summary>
     private static bool StartsAtOnceBeforeMore(MissionIndex index, MissionTrigger trigger)

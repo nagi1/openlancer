@@ -61,6 +61,10 @@ public sealed class PlayArgsTests
         Assert.Equal(plain, PlayArgs.Parse(plain.ToArguments()));
         Assert.Equal(args, PlayArgs.Parse(["--test-layer", layer, "--save", "2", "--profile", Profile, "--start-save", save,
             "--mod", "m6c"]));
+        // The start, each reload and each restart of the play load the test layer (review fix of M6c-2).
+        Assert.Equal(layer, args.TestLayer);
+        Assert.Null(plain.TestLayer);
+        Assert.Null((args with { Start = new PlayStart.AtBase("Li01_01_Base") }).TestLayer);
     }
 
     [Fact]

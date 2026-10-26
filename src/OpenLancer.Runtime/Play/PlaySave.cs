@@ -107,14 +107,25 @@ public static class PlaySave
         return save;
     }
 
-    /// <summary>The reason when the storyline of the game data does not have the mission of a start save. The server
-    /// would load no mission.</summary>
+    /// <summary>The reason when the storyline of the game data does not have the mission of a start save, or null. The
+    /// server would load no mission. The reason also tells about an ambient script of <c>[MissionState]</c> whose base or
+    /// room the game data does not have, because the server stops at such a line when it loads the save.</summary>
     internal static string? MissionProblem(GameItemDb items, SaveGame save)
     {
         var mission = save.StoryInfo?.Mission;
-        return items.Ini.Storyline.Missions.Any(m => m.Nickname.Equals(mission, StringComparison.OrdinalIgnoreCase))
-            ? null
-            : $"The start save names the mission '{mission}', which the storyline of the game data does not have.";
+        if (!items.Ini.Storyline.Missions.Any(m => m.Nickname.Equals(mission, StringComparison.OrdinalIgnoreCase)))
+            return $"The start save names the mission '{mission}', which the storyline of the game data does not have.";
+        foreach (var ambient in save.MissionState?.Ambients ?? [])
+        {
+            if (items.Bases.Get(ambient.Base.Hash) is not { } dock)
+                return $"The start save names the ambient script '{ambient.Script}' in a base that the game data does " +
+                       "not have. The game cannot load the save.";
+            if (dock.Rooms.Get(ambient.Room.Hash) == null)
+                return $"The start save names the ambient script '{ambient.Script}' in a room of base '{dock.Nickname}' " +
+                       "that the game data does not have. The game cannot load the save.";
+        }
+
+        return null;
     }
 
     /// <summary>

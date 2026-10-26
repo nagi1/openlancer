@@ -1556,6 +1556,7 @@ public sealed class PlayControllerTests : IDisposable
         Assert.True(result.Wait(TimeSpan.FromSeconds(5)));
         Assert.Equal(EditErrorKind.Refused, result.Result.Error!.Kind);
         Assert.Equal("This mission script has no story slot.", result.Result.Error.Message);
+        Assert.Equal("Play from here is not available: This mission script has no story slot.", Console[^1]);
     }
 
     /// <summary>The save of Play gives its error to the request: the save gate and files that changed outside the
@@ -1603,6 +1604,8 @@ public sealed class PlayControllerTests : IDisposable
         Assert.Equal("Playing: New London (Br01), save 2", play.StatusText);
         StopAndRunToIdle();
         Assert.Equal(1, stub.Starts);
+        // The live view starts a new play at the start and at the restart, and stops its clock at the exit.
+        Assert.Equal(["started", "started", "ended"], editor.LiveCalls);
     }
 
     /// <summary>restart-failed keeps the game: the player goes on with the data of the game, and the Console tells it as
@@ -1620,7 +1623,9 @@ public sealed class PlayControllerTests : IDisposable
 
         var warning = Assert.Single(editor.Log.Entries, e => e.Message.StartsWith("The game cannot start"));
         Assert.Equal(ConsoleSeverity.Warning, warning.Severity);
-        Assert.Equal("The game cannot start M99 again. The start save does not load.", warning.Message);
+        Assert.Equal("The game cannot start M99 again. The start save does not load. The game goes on with its old data. " +
+                     "In space, the mission goes back to its last checkpoint, or to the mission start when no checkpoint " +
+                     "ran.", warning.Message);
         Assert.True(stub.Runs(0));
         play.Update(false, false);
         play.Update(false, false);
@@ -1646,6 +1651,10 @@ public sealed class PlayControllerTests : IDisposable
         Assert.Same(mission, play.Mission);
         Assert.Equal(2, mission.Prepares);
         Assert.Equal(["start"], stub.Input(0));
+        Assert.Equal("The game cannot start M99 again. The path to trigger 't_wave' passes trigger 't_x', which has no " +
+                     "condition. The running game keeps save 1 and its mission.", Console[^1]);
+        play.Update(false, false);
+        Assert.Equal(2, mission.Prepares);
         StopAndRunToIdle();
     }
 
@@ -1662,11 +1671,15 @@ public sealed class PlayControllerTests : IDisposable
         play.Update(false, false);
 
         Assert.Equal(2, editor.SaveCalls);
-        Assert.Same(second, play.Mission);
+        // The game runs the first start until it answers restarted, and the request gets its result then.
+        Assert.Same(first, play.Mission);
+        Assert.Same(second, play.LoadingMission);
+        Assert.Equal([first, second], play.MissionStarts);
         Assert.Contains("OpenLancer plays M99 from t_wave (approximate).", Console);
+        RunUntil(PlayStatus.Running);
+        Assert.Same(second, play.Mission);
         Assert.True(result.Wait(TimeSpan.FromSeconds(5)));
         Assert.True(result.Result.Started);
-        RunUntil(PlayStatus.Running);
         Assert.Equal(["start", "restart 1"], stub.Input(0));
 
         editor.Commit(2);
@@ -1749,6 +1762,205 @@ public sealed class PlayControllerTests : IDisposable
         RunUntil(PlayStatus.Idle);
         Assert.Equal(PlayStopped.Game, PlayRequests.Stop(play, games));
         Assert.Equal(1, games.Stops);
+    }
+
+    /// <summary>restart-failed of a new start keeps the start that the game runs: the banner, a later restart and the
+    /// origins of the engine lines name it. The request of the new start gets refused with the reason of the game
+    /// (review fix of M6c-2).</summary>
+    [Fact]
+    public void ARestartFailedOfANewStartKeepsTheStartOfTheGame()
+    {
+        var first = new FakeMissionStart();
+        PlayMissionToRunning(Game with { RestartLines = [RestartFailed(1), Restarted(2)] }, first);
+        var second = new FakeMissionStart { StartName = "t_wave (approximate)" };
+
+        var result = play.RequestMission(second, null);
+        play.Update(false, false);
+        RunUntil(PlayStatus.Running);
+
+        Assert.True(result.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal("RestartFailed", result.Result.Error!.Detail);
+        Assert.StartsWith("The game cannot start M99 again. The start save does not load.", result.Result.Error.Message);
+        Assert.Same(first, play.Mission);
+        Assert.Equal([first], play.MissionStarts);
+        editor.Commit(2);
+        play.Update(false, false);
+        editor.Finish(2);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal(2, first.Prepares);
+        Assert.Equal(1, second.Prepares);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>A new start that cannot start after the save of its request: the request gets its refusal, and the save
+    /// goes to the game with the start of the running play, so the game does not keep the old files (review fix of
+    /// M6c-2).</summary>
+    [Fact]
+    public void ARefusedNewStartStillRestartsTheRunningStartWithItsSave()
+    {
+        var running = new FakeMissionStart();
+        PlayMissionToRunning(Game with { RestartLines = [Restarted(2)] }, running);
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+
+        var result = play.RequestMission(new FakeMissionStart { RefuseWith = "The path is refused." }, null);
+        play.Update(false, false);
+        editor.Finish(2);
+
+        Assert.True(result.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal("StartRefused", result.Result.Error!.Detail);
+        Assert.Contains("Play from here is not available: The path is refused.", Console);
+        RunUntil(PlayStatus.Running);
+        Assert.Equal(["start", "restart 2"], stub.Input(0));
+        Assert.Equal(2, running.Prepares);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>Restart the mission does not save: the game starts again with the saved files (section 5.8 of the M6c
+    /// design, review fix).</summary>
+    [Fact]
+    public void RestartTheMissionDoesNotSave()
+    {
+        var mission = new FakeMissionStart();
+        PlayMissionToRunning(Game with { RestartLines = [Restarted(1)] }, mission);
+        Assert.Null(play.RestartBlock);
+        var saves = editor.SaveCalls;
+        editor.SaveResult = new SaveOutcome(true, 2, false);
+
+        play.RestartMission();
+        play.Update(false, false);
+        RunUntil(PlayStatus.Running);
+
+        Assert.Equal(saves, editor.SaveCalls);
+        Assert.Equal(["start", "restart 1"], stub.Input(0));
+        StopAndRunToIdle();
+        Assert.Equal("Available while a mission play runs.", play.RestartBlock);
+    }
+
+    /// <summary>
+    /// An agent request that did not ask the user, because the mod had no unsaved edits, does not save edits that came
+    /// later, for example while the request waited for a field edit (user decision of 2026-10-20 of the M6c design). It
+    /// gives refused, and the agent sends it again, so the editor asks. A request of the user saves them.
+    /// </summary>
+    [Theory]
+    [InlineData((int)PlaySaveRule.NoEdits, true, false)]
+    [InlineData((int)PlaySaveRule.NoEdits, false, true)]
+    [InlineData((int)PlaySaveRule.Save, true, true)]
+    public void AnAgentRequestDoesNotSaveEditsThatCameAfterIt(int rule, bool unsaved, bool started)
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        var result = play.RequestMission(new FakeMissionStart(), null, (PlaySaveRule)rule);
+        play.Update(editing: true, dialogOpen: false);
+
+        editor.Session = editor.Session! with { Unsaved = unsaved };
+        play.Update(false, false);
+
+        Assert.True(result.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(started, result.Result.Started);
+        Assert.Equal(started ? 1 : 0, editor.SaveCalls);
+        Assert.Equal(started ? 1 : 0, starts.Count);
+        if (!started)
+        {
+            Assert.Equal(PlayRequests.NotSavedDetail, result.Result.Error!.Detail);
+            Assert.Equal(PlayRequests.EditsWhileWaiting("proof"), result.Result.Error.Message);
+            return;
+        }
+
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>A mission play waits until the Scene shows each edit, because its start place can be the Scene camera
+    /// (review fix of M6c-2).</summary>
+    [Fact]
+    public void AMissionPlayWaitsUntilTheSceneShowsEachEdit()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        editor.SceneBehind = true;
+        var mission = new FakeMissionStart();
+
+        play.RequestMission(mission, null);
+        play.Update(false, false);
+
+        Assert.Equal(0, mission.Prepares);
+        Assert.Empty(starts);
+        editor.SceneBehind = false;
+        play.Update(false, false);
+        Assert.Equal(1, mission.Prepares);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>A save while a restart runs: the game can show parts of it, and the Console says so. The trigger then
+    /// sends the restart of that save. The watchdog of a restart names the restart.</summary>
+    [Fact]
+    public void ASaveDuringARestartRestartsAgainAndTheWatchdogNamesTheRestart()
+    {
+        var mission = new FakeMissionStart();
+        PlayMissionToRunning(Game with { RestartLines = [Restarted(2), Restarted(3)] }, mission);
+        editor.Commit(2);
+        play.Update(false, false);
+        editor.Finish(2);
+        Assert.Equal(PlayStatus.Reloading, play.Status);
+        editor.Commit(3);
+        play.Update(false, false);
+        ui.RunUntil(() => stub.Input(0).Count >= 2 && Console.Any(l => l.StartsWith("Save 3 came during the restart")),
+            "the note of the save during the restart");
+        editor.Finish(3);
+        ui.RunUntil(() => stub.Input(0).Count >= 3 && play.Status == PlayStatus.Running, "the second restart");
+
+        Assert.Equal(["start", "restart 2", "restart 3"], stub.Input(0));
+        Assert.Contains("Save 3 came during the restart, so the game can show parts of it.", Console);
+        StopAndRunToIdle();
+
+        var waits = new FakeMissionStart();
+        PlayMissionToRunning(Game, waits);
+        editor.Commit(4);
+        play.Update(false, false);
+        editor.Finish(4);
+        now += PlayController.ReloadLimit + TimeSpan.FromSeconds(1);
+        play.Update(false, false);
+        Assert.Equal(PlayStatus.NotResponding, play.Status);
+        Assert.Equal("Play: the game does not respond. It did not start the mission again with save 4 in 30 s. Stop " +
+                     "ends it.", Console[^1]);
+        play.Stop();
+        play.Stop();
+        RunUntil(PlayStatus.Idle);
+    }
+
+    /// <summary>A new start that waits gives its refusal when the game exits, and when the validation of its save finds
+    /// errors (section 12.1 of the M6c design).</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ANewStartThatWaitsGivesItsRefusal(bool exits)
+    {
+        PlayMissionToRunning(Game, new FakeMissionStart());
+        editor.Commit(2);
+        var result = play.RequestMission(new FakeMissionStart { StartName = "t_wave (approximate)" }, null);
+        play.Update(false, false);
+        Assert.False(result.IsCompleted);
+
+        if (exits)
+        {
+            using (var process = Process.GetProcessById(stub.ProcessId(0)))
+                process.Kill();
+            RunUntil(PlayStatus.Idle);
+        }
+        else
+        {
+            editor.Finish(2, HullError);
+        }
+
+        Assert.True(result.Wait(TimeSpan.FromSeconds(5)));
+        Assert.Equal(exits ? "GameClosed" : "ValidationErrors", result.Result.Error!.Detail);
+        if (!exits)
+        {
+            Assert.Contains("Play did not start M99 from t_wave (approximate): the validation of save 2 found 1 error.",
+                Console);
+            StopAndRunToIdle();
+        }
     }
 
     private static string Restarted(int save, long ms = 600) =>
@@ -1959,6 +2171,13 @@ public sealed class PlayControllerTests : IDisposable
         public List<PlayEvent.MissionChanges> MissionEvents { get; } = [];
 
         public void MissionChanged(PlayEvent.MissionChanges changes) => MissionEvents.Add(changes);
+
+        /// <summary>The calls of the live view, in order: "started" and "ended".</summary>
+        public List<string> LiveCalls { get; } = [];
+
+        public void PlayStarted() => LiveCalls.Add("started");
+
+        public void PlayEnded() => LiveCalls.Add("ended");
 
         private void Done(ValidationResult result)
         {

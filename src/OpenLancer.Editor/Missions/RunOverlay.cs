@@ -26,6 +26,10 @@ internal enum RunChipKind
     /// <summary>OpenLancer runs the trigger with another rule than the retail game (section 6.4 of the M6c design). Only
     /// the live view of a mission play shows it.</summary>
     RulesDiffer,
+
+    /// <summary>The trigger of the play start of the mission (section 5.2 of the M6c design). It is not a run state, so
+    /// it has its own look.</summary>
+    PlayStart,
 }
 
 /// <summary>One chip of a run state: a glyph and a word, so no state depends on color alone (decision D761).</summary>

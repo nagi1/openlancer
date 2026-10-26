@@ -110,7 +110,11 @@ internal sealed class InspectorPanel : IDisposable
     }
 
     /// <summary>Frees the native editors of the pages.</summary>
-    public void Dispose() => missionPage.Dispose();
+    public void Dispose()
+    {
+        missionPage.Dispose();
+        playStartPage.Dispose();
+    }
 
     public void Draw(object? item)
     {

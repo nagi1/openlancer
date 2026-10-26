@@ -71,6 +71,8 @@ public sealed class MissionPlayTests : IDisposable
         Assert.Equal(MissionStartPoint.At("t_kill"), start.Request.Start);
         Assert.Equal((StartPlaceChoice.Base, "ol_base_a"), (start.Request.Place, start.Request.PlaceBase));
         Assert.Equal(EditOrigin.User, start.Request.Origin);
+        Assert.True(start.Request.FromPlayStart);
+        Assert.Equal([PlaySaveRule.Save], editor.Saves);
         Assert.True(result.Wait(Wait));
         Assert.True(result.Result.Started);
     }
@@ -108,6 +110,45 @@ public sealed class MissionPlayTests : IDisposable
         Assert.True(saved.Wait(Wait));
         Assert.True(saved.Result.Started);
         Assert.Single(editor.Requests);
+        Assert.Equal([PlaySaveRule.Save], editor.Saves);
+    }
+
+    /// <summary>A second agent request while the question of the first is open gives busy, so the first question stays
+    /// and its agent gets its answer. After the answer, a new request asks again.</summary>
+    [Fact]
+    public void ASecondAgentRequestWhileTheQuestionIsOpenGivesBusy()
+    {
+        editor.UnsavedMod = "act";
+        var first = plays.Request(AgentRequest("t_kill"));
+        var question = editor.Asked!.Value;
+
+        var second = plays.Request(AgentRequest(null));
+
+        Assert.True(second.Wait(Wait));
+        Assert.Equal(EditErrorKind.Busy, second.Result.Error!.Kind);
+        Assert.Equal(PlayRequests.AgentWaitsReason, second.Result.Error.Message);
+        Assert.False(first.IsCompleted);
+        question.Cancel();
+        Assert.True(first.Wait(Wait));
+
+        plays.Request(AgentRequest(null));
+        Assert.NotSame(question.Choices, editor.Asked!.Value.Choices);
+    }
+
+    /// <summary>The user can start another play while the question is open. "Save and continue" then checks the rule
+    /// again, and the agent gets refused, so the request does not close the play of the user.</summary>
+    [Fact]
+    public void SaveAndContinueChecksTheRuleOfAnotherPlayAgain()
+    {
+        editor.UnsavedMod = "act";
+        var result = plays.Request(AgentRequest("t_kill"));
+        editor.PlayStatus = PlayStatus.Running;
+
+        editor.Asked!.Value.Choices.Single(c => c.Label == "Save and continue").Action();
+
+        Assert.True(result.Wait(Wait));
+        Assert.Equal(MissionPlay.OtherPlayDetail, result.Result.Error!.Detail);
+        Assert.Empty(editor.Requests);
     }
 
     /// <summary>The setting skips the question, and a request without unsaved edits starts at once.</summary>
@@ -123,6 +164,8 @@ public sealed class MissionPlayTests : IDisposable
 
         Assert.Null(editor.Asked);
         Assert.Single(editor.Requests);
+        // Without the setting, nobody allowed a save, so Play refuses edits that come before its save.
+        Assert.Equal([autoSave ? PlaySaveRule.Save : PlaySaveRule.NoEdits], editor.Saves);
         Assert.True(result.Wait(Wait));
         Assert.True(result.Result.Started);
     }
@@ -159,6 +202,10 @@ public sealed class MissionPlayTests : IDisposable
         Assert.Equal(StartRefusal.NoSlot, noSlot.Plan!.Refusal);
         editor.Slot = StartPlanTests.Slot;
         Assert.Equal(EditErrorKind.NotFound, plays.Request(AgentRequest("t_gone")).Result.Error!.Kind);
+        Assert.Equal(StartPlan.NoTriggerReason("t_gone"), plays.Request(AgentRequest("t_gone")).Result.Error!.Message);
+        editor.Missing = "The session has no such mission script.";
+        var noScript = plays.Request(AgentRequest(null)).Result.Error!;
+        Assert.Equal((EditErrorKind.NotFound, MissionErrors.ScriptNotFound), (noScript.Kind, noScript.Detail));
         Assert.Null(editor.Asked);
         Assert.Empty(editor.Requests);
     }
@@ -188,29 +235,39 @@ public sealed class MissionPlayTests : IDisposable
         Assert.Equal(start.Plan.Setup.Select(t => t.Nickname), start.SetupTriggers);
     }
 
-    /// <summary>A play start whose trigger is gone becomes the mission start, and the Console tells it (decision D762).
-    /// A request of an agent plays the mission start too, but it does not change the play start of the user.</summary>
+    private const string PlayStartNote = "The play start of M99 named trigger 't_gone'. The script does not have this " +
+                                         "trigger now. The play start is the mission start again.";
+
+    private const string OtherStartNote = "This play of M99 started at trigger 't_gone'. The script does not have this " +
+                                          "trigger now, so the game plays the mission start.";
+
+    /// <summary>A start whose trigger is gone becomes the mission start, and the Console tells it (decision D762). Only a
+    /// request of the user from the play start also makes the play start the mission start. A Play menu item, a request
+    /// of an agent and a play start that the user changed during the play keep the play start of the user.</summary>
     [Theory]
-    [InlineData(EditOrigin.User, "")]
-    [InlineData(EditOrigin.Agent, "t_gone")]
-    public void AMissingStartFallsBackToTheMissionStart(EditOrigin origin, string playStartAfter)
+    [InlineData(EditOrigin.User, true, "t_gone", "", PlayStartNote)]
+    [InlineData(EditOrigin.User, false, "t_gone", "t_gone", OtherStartNote)]
+    [InlineData(EditOrigin.Agent, true, "t_gone", "t_gone", OtherStartNote)]
+    [InlineData(EditOrigin.User, true, "t_kill", "t_kill", OtherStartNote)]
+    public void AMissingStartFallsBackToTheMissionStart(EditOrigin origin, bool fromPlayStart, string playStart,
+        string playStartAfter, string note)
     {
-        plays.SetPlayStart(ScriptPath, new PlayStartSetting("t_gone", "suggested"));
+        plays.SetPlayStart(ScriptPath, new PlayStartSetting(playStart, "suggested"));
         var start = new MissionPlayStart(plays, new MissionPlayRequest(ScriptPath, MissionStartPoint.At("t_gone"))
         {
             Origin = origin,
+            FromPlayStart = fromPlayStart,
         });
 
         Assert.NotNull(start.Prepare());
 
         Assert.Equal(StartKind.MissionStart, start.Plan!.Kind);
-        Assert.Contains("The play start of M99 named trigger 't_gone'. The script does not have this trigger now. The play " +
-                        "start is the mission start again.", Console);
+        Assert.Equal([note], Console);
         Assert.Equal(playStartAfter, plays.PlayStartOf(ScriptPath).Trigger);
     }
 
-    /// <summary>A start that cannot start gives its reason to the Console with the prefix of section 8.4, and keeps it
-    /// for the result of the request.</summary>
+    /// <summary>A start that cannot start keeps its reason for the result of the request. Play gives it to the Console
+    /// with the text of a start or of a restart (see <c>PlayControllerTests</c>).</summary>
     [Fact]
     public void AStartThatCannotStartTellsWhy()
     {
@@ -220,9 +277,59 @@ public sealed class MissionPlayTests : IDisposable
         Assert.Null(start.Prepare());
 
         Assert.Equal(StartPlan.NoSlotReason, start.Refusal);
-        Assert.Contains(StartPlan.RefusalPrefix + StartPlan.NoSlotReason, Console);
+        Assert.Empty(Console);
         Assert.Null(start.Plan);
     }
+
+    /// <summary>
+    /// A rename of the trigger of the start during a mission play moves the start of the running play, of its restart and
+    /// of a request that waits (section 5.2 of the M6c design, review fix). So the restart after the save of the rename
+    /// starts at the renamed trigger, and the play start of the user follows the rename. An Undo moves it back.
+    /// </summary>
+    [Fact]
+    public void ARestartUsesTheStartOfTheRunningPlayAfterARenameAndItsUndo()
+    {
+        plays.SetPlayStart(ScriptPath, new PlayStartSetting("t_kill", "suggested"));
+        plays.PlayFromPlayStart(ScriptPath);
+        var running = (MissionPlayStart)editor.Requests.Single();
+        editor.Kept.Add(running);
+        Assert.NotNull(running.Prepare());
+
+        plays.Renamed(Renames(("t_kill", "t_kill_two")));
+        // The save writes the rename, so the model of the saved script has the new name.
+        editor.Index = MissionTestData.Index(StartPlanTests.Script.Replace("t_kill", "t_kill_two"));
+
+        Assert.NotNull(running.Prepare());
+        Assert.Equal(MissionStartPoint.At("t_kill_two"), running.Plan!.Start);
+        Assert.Equal(StartKind.Approximate, running.Plan.Kind);
+        Assert.Equal("t_kill_two", plays.PlayStartOf(ScriptPath).Trigger);
+        Assert.Empty(Console);
+
+        plays.Renamed(Renames(("t_kill_two", "t_kill")));
+        editor.Index = MissionTestData.Index(StartPlanTests.Script);
+        Assert.NotNull(running.Prepare());
+        Assert.Equal(MissionStartPoint.At("t_kill"), running.Plan!.Start);
+        Assert.Equal("t_kill", plays.PlayStartOf(ScriptPath).Trigger);
+    }
+
+    /// <summary>The name of a start comes from the kind of the plan: a script without a story slot gives "Test script"
+    /// on the toolbar chip, as on the Play start page.</summary>
+    [Fact]
+    public void TheNameOfTheStartIsTheNameOfThePlan()
+    {
+        plays.SetPlayStart(ScriptPath, new PlayStartSetting("t_restore", "suggested"));
+        Assert.Equal("Checkpoint t_restore", plays.StartNameOf(ScriptPath));
+
+        editor.Slot = null;
+
+        Assert.Equal("Test script", plays.StartNameOf(ScriptPath));
+        Assert.Equal(StartPlan.Make(editor.Index, null, MissionStartPoint.At("t_restore")).StartName,
+            plays.StartNameOf(ScriptPath));
+    }
+
+    private static MissionScriptsChange Renames(params (string From, string To)[] pairs) =>
+        new(new Dictionary<string, long>(),
+            pairs.Select(p => (new TriggerRef(ScriptPath, p.From), new TriggerRef(ScriptPath, p.To))).ToList());
 
     /// <summary>The play start follows a rename of its trigger, also the Undo and the Redo of the rename (section 5.2 of
     /// the M6c design). The renames come from the event of each change of the history.</summary>
@@ -313,6 +420,11 @@ public sealed class MissionPlayTests : IDisposable
 
         public IMissionStart? RunningMission { get; set; }
 
+        /// <summary>The starts that Play keeps, for the renames.</summary>
+        public List<IMissionStart> Kept { get; } = [];
+
+        public IReadOnlyList<IMissionStart> MissionStarts => Kept;
+
         public bool GameRuns { get; set; }
 
         public string? UnsavedMod { get; set; }
@@ -321,14 +433,20 @@ public sealed class MissionPlayTests : IDisposable
 
         public List<IMissionStart> Requests { get; } = [];
 
+        /// <summary>The save rule of each request, in order.</summary>
+        public List<PlaySaveRule> Saves { get; } = [];
+
         public (string Title, string Message, IReadOnlyList<Choice> Choices, Action Cancel)? Asked { get; private set; }
 
-        public MissionIndex? IndexOf(string script) => Index;
+        public (MissionIndex Index, StorySlot? Slot)? IndexOf(string script) => (Index, Slot);
+
+        /// <summary>The reason of a script that the session does not have, or null.</summary>
+        public string? Missing { get; set; }
 
         public (MissionIndex Index, StorySlot? Slot)? ModelOf(string script, out string? problem)
         {
-            problem = null;
-            return (Index, Slot);
+            problem = Missing;
+            return Missing == null ? (Index, Slot) : null;
         }
 
         public StartSavePlace? PlaceOf(StartPlace place, out string? problem)
@@ -339,9 +457,10 @@ public sealed class MissionPlayTests : IDisposable
                 : new StartSavePlace(place.System ?? "ol_sys_a", null, place.Position, place.Orientation);
         }
 
-        public Task<PlayRequestResult> RequestMission(IMissionStart start, string? package)
+        public Task<PlayRequestResult> RequestMission(IMissionStart start, string? package, PlaySaveRule save)
         {
             Requests.Add(start);
+            Saves.Add(save);
             return Task.FromResult(new PlayRequestResult(PlayStatus.Starting));
         }
 

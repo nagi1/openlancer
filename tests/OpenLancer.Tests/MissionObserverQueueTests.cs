@@ -9,6 +9,40 @@ namespace OpenLancer.Tests;
 /// events, the reset after a load, the bound of the queue and the dropped count.</summary>
 public sealed class MissionObserverQueueTests
 {
+    /// <summary>The writer of the mission lines writes each line of the observer as an event line. A closed output ends
+    /// the writes and does not throw on the timer thread. After an error event, no mission line follows (review fix of
+    /// M6c-2).</summary>
+    [Fact]
+    public void TheMissionLinesEndAtAClosedOutputAndAfterAnErrorEvent()
+    {
+        var observer = new MissionObserver();
+        var output = new System.IO.StringWriter();
+        var lines = new MissionLines(observer, output);
+        observer.MissionLoaded("Mission_02");
+        observer.TriggerChanged("t_start", MissionTriggerChange.Ran);
+
+        lines.Write();
+        var written = output.ToString().Trim();
+        Assert.IsType<PlayEvent.MissionChanges>(PlayProtocol.ReadEvent(written));
+        lines.Close();
+        observer.TriggerChanged("t_next", MissionTriggerChange.Started);
+        lines.Write();
+        Assert.Equal(written, output.ToString().Trim());
+
+        var closed = new MissionLines(observer, new ClosedWriter());
+        closed.Write();
+        Assert.True(closed.Closed);
+        closed.Write();
+    }
+
+    /// <summary>An output whose pipe the editor closed.</summary>
+    private sealed class ClosedWriter : System.IO.TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+        public override void WriteLine(string? value) => throw new System.IO.IOException("The pipe is being closed.");
+    }
+
     [Fact]
     public void TheChangesComeInALineWithTheResetOfTheirLoad()
     {

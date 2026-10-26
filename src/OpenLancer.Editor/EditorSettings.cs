@@ -38,14 +38,12 @@ internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastNa
 /// the agent tools write it.</param>
 internal sealed record PlayStartSetting(string Trigger, string Place)
 {
+    /// <summary>The play start of a script without a setting: the mission start at the suggested place.</summary>
+    public static readonly PlayStartSetting Default = new("", RunJson.SuggestedPlace);
+
     /// <summary>The setting of a start and a place.</summary>
     public static PlayStartSetting Of(MissionStartPoint start, StartPlaceChoice place, string? dock) =>
-        new(start.Trigger ?? "", place switch
-        {
-            StartPlaceChoice.Camera => "camera",
-            StartPlaceChoice.Base when dock != null => RunJson.BasePlacePrefix + dock,
-            _ => "suggested",
-        });
+        new(start.Trigger ?? "", RunJson.PlaceText(place, dock));
 
     /// <summary>The start of the setting.</summary>
     [JsonIgnore]
@@ -55,10 +53,7 @@ internal sealed record PlayStartSetting(string Trigger, string Place)
     /// suggestion.</summary>
     [JsonIgnore]
     public (StartPlaceChoice Place, string? Base) PlaceChoice =>
-        Place == "camera" ? (StartPlaceChoice.Camera, null)
-        : Place.StartsWith(RunJson.BasePlacePrefix, StringComparison.Ordinal) &&
-          Place[RunJson.BasePlacePrefix.Length..].Trim() is { Length: > 0 } dock ? (StartPlaceChoice.Base, dock)
-        : (StartPlaceChoice.Suggested, null);
+        RunJson.ParsePlace(Place) ?? (StartPlaceChoice.Suggested, null);
 }
 
 /// <summary>The choices of the Export dialog for one mod (milestone M11).</summary>
@@ -550,7 +545,7 @@ internal sealed class EditorSettings
     public PlayStartSetting PlayStartOf(string profilePath, string script) =>
         PlayStarts.TryGetValue(profilePath, out var scripts) && scripts.TryGetValue(script, out var start)
             ? start
-            : new PlayStartSetting("", "suggested");
+            : PlayStartSetting.Default;
 
     /// <summary>Stores the play start of a mission script. The mission start with the suggested place removes the
     /// entry.</summary>
@@ -561,7 +556,7 @@ internal sealed class EditorSettings
             PlayStarts[profilePath] = scripts = new Dictionary<string, PlayStartSetting>(StringComparer.OrdinalIgnoreCase);
         }
 
-        if (start.Trigger.Trim().Length == 0 && start.Place == "suggested")
+        if (start.Trigger.Trim().Length == 0 && start.Place == RunJson.SuggestedPlace)
         {
             scripts.Remove(script);
         }

@@ -41,6 +41,8 @@ internal sealed record PlayStartPageModel(string Script, PlayStartSetting Settin
     public const string SetupTip = "The setup triggers of an approximate start. They are in a test layer of the play. The mod " +
                                    "does not change.";
 
+    public const string PlayTip = "Play the mission from this start in OpenLancer (F5 in the Mission tab).";
+
     /// <summary>The model of the play start of a script.</summary>
     public static PlayStartPageModel Of(MissionAnalysis analysis, PlayStartSetting setting)
     {
@@ -79,4 +81,9 @@ internal sealed record PlayStartPageModel(string Script, PlayStartSetting Settin
 
     /// <summary>The setup triggers as read-only raw INI, or null for a start without them.</summary>
     public string? SetupIni => Plan.Setup.Count == 0 ? null : Plan.SetupPatch;
+
+    /// <summary>The setup triggers as the text of the raw INI editor, or null for a start without them.</summary>
+    public RawText? SetupText => setupText ??= SetupIni is { } ini ? RawText.Plain(ini) : null;
+
+    private RawText? setupText;
 }

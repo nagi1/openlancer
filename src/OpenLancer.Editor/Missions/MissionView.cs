@@ -262,12 +262,14 @@ internal sealed class MissionView : IDisposable
     internal const string PlayStartTip = "F5 plays this mission from this start in OpenLancer. Click to see the start.";
 
     /// <summary>The chip "Play start: {start}" of the toolbar (section 5.2 of the M6c design). A click selects the play
-    /// start, and the Inspector shows the Play start page.</summary>
+    /// start, and the Inspector shows the Play start page. The graph selects and frames the trigger of the play start
+    /// (UI rule 6).</summary>
     private void PlayStartChip(string script)
     {
         if (ImGui.Button($"{EditorIcons.Play}  Play start: {missions.Plays.StartNameOf(script)}##play-start"))
         {
             window.Selection = MissionRef.PlayStartOf(script);
+            missions.PendingGraphFrame = true;
         }
 
         ImGui.SetItemTooltip(PlayStartTip);
@@ -276,62 +278,120 @@ internal sealed class MissionView : IDisposable
     /// <summary>The info icon of the banner of the rules (section 8.5 of the M6c design).</summary>
     internal static readonly HelpText RulesHelp = new("Rules differ",
         "The OpenLancer engine reads some trigger lines in another way than the retail game. The differences are in two " +
-        "conditions, lines before the nickname, repeated nicknames, the order of starts, restarts, repeatable triggers, " +
-        "Cnd_SystemEnter and the COMPLETE state.", "Nothing.");
+        "conditions, lines before the nickname, repeated nicknames, triggers without a condition and the order of " +
+        "starts. They are also in restarts, repeatable triggers, Cnd_SystemEnter, Cnd_SpaceEnter with a system and the " +
+        "COMPLETE state.", "Nothing.");
 
     /// <summary>The text of the banner of the rules (section 8.1 of the M6c design).</summary>
     internal const string RulesBanner = "OpenLancer runs the triggers with its own rules. In some cases they differ from the " +
                                         "retail game. The dry run shows the retail rules.";
 
+    /// <summary>The kind of the play banner of the Mission tab (section 6.3 of the M6c design).</summary>
+    internal enum PlayBanner
+    {
+        /// <summary>No mission play runs.</summary>
+        None,
+
+        /// <summary>The game runs a mission without a story slot, so the graph has no state of it.</summary>
+        NoSlot,
+
+        /// <summary>The graph shows another mission than the game runs.</summary>
+        OtherMission,
+
+        /// <summary>The graph shows the mission of the game.</summary>
+        Play,
+    }
+
+    /// <summary>The text of the play banner while the game runs a mission without a story slot.</summary>
+    internal const string NoSlotBanner = "The game runs a mission that has no story slot.";
+
+    /// <summary>The text of the play banner while the graph shows another mission than the game runs.</summary>
+    internal static string OtherMissionBanner(string liveSlot, string openSlot) =>
+        $"The game runs {liveSlot}. The graph shows {openSlot}.";
+
+    /// <summary>The text of the play banner while the graph shows the mission of the game.</summary>
+    internal static string PlayBannerText(string slot, string start) =>
+        $"Play runs {slot} from {start}. The graph shows the state of the triggers in the game.";
+
     /// <summary>
-    /// The banners of a mission play (section 6.3 of the M6c design): the play with a Stop button, and the rules of
-    /// OpenLancer, while the graph shows the mission of the game. While it shows another mission, a banner tells it with
-    /// a button that opens the mission of the game.
+    /// The play banner of a mission play: none while no mission play runs, the banner of a mission without a story slot,
+    /// the banner of another mission, or the banner of the play.
+    /// </summary>
+    /// <param name="liveScript">The script of the mission that the game runs, by its story slot, or null.</param>
+    /// <param name="liveKnown">True when a mission event named the mission of the game.</param>
+    /// <param name="playScript">The script of the start of the mission play.</param>
+    /// <param name="openScript">The script that the graph shows.</param>
+    internal static PlayBanner PlayBannerOf(bool playRuns, string? liveScript, bool liveKnown, string playScript,
+        string openScript)
+    {
+        if (!playRuns)
+        {
+            return PlayBanner.None;
+        }
+
+        // Before the first mission event, the game runs the script of the start.
+        var live = liveScript ?? (liveKnown ? null : playScript);
+        return live == null ? PlayBanner.NoSlot
+            : !string.Equals(live, openScript, StringComparison.OrdinalIgnoreCase) ? PlayBanner.OtherMission
+            : PlayBanner.Play;
+    }
+
+    /// <summary>
+    /// The banners of a mission play (section 6.3 of the M6c design): the play with a Stop button while the graph shows
+    /// the mission of the game, or a banner with a button that opens the mission of the game. The banner of the rules of
+    /// OpenLancer shows while a mission play runs (section 6.4).
     /// </summary>
     private void LiveBanners(MissionAnalysis analysis)
     {
-        if (!missions.MissionPlayRuns || window.Play.Mission is not { } play)
+        if (window.Play.Mission is not { } play)
         {
             return;
         }
 
-        var width = ImGui.GetContentRegionAvail().X;
-        var size = new Vector2(width, EditorLayout.StripHeight);
-        var live = missions.LiveScript ?? (missions.Live.Mission == null ? play.Script : null);
-        if (live == null)
+        var kind = PlayBannerOf(missions.MissionPlayRuns, missions.LiveScript, missions.Live.Mission != null, play.Script,
+            analysis.Script.Path);
+        if (kind == PlayBanner.None)
         {
-            EditorLayout.Strip("##play-banner", () => BannerText(EditorIcons.Play,
-                "The game runs a mission that has no story slot."), size);
             return;
         }
 
-        if (!string.Equals(live, analysis.Script.Path, StringComparison.OrdinalIgnoreCase))
+        var size = new Vector2(ImGui.GetContentRegionAvail().X, EditorLayout.StripHeight);
+        switch (kind)
         {
-            var liveSlot = missions.Analysis(live)?.Script.Slot?.Slot ?? MissionFiles.Display(live);
-            var openSlot = analysis.Script.Slot?.Slot ?? MissionFiles.Display(analysis.Script.Path);
-            EditorLayout.Strip("##play-banner", () =>
-            {
-                BannerText(EditorIcons.Play, $"The game runs {liveSlot}. The graph shows {openSlot}.");
-                ImGui.SameLine();
-                if (ImGui.SmallButton($"Open {liveSlot}"))
+            case PlayBanner.NoSlot:
+                EditorLayout.Strip("##play-banner", () => BannerText(EditorIcons.Play, NoSlotBanner), size);
+                break;
+            case PlayBanner.OtherMission:
+                var live = missions.LiveScript ?? play.Script;
+                var liveSlot = missions.Analysis(live)?.Script.Slot?.Slot ?? MissionFiles.Display(live);
+                var openSlot = analysis.Script.Slot?.Slot ?? MissionFiles.Display(analysis.Script.Path);
+                EditorLayout.Strip("##play-banner", () =>
                 {
-                    missions.OpenMission(live, show: true);
-                }
-            }, size);
-            return;
+                    BannerText(EditorIcons.Play, OtherMissionBanner(liveSlot, openSlot));
+                    ImGui.SameLine();
+                    if (ImGui.SmallButton($"Open {liveSlot}"))
+                    {
+                        missions.OpenMission(live, show: true);
+                    }
+                }, size);
+                break;
+            default:
+                EditorLayout.Strip("##play-banner", () =>
+                {
+                    BannerText(EditorIcons.Play, PlayBannerText(play.Slot, play.StartName));
+                    ImGui.SameLine();
+                    // The Stop of the Play menu: Force stop when the game does not respond.
+                    var force = window.Play.ForceStop;
+                    if (ImGui.SmallButton(PlayMenu.StopLabel(force)))
+                    {
+                        PlayRequests.Stop(window.Play, window.GamePlay);
+                    }
+
+                    ImGui.SetItemTooltip(PlayMenu.StopTip(force));
+                }, size);
+                break;
         }
 
-        EditorLayout.Strip("##play-banner", () =>
-        {
-            BannerText(EditorIcons.Play, $"Play runs {play.Slot} from {play.StartName}. The graph shows the state of the triggers in the game.");
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Stop"))
-            {
-                PlayRequests.Stop(window.Play, window.GamePlay);
-            }
-
-            ImGui.SetItemTooltip("Stop the game (Shift+F5)");
-        }, size);
         EditorLayout.Strip("##rules-banner", () =>
         {
             BannerText(EditorIcons.InfoCircle, RulesBanner);

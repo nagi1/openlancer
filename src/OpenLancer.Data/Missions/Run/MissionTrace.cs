@@ -78,7 +78,7 @@ public sealed record TraceChange(TraceChangeKind Kind, string Trigger)
     /// <summary>The note of a live view whose game dropped changes because its queue was full (section 6.2 of the M6c
     /// design).</summary>
     public static TraceChange Dropped(int count) =>
-        Note($"The game dropped {count.ToString(CultureInfo.InvariantCulture)} changes.");
+        Note(count == 1 ? "The game dropped 1 change." : $"The game dropped {count.ToString(CultureInfo.InvariantCulture)} changes.");
 
     private string Times(string text) =>
         Count > 1 ? $"{text}, {Count.ToString(CultureInfo.InvariantCulture)} times" : text;

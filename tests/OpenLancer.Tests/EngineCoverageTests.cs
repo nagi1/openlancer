@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using LibreLancer.Data.Schema.Missions;
 using OpenLancer.Data.Missions;
@@ -100,6 +101,18 @@ public sealed class EngineCoverageTests
         nickname = t_plain
         Cnd_Timer = 1
         Act_ActTrig = t_now
+
+        [Trigger]
+        nickname = t_nocond
+        Act_PlayMusic = ol_music
+
+        [Trigger]
+        nickname = t_space
+        Cnd_SpaceEnter = ol_system
+
+        [Trigger]
+        nickname = t_anyspace
+        Cnd_SpaceEnter = no_params
         """;
 
     /// <summary>The rule differences of the fork runtime for each trigger (section 6.4 of the M6c design). A start of a
@@ -110,7 +123,9 @@ public sealed class EngineCoverageTests
     [InlineData("t_before", RuleDifference.LinesBeforeNickname)]
     [InlineData("t_dup", RuleDifference.RepeatedNickname)]
     [InlineData("t_order", RuleDifference.StartOrder)]
+    [InlineData("t_nocond", RuleDifference.NoCondition)]
     [InlineData("t_system", RuleDifference.SystemEnter)]
+    [InlineData("t_space", RuleDifference.SpaceEnterSystem)]
     [InlineData("t_again", RuleDifference.Restart)]
     [InlineData("t_repeats", RuleDifference.Repeats)]
     [InlineData("t_watched", RuleDifference.WatchComplete)]
@@ -127,6 +142,7 @@ public sealed class EngineCoverageTests
     [InlineData("t_now")]
     [InlineData("t_watcher")]
     [InlineData("t_restarter")]
+    [InlineData("t_anyspace")]
     public void ATriggerWithoutADifferenceHasNone(string trigger)
     {
         var index = MissionTestData.Index(Differences);
@@ -144,12 +160,31 @@ public sealed class EngineCoverageTests
         Assert.Equal([RuleDifference.RepeatedNickname], EngineCoverage.Instance.RuleDifferences(index, second));
     }
 
+    /// <summary>The fork starts the start triggers in file order, and the game in id order (TR7). Each start trigger
+    /// gets the difference only when the two orders differ.</summary>
+    [Fact]
+    public void TheStartSetDiffersOnlyWhenItsFileOrderIsNotItsIdOrder()
+    {
+        string[] names = ["t_first", "t_second"];
+        var byId = names.OrderBy(n => LibreLancer.Data.FLHash.CreateID(n)).ToList();
+        string Script(IEnumerable<string> order) => string.Join("\n", order.Select(n =>
+            $"[Trigger]\nnickname = {n}\nInitState = ACTIVE\nCnd_Timer = 1\n"));
+
+        var inOrder = MissionTestData.Index(Script(byId));
+        var reversed = MissionTestData.Index(Script(Enumerable.Reverse(byId)));
+
+        Assert.All(inOrder.StartTriggers, t => Assert.Empty(EngineCoverage.Instance.RuleDifferences(inOrder, t)));
+        Assert.Equal(2, reversed.StartTriggers.Count);
+        Assert.All(reversed.StartTriggers, t =>
+            Assert.Equal([RuleDifference.StartSetOrder], EngineCoverage.Instance.RuleDifferences(reversed, t)));
+    }
+
     /// <summary>Each reason of the chip "Rules differ" passes the STE lint (section 8.1 of the M6c design).</summary>
     [Fact]
     public void EachReasonPassesTheSteLint()
     {
         Assert.All(Enum.GetValues<RuleDifference>(), d => Assert.Empty(SteLint.Problems(RuleDifferences.Reason(d))));
-        Assert.Equal(8, Enum.GetValues<RuleDifference>().Select(RuleDifferences.Reason).Distinct().Count());
+        Assert.Equal(11, Enum.GetValues<RuleDifference>().Select(RuleDifferences.Reason).Distinct().Count());
     }
 
     [Fact]

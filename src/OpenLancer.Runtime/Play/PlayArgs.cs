@@ -40,6 +40,10 @@ public sealed record PlayArgs(string Profile, string? ActiveMod, int Save, PlayS
     /// <summary>A quaternion whose length differs more from 1 is not an orientation.</summary>
     private const float UnitTolerance = 1e-3f;
 
+    /// <summary>The folder of the test layer of a mission play, or null. The start, each reload and each restart of the
+    /// play load it after the mods of the play (section 5.4 of the M6c design).</summary>
+    public string? TestLayer => (Start as PlayStart.FromSave)?.TestLayer;
+
     public IReadOnlyList<string> ToArguments()
     {
         var args = new List<string> { ProfileOption, Profile };

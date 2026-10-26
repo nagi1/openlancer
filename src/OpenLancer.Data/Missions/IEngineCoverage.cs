@@ -32,11 +32,20 @@ public enum RuleDifference
     /// <summary>TR4: another trigger has the same nickname.</summary>
     RepeatedNickname,
 
+    /// <summary>TR6: the trigger has no condition.</summary>
+    NoCondition,
+
     /// <summary>TR7: the trigger starts a trigger that runs at once, then does more actions.</summary>
     StartOrder,
 
+    /// <summary>TR7: the trigger is in the start set, and the file order of the start set is not its id order.</summary>
+    StartSetOrder,
+
     /// <summary>TR8: the condition waits for a system.</summary>
     SystemEnter,
+
+    /// <summary>The condition waits for a space entry in one system.</summary>
+    SpaceEnterSystem,
 
     /// <summary>TR9: a trigger stops this trigger and starts it again.</summary>
     Restart,
@@ -57,9 +66,15 @@ public static class RuleDifferences
         RuleDifference.TwoConditions => "This trigger has two conditions. The retail game uses only the last one.",
         RuleDifference.LinesBeforeNickname => "This trigger has lines before its nickname. The retail game does not read them.",
         RuleDifference.RepeatedNickname => "Another trigger has the same nickname. The retail game uses the first one.",
+        RuleDifference.NoCondition =>
+            "This trigger has no condition. The retail game stops when it starts. OpenLancer runs it at the next check.",
         RuleDifference.StartOrder =>
             "This trigger starts a trigger that runs at once, then does more actions. The actions run in another order.",
+        RuleDifference.StartSetOrder => "This trigger starts with the mission. OpenLancer starts the start triggers in " +
+                                        "file order. The retail game starts them in id order.",
         RuleDifference.SystemEnter => "This trigger waits for a system. OpenLancer waits for a jump into the system.",
+        RuleDifference.SpaceEnterSystem =>
+            "This trigger waits for a space entry in one system. OpenLancer runs it at a space entry in each system.",
         RuleDifference.Restart => "A trigger stops this trigger and starts it again. OpenLancer does not start it again.",
         RuleDifference.Repeats => "This trigger repeats. OpenLancer runs it only once.",
         _ => "A trigger watches the COMPLETE state of this trigger. OpenLancer keeps that state after a new start.",

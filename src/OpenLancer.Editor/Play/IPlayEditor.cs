@@ -66,6 +66,13 @@ internal interface IPlayEditor : IPlayHost
     /// <summary>Takes the trigger changes of the mission of the game for the live view (section 6.3 of the M6c
     /// design).</summary>
     void MissionChanged(PlayEvent.MissionChanges changes);
+
+    /// <summary>A new game started, or the game starts its mission play again (section 7.2 of the M6c design). The live
+    /// view starts a new play: the play number grows, and the trace of the earlier play goes.</summary>
+    void PlayStarted();
+
+    /// <summary>The game exited. The live view stops its clock, so the times of the trace stay as at the exit.</summary>
+    void PlayEnded();
 }
 
 /// <summary>
@@ -100,8 +107,8 @@ internal interface IMissionStart
     string? Refusal { get; }
 
     /// <summary>Makes the plan of the start from the model of the saved script, and writes the start save and the test
-    /// layer. Null when the start cannot start: the Console then tells why, and <see cref="Refusal"/> has the
-    /// reason.</summary>
+    /// layer. Null when the start cannot start: <see cref="Refusal"/> then has the reason, and Play gives it to the
+    /// Console.</summary>
     PlayStart.FromSave? Prepare();
 }
 
@@ -119,9 +126,24 @@ internal static class MissionPlayTexts
     public static string Restart(int save, IMissionStart start) =>
         $"Save {save} changed the files of the mission play. The game starts {start.Slot} again from {start.StartName}.";
 
+    /// <summary>The refusal of a start: "Play from here is not available: {reason}"</summary>
+    public static string Refused(string reason) => StartPlan.RefusalPrefix + reason;
+
     /// <summary>The restart failure: "The game cannot start {slot} again. {reason}"</summary>
     public static string RestartFailed(IMissionStart start, string reason) =>
-        $"The game cannot start {start.Slot} again. {reason}";
+        $"The game cannot start {start.Slot} again. {reason.TrimEnd()}";
+
+    /// <summary>The restart failure of a start that cannot start before the restart. The editor sends no restart, so
+    /// the game keeps its mission and its data.</summary>
+    /// <param name="shown">The save of the game in words, for example "save 2".</param>
+    public static string RestartRefused(IMissionStart start, string reason, string shown) =>
+        $"{RestartFailed(start, reason)} The running game keeps {shown} and its mission.";
+
+    /// <summary>The restart failure of the game. The game goes on from its autosave, which keeps only the last checkpoint
+    /// of the mission while the player is in space.</summary>
+    public static string RestartFailedInGame(IMissionStart start, string reason) =>
+        $"{RestartFailed(start, reason.TrimEnd('.'))}. The game goes on with its old data. In space, the mission goes " +
+        "back to its last checkpoint, or to the mission start when no checkpoint ran.";
 }
 
 /// <summary>What Play reads of the open profile when it starts a game.</summary>
@@ -135,12 +157,14 @@ internal static class MissionPlayTexts
 /// D38).</param>
 /// <param name="BaseFolder">The base folder of the profile, or null when it is not known. Play does not start when the
 /// profile file is in it (decision D214).</param>
+/// <param name="Unsaved">True when the active mod has unsaved edits. The save of an agent request that nobody allowed to
+/// save refuses them (user decision of 2026-10-20 of the M6c design).</param>
 internal sealed record PlaySession(string ProfilePath, string? ActiveMod, int Saves, int IncompleteSave,
-    string? NoEditReason, IReadOnlyList<string> LaterMods, string? BaseFolder = null)
+    string? NoEditReason, IReadOnlyList<string> LaterMods, string? BaseFolder = null, bool Unsaved = false)
 {
-    /// <summary>The snapshot of an open profile. The edit session gives the profile and the mods. The editor gives the
-    /// other values, because the edit session does not keep them.</summary>
+    /// <summary>The snapshot of an open profile. The edit session gives the profile, the mods and the unsaved edits. The
+    /// editor gives the other values, because the edit session does not keep them.</summary>
     public static PlaySession Of(EditSession edits, int saves, int incompleteSave, string? noEditReason) =>
         new(edits.Profile.FilePath, edits.ActiveMod?.Id, saves, incompleteSave, noEditReason,
-            edits.LaterMods.Select(m => m.Id).ToList(), edits.Profile.BaseFolder);
+            edits.LaterMods.Select(m => m.Id).ToList(), edits.Profile.BaseFolder, edits.ActiveMod != null && edits.IsDirty);
 }

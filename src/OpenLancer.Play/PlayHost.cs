@@ -33,7 +33,11 @@ internal sealed class PlayHost
     public const string LogComponent = "Play";
 
     /// <summary>The time between two lines of trigger changes (section 6.2 of the M6c design).</summary>
-    private static readonly TimeSpan MissionLines = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan MissionLineTime = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>The writer of the mission lines of the process. An error event ends it, so no mission line follows the
+    /// error.</summary>
+    private static MissionLines? missionLines;
 
     private readonly PlayArgs args;
     private readonly FreelancerGame game;
@@ -44,9 +48,6 @@ internal sealed class PlayHost
 
     /// <summary>Gets the trigger changes of each mission runtime of the plays of this process (OL-0070).</summary>
     private readonly MissionObserver observer = new();
-
-    /// <summary>Keeps the order of the mission events when two calls of the timer meet.</summary>
-    private readonly object missionWrite = new();
 
     // Only the UI thread uses these fields.
     private bool startReceived;
@@ -99,8 +100,14 @@ internal sealed class PlayHost
     }
 
     /// <summary>Writes an event for the editor on the standard output. <see cref="Console.Out"/> writes the line in
-    /// one call, so an event line does not mix with a line of the engine log.</summary>
-    public static void Send(PlayEvent e) => Console.Out.WriteLine(PlayProtocol.Write(e));
+    /// one call, so an event line does not mix with a line of the engine log. An error event ends the mission lines
+    /// first, because the game exits after it.</summary>
+    public static void Send(PlayEvent e)
+    {
+        if (e is PlayEvent.Error)
+            missionLines?.Close();
+        Console.Out.WriteLine(PlayProtocol.Write(e));
+    }
 
     /// <summary>Runs the game until it exits.</summary>
     /// <returns>The exit code of the process, or null when the engine returned before its first frame. The engine
@@ -122,20 +129,12 @@ internal sealed class PlayHost
         });
         // The engine gives the host no update of each frame while a state of the game runs. So a timer writes the lines
         // of trigger changes. Console.Out writes each line in one call from any thread.
-        using (new Timer(_ => WriteMissionLines(), null, MissionLines, MissionLines))
+        var lines = new MissionLines(observer, Console.Out);
+        missionLines = lines;
+        using (new Timer(_ => lines.Write(), null, MissionLineTime, MissionLineTime))
             game.Run();
-        WriteMissionLines();
+        lines.Write();
         return firstFrame ? exitCode : null;
-    }
-
-    /// <summary>Writes the trigger changes that the observer has as mission events.</summary>
-    private void WriteMissionLines()
-    {
-        lock (missionWrite)
-        {
-            foreach (var line in observer.Take())
-                Send(line);
-        }
     }
 
     /// <summary>Lets the game restore the display before the crash window shows, as lancer does.</summary>
@@ -281,7 +280,9 @@ internal sealed class PlayHost
         server = null;
         arrived = false;
         var target = new PlayGame(files, game.GameData, game.Ui.Data, game.Saves);
-        game.ChangeState(new PlayReloadState(game, () => PlayReload.Load(args.Profile, args.ActiveMod),
+        // A reload of a mission play reads its test layer again, so the saved triggers of the setup still exist (section
+        // 5.4 of the M6c design).
+        game.ChangeState(new PlayReloadState(game, () => PlayReload.Load(args.Profile, args.ActiveMod, args.TestLayer),
             load => Continue(save, place, PlayReload.Apply(load, place, target), clock)));
     }
 
@@ -346,7 +347,7 @@ internal sealed class PlayHost
         server = null;
         arrived = false;
         var target = new PlayGame(files, game.GameData, game.Ui.Data, game.Saves);
-        game.ChangeState(new PlayReloadState(game, () => PlayReload.Load(args.Profile, args.ActiveMod, start.TestLayer),
+        game.ChangeState(new PlayReloadState(game, () => PlayReload.Load(args.Profile, args.ActiveMod, args.TestLayer),
             load => StartAgain(save, start, left, PlayReload.ApplyStart(load, start, args.Package, target), clock)));
     }
 

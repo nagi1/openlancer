@@ -177,6 +177,27 @@ public sealed class SpawnPointTests
         ], check.Lines);
     }
 
+    /// <summary>The start point of a mission play gets the same check, with texts about the start point (review fix of
+    /// M6c-2). The ship looks along the -Z of the heading of the start.</summary>
+    [Fact]
+    public void TheStartPointOfAMissionPlayGetsTheSameCheck()
+    {
+        AddPlanet("planet", new Vector3(0, 0, -5_000), 1_000);
+        AddZone("large", new Vector3(0, 0, -5_000), 2_000, damage: 0.5f);
+        var start = new PlayStart.InSpace("li01", new Vector3(0, 0, -5_900), Quaternion.Identity);
+
+        var check = SpawnPoint.FromPoint(start, Shapes());
+
+        Near(new Vector3(0, 0, -6_100), check.Start.Position);
+        Assert.Equal(
+        [
+            (ConsoleSeverity.Info, "Mission play: the start point is inside planet. The ship starts 200 units ahead of " +
+                                   "the start point."),
+            (ConsoleSeverity.Warning, "Mission play: the ship starts in large, which does 0.5 damage per second."),
+        ], check.Lines);
+        Assert.All(check.Lines, l => Assert.Empty(SteLint.Problems(l.Message)));
+    }
+
     [Theory]
     [InlineData(16, -2_600)]
     [InlineData(17, 5_100)]

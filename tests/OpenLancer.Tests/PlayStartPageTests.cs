@@ -60,6 +60,7 @@ public sealed class PlayStartPageTests
     public void ACheckpointHasNoSetupLinesAndThePlaceChoicesShowTheirTexts()
     {
         Assert.Null(Model(new PlayStartSetting("t_restore", "suggested")).SetupIni);
+        Assert.Null(Model(new PlayStartSetting("t_restore", "suggested")).SetupText);
         Assert.Equal("At base ol_base_a", Model(new PlayStartSetting("t_restore", "base:ol_base_a")).PlaceText);
         Assert.Equal("At the Scene camera", Model(new PlayStartSetting("t_restore", "camera")).PlaceText);
     }
@@ -86,6 +87,17 @@ public sealed class PlayStartPageTests
             ("approximate note", MissionPlayTexts.Approximate),
             ("missing start", MissionPlayStart.MissingStart("M02", "t_wave")),
             ("no path", StartPlan.NoPathWarning("t_wave")), ("no slot", StartPlan.NoSlotReason),
+            ("play tip", PlayStartPageModel.PlayTip), ("no trigger", StartPlan.NoTriggerReason("t_wave")),
+            ("checkpoint state", StartPlan.CheckpointStateWarning("t_restore")),
+            ("other start", MissionPlayStart.MissingPlayTrigger("M02", "t_wave")),
+            ("mission start item", PlayMenu.MissionStartTip), ("checkpoint item", PlayMenu.CheckpointTip),
+            ("restart item", PlayMenu.RestartTip), ("stop", PlayMenu.StopTip(false)), ("force stop", PlayMenu.StopTip(true)),
+            ("no slot banner", MissionView.NoSlotBanner), ("other banner", MissionView.OtherMissionBanner("M02", "M03")),
+            ("play banner", MissionView.PlayBannerText("M02", "Checkpoint t_restore")),
+            ("no camera", EditorWindow.NoCameraSystem), ("unchecked point", EditorWindow.UncheckedPoint("New York (Li01)")),
+            ("restart refused", MissionPlayTexts.RestartRefused(new NamedStart(), "The path is refused.", "save 2")),
+            ("restart failed", MissionPlayTexts.RestartFailedInGame(new NamedStart(), "The start save does not load.")),
+            ("ship", PlayShips.ShipText(null, null).Tooltip), ("ship missing", PlayShips.ShipText(null, "ol_package").Tooltip),
         };
 
         Assert.Empty(texts.SelectMany(t => SteLint.Problems(t.Text).Select(p => $"{t.Name}: {p}")));
@@ -102,6 +114,23 @@ public sealed class PlayStartPageTests
             MissionPlayTexts.Restart(3, start));
         Assert.Equal("The game cannot start M02 again. The start save does not load.",
             MissionPlayTexts.RestartFailed(start, "The start save does not load."));
+    }
+
+    /// <summary>The play banner of the Mission tab: none without a mission play, the banner of the play while the graph
+    /// shows the mission of the game, the banner of another mission, and the banner of a mission without a story slot
+    /// (section 6.3 of the M6c design). Before the first mission event, the game runs the script of the start.</summary>
+    [Fact]
+    public void ThePlayBannerFollowsTheMissionOfTheGame()
+    {
+        const string m02 = @"DATA\MISSIONS\M02\m02.ini";
+        const string m03 = @"DATA\MISSIONS\M03\m03.ini";
+
+        Assert.Equal(MissionView.PlayBanner.None, MissionView.PlayBannerOf(false, m02, true, m02, m02));
+        Assert.Equal(MissionView.PlayBanner.Play, MissionView.PlayBannerOf(true, m02, true, m02, m02.ToLowerInvariant()));
+        Assert.Equal(MissionView.PlayBanner.Play, MissionView.PlayBannerOf(true, null, false, m02, m02));
+        Assert.Equal(MissionView.PlayBanner.OtherMission, MissionView.PlayBannerOf(true, m03, true, m02, m02));
+        Assert.Equal(MissionView.PlayBanner.OtherMission, MissionView.PlayBannerOf(true, null, false, m03, m02));
+        Assert.Equal(MissionView.PlayBanner.NoSlot, MissionView.PlayBannerOf(true, null, true, m02, m02));
     }
 
     private sealed class NamedStart : IMissionStart

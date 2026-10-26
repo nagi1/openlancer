@@ -105,7 +105,8 @@ internal sealed class PlayMenu(EditorWindow window)
     {
         var play = window.Play;
         var block = CameraBlock();
-        if (ImGui.MenuItem($"{EditorIcons.Play}   Play from camera", "F5", false, block == null))
+        // F5 runs one of the two items: the mission play in the Mission tab with an open mission, else this one.
+        if (ImGui.MenuItem($"{EditorIcons.Play}   Play from camera", OpenMission == null ? "F5" : "", false, block == null))
         {
             PlayFromCamera();
         }
@@ -127,7 +128,7 @@ internal sealed class PlayMenu(EditorWindow window)
                              "The running game loads the mod files again and continues at the same place. Use it " +
                              "after a change outside the editor. A save reloads the game itself when its validation " +
                              "passes.");
-        if (ImGui.MenuItem($"{EditorIcons.Stop}   {(ForceStop ? "Force stop" : "Stop")}", "Shift+F5", false, CanStop))
+        if (ImGui.MenuItem($"{EditorIcons.Stop}   {StopLabel(ForceStop)}", "Shift+F5", false, CanStop))
         {
             Stop();
         }
@@ -185,9 +186,11 @@ internal sealed class PlayMenu(EditorWindow window)
     }
 
     /// <summary>
-    /// The submenu "Play mission" while a mission is open (section 5.2 of the M6c design): the play start with F5, the
-    /// mission start, one item for each checkpoint, and "Restart the mission" while a mission play runs. Only "Play from
-    /// here" and "Set as play start" change the play start.
+    /// The submenu "Play mission" while a mission is open (section 5.2 of the M6c design): the play start, the mission
+    /// start, one item for each checkpoint, and "Restart the mission" while a mission play runs. Only "Play from here" and
+    /// "Set as play start" change the play start. The item of the play start shows F5 while F5 runs it. The mission start
+    /// and the checkpoints start at their suggested places, because the start place of the play start is for its own
+    /// start.
     /// </summary>
     private void MissionMenu()
     {
@@ -200,9 +203,7 @@ internal sealed class PlayMenu(EditorWindow window)
             return;
         }
 
-        var setting = plays.PlayStartOf(script!);
-        var (place, dock) = setting.PlaceChoice;
-        if (ImGui.MenuItem($"From the play start ({plays.StartNameOf(script!)})", "F5"))
+        if (ImGui.MenuItem($"From the play start ({plays.StartNameOf(script!)})", OpenMission == script ? "F5" : ""))
         {
             plays.PlayFromPlayStart(script!);
         }
@@ -210,19 +211,18 @@ internal sealed class PlayMenu(EditorWindow window)
         ImGui.SetItemTooltip("Play the mission from its play start in OpenLancer.");
         if (ImGui.MenuItem("From the mission start"))
         {
-            plays.Request(new MissionPlayRequest(script!, MissionStartPoint.MissionStart) { Place = place, PlaceBase = dock });
+            plays.Request(new MissionPlayRequest(script!, MissionStartPoint.MissionStart));
         }
 
-        ImGui.SetItemTooltip("Play the mission from the start triggers in OpenLancer. The play start does not change.");
+        ImGui.SetItemTooltip(MissionStartTip);
         foreach (var checkpoint in DryRun.Checkpoints(analysis!.Index))
         {
             if (ImGui.MenuItem($"From checkpoint {RunOverlay.TriggerName(analysis, checkpoint.Nickname)}"))
             {
-                plays.Request(new MissionPlayRequest(script!, MissionStartPoint.At(checkpoint.Nickname)) { Place = place, PlaceBase = dock });
+                plays.Request(new MissionPlayRequest(script!, MissionStartPoint.At(checkpoint.Nickname)));
             }
 
-            ImGui.SetItemTooltip("Play the mission from this checkpoint in OpenLancer, as a load of a saved game does. The " +
-                                 "play start does not change.");
+            ImGui.SetItemTooltip(CheckpointTip);
         }
 
         var restart = window.Play.RestartBlock;
@@ -242,11 +242,21 @@ internal sealed class PlayMenu(EditorWindow window)
 
         if (restart == null)
         {
-            ImGui.SetItemTooltip("Start the mission play again from its start, with the saved files.");
+            ImGui.SetItemTooltip(RestartTip);
         }
 
         ImGui.EndMenu();
     }
+
+    // The tooltips of the submenu "Play mission" (section 8.4 of the M6c design).
+    internal const string MissionStartTip = "Play the mission from the start triggers in OpenLancer, at the suggested " +
+                                            "start place. The play start does not change.";
+
+    internal const string CheckpointTip = "Play the mission from this checkpoint in OpenLancer, as a load of a saved game " +
+                                          "does, at the suggested start place. The play start does not change.";
+
+    internal const string RestartTip = "Start the mission play again from its start, with the saved files. Unsaved " +
+                                       "edits do not go to the game.";
 
     /// <summary>Why Play from camera cannot run now, or null when it can.</summary>
     private string? CameraBlock() =>
@@ -260,7 +270,14 @@ internal sealed class PlayMenu(EditorWindow window)
             ? "Close the game and play again at the camera (F5)"
             : "Play from camera (F5): save the active mod, then fly where the Scene camera is");
 
-    private string StopTooltip() => ForceStop
+    private string StopTooltip() => StopTip(ForceStop);
+
+    /// <summary>The label of Stop: "Force stop" while Stop ends the game process at once, else "Stop". The Play menu and
+    /// the banner of a mission play use it.</summary>
+    internal static string StopLabel(bool force) => force ? "Force stop" : "Stop";
+
+    /// <summary>The tooltip of Stop.</summary>
+    internal static string StopTip(bool force) => force
         ? "Force stop (Shift+F5): the game does not respond, so this ends its process"
         : "Stop the game (Shift+F5)";
 
@@ -396,27 +413,8 @@ internal sealed class PlayMenu(EditorWindow window)
     {
         var session = window.Session;
         var package = session == null ? null : window.Settings.PlayPackageOf(session.Profile.FilePath);
-        var name = session == null ? null : PlayShips.ShipName(session, package);
-        string text, tooltip;
-        if (package == null)
-        {
-            text = $"Ship: {name ?? "the ship of a new character"} (default)";
-            tooltip = "The ship of a new multiplayer character. To fly another ship, right-click a ship package in " +
-                      "Database > Goods, then click Use for Play.";
-        }
-        else if (name != null)
-        {
-            text = $"Ship: {name}";
-            tooltip = $"The ship package {package}. Select another one in Database > Goods.";
-        }
-        else
-        {
-            text = $"Ship: {package} (not in the data)";
-            tooltip = $"The edit view has no ship package {package}, so Play stops with an error. Click Use the " +
-                      "default ship, or select a ship package in Database > Goods.";
-        }
-
-        ImGui.MenuItem($"{EditorIcons.SpaceShuttle}   {text}", false);
+        var (text, tooltip) = PlayShips.ShipText(session, package);
+        ImGui.MenuItem($"{EditorIcons.SpaceShuttle}   Ship: {text}", false);
         ImGui.SetItemTooltip(tooltip);
         if (Theme.IconMenuItem(EditorIcons.Undo, "Use the default ship", package != null))
         {

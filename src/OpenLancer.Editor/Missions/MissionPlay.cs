@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using OpenLancer.Data.Editing;
@@ -25,8 +26,8 @@ internal interface IMissionPlayEditor : IAgentPlayHost
 
     ConsoleLog Log { get; }
 
-    /// <summary>The index of a script in the last run of the mission checks, or null.</summary>
-    MissionIndex? IndexOf(string script);
+    /// <summary>The index and the story slot of a script in the last run of the mission checks, or null.</summary>
+    (MissionIndex Index, StorySlot? Slot)? IndexOf(string script);
 
     /// <summary>The index and the story slot of the model of a script now, or null with the reason (section 7 of the M6b
     /// design).</summary>
@@ -44,11 +45,14 @@ internal interface IMissionPlayEditor : IAgentPlayHost
     /// <summary>The mission start of the running OpenLancer game, or null.</summary>
     IMissionStart? RunningMission { get; }
 
+    /// <summary>The mission starts that Play keeps (<see cref="PlayController.MissionStarts"/>).</summary>
+    IReadOnlyList<IMissionStart> MissionStarts { get; }
+
     /// <summary>True while the game of a play copy runs (Play in the game).</summary>
     bool GameRuns { get; }
 
     /// <summary>Asks Play for a mission play (<see cref="PlayController.RequestMission"/>).</summary>
-    Task<PlayRequestResult> RequestMission(IMissionStart start, string? package);
+    Task<PlayRequestResult> RequestMission(IMissionStart start, string? package, PlaySaveRule save);
 }
 
 /// <summary>
@@ -67,10 +71,13 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
     public const string OtherPlayReason = "Another play runs, so the mission play did not start. Stop the other play " +
                                           "first.";
 
+    // The result of the agent request whose question is open, or null.
+    private Task<PlayRequestResult>? asking;
+
     /// <summary>The play start of a script of the open profile, or the mission start without a profile.</summary>
     public PlayStartSetting PlayStartOf(string script) => editor.ProfilePath is { } profile
         ? editor.Settings.PlayStartOf(profile, script)
-        : new PlayStartSetting("", "suggested");
+        : PlayStartSetting.Default;
 
     /// <summary>Sets the play start of a script ("Set as play start" and the Play start page). It has no Undo entry,
     /// because it is not data of the mod.</summary>
@@ -88,10 +95,19 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
     void IMissionPlayHost.SetPlayStart(string script, MissionStartPoint start) =>
         SetPlayStart(script, PlayStartOf(script) with { Trigger = start.Trigger ?? "" });
 
+    MissionStartPoint IMissionPlayHost.PlayStartOf(string script) => PlayStartOf(script).Start;
+
     /// <summary>Moves the play starts of the open profile with the trigger renames of a change of the history, also an
-    /// Undo or a Redo of a rename (section 5.2 of the M6c design).</summary>
+    /// Undo or a Redo of a rename (section 5.2 of the M6c design). The starts that Play keeps move too: the start of the
+    /// running mission play, of its restart and of a request that waits. So a restart after the rename and its save
+    /// starts at the renamed trigger.</summary>
     public void Renamed(MissionScriptsChange change)
     {
+        foreach (var start in editor.MissionStarts.OfType<MissionPlayStart>())
+        {
+            start.Renamed(change);
+        }
+
         if (editor.ProfilePath is { } profile && Rename(editor.Settings, profile, change))
         {
             editor.Settings.Save();
@@ -115,30 +131,21 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
     }
 
     /// <summary>The name of the play start of a script in the UI texts (section 8.1 of the M6c design): "Mission start",
-    /// "Checkpoint {trigger}" or "{trigger} (approximate)".</summary>
+    /// "Checkpoint {trigger}", "{trigger} (approximate)" or "Test script". The Play start page gives the same name.</summary>
     public string StartNameOf(string script) => NameOf(editor.IndexOf(script), PlayStartOf(script).Start);
 
-    /// <summary>The name of a start of a script with an index, or of a trigger that the index does not have.</summary>
-    internal static string NameOf(MissionIndex? index, MissionStartPoint start)
-    {
-        if (start.Trigger is not { } name)
-        {
-            return StartPlan.NameOf(StartKind.MissionStart, start);
-        }
-
-        var kind = index?.Trigger(name) is not { } trigger ? StartKind.Approximate
-            : index.StartTriggers.Contains(trigger) ? StartKind.MissionStart
-            : DryRun.Checkpoints(index).Contains(trigger) ? StartKind.Checkpoint
-            : StartKind.Approximate;
-        return StartPlan.NameOf(kind, start);
-    }
+    /// <summary>The name of a start of a script with an index, or of a script that the last run does not have.</summary>
+    internal static string NameOf((MissionIndex Index, StorySlot? Slot)? script, MissionStartPoint start) =>
+        StartPlan.NameOf(script is var (index, slot)
+            ? StartPlan.KindOf(index, slot, start)
+            : start.IsMissionStart ? StartKind.MissionStart : StartKind.Approximate, start);
 
     /// <summary>F5 in the Mission tab: plays a script from its play start in OpenLancer (decision D744).</summary>
     public Task<PlayRequestResult> PlayFromPlayStart(string script)
     {
         var start = PlayStartOf(script);
         var (place, dock) = start.PlaceChoice;
-        return Request(new MissionPlayRequest(script, start.Start) { Place = place, PlaceBase = dock });
+        return Request(new MissionPlayRequest(script, start.Start) { Place = place, PlaceBase = dock, FromPlayStart = true });
     }
 
     /// <summary>"Play from here": sets the play start to a trigger and plays it. The place choice of the play start
@@ -171,18 +178,38 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
             return Task.FromResult(refused);
         }
 
-        return PlayRequests.WithAgentRule(editor, request.Origin, () => editor.PlayStatus,
-            () => editor.RequestMission(new MissionPlayStart(this, request), editor.PlayPackage));
+        var asks = PlayRequests.AsksUser(editor, request.Origin);
+        var result = PlayRequests.WithAgentRule(editor, request.Origin, () => editor.PlayStatus, save =>
+            // The user can start another play while the question is open, so the rule of an agent request runs again
+            // after the answer.
+            asks && AgentRefusal(request, afterQuestion: true) is { } late
+                ? Task.FromResult(late)
+                : editor.RequestMission(new MissionPlayStart(this, request), editor.PlayPackage, save));
+        if (asks)
+        {
+            asking = result;
+        }
+
+        return result;
     }
 
     /// <summary>
-    /// Why a request of an agent cannot start before it asks the user, or null: another play runs (section 7.2 of the
-    /// M6c design), the script or the trigger does not resolve, or the plan of the model now refuses (section 7.4). The
-    /// plan of the model now is the plan of the saved script, because the save writes the model.
+    /// Why a request of an agent cannot start before it asks the user, or null: the question of another agent request
+    /// is open, another play runs (section 7.2 of the M6c design), the script or the trigger does not resolve, or the plan
+    /// of the model now refuses (section 7.4). The plan of the model now is the plan of the saved script, because the save
+    /// writes the model.
     /// </summary>
-    private PlayRequestResult? AgentRefusal(MissionPlayRequest request)
+    /// <param name="afterQuestion">True for the check after the answer of the user. The open question is then the
+    /// question of this request.</param>
+    private PlayRequestResult? AgentRefusal(MissionPlayRequest request, bool afterQuestion = false)
     {
         var status = editor.PlayStatus;
+        if (!afterQuestion && asking is { IsCompleted: false })
+        {
+            return PlayRequestResult.Refused(status, PlayRequests.AgentWaitsDetail, PlayRequests.AgentWaitsReason,
+                EditErrorKind.Busy);
+        }
+
         if (editor.GameRuns || status != PlayStatus.Idle && editor.RunningMission == null)
         {
             return PlayRequestResult.Refused(status, OtherPlayDetail, OtherPlayReason);
@@ -195,8 +222,8 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
 
         if (request.Start.Trigger is { } name && index.Trigger(name) == null)
         {
-            return PlayRequestResult.Refused(status, MissionErrors.TriggerNotFound,
-                $"The script {request.Script} has no trigger '{name}'. Give a trigger of the script.", EditErrorKind.NotFound);
+            return PlayRequestResult.Refused(status, MissionErrors.TriggerNotFound, StartPlan.NoTriggerReason(name),
+                EditErrorKind.NotFound);
         }
 
         var plan = StartPlan.Make(index, slot, request.Start, request.Place, request.PlaceBase);

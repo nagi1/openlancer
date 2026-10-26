@@ -196,11 +196,11 @@ The main menu of the game is not part of a play. When you quit to the menu, the 
 
 A mission play starts a story mission at a point of its script: the mission start, a checkpoint or any trigger. The Mission tab sets the point. [MISSIONS.md](MISSIONS.md) tells how, in "Play from a trigger", and it also tells about the live view of the graph. This section tells what Play does.
 
-1. Play saves the edits of the active mod, as F5 does.
-2. The editor makes the start plan from the saved script. It writes the start save `start\start.fl` and the test layer `start\layer\` into the play folder.
-3. The game loads the start save. The mission starts at the point of the start. The other steps are the same as for Play from camera.
+Play saves the edits of the active mod first, as F5 does. Then the editor makes the start plan from the saved script. It writes the start save `start\start.fl` and the test layer `start\layer\` into the play folder. The game loads the start save, and the mission starts at the point of the start. The other steps are the same as for Play from camera.
 
 The Console then names the play, for example "OpenLancer plays M02 from Checkpoint t_restore." For an approximate start, a second line says that setup triggers rebuild the state of the path. When the start cannot start, the Console says why. An example is "Play from here is not available: This mission script has no story slot."
+
+A start in space at a point of the plan gets the start check of Play from camera when the Scene shows its system. The start moves out of a planet or a station, and the Console warns about a death zone. When the Scene shows another system, the Console says that Play did not check the start point.
 
 OpenLancer can start only the scripts of the 14 story slots. A start in the linked game (Ctrl+F5) comes with a later version.
 
@@ -209,25 +209,37 @@ OpenLancer can start only the scripts of the 14 story slots. A start in the link
 During a mission play, a save whose validation passes starts the mission again at the start of the play. The game does not reload at the place of the player. So you can change a mission and test it again from the same point.
 
 1. Press Ctrl+S.
-2. The editor validates the save, as after each save.
-3. The editor makes the start plan again from the new script. The game loads the data of the save and starts the mission again. The process stays, so this takes about the time of a reload.
 
-The Console says, for example, "Save 4 changed the files of the mission play. The game starts M02 again from Checkpoint t_restore." When the game cannot start the mission again, it keeps its data and continues. The Console says "The game cannot start M02 again." with the reason.
+The editor validates the save, as after each save. Then it makes the start plan again from the new script. The game loads the data of the save and starts the mission again. The process stays, so this takes about the time of a reload.
 
-F5 during a mission play starts the game again at the play start of the open mission. Play > Play mission > Restart the mission starts it again at the start of the running play. A play from the camera or at a base still closes the game first.
+The Console says, for example, "Save 4 changed the files of the mission play. The game starts M02 again from Checkpoint t_restore." The start of the play changes only when the game started the mission again.
 
-When the trigger of the start is not in the script any more, the start becomes the mission start. The Console tells it.
+When the editor cannot make the start again, for example because a new edit breaks the path of an approximate start, the editor sends nothing. The running game keeps its save and its mission. The Console says "The game cannot start M02 again." with the reason.
+
+When the game cannot start the mission again, it goes on with its old data from its autosave. In space, the autosave keeps only the last checkpoint of the mission. So the mission goes back to its last checkpoint, or to the mission start when no checkpoint ran. The Console tells it.
+
+F5 during a mission play starts the game again at the play start of the open mission. When that start cannot start, the save of F5 still starts the running play again. A play from the camera or at a base still closes the game first.
+
+Play > Play mission > Restart the mission starts the game again at the start of the running play. It does not save, so the game uses the saved files.
+
+Play > Reload game during a mission play loads the mod files and the test layer again. The game then continues at the place of the player, as after each reload.
+
+When you rename the trigger of the start, the start of the running play follows the rename, also its Undo and its Redo. When the trigger of the start is not in the script any more, the game plays the mission start, and the Console tells it. Only F5 and "Play from here" then make the play start the mission start again.
 
 ### Agent Play
 
-An agent of the agent server can start a mission play. A request of an agent never saves on its own:
+An agent of the agent server can start a mission play. The agent tools that start Play come with a later version of the agent server. A request of an agent never saves on its own:
 
 | Case | What the editor does |
 |---|---|
 | The active mod has no unsaved edits | Play starts at once. |
-| The active mod has unsaved edits | The dialog "An agent wants to start Play. Mod '{id}' has unsaved edits. Save them and continue?" opens. "Save and continue" saves and plays. "Cancel" gives the agent the error "The user did not save. Play did not start." |
+| The active mod has unsaved edits | The dialog "An agent wants to start Play. Mod '{id}' has unsaved edits. Save them and continue?" opens. "Save and continue" saves and plays. "Cancel" gives the agent the error "The user did not save. Play did not start." Cancel is the default button, so Enter does not save. |
 | The setting "Auto-save and continue when an MCP agent starts Play" is on | Play saves and starts without the dialog. The setting is in Agent > Agent settings. It is off by default. |
-| Another play runs, for example a play from the camera | Play does not start. The agent must stop the other play first. |
+| The active mod gets unsaved edits after the request, before the save of Play | Play does not save and does not start. The agent gets an error, and a new request opens the dialog. |
+| Another play runs, for example a play from the camera | Play does not start. The agent must stop the other play first. The editor checks it again after "Save and continue". |
+| A mission play runs | The game starts again at the start of the request. |
+| The start cannot start | Play does not start. The agent gets the reason of the start plan. |
+| The dialog of another agent request is open | Play does not start. The agent gets an error and waits for the result of the other request. |
 
 An agent request plays the start of the request. It does not change the play start of the mission. Your own F5 and Ctrl+F5 always save first, as before.
 

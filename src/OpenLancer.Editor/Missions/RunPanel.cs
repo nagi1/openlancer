@@ -145,10 +145,6 @@ internal sealed class RunPanel(EditorWindow window, MissionWorkspace missions, G
             }
 
             ImGui.SetItemTooltip(ClearTip);
-            if (live.Dropped > 0)
-            {
-                ImGui.TextDisabled(TraceChange.Dropped(live.Dropped).LogText);
-            }
 
             var setup = live.Setup;
             if (liveCache is not var (version, trace, rows) || version != live.Version || !ReferenceEquals(trace, live.Trace))

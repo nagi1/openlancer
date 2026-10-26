@@ -5,6 +5,7 @@ using System.Linq;
 using System.Numerics;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Run;
+using OpenLancer.Runtime.Missions;
 using Xunit;
 
 namespace OpenLancer.DataTests;
@@ -15,11 +16,16 @@ namespace OpenLancer.DataTests;
 /// </summary>
 public sealed class StartPlanRetailTests(ITestOutputHelper output)
 {
-    private static IReadOnlyList<MissionAnalysis> Scripts()
+    private static readonly Lazy<MissionRunResult> Hde = new(() =>
     {
-        var run = RetailMissions.Run();
-        return run.Scripts.Where(s => s.Slot != null).Select(s => run.Of(s.Path)!).ToList();
-    }
+        using var workspace = new RetailWorkspace(GameDataPaths.RequireHde(), "m6cplanhde");
+        return MissionRun.Execute(workspace.Open().MissionInputs(EngineCoverage.Instance));
+    });
+
+    private static IReadOnlyList<MissionAnalysis> Slots(MissionRunResult run) =>
+        run.Scripts.Where(s => s.Slot != null).Select(s => run.Of(s.Path)!).ToList();
+
+    private static IReadOnlyList<MissionAnalysis> Scripts() => Slots(RetailMissions.Run());
 
     private static StartPlan Plan(MissionAnalysis analysis, MissionTrigger trigger) =>
         StartPlan.Make(analysis.Index, analysis.Script.Slot, MissionStartPoint.At(trigger.Nickname));
@@ -38,11 +44,42 @@ public sealed class StartPlanRetailTests(ITestOutputHelper output)
                 // No retail restore trigger has a condition that saves a state, so the save names it alone.
                 Assert.Equal([restore.Nickname], plan.SavedTriggers);
                 Assert.Empty(plan.Setup);
+                Assert.Contains(StartPlan.CheckpointStateWarning(restore.Nickname), plan.Warnings);
                 count++;
             }
         }
 
         Assert.Equal(34, count);
+    }
+
+    /// <summary>The same for the 14 HD Edition scripts (section 12.3 of the M6c design): each of the 33 restore triggers
+    /// gives an exact checkpoint start, and each start trigger gives a mission start.</summary>
+    [Fact]
+    public void EachHdRestoreTriggerAndStartTriggerGivesAnExactStart()
+    {
+        GameDataPaths.RequireHde();
+        var count = 0;
+        foreach (var analysis in Slots(Hde.Value))
+        {
+            foreach (var restore in DryRun.Checkpoints(analysis.Index))
+            {
+                var plan = Plan(analysis, restore);
+                Assert.True(plan.CanStart, $"{analysis.Script.Slot!.Slot} {restore.Nickname}: {plan.Reason}");
+                Assert.Equal(StartKind.Checkpoint, plan.Kind);
+                Assert.Equal([restore.Nickname], plan.SavedTriggers);
+                Assert.Empty(plan.Setup);
+                count++;
+            }
+
+            foreach (var start in analysis.Index.StartTriggers)
+            {
+                var plan = Plan(analysis, start);
+                Assert.True(plan.CanStart, $"{analysis.Script.Slot!.Slot} {start.Nickname}: {plan.Reason}");
+                Assert.Equal(StartKind.MissionStart, plan.Kind);
+            }
+        }
+
+        Assert.Equal(33, count);
     }
 
     [Fact]

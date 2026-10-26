@@ -14,6 +14,15 @@ namespace OpenLancer.Tests;
 /// window.</summary>
 public sealed class RunOverlayTests
 {
+    /// <summary>The chip of the play start has its own kind, so it does not look like the chip "Waits" of a run state
+    /// (review fix of M6c-2).</summary>
+    [Fact]
+    public void ThePlayStartChipIsNotARunState()
+    {
+        Assert.Equal(RunChipKind.PlayStart, GraphView.PlayStartChip.Kind);
+        Assert.NotEqual(RunChipKind.Waits, GraphView.PlayStartChip.Kind);
+    }
+
     private const string Script = """
         [Mission]
 

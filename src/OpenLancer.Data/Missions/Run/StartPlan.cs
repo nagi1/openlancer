@@ -80,6 +80,10 @@ public enum StartRefusal
 
     /// <summary>A setup trigger has an error of the mission checks.</summary>
     SetupProblem,
+
+    /// <summary>A key of the start save names data that the game data does not have, so the game cannot load the
+    /// save.</summary>
+    SaveProblem,
 }
 
 /// <summary>Where the user wants the player to start (section 5.3, step 7 of the M6c design).</summary>
@@ -227,9 +231,35 @@ public sealed record StartPlan
     public static string NoPathWarning(string trigger) =>
         $"No start trigger and no checkpoint leads to trigger '{trigger}'. The play starts only this trigger.";
 
-    /// <summary>The reason of a script without a story slot (section 8.4 of the M6c design).</summary>
+    /// <summary>The reason of a script without a story slot (section 8.4 of the M6c design). The sentence about Ctrl+F5
+    /// comes with the start in the linked game (milestone M6c-3).</summary>
     public const string NoSlotReason = "This mission script has no story slot. OpenLancer can start only the scripts of " +
-                                       "the 14 story slots. Play it in the linked game with Ctrl+F5.";
+                                       "the 14 story slots.";
+
+    /// <summary>The reason of a start at a trigger that the script does not have.</summary>
+    public static string NoTriggerReason(string trigger) =>
+        $"The script has no trigger '{trigger}'. Pick a trigger of the script.";
+
+    /// <summary>The warning of a start from a checkpoint, also of an approximate start whose path starts at a
+    /// checkpoint. A saved game of the retail game keeps more than the triggers. The start save keeps only them.</summary>
+    public static string CheckpointStateWarning(string trigger) =>
+        $"A saved game at checkpoint '{trigger}' also keeps the objective, the dock and lane rules, the reputations and " +
+        "other state from before the save. The start save of this play keeps only the triggers, so that state can differ.";
+
+    /// <summary>The kind of a start: a script without a story slot gives a test script, the mission start and a start
+    /// trigger give the mission start, a restore trigger gives a checkpoint, and each other trigger gives an
+    /// approximate start. A trigger that the script does not have gives an approximate start too.</summary>
+    public static StartKind KindOf(MissionIndex index, StorySlot? slot, MissionStartPoint start) =>
+        slot == null ? StartKind.TestScript
+        : start.Trigger is not { } name ? StartKind.MissionStart
+        : index.Trigger(name) is { IsDuplicate: false } trigger ? KindOf(index, trigger)
+        : StartKind.Approximate;
+
+    /// <summary>The kind of a start at a trigger of a script with a story slot.</summary>
+    internal static StartKind KindOf(MissionIndex index, MissionTrigger trigger) =>
+        index.StartTriggers.Contains(trigger) ? StartKind.MissionStart
+        : DryRun.Checkpoints(index).Contains(trigger) ? StartKind.Checkpoint
+        : StartKind.Approximate;
 
     /// <summary>
     /// Makes the plan of a start (section 5.3 of the M6c design). The plan reads only the index, so it is pure: the same
@@ -259,11 +289,16 @@ public sealed record StartPlan
         var story = StoryPath(index, replay.Chosen);
         var accepted = story.Any(t => t != replay.Chosen && IsAccept(t));
         var notes = slot.Notes.Select(n => MissionSchema.Retail.SlotNotes.GetValueOrDefault(n)).OfType<string>();
+        // A restore trigger at the root of the replay rebuilds the triggers of a checkpoint, but not the rest of the
+        // state of a saved game.
+        IReadOnlyList<string> restored = replay.Kind != StartKind.MissionStart && replay.Root is { StartsActive: false } root
+            ? [CheckpointStateWarning(root.Nickname)]
+            : [];
         plan = plan with
         {
             Stage = accepted ? slot.AcceptStage : slot.StartStage,
             Accepted = accepted,
-            Warnings = [.. plan.Warnings, .. notes],
+            Warnings = [.. plan.Warnings, .. restored, .. notes],
             Place = place switch
             {
                 StartPlaceChoice.Base when placeBase != null => new StartPlace(StartPlaceKind.Base, null, placeBase.Trim(),
@@ -365,17 +400,11 @@ internal sealed record StartReplay
         if (start.Trigger is not { } name)
             return Exact(index, null, StartKind.MissionStart);
         if (index.Trigger(name) is not { IsDuplicate: false } chosen)
-            return new StartReplay
-            {
-                Refusal = StartRefusal.NoTrigger,
-                Reason = $"The script has no trigger '{name}'. Pick a trigger of the script.",
-            };
-        if (index.StartTriggers.Contains(chosen))
-            return Exact(index, chosen, StartKind.MissionStart);
-        var checkpoints = DryRun.Checkpoints(index);
-        if (checkpoints.Contains(chosen))
-            return Exact(index, chosen, StartKind.Checkpoint);
-        var path = StartPlan.ShortestPath(index, index.StartTriggers.Concat(checkpoints), chosen, MissionLinkKind.Start);
+            return new StartReplay { Refusal = StartRefusal.NoTrigger, Reason = StartPlan.NoTriggerReason(name) };
+        if (StartPlan.KindOf(index, chosen) is var kind and not StartKind.Approximate)
+            return Exact(index, chosen, kind);
+        var roots = index.StartTriggers.Concat(DryRun.Checkpoints(index));
+        var path = StartPlan.ShortestPath(index, roots, chosen, MissionLinkKind.Start);
         if (path.Count == 0)
             return new StartReplay
             {
@@ -461,11 +490,16 @@ internal sealed record StartReplay
         return replay with { ActiveSet = active, Effects = world.Effects };
     }
 
+    /// <summary>The refusal of a trigger of the path that does not start or run at its point (section 8.4 of the M6c
+    /// design). The chosen trigger gets its own text, so the text does not name it twice.</summary>
     private static StartReplay NotActive(StartReplay replay, MissionTrigger other, MissionTrigger chosen) => replay with
     {
         Refusal = StartRefusal.NotActive,
-        Reason = $"Trigger '{other.Nickname}' on the path to '{chosen.Nickname}' is not active at that point, because " +
-                 "another trigger stops it first. Pick another trigger.",
+        Reason = other == chosen
+            ? $"The path to trigger '{chosen.Nickname}' does not start it, because another line stops it or cancels its " +
+              "start. Pick another trigger."
+            : $"Trigger '{other.Nickname}' on the path to '{chosen.Nickname}' is not active at that point, because " +
+              "another trigger stops it first. Pick another trigger.",
     };
 
     private static StartRefusal RefusalOf(MachineHalt halt, MissionTrigger? chosen) =>

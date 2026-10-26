@@ -37,16 +37,22 @@ internal sealed class ChoiceDialog : ModalDialog
 
     protected override bool CanCancel => cancellable;
 
+    /// <summary>Shows a question. When another question shows, the new question takes its place, and the cancel action of
+    /// the earlier question runs, because the user did not answer it. So a caller that waits for the answer always gets
+    /// one.</summary>
     /// <param name="title">The title. Two dialogs that can show at the same time need different titles.</param>
     /// <param name="cancel">What Escape and the close button of the title bar do, or null for nothing.</param>
     public void Show(string title, string message, IReadOnlyList<Choice> choices, Action? cancel = null)
     {
+        var replaced = IsOpen ? this.cancel : null;
         this.title = title;
         this.message = message;
         this.choices = choices;
         this.cancel = cancel;
         cancellable = true;
         Open();
+        // After the new question is in place, so a cancel action that shows a question replaces it in turn.
+        replaced?.Invoke();
     }
 
     /// <summary>Shows a dialog that the user cannot cancel. It blocks the window until a button closes it or the window

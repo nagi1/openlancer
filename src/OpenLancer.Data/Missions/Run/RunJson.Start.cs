@@ -108,11 +108,33 @@ public static partial class RunJson
     /// M6c-3.</summary>
     public const string OpenLancerTarget = "openlancer";
 
-    /// <summary>The words of <c>start_place</c> without a value.</summary>
-    public static readonly IReadOnlyList<string> PlaceWords = ["suggested", "camera"];
+    /// <summary>The <c>start_place</c> of the suggested place.</summary>
+    public const string SuggestedPlace = "suggested";
+
+    /// <summary>The <c>start_place</c> of the Scene camera.</summary>
+    public const string CameraPlace = "camera";
 
     /// <summary>The prefix of <c>start_place</c> for a base.</summary>
     public const string BasePlacePrefix = "base:";
+
+    /// <summary>The text of a place choice: <c>suggested</c>, <c>camera</c> or <c>base:&lt;nickname&gt;</c>. The editor
+    /// settings keep the play start in this form too. A base choice without a base gives the suggestion.</summary>
+    public static string PlaceText(StartPlaceChoice place, string? dock) => place switch
+    {
+        StartPlaceChoice.Camera => CameraPlace,
+        StartPlaceChoice.Base when dock != null => BasePlacePrefix + dock.Trim(),
+        _ => SuggestedPlace,
+    };
+
+    /// <summary>The place choice of a text of <see cref="PlaceText"/>, or null when the text is not one.</summary>
+    public static (StartPlaceChoice Place, string? Base)? ParsePlace(string text) => text switch
+    {
+        SuggestedPlace => (StartPlaceChoice.Suggested, null),
+        CameraPlace => (StartPlaceChoice.Camera, null),
+        _ when text.StartsWith(BasePlacePrefix, StringComparison.Ordinal) &&
+               text[BasePlacePrefix.Length..].Trim() is { Length: > 0 } dock => (StartPlaceChoice.Base, dock),
+        _ => null,
+    };
 
     /// <summary>
     /// Reads a request of the start plan query: <c>script</c>, <c>start</c> (<c>mission_start</c> or a <c>trg:</c>
@@ -161,15 +183,9 @@ public static partial class RunJson
         if (node == null)
             return (StartPlaceChoice.Suggested, null);
         var text = node is JsonValue value && value.TryGetValue(out string? word) ? word : null;
-        return text switch
-        {
-            "suggested" => (StartPlaceChoice.Suggested, null),
-            "camera" => (StartPlaceChoice.Camera, null),
-            not null when text.StartsWith(BasePlacePrefix, StringComparison.Ordinal) &&
-                          text[BasePlacePrefix.Length..].Trim() is { Length: > 0 } dock => (StartPlaceChoice.Base, dock),
-            _ => throw BadField("start_place", "The start place is suggested, camera, or base: with the nickname of a " +
-                                               "base, for example base:my_base."),
-        };
+        return (text == null ? null : ParsePlace(text)) ??
+               throw BadField("start_place", "The start place is suggested, camera, or base: with the nickname of a " +
+                                             "base, for example base:my_base.");
     }
 
     /// <summary>The text of a start for JSON: <c>mission_start</c>, or the <c>trg:</c> reference of the

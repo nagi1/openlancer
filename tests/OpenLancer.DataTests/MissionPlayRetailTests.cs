@@ -128,6 +128,60 @@ public sealed class MissionPlayRetailTests(ITestOutputHelper output) : IDisposab
         }
     }
 
+    /// <summary>
+    /// The first approximate start whose path adds an ambient script: the start save gives the id of the room of the
+    /// base, so the server finds the room and loads the mission (review fix of M6c-2). The id of the room name alone
+    /// stopped the load on the server thread. A start save whose room the base does not have refuses with its reason.
+    /// </summary>
+    [Fact]
+    public void AStartWithAnAmbientScriptLoads()
+    {
+        var data = RetailGame.Instance.Data;
+        var plan = Scripts().SelectMany(a => a.Index.Triggers
+                .Where(t => !t.IsDuplicate && a.Index.Reached.Contains(t))
+                .Select(t => StartPlan.Make(a.Index, a.Script.Slot, MissionStartPoint.At(t.Nickname))))
+            .First(p => p.CanStart && p.State.Ambients.Count > 0);
+        output.WriteLine($"{plan.Slot!.Slot}: {plan.State.Ambients.Count} ambient scripts, {plan.Path.Count} on the path.");
+
+        Load(data, plan, []);
+
+        var (script, room, dock) = plan.State.Ambients[0];
+        var file = Path.Combine(folder, "start.fl");
+        var right = FLHash.CreateLocationID(dock, room).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var wrong = FLHash.CreateLocationID(dock, "ol_no_room").ToString(System.Globalization.CultureInfo.InvariantCulture);
+        File.WriteAllText(file, File.ReadAllText(file).Replace($", {right}, ", $", {wrong}, "));
+        var known = data.Items.Bases.Get(dock)!;
+        Assert.Equal($"The start save names the ambient script '{script}' in a room of base '{known.Nickname}' that the game " +
+                     "data does not have. The game cannot load the save.",
+            PlaySave.Check(data.Items, new PlayStart.FromSave(file, null), null));
+    }
+
+    /// <summary>A start save with the ship package of the Play menu: the save of the play has the story, mission and
+    /// trigger parts of the start save, and the ship of the package (section 12.1 of the M6c design).</summary>
+    [Fact]
+    public void AStartSaveWithAShipPackageKeepsItsMissionParts()
+    {
+        const string package = "le_package";
+        var data = RetailGame.Instance.Data;
+        var analysis = RetailMissions.Slot("M02");
+        var restore = DryRun.Checkpoints(analysis.Index).First();
+        var plan = StartPlan.Make(analysis.Index, analysis.Script.Slot, MissionStartPoint.At(restore.Nickname));
+        var file = Path.Combine(Directory.CreateDirectory(folder).FullName, "start.fl");
+        File.WriteAllText(file, StartSaveText.OpenLancer(plan, Place(data.Items, plan.Place), DateTime.Now));
+        var start = new PlayStart.FromSave(file, null);
+        Assert.Null(PlaySave.Check(data.Items, start, package));
+        using var headless = new HeadlessServer(data);
+
+        var save = PlaySave.Create(headless.Server, start, package);
+
+        Assert.Equal(plan.Slot!.Controller, save.StoryInfo!.Mission);
+        Assert.Equal(plan.Stage, save.StoryInfo.MissionNum);
+        Assert.NotNull(save.MissionState);
+        Assert.Equal([FLHash.CreateID(restore.Nickname)], save.TriggerSave.Select(t => (uint)t.Trigger));
+        Assert.Equal(new HashValue(data.Items.GetShipPackage(FLHash.CreateID(package))!.Ship.Nickname),
+            save.Player!.ShipArchetype);
+    }
+
     [Fact]
     public void AStartSaveOfAnUnknownMissionRefusesWithItsReason()
     {

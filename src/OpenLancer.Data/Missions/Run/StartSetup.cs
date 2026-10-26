@@ -73,12 +73,28 @@ internal static class StartSetup
             triggers.Add(new SetupTrigger(worldName, [wait, .. world]));
         }
         var saved = lines.Where(l => l.Name!.Start == StartRole.Save).ToList();
+        var state = StateOf(index, saved, forced);
+        if (UnknownAmbientBase(index, state) is { } reason)
+            return plan with { Refusal = StartRefusal.SaveProblem, Reason = reason };
         return Check(plan with
         {
             Setup = triggers,
             SavedTriggers = [setupName],
-            State = StateOf(index, saved, forced),
+            State = state,
         }, index);
+    }
+
+    /// <summary>The reason when an ambient script of the start save names a base that the game data does not have, or
+    /// null. The game finds the room of an <c>ambi_scene</c> line in its base, so it cannot load such a line. A world
+    /// that does not know the bases finds no problem.</summary>
+    private static string? UnknownAmbientBase(MissionIndex index, StartMissionState state)
+    {
+        if (!index.World.Knows(MissionValueKind.Base))
+            return null;
+        return state.Ambients.FirstOrDefault(a => !index.World.Has(MissionValueKind.Base, a.Base)) is { File: not null } bad
+            ? $"The path adds the ambient script '{bad.File}' in base '{bad.Base}', which is not in the game data. The " +
+              "game cannot load the start save with it. Correct the Act_AddAmbient line, or pick another trigger."
+            : null;
     }
 
     /// <summary>
@@ -149,40 +165,45 @@ internal static class StartSetup
         }
     }
 
-    /// <summary>The net result of the save lines (section 5.3, step 9): the last title and offer, and the base scenes and
-    /// ambient scripts that stay. A scene that a <c>Cnd_RTCDone</c> line of the path names played, so it goes.</summary>
+    /// <summary>
+    /// The net result of the save lines (section 5.3, step 9): the last title and offer, and the base scenes and ambient
+    /// scripts that stay. The path of a scene compares as the game compares it:
+    /// <list type="bullet">
+    /// <item>Each <c>Act_AddRTC</c> and each <c>Act_AddAmbient</c> adds one entry, also for a path that the list has.</item>
+    /// <item><c>Act_RemoveRTC</c> compares the path with letter case, and it removes each scene with that path.</item>
+    /// <item><c>Act_RemoveAmbient</c> compares the path without letter case, and it removes only the first match.</item>
+    /// <item>A scene that a <c>Cnd_RTCDone</c> line of the path names played, so it goes. That condition compares the
+    /// path without letter case.</item>
+    /// </list>
+    /// No compare reads <c>/</c> as <c>\</c>.
+    /// </summary>
     internal static StartMissionState StateOf(MissionIndex index, IReadOnlyList<MissionLine> lines,
         IReadOnlyList<MissionTrigger> forced)
     {
         var played = forced.Select(t => t.Condition).OfType<MissionLine>().Where(c => Is(c, "Cnd_RTCDone"))
-            .Select(c => c.ValueOf("file")).OfType<string>().Select(Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(c => c.ValueOf("file")).OfType<string>().Select(f => f.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
         int title = 0, offer = 0;
         var scenes = new List<(string File, bool Repeats)>();
         var ambients = new List<(string File, string Room, string Base)>();
         foreach (var line in lines)
         {
-            var file = line.ValueOf("file");
+            var file = line.ValueOf("file")?.Trim();
             if (Is(line, "Act_SetTitle"))
                 title = Id(line.ValueOf("text"));
             else if (Is(line, "Act_SetOffer"))
                 offer = Id(line.ValueOf("text"));
             else if (Is(line, "Act_AddRTC") && file != null)
-            {
-                scenes.RemoveAll(s => Same(s.File, file));
                 scenes.Add((file, MissionIndex.Is(line.ValueOf("repeats"), "repeatable")));
-            }
             else if (Is(line, "Act_RemoveRTC") && file != null)
-                scenes.RemoveAll(s => Same(s.File, file));
+                scenes.RemoveAll(s => string.Equals(s.File, file, StringComparison.Ordinal));
             else if (Is(line, "Act_AddAmbient") && file != null && line.ValueOf("room") is { } room &&
                      line.ValueOf("base") is { } dock)
-            {
-                ambients.RemoveAll(a => Same(a.File, file));
-                ambients.Add((file, room, dock));
-            }
-            else if (Is(line, "Act_RemoveAmbient") && file != null)
-                ambients.RemoveAll(a => Same(a.File, file));
+                ambients.Add((file, room.Trim(), dock.Trim()));
+            else if (Is(line, "Act_RemoveAmbient") && file != null &&
+                     ambients.FindIndex(a => string.Equals(a.File, file, StringComparison.OrdinalIgnoreCase)) is >= 0 and var at)
+                ambients.RemoveAt(at);
         }
-        scenes.RemoveAll(s => played.Contains(Path(s.File)));
+        scenes.RemoveAll(s => played.Contains(s.File));
         return new StartMissionState(title, offer, scenes, ambients);
     }
 
@@ -289,8 +310,4 @@ internal static class StartSetup
 
     private static int Id(string? text) =>
         int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) ? id : 0;
-
-    private static string Path(string file) => file.Trim().Replace('/', '\\');
-
-    private static bool Same(string a, string b) => string.Equals(Path(a), Path(b), StringComparison.OrdinalIgnoreCase);
 }

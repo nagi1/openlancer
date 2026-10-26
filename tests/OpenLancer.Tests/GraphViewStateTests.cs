@@ -97,6 +97,20 @@ public sealed class GraphViewStateTests
         Assert.Null(GraphViewState.BlockOf(graph, new MissionRef(Path, MissionItemKind.Label, Key: "enemy1")));
     }
 
+    /// <summary>The play start shows in the node of its trigger, so a click on the chip of the toolbar selects and frames
+    /// it in the graph (UI rule 6, review fix of M6c-2). The mission start has no node.</summary>
+    [Fact]
+    public void ThePlayStartShowsInTheNodeOfItsTrigger()
+    {
+        var graph = Graph(new GraphViewState());
+        var item = MissionRef.PlayStartOf(Path);
+
+        Assert.Equal("t_start", ((GraphNode)GraphViewState.BlockOf(graph, item, "t_start")!).Title);
+        Assert.Null(GraphViewState.BlockOf(graph, item, null));
+        Assert.Null(GraphViewState.BlockOf(graph, item, "t_gone"));
+        Assert.Null(GraphViewState.BlockOf(graph, item));
+    }
+
     [Fact]
     public void TheSelectionOfANodeIsItsTriggerItsPrefabOrItsAct()
     {

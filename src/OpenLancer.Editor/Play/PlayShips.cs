@@ -54,6 +54,29 @@ internal static class PlayShips
         return ship != null && session.SectionName(ship) is { Length: > 0 } name ? name : nickname;
     }
 
+    /// <summary>
+    /// The ship of Play in words, with its tooltip, for the Play menu and the Play start page: "{ship} (default)" without
+    /// a package, the ship of the package, or "{package} (not in the data)" with the reason when W has no such
+    /// package.
+    /// </summary>
+    /// <param name="package">The nickname of the package, or null for the default package.</param>
+    public static (string Text, string Tooltip) ShipText(EditorSession? session, string? package)
+    {
+        var name = session == null ? null : ShipName(session, package);
+        if (package == null)
+        {
+            return ($"{name ?? "the ship of a new character"} (default)",
+                "The ship of a new multiplayer character. To fly another ship, right-click a ship package in " +
+                "Database > Goods, then click Use for Play.");
+        }
+
+        return name != null
+            ? (name, $"The ship package {package}. Select another one in Database > Goods.")
+            : ($"{package} (not in the data)",
+                $"The edit view has no ship package {package}, so Play stops with an error. Click Use the default ship " +
+                "in the Play menu, or select a ship package in Database > Goods.");
+    }
+
     /// <summary>The first value of the first line of a key, as text, or null. The item index of W reads the category of
     /// a good in the same way.</summary>
     private static string? First(SectionView view, string key) =>

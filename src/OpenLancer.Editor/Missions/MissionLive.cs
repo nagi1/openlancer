@@ -37,25 +37,29 @@ internal sealed record LiveTraceResult(int Play, IReadOnlyList<LiveChange> Chang
 /// <summary>
 /// The live trace of the mission of the OpenLancer game (sections 4.5, 6.3 and 7.2 of the M6c design): the trigger
 /// changes of the mission events of Play, as the steps of one trace for the overlay and the Run log. A step holds the
-/// changes of one time. The play number grows at each load of a mission in the game, so at each start and each restart.
-/// After the exit of the game, the trace stays until the next play or until the modder clears it. The class makes no
-/// ImGui call, so the tests check it.
+/// changes of one time. The play number grows at each start of a game and at each restart of a mission play, and at each
+/// other load of a mission in the game, for example a reload. After the exit of the game, the trace stays with the time
+/// of the exit until the next play or until the modder clears it. The class makes no ImGui call, so the tests check it.
 /// </summary>
 internal sealed class MissionLive(Func<double> clock)
 {
-    /// <summary>The time that a trigger waits before the Console gets the stall note, in seconds.</summary>
-    public const double StallSeconds = MissionTrace.StallSeconds;
-
     private readonly List<LiveChange> changes = [];
     private readonly HashSet<string> stalled = new(StringComparer.OrdinalIgnoreCase);
     private double loadedAt;
     private long sequence;
 
-    /// <summary>The number of the play, from 1, or 0 before the first mission event.</summary>
+    // True after a new play started and before its first reset. The game can still send the changes of the earlier
+    // play, so the trace takes no change until the reset.
+    private bool waitsForReset;
+
+    // The time of the clock when the game exited, or null while a game runs.
+    private double? endedAt;
+
+    /// <summary>The number of the play, from 1, or 0 before the first play.</summary>
     public int Play { get; private set; }
 
-    /// <summary>The name of the mission of the game, for example <c>Mission_02</c>, or null before the first event and
-    /// after <see cref="Clear"/>.</summary>
+    /// <summary>The name of the mission of the game, for example <c>Mission_02</c>, or null before the first event of a
+    /// play and after <see cref="Clear"/>.</summary>
     public string? Mission { get; private set; }
 
     /// <summary>The steps of the live trace.</summary>
@@ -79,26 +83,52 @@ internal sealed class MissionLive(Func<double> clock)
     public double ChangedAt { get; private set; } = double.NegativeInfinity;
 
     /// <summary>The time now in the live trace: the seconds since the game loaded the mission, by the clock of the
-    /// editor.</summary>
-    public double Now => clock() - loadedAt;
+    /// editor. After the exit of the game, the time of the exit.</summary>
+    public double Now => (endedAt ?? clock()) - loadedAt;
 
     /// <summary>
-    /// Takes a mission event of the game. A reset starts a new play: the trace of the play before it goes. After
-    /// <see cref="Clear"/>, the next event shows the mission again, and the sequence numbers of the play go on.
+    /// A new game started, or the game starts its mission play again (section 7.2 of the M6c design). The play number
+    /// grows, and the trace of the earlier play goes, also after a play from the camera or at a base. The trace then
+    /// takes the changes of the first reset of the game.
+    /// </summary>
+    public void Started()
+    {
+        Play++;
+        Mission = null;
+        NewTrace();
+        Setup = new HashSet<string>();
+        waitsForReset = true;
+        endedAt = null;
+    }
+
+    /// <summary>The game exited. The clock of the trace stops, so a trigger that waited at the exit does not wait
+    /// longer.</summary>
+    public void Ended()
+    {
+        if (endedAt != null)
+            return;
+        endedAt = clock();
+        waitsForReset = false;
+        Version++;
+    }
+
+    /// <summary>
+    /// Takes a mission event of the game. A reset starts a new play: the trace of the play before it goes. The first
+    /// reset after <see cref="Started"/> belongs to that play, so the play number stays. After <see cref="Clear"/>, the
+    /// next event shows the mission again, and the sequence numbers of the play go on.
     /// </summary>
     /// <param name="setup">The setup triggers of the test layer of the play that runs. A reset keeps them for the
     /// play.</param>
     public void Take(PlayEvent.MissionChanges e, IReadOnlySet<string>? setup = null)
     {
+        if (waitsForReset && !e.Reset)
+            return;
         if (e.Reset || Play == 0)
         {
-            Play++;
-            Trace = new MissionTrace(live: true);
-            changes.Clear();
-            stalled.Clear();
-            Dropped = 0;
-            sequence = 0;
-            loadedAt = clock();
+            if (!waitsForReset)
+                Play++;
+            waitsForReset = false;
+            NewTrace();
             Setup = setup ?? new HashSet<string>();
         }
 
@@ -151,8 +181,8 @@ internal sealed class MissionLive(Func<double> clock)
         ChangedAt = double.NegativeInfinity;
     }
 
-    /// <summary>The triggers that wait for <see cref="StallSeconds"/> now and did not stall before in this play (section
-    /// 6.3 of the M6c design). Each trigger comes once in a play.</summary>
+    /// <summary>The triggers that wait for the stall time of <see cref="MissionTrace"/> now and did not stall before in
+    /// this play (section 6.3 of the M6c design). Each trigger comes once in a play.</summary>
     public IReadOnlyList<string> NewStalls()
     {
         var now = Now;
@@ -171,6 +201,39 @@ internal sealed class MissionLive(Func<double> clock)
     /// </summary>
     public IReadOnlyList<LiveChange> Since(int play, long since) =>
         play == Play ? changes.Where(c => c.Sequence > since).ToList() : changes.ToList();
+
+    /// <summary>
+    /// The result of the live trace query of the shared command layer (section 7.2 of the M6c design): the play number,
+    /// the changes of the play after a sequence number, and the Play status. While only the game of a play copy runs,
+    /// the result has no changes, because the real game has no channel to the editor.
+    /// </summary>
+    /// <param name="play">The play number of the last result of the caller, or 0.</param>
+    /// <param name="since">The last sequence number that the caller has, or 0.</param>
+    /// <param name="status">The Play status of OpenLancer.</param>
+    /// <param name="gameRuns">True while the game of a play copy runs.</param>
+    /// <param name="script">The install path of the script of the mission of the trace, or null.</param>
+    public LiveTraceResult Result(int play, long since, PlayStatus status, bool gameRuns, string? script) =>
+        new(Play, gameRuns && status == PlayStatus.Idle ? [] : Since(play, since), status)
+        {
+            Mission = Mission,
+            Script = script,
+            Dropped = Dropped,
+            GameRuns = gameRuns,
+        };
+
+    /// <summary>Starts an empty trace for a new play: no change, no stall, and the time from now.</summary>
+    private void NewTrace()
+    {
+        Trace = new MissionTrace(live: true);
+        changes.Clear();
+        stalled.Clear();
+        Dropped = 0;
+        sequence = 0;
+        loadedAt = clock();
+        endedAt = null;
+        Version++;
+        ChangedAt = double.NegativeInfinity;
+    }
 }
 
 /// <summary>The Console notes of the live view (sections 6.5 and 8.4 of the M6c design). The trigger changes go to the

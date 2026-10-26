@@ -68,18 +68,18 @@ Else the helper prints no token and exits with the code 2. It writes the reason 
 | Connect an agent... | Shows the text for `.mcp.json` and a Copy button. |
 | Show agent messages | Shows the messages of the server in the Console. |
 | Start the agent server with the editor | Starts the server when the editor starts. The server is off by default. |
-| Agent settings | The port, the setting of agent Play, the tool groups and the limits. |
+| Agent settings | The port, the tool groups and the limits. |
 
 When another program uses the port, the server does not start. The status bar then shows "Agent server: port 47815 is in use". Close the other program, or pick another port in **Agent > Agent settings**. Then change the port in `.mcp.json` too. The server never moves to another port by itself.
 
 ### The agent settings
 
-**Agent > Agent settings** has the port, the setting of agent Play and the tool groups. Its section **Advanced** has the limits of one agent call.
+**Agent > Agent settings** has the port and the tool groups. Its section **Advanced** has the limits of one agent call.
 
 | Setting | Default | What it does |
 |---|---|---|
 | Agent server port | 47815 | The port of the server on this computer. Stop the server to change it. |
-| Auto-save and continue when an MCP agent starts Play | Off | When an agent starts Play and the active mod has unsaved edits, the editor saves them and plays. Off: the editor asks you first. See "Agent Play" in [PLAY.md](PLAY.md). |
+| Auto-save and continue when an MCP agent starts Play | Off | When an agent starts Play and the active mod has unsaved edits, the editor saves them and plays. Off: the editor asks you first. See "Agent Play" in [PLAY.md](PLAY.md). The setting shows only when the agent server has a tool that starts Play. These tools come with a later version. |
 | Agent tool groups | All groups | The agent can use the tools of the selected groups: Scene, Missions and Cutscenes. `render_scene` is in the group Scene, and `render_cutscene` is in the group Cutscenes. These tools are always available: `studio_status`, `get_item`, `find_references`, `list_values`, `get_raw_ini`, `check`, `get_console`, `open_view`, `select_items` and `capture_panel`. A tool of a cleared group tells the agent that you cleared the group. |
 | Rows of a page without a limit | 50 | The rows of a list result when the agent gives no limit. |
 | Largest page limit | 200 | The largest limit that the agent can ask for in one list result. |

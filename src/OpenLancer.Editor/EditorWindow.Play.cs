@@ -85,6 +85,10 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
 
     void IPlayEditor.MissionChanged(PlayEvent.MissionChanges changes) => Missions.MissionChanged(changes);
 
+    void IPlayEditor.PlayStarted() => Missions.Live.Started();
+
+    void IPlayEditor.PlayEnded() => Missions.Live.Ended();
+
     void IGamePlayHost.Ask(string title, string message, IReadOnlyList<Choice> choices) =>
         Choice.Show(title, message, choices);
 
@@ -99,7 +103,8 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
 
     ConsoleLog IMissionPlayEditor.Log => Log;
 
-    MissionIndex? IMissionPlayEditor.IndexOf(string script) => Missions.Analysis(script)?.Index;
+    (MissionIndex Index, StorySlot? Slot)? IMissionPlayEditor.IndexOf(string script) =>
+        Missions.Analysis(script) is { } analysis ? (analysis.Index, analysis.Script.Slot) : null;
 
     (MissionIndex Index, StorySlot? Slot)? IMissionPlayEditor.ModelOf(string script, out string? problem)
     {
@@ -124,46 +129,95 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
 
     StartSavePlace? IMissionPlayEditor.PlaceOf(StartPlace place, out string? problem)
     {
-        problem = null;
-        if (Session?.GameData?.Items is not { } items)
+        problem = StartPlaceProblem(place);
+        if (problem != null)
         {
-            problem = "The game data of the profile did not load.";
             return null;
         }
 
+        var items = Session!.GameData!.Items;
         switch (place.Kind)
         {
-            case StartPlaceKind.Space when items.Systems.Get(place.System!) is { } system:
-                return new StartSavePlace(system.Nickname, null, place.Position, place.Orientation);
             case StartPlaceKind.Space:
-                problem = $"The start place names the system '{place.System}', which is not in the game data. Pick a base " +
-                          "or the Scene camera on the Play start page.";
-                return null;
-            case StartPlaceKind.Base when items.Bases.Get(place.Base!) is { System: { } baseSystem } dock:
-                return StartSavePlace.AtBase(baseSystem, dock.Nickname);
+                var system = items.Systems.Get(place.System!)!;
+                var point = new PlayStart.InSpace(system.Nickname, place.Position, place.Orientation);
+                // A rule of the plan gives the point, so it can be in a planet or in a death zone. The Scene has the
+                // shapes of the system only while it shows that system.
+                if (Scene.SpawnShapes(system.Nickname) is { } spaceShapes)
+                {
+                    point = Checked(SpawnPoint.FromPoint(point, spaceShapes));
+                }
+                else
+                {
+                    var name = Session.ItemName(system);
+                    Log.Add(ConsoleSeverity.Info, PlayController.Source,
+                        UncheckedPoint(name.Length > 0 ? $"{name} ({system.Nickname})" : system.Nickname));
+                }
+
+                return new StartSavePlace(point.System, null, point.Position, point.Orientation);
             case StartPlaceKind.Base:
-                problem = $"The start place names the base '{place.Base}', which is not in the game data. Pick another " +
-                          "base on the Play start page.";
-                return null;
+                var dock = items.Bases.Get(place.Base!)!;
+                return StartSavePlace.AtBase(dock.System!, dock.Nickname);
         }
 
         // The Scene camera, with the start check of Play from camera (section 9.5 of the M4 design).
-        if (Scene.System is not { } open || Scene.SpawnShapes(open.Nickname) is not { } shapes)
+        var open = Scene.System!;
+        if (Scene.SpawnShapes(open.Nickname) is not { } shapes)
         {
-            problem = "The start place is the Scene camera, and no system is open. Open a system, or pick another start " +
-                      "place on the Play start page.";
+            problem = NoCameraSystem;
             return null;
         }
 
-        var check = SpawnPoint.FromCamera(new PlayStart.InSpace(open.Nickname, Scene.CameraPosition, Scene.CameraOrientation),
-            shapes);
+        var camera = Checked(SpawnPoint.FromCamera(
+            new PlayStart.InSpace(open.Nickname, Scene.CameraPosition, Scene.CameraOrientation), shapes));
+        return new StartSavePlace(camera.System, null, camera.Position, camera.Orientation);
+    }
+
+    /// <summary>Gives the lines of a start check to the Console and returns its start.</summary>
+    private PlayStart.InSpace Checked(SpawnCheck check)
+    {
         foreach (var (severity, message) in check.Lines)
         {
             Log.Add(severity, PlayController.Source, message);
         }
 
-        return new StartSavePlace(check.Start.System, null, check.Start.Position, check.Start.Orientation);
+        return check.Start;
     }
+
+    /// <summary>
+    /// Why a mission play cannot start at a start place, or null when it can (UI rule 2). The Play start page shows the
+    /// reason under the start place, and Play gives it when it refuses. The check has no side effect: it writes nothing
+    /// to the Console.
+    /// </summary>
+    internal string? StartPlaceProblem(StartPlace place)
+    {
+        if (Session?.GameData?.Items is not { } items)
+        {
+            return "The game data of the profile did not load.";
+        }
+
+        return place.Kind switch
+        {
+            StartPlaceKind.Space when items.Systems.Get(place.System!) == null =>
+                $"The start place names the system '{place.System}', which is not in the game data. Pick a base or the " +
+                "Scene camera on the Play start page.",
+            StartPlaceKind.Base when items.Bases.Get(place.Base!) is not { System: not null } =>
+                $"The start place names the base '{place.Base}', which is not in the game data. Pick another base on the " +
+                "Play start page.",
+            StartPlaceKind.Camera when Scene.System == null => NoCameraSystem,
+            _ => null,
+        };
+    }
+
+    /// <summary>The reason of a start at the Scene camera while no system is open.</summary>
+    internal const string NoCameraSystem = "The start place is the Scene camera, and no system is open. Open a system, or " +
+                                           "pick another start place on the Play start page.";
+
+    /// <summary>The Console note of a start point in space that Play cannot check, because the Scene does not show its
+    /// system.</summary>
+    internal static string UncheckedPoint(string system) =>
+        $"Mission play: the Scene does not show {system}, so Play did not check the start point for planets, stations " +
+        "and death zones. Open the system in the Scene to check it at the next play.";
 
     string? IMissionPlayEditor.PlayPackage => Session is { } session ? Settings.PlayPackageOf(session.Profile.FilePath) : null;
 
@@ -171,10 +225,12 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
 
     IMissionStart? IMissionPlayEditor.RunningMission => Play.Mission;
 
+    IReadOnlyList<IMissionStart> IMissionPlayEditor.MissionStarts => Play.MissionStarts;
+
     bool IMissionPlayEditor.GameRuns => GamePlay.GameRuns;
 
-    Task<PlayRequestResult> IMissionPlayEditor.RequestMission(IMissionStart start, string? package) =>
-        Play.RequestMission(start, package);
+    Task<PlayRequestResult> IMissionPlayEditor.RequestMission(IMissionStart start, string? package, PlaySaveRule save) =>
+        Play.RequestMission(start, package, save);
 
     string? IAgentPlayHost.UnsavedMod => Session is { Edits: { IsDirty: true, ActiveMod: { } mod } } ? mod.Id : null;
 

@@ -154,6 +154,39 @@ public sealed class StartPlanTests
         Assert.Equal((5, true), (plan.Stage, plan.Accepted));
     }
 
+    /// <summary>
+    /// A saved game keeps more state than the triggers, for example the objective, the dock rules and the reputations.
+    /// The start save keeps only the triggers, so a checkpoint start and an approximate start whose path starts at a
+    /// checkpoint warn about it (review fix of M6c-2). A start from a start trigger has no such warning.
+    /// </summary>
+    [Fact]
+    public void ACheckpointStartWarnsThatTheStateOfASavedGameIsNotInTheStart()
+    {
+        var checkpoint = Plan(Script, "t_restore");
+        var fromCheckpoint = Plan(Script, "t_fail");
+
+        Assert.Contains(StartPlan.CheckpointStateWarning("t_restore"), checkpoint.Warnings);
+        Assert.Equal(["t_restore", "t_fail"], fromCheckpoint.Path);
+        Assert.Contains(StartPlan.CheckpointStateWarning("t_restore"), fromCheckpoint.Warnings);
+        Assert.DoesNotContain(Plan(Script, "t_chosen").Warnings, w => w.StartsWith("A saved game", StringComparison.Ordinal));
+        Assert.DoesNotContain(Plan(Script, null).Warnings, w => w.StartsWith("A saved game", StringComparison.Ordinal));
+        Assert.Empty(SteLint.Problems(StartPlan.CheckpointStateWarning("t_restore")));
+    }
+
+    /// <summary>The kind of a start, for the chip of the toolbar and for the plan: one rule.</summary>
+    [Fact]
+    public void TheKindOfAStartIsTheKindOfThePlan()
+    {
+        var index = Index(Script);
+        foreach (var start in new[] { null, "t_start", "t_restore", "t_chosen", "t_gone" })
+        {
+            var point = start == null ? MissionStartPoint.MissionStart : MissionStartPoint.At(start);
+            var expected = start == "t_gone" ? StartKind.Approximate : StartPlan.Make(index, Slot, point).Kind;
+            Assert.Equal(expected, StartPlan.KindOf(index, Slot, point));
+            Assert.Equal(StartKind.TestScript, StartPlan.KindOf(index, null, point));
+        }
+    }
+
     [Fact]
     public void ARestoreTriggerWithActSetInitialPlayerPosGivesASpaceStartAtItsPoint()
     {
@@ -224,6 +257,63 @@ public sealed class StartPlanTests
         Assert.Equal(0, state.Offer);
         // The path waits for the end of ol_scene, so it does not play again.
         Assert.Equal([(@"missions\ol\ol_other.ini", false)], state.Scenes);
+    }
+
+    /// <summary>
+    /// The base scenes and the ambient scripts compare their paths as the game compares them (review fix of M6c-2). Each
+    /// add adds one entry. Act_RemoveRTC compares with letter case and removes each match. Act_RemoveAmbient compares
+    /// without letter case and removes the first match. No compare reads / as \.
+    /// </summary>
+    [Fact]
+    public void TheSaveKeysComparePathsAsTheGameDoes()
+    {
+        const string text = """
+            [Trigger]
+            nickname = s_lines
+            Cnd_Timer = 1
+            Act_AddRTC = missions\ol\a.ini
+            Act_AddRTC = missions\ol\a.ini
+            Act_AddRTC = missions\ol\b.ini
+            Act_AddRTC = missions\ol\c.ini
+            Act_AddRTC = missions\ol\d.ini
+            Act_RemoveRTC = MISSIONS\OL\B.INI
+            Act_RemoveRTC = missions/ol/c.ini
+            Act_RemoveRTC = missions\ol\d.ini
+            Act_AddAmbient = scripts\ol\amb.thn, ol_room, ol_base_a
+            Act_AddAmbient = scripts\ol\amb.thn, ol_room_2, ol_base_a
+            Act_RemoveAmbient = SCRIPTS\OL\AMB.THN
+            """;
+        var index = Index(text);
+
+        var state = StartSetup.StateOf(index, index.Trigger("s_lines")!.Actions, []);
+
+        Assert.Equal([@"missions\ol\a.ini", @"missions\ol\a.ini", @"missions\ol\b.ini", @"missions\ol\c.ini"],
+            state.Scenes.Select(s => s.File));
+        Assert.Equal([(@"scripts\ol\amb.thn", "ol_room_2", "ol_base_a")], state.Ambients);
+    }
+
+    /// <summary>An ambient script of the path whose base the game data does not have refuses the start, because the
+    /// game cannot load such a line of the start save (review fix of M6c-2).</summary>
+    [Fact]
+    public void AnAmbientScriptInABaseThatTheGameDataDoesNotHaveRefuses()
+    {
+        var world = new MissionWorld(new Dictionary<MissionValueKind, IEnumerable<string>>
+        {
+            [MissionValueKind.Base] = ["ol_base_a"],
+        }, null);
+        string Text(string dock) => Script.Replace("Act_ActTrig = t_scene",
+            $"Act_AddAmbient = scripts\\ol\\amb.thn, ol_room, {dock}\nAct_ActTrig = t_scene");
+
+        var known = StartPlan.Make(Index(Text("ol_base_a"), world), Slot, MissionStartPoint.At("t_chosen"));
+        var unknown = StartPlan.Make(Index(Text("ol_base_x"), world), Slot, MissionStartPoint.At("t_chosen"));
+
+        Assert.True(known.CanStart, known.Reason);
+        Assert.Equal([(@"scripts\ol\amb.thn", "ol_room", "ol_base_a")], known.State.Ambients);
+        Assert.Equal(StartRefusal.SaveProblem, unknown.Refusal);
+        Assert.Equal(@"The path adds the ambient script 'scripts\ol\amb.thn' in base 'ol_base_x', which is not in the game " +
+                     "data. The game cannot load the start save with it. Correct the Act_AddAmbient line, or pick another " +
+                     "trigger.", unknown.Reason);
+        Assert.Empty(SteLint.Problems(unknown.Reason!));
     }
 
     [Fact]
@@ -322,6 +412,43 @@ public sealed class StartPlanTests
         Assert.Equal(StartRefusal.NotActive, plan.Refusal);
         Assert.Equal("Trigger 's_mid' on the path to 's_chosen' is not active at that point, because another trigger " +
                      "stops it first. Pick another trigger.", plan.Reason);
+    }
+
+    /// <summary>When the path does not start the chosen trigger, the refusal names it once (review fix of M6c-2). Here a
+    /// trigger that starts first in id order stops the chosen trigger before it starts.</summary>
+    [Fact]
+    public void AChosenTriggerThatThePathDoesNotStartRefusesWithItsOwnReason()
+    {
+        var killer = Enumerable.Range(0, 100).Select(n => $"s_kill{n}")
+            .First(n => FLHash.CreateID(n) < FLHash.CreateID("s_chosen"));
+        var text = $"""
+            [Trigger]
+            nickname = s_start
+            InitState = ACTIVE
+            Cnd_True = no_params
+            Act_ActTrig = s_mid
+
+            [Trigger]
+            nickname = s_mid
+            Cnd_Timer = 3
+            Act_ActTrig = {killer}
+            Act_ActTrig = s_chosen
+
+            [Trigger]
+            nickname = {killer}
+            Cnd_True = no_params
+            Act_DeactTrig = s_chosen
+
+            [Trigger]
+            nickname = s_chosen
+            Cnd_Timer = 3
+            """;
+
+        var plan = Plan(text, "s_chosen");
+
+        Assert.Equal(StartRefusal.NotActive, plan.Refusal);
+        Assert.Equal("The path to trigger 's_chosen' does not start it, because another line stops it or cancels its " +
+                     "start. Pick another trigger.", plan.Reason);
     }
 
     [Fact]

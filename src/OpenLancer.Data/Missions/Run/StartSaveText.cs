@@ -66,7 +66,7 @@ public static class StartSaveText
             state.Add(Line("msn_offer", Number(plan.State.Offer)));
         state.AddRange(plan.State.Scenes.Select(s => Line("rtc", s.File, s.Repeats ? "true" : "false")));
         state.AddRange(plan.State.Ambients.Select(a =>
-            Line("ambi_scene", a.File, Id(a.Room), Id(a.Base))));
+            Line("ambi_scene", a.File, Number(RoomId(a.Base, a.Room)), Id(a.Base))));
         var sections = new List<(string, IReadOnlyList<string>)>
         {
             ("StoryInfo", [Line("Mission", slot.Controller), Line("MissionNum", Number(plan.Stage)), Line("delta_worth", NoWorth)]),
@@ -121,6 +121,10 @@ public static class StartSaveText
 
     /// <summary>The game id of a name as an unsigned decimal number.</summary>
     private static string Id(string name) => Number(FLHash.CreateID(name.Trim()));
+
+    /// <summary>The game id of a room of a base. The game makes it from the base and the room name, not from the room
+    /// name alone. A save keeps this id in <c>ambi_scene</c>, and the game finds the room of the base by it.</summary>
+    internal static uint RoomId(string dock, string room) => FLHash.CreateLocationID(dock.Trim(), room.Trim());
 
     private static string Number(uint value) => value.ToString(CultureInfo.InvariantCulture);
 

@@ -113,6 +113,27 @@ public sealed class StartSaveTextTests
             player.Select(l => l.Split(" = ")[0]));
     }
 
+    /// <summary>
+    /// An ambient script of the path writes the game id of its room, which the game makes from the base and the room
+    /// name, as the fork writes it in its own saves. The fork finds the room of the base by that id when it loads the
+    /// save (review fix of M6c-2: the id of the room name alone stopped the load).
+    /// </summary>
+    [Fact]
+    public void AnAmbientScriptWritesTheIdOfTheRoomOfItsBase()
+    {
+        var text = StartPlanTests.Script.Replace("Act_ActTrig = t_scene",
+            "Act_AddAmbient = scripts\\ol\\ol_amb.thn, ol_room, ol_base_a\nAct_ActTrig = t_scene");
+        var plan = StartPlan.Make(Index(text), StartPlanTests.Slot, MissionStartPoint.At("t_chosen"));
+        var room = FLHash.CreateLocationID("ol_base_a", "ol_room");
+
+        var save = StartSaveText.OpenLancer(plan, InSpace, Time);
+
+        Assert.Contains($"ambi_scene = scripts\\ol\\ol_amb.thn, {room}, {FLHash.CreateID("ol_base_a")}\r\n", save);
+        var ambient = Assert.Single(Read(save).MissionState!.Ambients);
+        Assert.Equal((room, FLHash.CreateID("ol_base_a")), (ambient.Room.Hash, ambient.Base.Hash));
+        Assert.NotEqual(FLHash.CreateID("ol_room"), ambient.Room.Hash);
+    }
+
     [Fact]
     public void APlanThatCannotStartHasNoStartSave()
     {

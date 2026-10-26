@@ -4,6 +4,7 @@ using OpenLancer.Data;
 using OpenLancer.Data.Missions;
 using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Missions;
+using OpenLancer.Editor.Play;
 using OpenLancer.Runtime.Play;
 using Xunit;
 using static OpenLancer.Tests.MissionTestData;
@@ -121,6 +122,81 @@ public sealed class MissionLiveTests
 
         Assert.Equal(12, live.Dropped);
         Assert.Equal(["The game dropped 12 changes.", "Ran t_start"], live.Trace.Steps[0].Changes.Select(c => c.LogText));
+        Assert.Equal("The game dropped 1 change.", TraceChange.Dropped(1).LogText);
+    }
+
+    /// <summary>
+    /// A new play ends the trace of the earlier play at once, also a play from the camera that loads no mission: the
+    /// play number grows, and the query gives no change of the earlier play. The first reset of the game belongs to the
+    /// new play, so the play number does not grow again. A late line of the earlier play before that reset goes (review
+    /// fix of M6c-2).
+    /// </summary>
+    [Fact]
+    public void ANewPlayEndsTheTraceOfTheEarlierPlay()
+    {
+        var live = Live();
+        live.Take(Event(true, (100, "t_start", MissionChangeKind.Ran), (100, "t_wait", MissionChangeKind.Started)));
+        Assert.Equal(1, live.Play);
+
+        live.Started();
+
+        Assert.Equal(2, live.Play);
+        Assert.Null(live.Mission);
+        Assert.Empty(live.Trace.Steps);
+        Assert.Empty(live.Since(1, 0));
+        live.Take(Event(false, (300, "t_wait", MissionChangeKind.Ran)));
+        Assert.Empty(live.Changes);
+
+        live.Take(Event(true, (50, "t_start", MissionChangeKind.Ran)));
+        Assert.Equal(2, live.Play);
+        Assert.Equal("Mission_99", live.Mission);
+        Assert.Equal(1, Assert.Single(live.Since(2, 0)).Sequence);
+
+        // A reload of the game loads the mission again without a new play request: a new play number.
+        live.Take(Event(true, (60, "t_start", MissionChangeKind.Ran)));
+        Assert.Equal(3, live.Play);
+    }
+
+    /// <summary>The clock of the trace stops at the exit of the game, so a trigger that waited at the exit does not wait
+    /// longer (review fix of M6c-2). A new play starts the clock again.</summary>
+    [Fact]
+    public void TheClockStopsAtTheExitOfTheGame()
+    {
+        var live = Live();
+        live.Started();
+        live.Take(Event(true, (0, "t_wait", MissionChangeKind.Started)));
+        now = 120;
+
+        live.Ended();
+        now = 1_200;
+
+        Assert.Equal(120, live.Now);
+        Assert.Empty(live.NewStalls());
+        Assert.Null(live.Trace.StallMinutes(live.Trace.States["t_wait"], live.Now));
+        live.Started();
+        Assert.Equal(0, live.Now);
+    }
+
+    /// <summary>The result of the live trace query: the play number, the changes after a sequence number and the Play
+    /// status. While only the game of a play copy runs, the result has no changes, because the real game has no channel
+    /// to the editor.</summary>
+    [Fact]
+    public void TheQueryResultGivesTheStatusAndNoChangesOfARealGame()
+    {
+        var live = Live();
+        live.Started();
+        live.Take(Event(true, (100, "t_start", MissionChangeKind.Ran), (100, "t_wait", MissionChangeKind.Started)));
+
+        var result = live.Result(1, 1, PlayStatus.Running, gameRuns: false, Path);
+
+        Assert.Equal((1, PlayStatus.Running, "Mission_99", Path), (result.Play, result.Status, result.Mission, result.Script));
+        Assert.Equal(["t_wait"], result.Changes.Select(c => c.Trigger));
+        Assert.False(result.GameRuns);
+        live.Ended();
+        var real = live.Result(1, 0, PlayStatus.Idle, gameRuns: true, Path);
+        Assert.Empty(real.Changes);
+        Assert.True(real.GameRuns);
+        Assert.Equal(2, live.Result(1, 0, PlayStatus.Idle, gameRuns: false, Path).Changes.Count);
     }
 
     /// <summary>A trigger that waits for 10 minutes stalls once in a play.</summary>

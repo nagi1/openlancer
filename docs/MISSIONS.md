@@ -169,7 +169,7 @@ Play from a trigger starts the mission in the OpenLancer game at a point of the 
 | Start | Which triggers | What the game gets |
 |---|---|---|
 | Mission start | The start triggers | The mission starts as a new mission. Exact. |
-| Checkpoint {trigger} | The restore trigger of an `Act_Save` line | The form of a saved game at that checkpoint. Exact. |
+| Checkpoint {trigger} | The restore trigger of an `Act_Save` line | The triggers of a saved game at that checkpoint. Exact for the triggers. A saved game also keeps the objective, the dock and lane rules, the reputations and other state from before the save. The start save does not keep them, and the Play start page warns about it. |
 | {trigger} (approximate) | Each other trigger | The triggers that wait at that point, and two setup triggers that rebuild the state of the path. Some state can differ, for example damage or the cargo of a ship. |
 
 ### Set the play start and play
@@ -179,11 +179,11 @@ Play from a trigger starts the mission in the OpenLancer game at a point of the 
 3. Click "Play from here". The trigger becomes the play start, and the game starts. To set the play start without a play, click "Set as play start". Click it again to make the mission start the play start again.
 4. Press F5 in the Mission tab to play from the play start again.
 
-The trigger of the play start has the chip "Play start". The toolbar chip "Play start: {start}" names the start. A click on it shows the Play start page in the Inspector.
+The trigger of the play start has the chip "Play start". The toolbar chip "Play start: {start}" names the start. A click on it shows the Play start page in the Inspector, and the graph selects and frames the trigger of the play start.
 
-The play start is a setting of the editor for each profile and script. It is not data of the mod, so a change of it has no Undo entry, and the mod does not change. When you rename the trigger, the play start follows the rename, also its Undo and its Redo. When the script does not have the trigger any more, the play start becomes the mission start, and the Console tells it.
+The play start is a setting of the editor for each profile and script. It is not data of the mod, so a change of it has no Undo entry, and the mod does not change. When you rename the trigger, the play start follows the rename, also its Undo and its Redo. The start of a running mission play follows the rename too. When the script does not have the trigger any more, F5 plays the mission start. The play start then becomes the mission start, and the Console tells it.
 
-While a mission is open, the Play menu has the submenu "Play mission". Its items are "From the play start" (F5), "From the mission start" and one item for each checkpoint. While a mission play runs, it also has "Restart the mission". Only "Play from here" and "Set as play start" change the play start.
+The Play menu has the submenu "Play mission". It is available while a mission is open in the Mission tab. Its items are "From the play start", "From the mission start" and one item for each checkpoint. The item of the play start shows F5 while F5 runs it. The mission start and the checkpoints start at their suggested start places. While a mission play runs, the submenu also has "Restart the mission". Only "Play from here" and "Set as play start" change the play start.
 
 In the Scene and Cutscene tabs, and in the Mission tab without an open mission, F5 stays Play from camera.
 
@@ -195,12 +195,13 @@ In the Scene and Cutscene tabs, and in the Mission tab without an open mission, 
 | Story slot | The story slot of the mission. The start save names its mission. |
 | Story stage | The story stage in the start save. After the accept, it is the accept stage of the slot. |
 | Mission accepted | Yes when the start comes after the player accepts the mission. |
-| Start place | Where the player starts: the suggestion, a base that you pick, or the Scene camera. The suggestion comes from the start trigger and from the path to it. |
+| Start place | Where the player starts: the suggestion, a base that you pick, or the Scene camera. The suggestion comes from the start trigger and from the path to it. A base that the game data does not have, and the Scene camera without an open system, show their reason under the field. |
 | Ship | The ship package of the Play menu. |
 | Triggers that wait at the start | The triggers that are active when the play starts. Click a row to select the trigger. |
-| Advanced > Setup lines | The setup triggers of an approximate start, as read-only INI. They are in the test layer of the play, not in the mod. |
+| Advanced > Setup lines | The setup triggers of an approximate start, as read-only raw INI with colors. They are in the test layer of the play, not in the mod. |
+| Play from the play start | Plays the mission from this start in OpenLancer, as F5 in the Mission tab does. The button is off while the start or its start place cannot start, and its tooltip gives the reason. |
 
-A warning shows when no start trigger and no checkpoint leads to the trigger. The play then starts only this trigger. When the start cannot start, the page shows the reason, for example for a script without a story slot.
+A warning shows when no start trigger and no checkpoint leads to the trigger. The play then starts only this trigger. A warning also shows for a checkpoint start and for a start whose path starts at a checkpoint. The start save keeps only the triggers of a saved game. When the start cannot start, the page shows the reason, for example for a script without a story slot.
 
 The section "Play a mission" of [PLAY.md](PLAY.md) tells what Play does with the start. It tells about the save, the start save, the test layer and the restart after a save.
 
@@ -210,17 +211,17 @@ While a mission play runs, the graph shows the state of the triggers in the Open
 
 | Item | Meaning |
 |---|---|
-| Waits {m} min | The trigger is active for 10 minutes or more. When its condition has no effect in OpenLancer, the tooltip tells it, because the trigger never runs here. The Console also gets one note for each such trigger. |
+| Waits {m} min | The trigger is active for 10 minutes or more. When its condition has no effect in OpenLancer, the tooltip tells it, because the trigger never runs here. The Console also gets a stall note for each trigger that waits for 10 minutes. |
 | Rules differ | OpenLancer runs this trigger with another rule than the retail game. The tooltip gives the reason. |
 | Play setup: {trigger} | A row of the Run log about a setup trigger of the test layer. |
 | Not in the graph: {trigger} | The game runs a trigger that the graph does not have, for example after an edit that you did not save. |
 | The game dropped {n} changes. | The game sent the changes too fast. The graph can miss some of them. |
 
-The banner above the graph names the play and has a Stop button. A second banner tells that OpenLancer runs the triggers with its own rules, and that the dry run shows the retail rules. When the graph shows another mission than the game runs, the banner has a button that opens the mission of the game.
+The banner above the graph names the play and has a Stop button. The button is Force stop when the game does not respond, as in the Play menu. When the graph shows another mission than the game runs, the banner has a button that opens the mission of the game. While a mission play runs, a second banner tells that OpenLancer runs the triggers with its own rules. The dry run shows the retail rules.
 
-The OpenLancer game differs from the retail game in some trigger rules. They are about two conditions, lines before the nickname, repeated nicknames and the order of starts. They are also about restarts, repeatable triggers, Cnd_SystemEnter and the COMPLETE state.
+The OpenLancer game differs from the retail game in some trigger rules. They are about two conditions, lines before the nickname, repeated nicknames, triggers without a condition and the order of starts. They are also about restarts, repeatable triggers, Cnd_SystemEnter, Cnd_SpaceEnter with a system and the COMPLETE state.
 
-After the game exits, the live view stays until the next play. Click "Clear" in the Run panel to remove it. While the toggle "Dry run" is on, the graph shows the dry run. When you turn the dry run off, the live view comes back.
+After the game exits, the live view stays with the time of the exit until the next play. The next play, also a play from the camera, starts a new live view. Click "Clear" in the Run panel to remove it. While the toggle "Dry run" is on, the graph shows the dry run. When you turn the dry run off, the live view comes back.
 
 The Console gets only the notes of the play: the start, the end of the mission, the stall notes and the restart. The trigger changes go to the Run log only.
 

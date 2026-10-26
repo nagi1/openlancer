@@ -414,7 +414,7 @@ internal sealed partial class GraphView : IDisposable
         Focus(graph);
         selectedBlock = window.Selection is MissionRef selection &&
                         string.Equals(selection.Script, analysis.Script.Path, StringComparison.OrdinalIgnoreCase)
-            ? GraphViewState.BlockOf(graph, selection)
+            ? GraphViewState.BlockOf(graph, selection, PlayStartTrigger(analysis.Script.Path))
             : null;
 
         foreach (var frame in OpenFrames(graph))
@@ -1310,6 +1310,7 @@ internal sealed partial class GraphView : IDisposable
                     RunChipKind.StartsNext => ChipLook.Outline(EditorTheme.MissionRun),
                     RunChipKind.Stall => ChipLook.Filled(EditorTheme.Warning),
                     RunChipKind.RulesDiffer => ChipLook.Outline(EditorTheme.Warning),
+                    RunChipKind.PlayStart => ChipLook.Outline(EditorTheme.Accent),
                     _ => ChipLook.Grey,
                 };
                 Chip.Paint(drawList, font, SmallSize, min, max, chip.Label, look);
@@ -1337,7 +1338,7 @@ internal sealed partial class GraphView : IDisposable
         selectedByView = true;
         NodeEditor.ClearSelection();
         if (selection is MissionRef item && string.Equals(item.Script, script, StringComparison.OrdinalIgnoreCase) &&
-            GraphViewState.BlockOf(graph, item) is { } block)
+            GraphViewState.BlockOf(graph, item, PlayStartTrigger(script)) is { } block)
         {
             NodeEditor.SelectNode(block.Id);
         }
@@ -1417,7 +1418,8 @@ internal sealed partial class GraphView : IDisposable
                 NodeEditor.CenterNodeOnScreen(pendingCenter);
                 break;
             case Navigation.Selection:
-                if (window.Selection is MissionRef item && GraphViewState.BlockOf(graph, item) is { } block)
+                if (window.Selection is MissionRef item &&
+                    GraphViewState.BlockOf(graph, item, PlayStartTrigger(item.Script)) is { } block)
                 {
                     NodeEditor.CenterNodeOnScreen(block.Id);
                 }
@@ -1530,6 +1532,9 @@ internal sealed partial class GraphView : IDisposable
         EditNodeMenu(node, trigger);
     }
 
+    /// <summary>The trigger of the play start of a script, or null for the mission start.</summary>
+    private string? PlayStartTrigger(string script) => missions.Plays.PlayStartOf(script).Start.Trigger;
+
     /// <summary>The tooltip of the node menu item of the dry run (section 8.1 of the M6c design).</summary>
     internal const string RunThisTip = "Run this trigger: In the dry run, run this trigger now, as if its condition is met. " +
                                        "Only a trigger that waits can run.";
@@ -1541,7 +1546,7 @@ internal sealed partial class GraphView : IDisposable
         "Dry run from here: Start a dry run at this trigger, with the triggers that wait there.";
 
     /// <summary>The chip of the trigger of the play start (section 8.1 of the M6c design).</summary>
-    internal static readonly RunChip PlayStartChip = new(RunChipKind.Waits, EditorIcons.Play, "Play start",
+    internal static readonly RunChip PlayStartChip = new(RunChipKind.PlayStart, EditorIcons.Play, "Play start",
         "Play start: Play starts this mission at this trigger.");
 
     /// <summary>

@@ -144,12 +144,15 @@ internal sealed class GraphViewState
     /// <summary>
     /// The node or the frame of the graph that shows a selection, or null. A trigger or a row shows in the node of its
     /// trigger, or in the collapsed frame that holds it. A prefab instance or an act shows in its frame or its collapsed
-    /// node.
+    /// node. The play start shows in the node of its trigger (UI rule 6).
     /// </summary>
-    public static GraphBlock? BlockOf(MissionGraph graph, MissionRef item)
+    /// <param name="playStart">The trigger of the play start of the script, or null for the mission start.</param>
+    public static GraphBlock? BlockOf(MissionGraph graph, MissionRef item, string? playStart = null)
     {
         switch (item.Kind)
         {
+            case MissionItemKind.PlayStart when playStart != null && graph.Index.Trigger(playStart) is { } start:
+                return graph.NodeOf(start);
             case MissionItemKind.Trigger or MissionItemKind.Row when item.Section is { } section &&
                                                                      graph.Index.Document.Find(section) is { } found:
                 foreach (var trigger in graph.Index.Triggers)

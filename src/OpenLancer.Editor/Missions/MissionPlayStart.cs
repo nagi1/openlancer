@@ -4,7 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.IO;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Logs;
 using OpenLancer.Editor.Play;
@@ -25,6 +27,11 @@ internal sealed record MissionPlayRequest(string Script, MissionStartPoint Start
     /// <summary>Who asks: the user (F5, the menus, the node menu) or an agent. A request of an agent never saves on its
     /// own, and it never changes the play start of the user (user decision of 2026-10-20 of the M6c design).</summary>
     public EditOrigin Origin { get; init; } = EditOrigin.User;
+
+    /// <summary>True for a request of the play start of the settings: F5, "Play from here", the button of the Play start
+    /// page and the menu item "From the play start". Only such a request makes the play start the mission start when its
+    /// trigger is gone (decision D762).</summary>
+    public bool FromPlayStart { get; init; }
 }
 
 /// <summary>What a mission play start reads from the editor. <see cref="MissionPlay"/> gives it, and the tests give a
@@ -49,6 +56,9 @@ internal interface IMissionPlayHost
     /// </summary>
     StartSavePlace? PlaceOf(StartPlace place, out string? problem);
 
+    /// <summary>The play start of a script of the open profile, or the mission start.</summary>
+    MissionStartPoint PlayStartOf(string script);
+
     /// <summary>Stores the play start of a script of the open profile (decision D762).</summary>
     void SetPlayStart(string script, MissionStartPoint start);
 }
@@ -56,8 +66,10 @@ internal interface IMissionPlayHost
 /// <summary>
 /// The start of one mission play (sections 5.6 and 5.8 of the M6c design). Play calls <see cref="Prepare"/> after its
 /// save and before each restart. It makes the start plan from the model of the saved script, and it writes the start save
-/// and the test layer into the play folder. A play start whose trigger is gone becomes the mission start, and the
-/// Console tells it (decision D762). A request of an agent keeps the play start of the user.
+/// and the test layer into the play folder. The start follows a rename of its trigger, also its Undo and its Redo, so a
+/// restart after the rename finds the trigger. A start whose trigger is gone becomes the mission start, and the Console
+/// tells it (decision D762). Only a request of the user from the play start also makes the play start of the settings
+/// the mission start. So a request of an agent and a Play menu item keep the play start of the user.
 /// </summary>
 internal sealed class MissionPlayStart(IMissionPlayHost host, MissionPlayRequest request) : IMissionStart
 {
@@ -81,6 +93,18 @@ internal sealed class MissionPlayStart(IMissionPlayHost host, MissionPlayRequest
     public IReadOnlySet<string> SetupTriggers =>
         (Plan?.Setup ?? []).Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Moves the start with the trigger renames of a change of the history of its script.</summary>
+    public void Renamed(MissionScriptsChange change)
+    {
+        foreach (var (from, to) in change.Renames)
+        {
+            if (VfsPath.Comparer.Equals(from.Script, Request.Script) && VfsPath.Comparer.Equals(to.Script, Request.Script))
+            {
+                Request = Request with { Start = Request.Start.Renamed(from.Name, to.Name) };
+            }
+        }
+    }
+
     public PlayStart.FromSave? Prepare()
     {
         Refusal = null;
@@ -96,11 +120,17 @@ internal sealed class MissionPlayStart(IMissionPlayHost host, MissionPlayRequest
 
         if (Request.Start.Trigger is { } name && index.Trigger(name) is not { IsDuplicate: false })
         {
-            host.Log.Add(ConsoleSeverity.Info, PlayController.Source, MissingStart(slot?.Slot ?? MissionFiles.Display(Script), name));
+            var slotName = slot?.Slot ?? MissionFiles.Display(Script);
+            var gone = Request.Start;
             Request = Request with { Start = MissionStartPoint.MissionStart };
-            if (Request.Origin != EditOrigin.Agent)
+            if (Request is { Origin: EditOrigin.User, FromPlayStart: true } && host.PlayStartOf(Request.Script).Equals(gone))
             {
+                host.Log.Add(ConsoleSeverity.Info, PlayController.Source, MissingStart(slotName, name));
                 host.SetPlayStart(Request.Script, MissionStartPoint.MissionStart);
+            }
+            else
+            {
+                host.Log.Add(ConsoleSeverity.Info, PlayController.Source, MissingPlayTrigger(slotName, name));
             }
         }
 
@@ -126,9 +156,7 @@ internal sealed class MissionPlayStart(IMissionPlayHost host, MissionPlayRequest
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Refusal = $"Play cannot write the start save or the test layer of the mission: {e.Message}";
-            host.Log.Add(ConsoleSeverity.Error, PlayController.Source, Refusal);
-            return null;
+            return Refuse($"Play cannot write the start save or the test layer of the mission: {e.Message}");
         }
 
         Plan = plan;
@@ -140,10 +168,16 @@ internal sealed class MissionPlayStart(IMissionPlayHost host, MissionPlayRequest
         $"The play start of {slot} named trigger '{trigger}'. The script does not have this trigger now. The play start " +
         "is the mission start again.";
 
+    /// <summary>The Console note of another start whose trigger is gone, for example the start of a Play menu item or of
+    /// an agent request. The play start of the settings does not change.</summary>
+    public static string MissingPlayTrigger(string slot, string trigger) =>
+        $"This play of {slot} started at trigger '{trigger}'. The script does not have this trigger now, so the game " +
+        "plays the mission start.";
+
+    /// <summary>Keeps the reason. Play gives it to the Console, with the text of a start or of a restart.</summary>
     private PlayStart.FromSave? Refuse(string reason)
     {
         Refusal = reason;
-        host.Log.Add(ConsoleSeverity.Warning, PlayController.Source, StartPlan.RefusalPrefix + reason);
         return null;
     }
 }

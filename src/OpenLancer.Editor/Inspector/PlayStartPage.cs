@@ -18,11 +18,12 @@ namespace OpenLancer.Editor.Inspector;
 /// read-only raw INI in the closed section "Advanced". A change of the start or of the place changes the play start in
 /// the editor settings. It is not data of the mod, so it has no Undo entry.
 /// </summary>
-internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid)
+internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid) : IDisposable
 {
     private const float HeaderPaddingX = 10;
 
     private readonly ValuePicker basePicker = new();
+    private readonly RawIniEditor setupIni = new(MissionWorkspace.Vocabulary);
     private bool pickBase;
     private (MissionAnalysis Analysis, PlayStartSetting Setting, PlayStartPageModel Model)? cache;
 
@@ -78,6 +79,8 @@ internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid)
         var plan = model.Plan;
         var script = model.Script;
         var plays = window.Missions.Plays;
+        // The check of the start place reads the game data and the Scene, which change without a new plan.
+        var placeProblem = plan.CanStart ? window.StartPlaceProblem(plan.Place) : null;
         if (grid.BeginSection("PlayStart.Start", EditorIcons.Play, "Play start", true, PlayStartPageModel.Help))
         {
             grid.Help(PlayStartPageModel.StartTip);
@@ -113,8 +116,14 @@ internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid)
                 grid.Text("Mission accepted", plan.Accepted ? "Yes" : "No");
                 grid.Help(PlayStartPageModel.PlaceTip);
                 grid.Row("Start place", () => PlaceCombo(script, model));
-                grid.Help(PlayStartPageModel.ShipTip);
-                grid.Text("Ship", ShipText());
+                if (placeProblem != null)
+                {
+                    Warning(placeProblem);
+                }
+
+                var (ship, shipTip) = PlayShips.ShipText(window.Session, ShipPackage());
+                grid.Help($"{PlayStartPageModel.ShipTip} {shipTip}");
+                grid.Text("Ship", ship);
             }
 
             grid.EndSection();
@@ -122,12 +131,7 @@ internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid)
 
         foreach (var warning in plan.Warnings)
         {
-            grid.FullRow(() =>
-            {
-                ImGui.PushTextWrapPos(0);
-                ImGui.TextColored(EditorTheme.Warning, $"{EditorIcons.ExclamationTriangle}  {warning}");
-                ImGui.PopTextWrapPos();
-            });
+            Warning(warning);
         }
 
         if (grid.BeginSection("PlayStart.Wait", EditorIcons.DotCircle, $"Triggers that wait at the start ({plan.ActiveSet.Count})",
@@ -149,29 +153,42 @@ internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid)
             grid.EndSection();
         }
 
-        if (model.SetupIni is { } ini && grid.BeginSection("PlayStart.Advanced", EditorIcons.Terminal, "Advanced", false, null))
+        if (model.SetupText is { } setup && grid.BeginSection("PlayStart.Advanced", EditorIcons.Terminal, "Advanced", false, null))
         {
             ImGui.TextDisabled("Setup lines");
             ImGui.SetItemTooltip(PlayStartPageModel.SetupTip);
-            var text = ini;
-            var size = new Vector2(-1, ImGui.GetTextLineHeight() * Math.Min(20, ini.Count(c => c == '\n') + 2));
-            ImGui.InputTextMultiline("##setup-lines", ref text, (uint)(ini.Length + 1), size, ImGuiInputTextFlags.ReadOnly);
+            // Read-only raw INI with the colors of the mission scripts (UI rule 11). The plan refuses a setup trigger
+            // with an error of the checks, so the lines have no marks.
+            var height = (setup.Lines.Count + 2) * ImGui.GetTextLineHeightWithSpacing();
+            setupIni.Draw("##setup-lines", setup, [], new Vector2(ImGui.GetContentRegionAvail().X,
+                Math.Min(height, 20 * ImGui.GetTextLineHeightWithSpacing())));
             grid.EndSection();
         }
 
         // Play from the start: the same request as F5 in the Mission tab.
+        var block = !plan.CanStart ? StartPlan.RefusalPrefix + plan.Reason : placeProblem;
         grid.FullRow(() =>
         {
-            ImGui.BeginDisabled(!plan.CanStart);
+            ImGui.BeginDisabled(block != null);
             if (ImGui.Button($"{EditorIcons.Play}  Play from the play start"))
             {
                 plays.PlayFromPlayStart(script);
             }
 
             ImGui.EndDisabled();
-            ImGui.SetItemTooltip("Play the mission from this start in OpenLancer (F5 in the Mission tab).");
+            ImGui.SetItemTooltip(block ?? PlayStartPageModel.PlayTip);
         });
     }
+
+    /// <summary>Frees the native editor of the setup lines.</summary>
+    public void Dispose() => setupIni.Dispose();
+
+    private void Warning(string text) => grid.FullRow(() =>
+    {
+        ImGui.PushTextWrapPos(0);
+        ImGui.TextColored(EditorTheme.Warning, $"{EditorIcons.ExclamationTriangle}  {text}");
+        ImGui.PopTextWrapPos();
+    });
 
     private void StartCombo(MissionAnalysis analysis, PlayStartPageModel model)
     {
@@ -239,15 +256,7 @@ internal sealed class PlayStartPage(EditorWindow window, PropertyGrid grid)
         }
     }
 
-    private string ShipText()
-    {
-        if (window.Session is not { } session)
-        {
-            return "";
-        }
-
-        var package = window.Settings.PlayPackageOf(session.Profile.FilePath);
-        var name = PlayShips.ShipName(session, package);
-        return package == null ? $"{name ?? "the ship of a new character"} (default)" : name ?? package;
-    }
+    /// <summary>The ship package of the Play menu, or null for the default ship.</summary>
+    private string? ShipPackage() =>
+        window.Session is { } session ? window.Settings.PlayPackageOf(session.Profile.FilePath) : null;
 }

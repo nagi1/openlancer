@@ -84,30 +84,47 @@ internal static class SpawnPoint
     /// </summary>
     /// <param name="camera">The system, the position and the orientation of the camera. The camera looks along the -Z
     /// of its orientation.</param>
-    public static SpawnCheck FromCamera(PlayStart.InSpace camera, IReadOnlyList<SpawnShape> shapes)
+    public static SpawnCheck FromCamera(PlayStart.InSpace camera, IReadOnlyList<SpawnShape> shapes) =>
+        Check(camera, shapes, "Play from camera", "the camera", "the view axis");
+
+    /// <summary>
+    /// The same check for the start point of a mission play in space (section 5.3, step 7 of the M6c design), for
+    /// example a point near a spawn of the mission or the system center. A rule of the start plan gives the point, so it
+    /// can be inside a planet, a station or a death zone.
+    /// </summary>
+    /// <param name="start">The system, the point and the heading of the start. The ship looks along the -Z of the
+    /// heading.</param>
+    public static SpawnCheck FromPoint(PlayStart.InSpace start, IReadOnlyList<SpawnShape> shapes) =>
+        Check(start, shapes, "Mission play", "the start point", "the heading of the ship");
+
+    /// <param name="who">The start of each line, for example "Play from camera".</param>
+    /// <param name="point">The point in words, for example "the camera".</param>
+    /// <param name="axis">The axis of the moves in words, for example "the view axis".</param>
+    private static SpawnCheck Check(PlayStart.InSpace start, IReadOnlyList<SpawnShape> shapes, string who, string point,
+        string axis)
     {
-        var forward = Vector3.Transform(-Vector3.UnitZ, camera.Orientation);
-        var move = Clear(camera.Position, forward, shapes);
+        var forward = Vector3.Transform(-Vector3.UnitZ, start.Orientation);
+        var move = Clear(start.Position, forward, shapes);
         var lines = new List<(ConsoleSeverity, string)>();
         if (move.MovedOutOf is { } inside)
         {
             var units = MathF.Abs(move.Distance).ToString("N0", CultureInfo.InvariantCulture);
-            var place = $"{units} units {(move.Distance >= 0 ? "ahead of" : "behind")} the camera";
+            var place = $"{units} units {(move.Distance >= 0 ? "ahead of" : "behind")} {point}";
             lines.Add(move.StillIn is { } still
-                ? (ConsoleSeverity.Warning, $"Play from camera: the camera is inside {inside}. In {MaxMoves} moves " +
-                                            $"along the view axis, the start did not get out of each shape. The ship " +
-                                            $"starts {place}, inside {still}.")
-                : (ConsoleSeverity.Info, $"Play from camera: the camera is inside {inside}. The ship starts {place}."));
+                ? (ConsoleSeverity.Warning, $"{who}: {point} is inside {inside}. In {MaxMoves} moves along {axis}, the " +
+                                            $"start did not get out of each shape. The ship starts {place}, inside " +
+                                            $"{still}.")
+                : (ConsoleSeverity.Info, $"{who}: {point} is inside {inside}. The ship starts {place}."));
         }
 
         foreach (var zone in shapes.Where(s => !s.Blocks && s.Holds(move.Position, forward)))
         {
             var damage = zone.Damage!.Value.ToString("0.###", CultureInfo.InvariantCulture);
             lines.Add((ConsoleSeverity.Warning,
-                $"Play from camera: the ship starts in {zone.Name}, which does {damage} damage per second."));
+                $"{who}: the ship starts in {zone.Name}, which does {damage} damage per second."));
         }
 
-        return new SpawnCheck(camera with { Position = move.Position }, lines);
+        return new SpawnCheck(start with { Position = move.Position }, lines);
     }
 
     /// <summary>

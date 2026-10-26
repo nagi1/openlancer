@@ -115,19 +115,8 @@ internal sealed class MissionWorkspace
     /// </summary>
     /// <param name="play">The play number of the last result of the caller, or 0.</param>
     /// <param name="since">The last sequence number that the caller has, or 0.</param>
-    public LiveTraceResult LiveTrace(int play, long since)
-    {
-        var status = window.Play.Status;
-        var games = window.GamePlay.GameRuns;
-        var changes = games && status == PlayStatus.Idle ? [] : Live.Since(play, since);
-        return new LiveTraceResult(Live.Play, changes, status)
-        {
-            Mission = Live.Mission,
-            Script = LiveScript,
-            Dropped = Live.Dropped,
-            GameRuns = games,
-        };
-    }
+    public LiveTraceResult LiveTrace(int play, long since) =>
+        Live.Result(play, since, window.Play.Status, window.GamePlay.GameRuns, LiveScript);
 
     /// <summary>The overlay of the live trace on a graph, with the chips "Rules differ" while a mission play runs. It
     /// stays for a quarter of a second, so the flashes and the stalls follow the time.</summary>
@@ -147,7 +136,7 @@ internal sealed class MissionWorkspace
     /// </summary>
     public void MissionChanged(PlayEvent.MissionChanges changes)
     {
-        Live.Take(changes, window.Play.Mission?.SetupTriggers);
+        Live.Take(changes, window.Play.LoadingMission?.SetupTriggers);
         if (LiveScript is not { } script || Analysis(script) is not { } analysis)
             return;
         foreach (var note in LiveNotes.Ends(analysis, changes))

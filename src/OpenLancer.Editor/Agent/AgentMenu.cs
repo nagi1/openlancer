@@ -130,13 +130,17 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         }
         ImGui.EndDisabled();
 
-        var autoSave = settings.AutoSavePlay;
-        if (ImGui.Checkbox(AutoSavePlayLabel, ref autoSave))
+        // The setting has an effect only when an agent tool can start Play (UI rule 4).
+        if (AgentCanPlay)
         {
-            settings.AutoSavePlay = autoSave;
-            window.Settings.Save();
+            var autoSave = settings.AutoSavePlay;
+            if (ImGui.Checkbox(AutoSavePlayLabel, ref autoSave))
+            {
+                settings.AutoSavePlay = autoSave;
+                window.Settings.Save();
+            }
+            ImGui.SetItemTooltip(AutoSavePlayTip);
         }
-        ImGui.SetItemTooltip(AutoSavePlayTip);
 
         ImGui.SeparatorText("Agent tool groups");
         ImGui.SetItemTooltip("The agent can use the tools of the selected groups. A tool of a cleared group tells the agent " +
@@ -156,6 +160,13 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         if (ImGui.CollapsingHeader("Advanced"))
             Limits(settings);
     }
+
+    /// <summary>The agent tools that start Play. They come with milestone MCP1.</summary>
+    internal static readonly IReadOnlyList<string> PlayTools = ["play", "mission_play"];
+
+    /// <summary>True when the tool list of this build has a tool that starts Play. The setting of agent Play shows only
+    /// then, because it has no effect without such a tool.</summary>
+    internal static bool AgentCanPlay => PlayTools.Any(name => AgentTools.Find(name) != null);
 
     /// <summary>The label of the setting of the agent play rule (user decision of 2026-10-20 of the M6c design).</summary>
     internal const string AutoSavePlayLabel = "Auto-save and continue when an MCP agent starts Play";

@@ -55,8 +55,12 @@ public sealed class PlaySeamTests
         ws.Mod("late2", new());
         ws.WriteProfile("low", "act", "late1", "late2");
 
-        var active = PlaySession.Of(ws.Session("act"), 3, 2, "a reason");
+        var session = ws.Session("act");
+        var active = PlaySession.Of(session, 3, 2, "a reason");
         var all = PlaySession.Of(ws.Session(null), 0, 0, null);
+        // The snapshot tells whether the active mod has unsaved edits, for the agent play rule.
+        Assert.Equal(session.IsDirty, active.Unsaved);
+        Assert.False(all.Unsaved);
 
         Assert.Equal((ws.ProfilePath, "act", 3, 2, "a reason"),
             (active.ProfilePath, active.ActiveMod, active.Saves, active.IncompleteSave, active.NoEditReason));

@@ -54,6 +54,21 @@ internal sealed record PlayRequestResult(PlayStatus Play)
         EditErrorKind kind = EditErrorKind.Refused) => new(play) { Error = new EditError(kind, detail, message) };
 }
 
+/// <summary>What the save of Play does for a play request (user decision of 2026-10-20 of the M6c design).</summary>
+internal enum PlaySaveRule
+{
+    /// <summary>Play saves the edits of the active mod first, as F5 does. A request of the user, and a request of an
+    /// agent that the user or the agent setting allowed to save.</summary>
+    Save,
+
+    /// <summary>A request of an agent that nobody allowed to save, because the active mod had no unsaved edits. When the
+    /// active mod has unsaved edits at the save of Play, the request gives refused, and Play does not save.</summary>
+    NoEdits,
+
+    /// <summary>Play does not save. The game uses the saved files, for example for Restart the mission.</summary>
+    None,
+}
+
 /// <summary>What the agent play rule reads of the editor (user decision of 2026-10-20 of the M6c design).</summary>
 internal interface IAgentPlayHost
 {
@@ -90,9 +105,22 @@ internal static class PlayRequests
     /// <summary>The detail code of the refusal when the user does not save.</summary>
     public const string NotSavedDetail = "NotSaved";
 
+    /// <summary>The detail code of an agent request while the question of another agent request is open.</summary>
+    public const string AgentWaitsDetail = "AgentPlayWaits";
+
+    /// <summary>The refusal of an agent request while the question of another agent request is open.</summary>
+    public const string AgentWaitsReason = "The user did not answer an earlier agent play request yet, so this request " +
+                                           "did not start. Wait for the result of the earlier request.";
+
     /// <summary>The question of the agent play rule (user decision of 2026-10-20 of the M6c design).</summary>
     public static string AgentPlayQuestion(string mod) =>
         $"An agent wants to start Play. Mod '{mod}' has unsaved edits. Save them and continue?";
+
+    /// <summary>The refusal of an agent request whose active mod got unsaved edits after the request, before the save
+    /// of Play. Nobody allowed the save of these edits.</summary>
+    public static string EditsWhileWaiting(string mod) =>
+        $"Mod '{mod}' got unsaved edits while the agent play request waited. Play did not save them and did not " +
+        "start. Send the request again, so that the editor asks the user.";
 
     /// <summary>Stops the game of Play in OpenLancer when one runs, else the game of the play copy. A game that does not
     /// respond ends at once (Force stop).</summary>
@@ -113,30 +141,41 @@ internal static class PlayRequests
         return PlayStopped.Nothing;
     }
 
+    /// <summary>True when a play request asks the user before it starts: a request of an agent while the active mod has
+    /// unsaved edits and the agent setting is off.</summary>
+    public static bool AsksUser(IAgentPlayHost host, EditOrigin origin) =>
+        origin == EditOrigin.Agent && host.UnsavedMod != null && !host.AutoSaveAgentPlay;
+
     /// <summary>
     /// Runs a play request with the agent play rule (user decision of 2026-10-20 of the M6c design). A request of an
     /// agent never saves on its own. When the active mod has unsaved edits, the editor asks the user first: "Save and
-    /// continue" starts the play, and Play saves first, as F5 does. "Cancel", Escape and the close button give the
-    /// refusal <see cref="NotSavedReason"/>. The agent setting "Auto-save and continue when an MCP agent starts Play"
-    /// skips the question. A request without unsaved edits, and each request of the user (F5 and Ctrl+F5), starts at
-    /// once.
+    /// continue" starts the play, and Play saves first, as F5 does. "Cancel", Escape, the close button and a dialog that
+    /// takes the place of the question give the refusal <see cref="NotSavedReason"/>. Cancel is the default button, so
+    /// Enter does not save. The agent setting "Auto-save and continue when an MCP agent starts Play" skips the question.
+    /// A request without unsaved edits starts at once, and Play then refuses to save edits that come later
+    /// (<see cref="PlaySaveRule.NoEdits"/>). Each request of the user (F5 and Ctrl+F5) starts at once and saves.
     /// </summary>
     /// <param name="status">Gives the Play status for a refusal.</param>
-    /// <param name="start">Starts the play on the UI thread. The question calls it from its button, so it also runs on
-    /// the UI thread.</param>
+    /// <param name="start">Starts the play on the UI thread with the save rule of the request. The question calls it
+    /// from its button, so it also runs on the UI thread.</param>
     public static Task<PlayRequestResult> WithAgentRule(IAgentPlayHost host, EditOrigin origin, Func<PlayStatus> status,
-        Func<Task<PlayRequestResult>> start)
+        Func<PlaySaveRule, Task<PlayRequestResult>> start)
     {
-        if (origin != EditOrigin.Agent || host.UnsavedMod is not { } mod || host.AutoSaveAgentPlay)
+        if (origin != EditOrigin.Agent || host.AutoSaveAgentPlay)
         {
-            return start();
+            return start(PlaySaveRule.Save);
+        }
+
+        if (host.UnsavedMod is not { } mod)
+        {
+            return start(PlaySaveRule.NoEdits);
         }
 
         var done = new TaskCompletionSource<PlayRequestResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.Ask(AgentPlayTitle, AgentPlayQuestion(mod),
         [
-            new Choice(SaveAndContinue, () => Forward(start(), done)),
-            new Choice(CancelLabel, Refuse),
+            new Choice(SaveAndContinue, () => Forward(start(PlaySaveRule.Save), done)),
+            new Choice(CancelLabel, Refuse) { Default = true },
         ], Refuse);
         return done.Task;
 
