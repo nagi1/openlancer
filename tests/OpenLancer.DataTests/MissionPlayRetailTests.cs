@@ -109,7 +109,12 @@ public sealed class MissionPlayRetailTests(ITestOutputHelper output) : IDisposab
             File.WriteAllText(patch, plan.SetupPatch);
         }
         var files = PlayView.Build(ModProfile.Load(workspace.ProfilePath), workspace.ModId, layer).CreateFileSystem();
-        var data = new GameDataManager(new GameItemDb(files), new ServerResourceManager(null, files));
+        // The layer changes no shape, so the data shares the convex shapes of the retail data, which live as long as the
+        // test host. A world of a stopped server can still load its shapes in the background. Shapes of its own would
+        // then fill a buffer pool after their dispose, and in a Debug build the pool fails an assert when the collector
+        // finds it, and the test host ends.
+        var data = new GameDataManager(new GameItemDb(files),
+            new ServerResourceManager(RetailGame.Instance.Data.Resources.ConvexCollection, files));
         data.LoadData(null);
 
         foreach (var plan in plans)
