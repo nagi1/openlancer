@@ -10,8 +10,8 @@ This version has these limits:
 - In prefab mode, the Raw INI view does not show, and the INI block of a page is read-only. The Prefab page shows the text of the prefab file.
 - The Scene part does not drag mission items yet. Use "Pick in Scene" to set a position.
 - The editor writes the lines of a mission. OpenLancer does not run each line yet. The column OpenLancer of the Missions tab tells what it runs.
-- The dry run starts only at the mission start or at a checkpoint. It cannot start at another trigger yet, and the node menu has no item "Dry run from here".
-- Prefab mode has no dry run.
+- Prefab mode has no dry run and no play from a trigger.
+- A play from a trigger runs only in OpenLancer, and only for the 14 story missions. A play from a trigger in the linked game (Ctrl+F5) comes with a later version.
 - The graph shows the chips of the dry run only at full detail. Zoom in to see them.
 
 ## Open a mission
@@ -40,7 +40,7 @@ The toggle "base-game messages" shows the problems that the base game has too. T
 
 ## The Mission tab
 
-The Mission tab shows the open mission as a graph. The Scene part is at its right, and a splitter is between them. The toolbar has the mission menu, the switch between Graph and Raw INI, the toggle "Dry run", the lens, "Show lines" and "Frame all". It also has the search, the menu Systems, the toggle Library, "Add..." and the toggle Scene.
+The Mission tab shows the open mission as a graph. The Scene part is at its right, and a splitter is between them. The toolbar has the mission menu, the switch between Graph and Raw INI, the toggle "Dry run" and the chip "Play start". It also has the lens, "Show lines", "Frame all", the search, the menu Systems, the toggle Library, "Add..." and the toggle Scene.
 
 ### The graph
 
@@ -111,6 +111,12 @@ The dry run runs the trigger rules of the retail game on the graph of the open m
 1. In the Run panel, click "Load checkpoint". A menu with the checkpoints of the script opens.
 2. Click a checkpoint. The steps before it go, and its restore trigger starts, as a load of a saved game does.
 
+### Start a dry run at a trigger
+
+1. Right-click a trigger in the graph.
+2. Click "Dry run from here". The dry run turns on, and the steps before go.
+3. Look at the graph. The triggers that wait at that trigger are active, as in a play from that trigger (see "Play from a trigger").
+
 ### The Run panel
 
 | Item | What it does |
@@ -155,6 +161,68 @@ The Trigger page of the Inspector gets the section "Run" while the graph shows a
 - One event of the game can match two lines, for example Cnd_BaseEnter of a base and Cnd_BaseEnter ANY. The dry run lists them as two events.
 - A chain of starts that does not end stops the run with a message. A trigger without a condition stops the run too, as it stops the game.
 - An agent can run the same dry run with the agent tool `mission_dry_run`. The same inputs give the same steps as in the Run panel.
+
+## Play from a trigger
+
+Play from a trigger starts the mission in the OpenLancer game at a point of the script. So you do not fly the whole mission to test one part. Each mission has one play start. It is the mission start until you set another start.
+
+| Start | Which triggers | What the game gets |
+|---|---|---|
+| Mission start | The start triggers | The mission starts as a new mission. Exact. |
+| Checkpoint {trigger} | The restore trigger of an `Act_Save` line | The form of a saved game at that checkpoint. Exact. |
+| {trigger} (approximate) | Each other trigger | The triggers that wait at that point, and two setup triggers that rebuild the state of the path. Some state can differ, for example damage or the cargo of a ship. |
+
+### Set the play start and play
+
+1. Open a mission.
+2. Right-click a trigger in the graph.
+3. Click "Play from here". The trigger becomes the play start, and the game starts. To set the play start without a play, click "Set as play start". Click it again to make the mission start the play start again.
+4. Press F5 in the Mission tab to play from the play start again.
+
+The trigger of the play start has the chip "Play start". The toolbar chip "Play start: {start}" names the start. A click on it shows the Play start page in the Inspector.
+
+The play start is a setting of the editor for each profile and script. It is not data of the mod, so a change of it has no Undo entry, and the mod does not change. When you rename the trigger, the play start follows the rename, also its Undo and its Redo. When the script does not have the trigger any more, the play start becomes the mission start, and the Console tells it.
+
+While a mission is open, the Play menu has the submenu "Play mission". Its items are "From the play start" (F5), "From the mission start" and one item for each checkpoint. While a mission play runs, it also has "Restart the mission". Only "Play from here" and "Set as play start" change the play start.
+
+In the Scene and Cutscene tabs, and in the Mission tab without an open mission, F5 stays Play from camera.
+
+### The Play start page
+
+| Field | What it shows |
+|---|---|
+| Start | The point where Play starts the mission. Pick the mission start, a checkpoint or the trigger of the play start. |
+| Story slot | The story slot of the mission. The start save names its mission. |
+| Story stage | The story stage in the start save. After the accept, it is the accept stage of the slot. |
+| Mission accepted | Yes when the start comes after the player accepts the mission. |
+| Start place | Where the player starts: the suggestion, a base that you pick, or the Scene camera. The suggestion comes from the start trigger and from the path to it. |
+| Ship | The ship package of the Play menu. |
+| Triggers that wait at the start | The triggers that are active when the play starts. Click a row to select the trigger. |
+| Advanced > Setup lines | The setup triggers of an approximate start, as read-only INI. They are in the test layer of the play, not in the mod. |
+
+A warning shows when no start trigger and no checkpoint leads to the trigger. The play then starts only this trigger. When the start cannot start, the page shows the reason, for example for a script without a story slot.
+
+The section "Play a mission" of [PLAY.md](PLAY.md) tells what Play does with the start. It tells about the save, the start save, the test layer and the restart after a save.
+
+## The live view
+
+While a mission play runs, the graph shows the state of the triggers in the OpenLancer game. It uses the chips of the dry run: Waits, Ran, Has run and Stopped. The Run panel shows the Run log of the game, with the time of each change, for example "1:05.3". The toggle "Dry run" is off while the play runs.
+
+| Item | Meaning |
+|---|---|
+| Waits {m} min | The trigger is active for 10 minutes or more. When its condition has no effect in OpenLancer, the tooltip tells it, because the trigger never runs here. The Console also gets one note for each such trigger. |
+| Rules differ | OpenLancer runs this trigger with another rule than the retail game. The tooltip gives the reason. |
+| Play setup: {trigger} | A row of the Run log about a setup trigger of the test layer. |
+| Not in the graph: {trigger} | The game runs a trigger that the graph does not have, for example after an edit that you did not save. |
+| The game dropped {n} changes. | The game sent the changes too fast. The graph can miss some of them. |
+
+The banner above the graph names the play and has a Stop button. A second banner tells that OpenLancer runs the triggers with its own rules, and that the dry run shows the retail rules. When the graph shows another mission than the game runs, the banner has a button that opens the mission of the game.
+
+The OpenLancer game differs from the retail game in some trigger rules. They are about two conditions, lines before the nickname, repeated nicknames and the order of starts. They are also about restarts, repeatable triggers, Cnd_SystemEnter and the COMPLETE state.
+
+After the game exits, the live view stays until the next play. Click "Clear" in the Run panel to remove it. While the toggle "Dry run" is on, the graph shows the dry run. When you turn the dry run off, the live view comes back.
+
+The Console gets only the notes of the play: the start, the end of the mission, the stall notes and the restart. The trigger changes go to the Run log only.
 
 ## The Hierarchy and the Inspector
 

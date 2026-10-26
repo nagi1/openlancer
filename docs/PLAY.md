@@ -12,8 +12,9 @@ The main menu bar has a Play menu after the Mod menu. Three buttons in the middl
 
 | Control | Key | Effect |
 |---|---|---|
-| Play button, or Play > Play from camera | F5 | Plays at the Scene camera. While a game runs, the game closes and a new game starts. |
+| Play button, or Play > Play from camera | F5 | Plays at the Scene camera. While a game runs, the game closes and a new game starts. In the Mission tab with an open mission, F5 and the Play button play the mission from its play start (see "Play a mission"). |
 | Play > Play at base | | Plays docked at the base that you click. |
+| Play > Play mission | | While a mission is open in the Mission tab: plays the mission from its play start, from the mission start or from a checkpoint. "Restart the mission" starts a running mission play again (see "Play a mission"). |
 | Play > Ship: ... | | Shows the ship of the profile. It is not a command. |
 | Play > Use the default ship | | Sets the ship of the profile back to the default. |
 | Play > Play in HD Edition 0.7.1, and one item for each other linked game with its game program | Ctrl+F5 | Plays the profile in the play copy of that game (see "Play in the game"). Ctrl+F5 plays in the game of the last Play in the game, or in the first game. |
@@ -105,7 +106,7 @@ The status bar of the editor shows the state of the game:
 
 ## Stop
 
-Press Shift+F5, or click the Stop button. The game closes.
+Press Shift+F5, or click the Stop button. The game closes. The Stop button of the banner of a mission play does the same. When no OpenLancer game runs, Stop stops the game of the play copy (see "Play in the game").
 
 When the game does not close in 5 s, the Stop button becomes Force stop. Force stop ends the game process at once. When the game does not respond, Stop is Force stop at once.
 
@@ -186,8 +187,49 @@ Each profile has a play folder next to the profile file: `<profile folder>\<prof
 |---|---|
 | `lancer.ini` | The game settings of the play. The game options write it, so the volumes and the graphics options stay between plays. The game always starts in a window with the debug view. |
 | `saves\` | The saves of the player, `AutoSave.fl` of the reloads, and the files of the scripts. |
+| `start\start.fl` | The start save of the last mission play (see "Play a mission"). |
+| `start\layer\` | The test layer of the last mission play: a mod folder with the setup triggers of an approximate start. It is not a mod of the profile, and an export never holds it. |
 
 The main menu of the game is not part of a play. When you quit to the menu, the menu lists the saves of `Documents\SavedGames\OpenLancer`, and New Game saves there. The key map is in that folder too.
+
+## Play a mission
+
+A mission play starts a story mission at a point of its script: the mission start, a checkpoint or any trigger. The Mission tab sets the point. [MISSIONS.md](MISSIONS.md) tells how, in "Play from a trigger", and it also tells about the live view of the graph. This section tells what Play does.
+
+1. Play saves the edits of the active mod, as F5 does.
+2. The editor makes the start plan from the saved script. It writes the start save `start\start.fl` and the test layer `start\layer\` into the play folder.
+3. The game loads the start save. The mission starts at the point of the start. The other steps are the same as for Play from camera.
+
+The Console then names the play, for example "OpenLancer plays M02 from Checkpoint t_restore." For an approximate start, a second line says that setup triggers rebuild the state of the path. When the start cannot start, the Console says why. An example is "Play from here is not available: This mission script has no story slot."
+
+OpenLancer can start only the scripts of the 14 story slots. A start in the linked game (Ctrl+F5) comes with a later version.
+
+### A save during a mission play
+
+During a mission play, a save whose validation passes starts the mission again at the start of the play. The game does not reload at the place of the player. So you can change a mission and test it again from the same point.
+
+1. Press Ctrl+S.
+2. The editor validates the save, as after each save.
+3. The editor makes the start plan again from the new script. The game loads the data of the save and starts the mission again. The process stays, so this takes about the time of a reload.
+
+The Console says, for example, "Save 4 changed the files of the mission play. The game starts M02 again from Checkpoint t_restore." When the game cannot start the mission again, it keeps its data and continues. The Console says "The game cannot start M02 again." with the reason.
+
+F5 during a mission play starts the game again at the play start of the open mission. Play > Play mission > Restart the mission starts it again at the start of the running play. A play from the camera or at a base still closes the game first.
+
+When the trigger of the start is not in the script any more, the start becomes the mission start. The Console tells it.
+
+### Agent Play
+
+An agent of the agent server can start a mission play. A request of an agent never saves on its own:
+
+| Case | What the editor does |
+|---|---|
+| The active mod has no unsaved edits | Play starts at once. |
+| The active mod has unsaved edits | The dialog "An agent wants to start Play. Mod '{id}' has unsaved edits. Save them and continue?" opens. "Save and continue" saves and plays. "Cancel" gives the agent the error "The user did not save. Play did not start." |
+| The setting "Auto-save and continue when an MCP agent starts Play" is on | Play saves and starts without the dialog. The setting is in Agent > Agent settings. It is off by default. |
+| Another play runs, for example a play from the camera | Play does not start. The agent must stop the other play first. |
+
+An agent request plays the start of the request. It does not change the play start of the mission. Your own F5 and Ctrl+F5 always save first, as before.
 
 ## When the game stops by itself
 
@@ -208,6 +250,8 @@ For an exit code other than 0 or 3, the Console gives the cause and the path of 
 When the validation finds errors and the game closes during its load, the Console names the validation errors as the cause.
 
 The warnings and errors of the game log also go to the Console with the source "Play". The Console adds a line only when it does not show the same line yet. The Console hides the lines that the base game without mods also gives, as it does for the lines of the editor. Turn on the base-game toggle of the Console to show them. When the game server is slow, the Console shows one info entry for the Play run. The Play log has each slow update.
+
+A line of the game about a setup trigger of the test layer of a mission play has the origin OpenLancer. Its text ends with "(play start)", because the mod does not have the setup triggers.
 
 The Console counts the lines of each load of the game: the start, each reload, and each start of a mission or a system. A line that a load gives more often than the base game shows. This is also true when the line has the same text as a base-game line, for example a line of a binary file, which has no line number.
 
