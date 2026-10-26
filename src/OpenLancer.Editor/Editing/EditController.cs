@@ -27,9 +27,32 @@ internal sealed record SaveOutcome(bool Saved, int Number, bool Incomplete)
 {
     public static readonly SaveOutcome NotSaved = new(false, 0, false);
 
+    /// <summary>The outcome of a save that the save gate refused.</summary>
+    public static readonly SaveOutcome Blocked = NotSaved with { Failure = SaveFailure.Blocked };
+
+    /// <summary>Why a save that did not save stopped. A play request of an agent gives it as its error (section 7.4 of
+    /// the M6c design).</summary>
+    public SaveFailure Failure { get; init; }
+
     /// <summary>The outcome of a save that gave <paramref name="result"/>.</summary>
     /// <param name="number">The number that the session gave the save (see <see cref="EditorSession.Saved"/>).</param>
-    public static SaveOutcome Of(SaveResult result, int number) => new(result.Saved, number, result.Incomplete);
+    public static SaveOutcome Of(SaveResult result, int number) => new(result.Saved, number, result.Incomplete)
+    {
+        Failure = !result.Saved && result.ChangedOnDisk.Count > 0 ? SaveFailure.ChangedOnDisk : SaveFailure.None,
+    };
+}
+
+/// <summary>Why a save did not save.</summary>
+internal enum SaveFailure
+{
+    /// <summary>The save saved, or it stopped for another reason. The Console tells why.</summary>
+    None,
+
+    /// <summary>The save gate found errors in the active mod.</summary>
+    Blocked,
+
+    /// <summary>Files of the active mod changed outside the editor.</summary>
+    ChangedOnDisk,
 }
 
 /// <summary>
@@ -254,7 +277,7 @@ internal sealed class EditController(EditorWindow window) : IDisposable
         if (Gate(session.Edits) is { } refused)
         {
             Report(refused, mod, 0, hadEdits);
-            return SaveOutcome.NotSaved;
+            return SaveOutcome.Blocked;
         }
 
         // The oltool process of an earlier validation reads the files of the mod. So it stops before a save of the edits

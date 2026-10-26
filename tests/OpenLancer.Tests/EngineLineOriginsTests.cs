@@ -172,6 +172,41 @@ public sealed class EngineLineOriginsTests
         Assert.Equal(MessageOrigin.Unknown, origins.ResolveRunning(Duplicate(1), 1).Origin);
     }
 
+    /// <summary>An engine line about a setup trigger of the test layer of a mission play is about the work of OpenLancer
+    /// (section 6.5 of the M6c design): it names a setup trigger as a whole word. A longer name with the same start is
+    /// another name.</summary>
+    [Fact]
+    public void AnEngineLineThatNamesASetupTriggerIsInThePlayLayer()
+    {
+        var setup = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ol_play_setup", "ol_play_world" };
+
+        Assert.True(EngineLineOrigins.InPlayLayer(Missions("Trigger OL_PLAY_WORLD: no ship ol_wave2"), setup));
+        Assert.True(EngineLineOrigins.InPlayLayer(Missions("Act_SpawnShip of 'ol_play_setup' failed"), setup));
+        Assert.False(EngineLineOrigins.InPlayLayer(Missions("Trigger ol_play_world_2: no ship ol_wave2"), setup));
+        Assert.False(EngineLineOrigins.InPlayLayer(Missions("Trigger t_wave: no ship ol_wave2"), setup));
+        Assert.False(EngineLineOrigins.InPlayLayer(Missions("Trigger ol_play_world: no ship"), new HashSet<string>()));
+    }
+
+    /// <summary>The Console gives a line of a Play run about a setup trigger the origin OpenLancer and the suffix "(play
+    /// start)". Another line of the run keeps its own origin and text.</summary>
+    [Fact]
+    public void TheConsoleGivesALineOfThePlayLayerTheOriginOpenLancer()
+    {
+        var log = new OpenLancer.Editor.Logs.ConsoleLog();
+        var run = log.BeginGameRun();
+        run.Layer = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ol_play_world" };
+
+        log.AddGameLine(run, Missions("Trigger ol_play_world: no ship ol_wave2"), "Play");
+        log.AddGameLine(run, Missions("Trigger t_wave: no ship ol_wave2"), "Play");
+
+        Assert.Equal(["Missions: Trigger ol_play_world: no ship ol_wave2 (play start)",
+            "Missions: Trigger t_wave: no ship ol_wave2"], log.Entries.Select(e => e.Message));
+        Assert.Equal(MessageOrigin.OpenLancer, log.Entries[0].Origin);
+    }
+
+    private static EngineLine Missions(string message) =>
+        EngineLine.Parse($"[Warning: 12:00:00] Missions: {message}")!;
+
     /// <summary>A line of a Play run resolves when it arrives: the n-th line of a key is a base-game line when the base
     /// run gives it n times or more.</summary>
     [Fact]

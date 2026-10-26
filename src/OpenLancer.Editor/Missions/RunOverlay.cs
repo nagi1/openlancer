@@ -22,6 +22,10 @@ internal enum RunChipKind
 
     /// <summary>The count of the waiting triggers of a collapsed frame.</summary>
     FrameWaits,
+
+    /// <summary>OpenLancer runs the trigger with another rule than the retail game (section 6.4 of the M6c design). Only
+    /// the live view of a mission play shows it.</summary>
+    RulesDiffer,
 }
 
 /// <summary>One chip of a run state: a glyph and a word, so no state depends on color alone (decision D761).</summary>
@@ -69,7 +73,10 @@ internal sealed class RunOverlay
     /// <summary>The overlay of a trace on a graph.</summary>
     /// <param name="now">The time now in the live view, in seconds since the start of the play. The dry run does not
     /// use it.</param>
-    public static RunOverlay Of(MissionGraph graph, MissionTrace trace, double now = 0)
+    /// <param name="engine">The rules of the OpenLancer engine for the live view of a mission play: each trigger with
+    /// another rule than the retail game gets the chip "Rules differ", and the chip of a stall says when the condition
+    /// has no effect in OpenLancer. Null for the dry run.</param>
+    public static RunOverlay Of(MissionGraph graph, MissionTrace trace, double now = 0, IEngineCoverage? engine = null)
     {
         var nodes = new Dictionary<string, RunNodeState>(StringComparer.Ordinal);
         var ran = new HashSet<MissionTrigger>();
@@ -87,9 +94,21 @@ internal sealed class RunOverlay
                     nodes[node.Key] = new RunNodeState(waiting > 0 ? [FrameChip(waiting)] : [], waiting > 0, frameRan);
                 continue;
             }
-            if (node.Trigger is not { } trigger || trace.StateOf(trigger.Nickname) is not { } state)
+            if (node.Trigger is not { } trigger)
                 continue;
-            var chips = ChipsOf(state, trace, now);
+            var differ = engine?.RuleDifferences(graph.Index, trigger) is { Count: > 0 } differences
+                ? RulesChip(differences)
+                : null;
+            if (trace.StateOf(trigger.Nickname) is not { } state)
+            {
+                if (differ != null)
+                    nodes[node.Key] = new RunNodeState([differ], false, false);
+                continue;
+            }
+            var noEffect = engine != null && trigger.Condition?.Mark == EngineMark.NoEffect;
+            var chips = ChipsOf(state, trace, now, noEffect);
+            if (differ != null)
+                chips = [.. chips, differ];
             if (chips.Count == 0)
                 continue;
             var nodeRan = trace.RanNow(state, now) > 0;
@@ -107,14 +126,17 @@ internal sealed class RunOverlay
     }
 
     /// <summary>The chips of the run state of a trigger (section 8.1 of the M6c design), in a fixed order.</summary>
-    public static IReadOnlyList<RunChip> ChipsOf(TriggerTrace state, MissionTrace trace, double now = 0)
+    /// <param name="noEffect">True when the condition of the trigger has no effect in OpenLancer. The chip of a stall
+    /// then says so.</param>
+    public static IReadOnlyList<RunChip> ChipsOf(TriggerTrace state, MissionTrace trace, double now = 0, bool noEffect = false)
     {
         var chips = new List<RunChip>();
         if (state.StartsNext > 0)
             chips.Add(new RunChip(RunChipKind.StartsNext, EditorIcons.StepForward,
                 $"Starts next ({Number(state.StartsNext)})", StartsNextTip));
         if (trace.StallMinutes(state, now) is { } minutes)
-            chips.Add(new RunChip(RunChipKind.Stall, EditorIcons.History, $"Waits {Number(minutes)} min", StallTip(minutes)));
+            chips.Add(new RunChip(RunChipKind.Stall, EditorIcons.History, $"Waits {Number(minutes)} min",
+                noEffect ? $"{StallTip(minutes)} {NoEffectStallTip}" : StallTip(minutes)));
         else if (state.Waits)
             chips.Add(new RunChip(RunChipKind.Waits, EditorIcons.DotCircle, "Waits", WaitsTip));
         var ran = trace.RanNow(state, now);
@@ -154,6 +176,18 @@ internal sealed class RunOverlay
 
     public static string StallTip(int minutes) =>
         $"Waits {Number(minutes)} min: This trigger is active for {Number(minutes)} minutes.";
+
+    /// <summary>The second sentence of the tooltip of a stall whose condition has no effect in OpenLancer (section 6.3
+    /// of the M6c design).</summary>
+    public const string NoEffectStallTip = "Its condition has no effect in OpenLancer, so it never runs here.";
+
+    /// <summary>The start of the tooltip of the chip "Rules differ" (section 8.1 of the M6c design).</summary>
+    public const string RulesDifferTip = "Rules differ: OpenLancer runs this trigger with another rule than the retail game.";
+
+    /// <summary>The chip "Rules differ" with the reason of each difference in its tooltip.</summary>
+    public static RunChip RulesChip(IReadOnlyList<RuleDifference> differences) =>
+        new(RunChipKind.RulesDiffer, EditorIcons.ExclamationTriangle, "Rules differ",
+            string.Join(" ", [RulesDifferTip, .. differences.Select(RuleDifferences.Reason)]));
 
     private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 }

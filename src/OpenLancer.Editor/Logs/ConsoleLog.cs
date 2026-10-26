@@ -87,6 +87,10 @@ internal sealed class GameRunLines
     /// <summary>True after the run gave its notice of the slow game server (decision D507).</summary>
     internal bool Noticed { get; set; }
 
+    /// <summary>The setup triggers of the test layer of a mission play, or empty (section 6.5 of the M6c design). A line
+    /// about one of them gets the origin OpenLancer.</summary>
+    internal IReadOnlySet<string> Layer { get; set; } = new HashSet<string>();
+
     /// <summary>Starts the counts of a new load of the game: a hot reload, or a line of the game that starts a load
     /// (see <see cref="EngineLineRules.StartsLoad"/>).</summary>
     internal void LoadStarted() => Seen.Clear();
@@ -532,6 +536,24 @@ internal sealed class ConsoleLog
         var occurrence = run.Seen[line.Key] = run.Seen.GetValueOrDefault(line.Key) + 1;
         var severity = line.Severity == LogSeverity.Error ? ConsoleSeverity.Error : ConsoleSeverity.Warning;
         var text = new EngineText(severity, line.Source, line.Message);
+        // A line about a setup trigger of the test layer of a mission play is about the work of OpenLancer, not about
+        // the game data (section 6.5 of the M6c design).
+        if (run.Layer.Count > 0 && EngineLineOrigins.InPlayLayer(line, run.Layer))
+        {
+            if (!Has(text, MessageOrigin.OpenLancer))
+            {
+                Add(new ConsoleEntry(severity, source, $"{line.Source}: {line.Message}{EngineLineOrigins.PlayStartSuffix}",
+                    DateTime.Now)
+                {
+                    Kind = kind,
+                    Origin = MessageOrigin.OpenLancer,
+                    EngineText = text,
+                });
+            }
+
+            return;
+        }
+
         var resolved = origins == null
             ? new ResolvedLine(MessageOrigin.OpenLancer, null)
             : origins.CanResolve ? origins.ResolveRunning(line, occurrence)

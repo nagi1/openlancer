@@ -26,6 +26,20 @@ public sealed class PlaySeamTests
         Assert.Equal(new SaveOutcome(false, 0, false), SaveOutcome.Of(notSaved, 0));
     }
 
+    /// <summary>A save that did not save tells why, so a play request of an agent gives save_blocked or changed_on_disk
+    /// (section 7.4 of the M6c design).</summary>
+    [Fact]
+    public void TheSaveOutcomeTellsWhyASaveDidNotSave()
+    {
+        var notSaved = new SaveResult(false, [], [], [], []);
+
+        Assert.Equal(SaveFailure.None, SaveOutcome.Of(notSaved, 0).Failure);
+        Assert.Equal(SaveFailure.ChangedOnDisk,
+            SaveOutcome.Of(notSaved with { ChangedOnDisk = ["goods.ini"] }, 0).Failure);
+        Assert.Equal(SaveFailure.Blocked, SaveOutcome.Blocked.Failure);
+        Assert.False(SaveOutcome.Blocked.Saved);
+    }
+
     /// <summary>
     /// The snapshot has the active mod, so Play saves its edits and plays the mods through it. The later mods are only
     /// for the warning of D38. Without an active mod, Play plays all mods.

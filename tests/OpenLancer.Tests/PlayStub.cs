@@ -19,13 +19,17 @@ namespace OpenLancer.Tests;
 /// <param name="ReloadLines">The lines that the stub writes when it reads <c>reload n</c>: the first line at the first
 /// reload, the second line at the second reload, and the last line at each later reload. A line can hold more lines,
 /// each after <see cref="NextLine"/>. Without them, the stub does not answer a reload.</param>
+/// <param name="RestartLines">The lines that the stub writes when it reads <c>restart n</c> (section 5.8 of the M6c
+/// design), in the same way as <paramref name="ReloadLines"/>. Without them, the stub does not answer a
+/// restart.</param>
 internal sealed record StubPlan(
     string[] Lines,
     string[]? StartLines = null,
     int? Exit = null,
     bool IgnoreStop = false,
     int Sleep = 0,
-    string[]? ReloadLines = null)
+    string[]? ReloadLines = null,
+    string[]? RestartLines = null)
 {
     /// <summary>The character between two lines of one reload in <see cref="ReloadLines"/>.</summary>
     public const char NextLine = '\u001f';
@@ -34,14 +38,14 @@ internal sealed record StubPlan(
 /// <summary>
 /// A stub of the play program (section 16.1 of the M4 design): a PowerShell script, because it must read lines of its
 /// input. It writes its process id and each input line to a record file, and <c>&lt;eof&gt;</c> at the end of its
-/// input. It answers <c>start</c> and each <c>reload n</c> with the lines of its plan. It ends at <c>stop</c> or at the
-/// end of its input.
+/// input. It answers <c>start</c>, each <c>reload n</c> and each <c>restart n</c> with the lines of its plan. It ends at
+/// <c>stop</c> or at the end of its input.
 /// </summary>
 internal sealed class PlayStub
 {
     private const string Script = """
         param([string]$Record, [string]$Lines = '', [string]$StartLines = '', [int]$Exit = -1, [switch]$IgnoreStop,
-              [int]$Sleep = 0, [string]$ReloadLines = '')
+              [int]$Sleep = 0, [string]$ReloadLines = '', [string]$RestartLines = '')
         # The test reads the record while the stub writes it, so both share the file.
         function Write-Record([string]$Text) {
             $stream = [IO.File]::Open($Record, 'Append', 'Write', 'ReadWrite')
@@ -65,6 +69,9 @@ internal sealed class PlayStub
         $reloads = @()
         if ($ReloadLines -ne '') { $reloads = [IO.File]::ReadAllLines($ReloadLines) }
         $reloadCount = 0
+        $restarts = @()
+        if ($RestartLines -ne '') { $restarts = [IO.File]::ReadAllLines($RestartLines) }
+        $restartCount = 0
         while ($true) {
             $line = [Console]::In.ReadLine()
             if ($null -eq $line) { Write-Record '<eof>'; exit 0 }
@@ -76,6 +83,13 @@ internal sealed class PlayStub
                 }
                 [Console]::Out.Flush()
                 $reloadCount++
+            }
+            if ($line.StartsWith('restart ') -and $restarts.Count -gt 0) {
+                foreach ($out in $restarts[[Math]::Min($restartCount, $restarts.Count - 1)].Split([char]0x1F)) {
+                    [Console]::Out.WriteLine($out)
+                }
+                [Console]::Out.Flush()
+                $restartCount++
             }
             if ($line -eq 'stop' -and -not $IgnoreStop) { exit 0 }
         }
@@ -143,6 +157,12 @@ internal sealed class PlayStub
         {
             info.ArgumentList.Add("-ReloadLines");
             info.ArgumentList.Add(LinesFile($"reload{n}.txt", reloadLines));
+        }
+
+        if (plan.RestartLines is { Length: > 0 } restartLines)
+        {
+            info.ArgumentList.Add("-RestartLines");
+            info.ArgumentList.Add(LinesFile($"restart{n}.txt", restartLines));
         }
 
         return info;

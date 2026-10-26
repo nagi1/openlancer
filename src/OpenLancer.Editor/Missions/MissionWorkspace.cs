@@ -13,9 +13,11 @@ using OpenLancer.Data.Missions.Editing;
 using OpenLancer.Data.Missions.Prefabs;
 using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Editor.Play;
 using OpenLancer.Editor.Ui;
 using OpenLancer.Editor.Ui.Fields;
 using OpenLancer.Runtime.Missions;
+using OpenLancer.Runtime.Play;
 
 namespace OpenLancer.Editor.Missions;
 
@@ -64,7 +66,114 @@ internal sealed class MissionWorkspace
     {
         this.window = window;
         savePrefab = new SavePrefabDialog(Run);
-        DryRuns = new MissionDryRuns(() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+        DryRuns = new MissionDryRuns(Clock);
+        Live = new MissionLive(Clock);
+        Plays = new MissionPlay(window);
+    }
+
+    /// <summary>The clock of the dry run and the live view, in seconds.</summary>
+    private static double Clock() => Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+
+    // ---- Play from a trigger and the live view (sections 5 and 6 of the M6c design) ----
+
+    /// <summary>The mission play request and the play starts of the scripts.</summary>
+    public MissionPlay Plays { get; }
+
+    /// <summary>The live trace of the mission of the OpenLancer game.</summary>
+    public MissionLive Live { get; }
+
+    /// <summary>The source of the stall notes in the Console (section 6.5 of the M6c design).</summary>
+    public const string RunSource = "Mission run";
+
+    // The overlay of the live trace, and the time of the last check of the stalls.
+    private (MissionGraph Graph, int Version, long Tick, RunOverlay Overlay)? liveOverlay;
+    private double stallCheck = double.NegativeInfinity;
+
+    /// <summary>True while a mission play of OpenLancer runs.</summary>
+    public bool MissionPlayRuns => window.Play.Mission != null && window.Play.Status != PlayStatus.Idle;
+
+    /// <summary>The script of the mission of the live trace, by its story slot, or null for a mission without a story
+    /// slot.</summary>
+    public string? LiveScript => Live.Mission is { } mission
+        ? Result?.Scripts.FirstOrDefault(s => string.Equals(s.Slot?.Controller, mission, StringComparison.OrdinalIgnoreCase))?.Path
+        : null;
+
+    /// <summary>The live trace of a script while the graph shows it (section 6.3 of the M6c design): the game runs or ran
+    /// the mission of the script, and the modder did not clear the trace. After the exit of the game, the dry run comes
+    /// first while its toggle is on. Else null.</summary>
+    public MissionTrace? ShownLive(string script) =>
+        !ShowRaw && (MissionPlayRuns || !DryRuns.On) && Live.Mission != null &&
+        string.Equals(LiveScript, script, StringComparison.OrdinalIgnoreCase)
+            ? Live.Trace
+            : null;
+
+    /// <summary>
+    /// The live trace query of the shared command layer (section 7.2 of the M6c design): the play number, the changes of
+    /// the play after a sequence number, and the Play status. A request with another play number gets all changes of
+    /// the current play. While only the game of a play copy runs, the query gives no changes, because the real game has
+    /// no channel to the editor.
+    /// </summary>
+    /// <param name="play">The play number of the last result of the caller, or 0.</param>
+    /// <param name="since">The last sequence number that the caller has, or 0.</param>
+    public LiveTraceResult LiveTrace(int play, long since)
+    {
+        var status = window.Play.Status;
+        var games = window.GamePlay.GameRuns;
+        var changes = games && status == PlayStatus.Idle ? [] : Live.Since(play, since);
+        return new LiveTraceResult(Live.Play, changes, status)
+        {
+            Mission = Live.Mission,
+            Script = LiveScript,
+            Dropped = Live.Dropped,
+            GameRuns = games,
+        };
+    }
+
+    /// <summary>The overlay of the live trace on a graph, with the chips "Rules differ" while a mission play runs. It
+    /// stays for a quarter of a second, so the flashes and the stalls follow the time.</summary>
+    public RunOverlay LiveOverlay(MissionGraph graph)
+    {
+        var tick = (long)(Live.Now * 4);
+        if (liveOverlay is var (g, v, t, known) && ReferenceEquals(g, graph) && v == Live.Version && t == tick)
+            return known;
+        var made = RunOverlay.Of(graph, Live.Trace, Live.Now, MissionPlayRuns ? EngineCoverage.Instance : null);
+        liveOverlay = (graph, Live.Version, tick, made);
+        return made;
+    }
+
+    /// <summary>
+    /// Takes a mission event of the game (section 6.3 of the M6c design). The Console gets the end note of a trigger that
+    /// ends the mission (section 6.5). The trigger changes go to the Run log only.
+    /// </summary>
+    public void MissionChanged(PlayEvent.MissionChanges changes)
+    {
+        Live.Take(changes, window.Play.Mission?.SetupTriggers);
+        if (LiveScript is not { } script || Analysis(script) is not { } analysis)
+            return;
+        foreach (var note in LiveNotes.Ends(analysis, changes))
+            window.Log.Add(ConsoleSeverity.Info, PlayController.Source, note);
+    }
+
+    /// <summary>
+    /// The stall notes of the live view (section 6.5 of the M6c design): a trigger that waits for 10 minutes gives one
+    /// warning in each play. The origin is the base game when no mod changes the script, else the last mod that changes
+    /// it (decision D551 of the M6a design). The Mission tab calls it in each frame, and it looks once a second.
+    /// </summary>
+    public void CheckStalls()
+    {
+        var now = Clock();
+        if (!MissionPlayRuns || now - stallCheck < 1)
+            return;
+        stallCheck = now;
+        if (LiveScript is not { } script || Analysis(script) is not { } analysis)
+            return;
+        var origin = LiveNotes.StallOrigin(analysis.Script);
+        foreach (var name in Live.NewStalls())
+        {
+            if (analysis.Index.Trigger(name) is { } trigger)
+                window.Log.Add(ConsoleSeverity.Warning, RunSource, LiveNotes.Stall(analysis, trigger), trigger.Section.Ref,
+                    origin: origin);
+        }
     }
 
     // ---- The dry run (section 4 of the M6c design) ----
@@ -75,15 +184,17 @@ internal sealed class MissionWorkspace
 
     /// <summary>The dry run of the open mission while the toggle "Dry run" is on, else null. Prefab mode has no dry
     /// run.</summary>
-    public DryRun? DryRun => DryRuns.On && OpenPrefab == null && Open is { } analysis ? DryRuns.For(analysis) : null;
+    public DryRun? DryRun =>
+        DryRuns.On && !MissionPlayRuns && OpenPrefab == null && Open is { } analysis ? DryRuns.For(analysis) : null;
 
     /// <summary>The trace of the dry run of a script while the graph shows the run (section 4.5 of the M6c design): the
     /// toggle "Dry run" is on, the script is the open mission in the graph view, and the run started. Else null. The
     /// Trigger page shows the section "Run" only then.</summary>
     public MissionTrace? ShownRun(string script) =>
-        !ShowRaw && DryRun is { Started: true } run && string.Equals(OpenPath, script, StringComparison.OrdinalIgnoreCase)
+        ShownLive(script) ??
+        (!ShowRaw && DryRun is { Started: true } run && string.Equals(OpenPath, script, StringComparison.OrdinalIgnoreCase)
             ? run.State.Trace
-            : null;
+            : null);
 
     /// <summary>Folds the dry run of the open mission again when its model changed, for example after an edit, an Undo
     /// or a Redo. The Mission tab calls it in each frame.</summary>
@@ -483,8 +594,10 @@ internal sealed class MissionWorkspace
     /// again.</summary>
     private void ScriptsChanged(MissionScriptsChange change)
     {
-        // The dry run moves its inputs with the renames at its next fold (section 4.2 of the M6c design).
+        // The dry run moves its inputs with the renames at its next fold (section 4.2 of the M6c design). The play start
+        // follows the rename, also its Undo and its Redo (section 5.2).
         DryRuns.ScriptsChanged(change);
+        Plays.Renamed(change);
         changedDuringRun.UnionWith(change.Versions.Keys);
         if (Result is not { } result || followed is not { } edits)
         {
@@ -817,6 +930,7 @@ internal sealed class MissionWorkspace
         pendingPick = null;
         acts.Clear();
         DryRuns.Clear();
+        Live.Clear();
         latestRun = 0;
         rawTexts.Clear();
         marks.Clear();

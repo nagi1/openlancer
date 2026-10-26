@@ -91,7 +91,7 @@ internal sealed record PlayCopyInfo(string Folder, PlayCopyRecord? Record, long 
 /// publish history of each mod that its play installed (decision D569 of the M11c design). The test server records
 /// nothing.</para>
 /// </remarks>
-internal sealed class GamePlay : IDisposable
+internal sealed class GamePlay : IDisposable, IGameStop
 {
     /// <summary>The Console source of Play in the game.</summary>
     public const string Source = "Play in the game";

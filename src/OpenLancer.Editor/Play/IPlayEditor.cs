@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using LibreLancer;
 using OpenLancer.Data.Editing;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Logs;
+using OpenLancer.Runtime.Play;
 
 namespace OpenLancer.Editor.Play;
 
@@ -60,6 +62,66 @@ internal interface IPlayEditor : IPlayHost
     /// Scene shows them. Null when the Scene does not show that system.</summary>
     /// <param name="system">The nickname of the system.</param>
     IReadOnlyList<SpawnShape>? SpawnShapes(string system);
+
+    /// <summary>Takes the trigger changes of the mission of the game for the live view (section 6.3 of the M6c
+    /// design).</summary>
+    void MissionChanged(PlayEvent.MissionChanges changes);
+}
+
+/// <summary>
+/// The start of a mission play (sections 5.6 and 5.8 of the M6c design): the editor makes the start plan from the model
+/// of the saved script and writes the start save and the test layer. Play prepares the start after its save, and again
+/// before each restart, so the plan reads the files that the game reads.
+/// </summary>
+/// <remarks>Each member runs on the UI thread.</remarks>
+internal interface IMissionStart
+{
+    /// <summary>The install path of the mission script.</summary>
+    string Script { get; }
+
+    /// <summary>The story slot of the mission in the Console texts, for example "M02".</summary>
+    string Slot { get; }
+
+    /// <summary>The name of the start in the Console texts, for example "Checkpoint t_restore" (section 8.1 of the M6c
+    /// design).</summary>
+    string StartName { get; }
+
+    /// <summary>True when the last start that <see cref="Prepare"/> made is approximate.</summary>
+    bool Approximate { get; }
+
+    /// <summary>The nicknames of the setup triggers of the last start that <see cref="Prepare"/> made. They are in the
+    /// test layer, not in the mod.</summary>
+    IReadOnlySet<string> SetupTriggers { get; }
+
+    /// <summary>The plan of the last start that <see cref="Prepare"/> made, or null.</summary>
+    StartPlan? Plan { get; }
+
+    /// <summary>Why the last <see cref="Prepare"/> could not start, or null.</summary>
+    string? Refusal { get; }
+
+    /// <summary>Makes the plan of the start from the model of the saved script, and writes the start save and the test
+    /// layer. Null when the start cannot start: the Console then tells why, and <see cref="Refusal"/> has the
+    /// reason.</summary>
+    PlayStart.FromSave? Prepare();
+}
+
+/// <summary>The texts of a mission play in the Console (section 8.4 of the M6c design).</summary>
+internal static class MissionPlayTexts
+{
+    /// <summary>The start note: "OpenLancer plays {slot} from {start}."</summary>
+    public static string Start(IMissionStart start) => $"OpenLancer plays {start.Slot} from {start.StartName}.";
+
+    /// <summary>The note of an approximate start.</summary>
+    public const string Approximate = "This start is approximate. Setup triggers rebuild the state of the path. Some " +
+                                      "state can differ, for example damage. See the Play start page.";
+
+    /// <summary>The restart note after a save.</summary>
+    public static string Restart(int save, IMissionStart start) =>
+        $"Save {save} changed the files of the mission play. The game starts {start.Slot} again from {start.StartName}.";
+
+    /// <summary>The restart failure: "The game cannot start {slot} again. {reason}"</summary>
+    public static string RestartFailed(IMissionStart start, string reason) =>
+        $"The game cannot start {start.Slot} again. {reason}";
 }
 
 /// <summary>What Play reads of the open profile when it starts a game.</summary>

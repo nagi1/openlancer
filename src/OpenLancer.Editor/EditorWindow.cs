@@ -794,6 +794,8 @@ internal sealed partial class EditorWindow : Game
         Edits.Update(IsEditing);
         // After the layout, so that a click on Play gets the edit of a field that the click ended (section 9.1).
         Play.Update(IsEditing, DialogOpen);
+        // The stall notes of the live view come also while another tab shows (section 6.5 of the M6c design).
+        Missions.CheckStalls();
         GamePlay.Update(IsEditing, DialogOpen);
         bench?.Update();
 

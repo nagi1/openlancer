@@ -3,8 +3,10 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Threading.Tasks;
 using LibreLancer;
 using OpenLancer.Data;
+using OpenLancer.Data.Editing.Commands;
 using OpenLancer.Data.Games;
 using OpenLancer.Editor.Editing;
 using OpenLancer.Editor.Logs;
@@ -54,6 +56,12 @@ internal enum PlayStatus
 /// <para>The reload trigger (section 12.1, D17, D52): after the player arrived, a save whose validation passes reloads
 /// the running game. One reload runs at a time. A save while the game reads the mod files makes the files of the game
 /// a mix of two saves, so the game then gets the newest save again.</para>
+/// <para>A mission play (section 5.6 of the M6c design) prepares its start save and its test layer after the save. After
+/// the player arrived, a save whose validation passes starts the mission again from its start (restart, section 5.8),
+/// in place of a reload. A new mission play while a mission play runs with the player in the game starts the game again
+/// at the new start. The game gives the trigger changes of its mission to the editor (section 6.2).</para>
+/// <para>Each request gives its result when it ends: the play started, or the reason why it did not (section 7.2 of the
+/// M6c design). The agent tools read it. The keys and the menus do not need it.</para>
 /// <para>The controller talks to the editor only through <see cref="IPlayEditor"/> (D50), and it reads the time from a
 /// clock that the tests replace.</para>
 /// </remarks>
@@ -123,6 +131,7 @@ internal sealed class PlayController : IDisposable
         PlayStatus.Running => game is { Whole: true, Shown: 0 }
             ? $"Playing: {game.Place}"
             : $"Playing: {game!.Place}, {Shown(game)}",
+        PlayStatus.Reloading when game!.Reload!.Restart => "Play: starting the mission again...",
         PlayStatus.Reloading => $"Play: reloading {EditController.SaveText(game!.Reload!.Save)}...",
         PlayStatus.NotResponding => "Play: the game does not respond",
         PlayStatus.Stopping => "Play: stopping...",
@@ -146,6 +155,39 @@ internal sealed class PlayController : IDisposable
     /// <summary>True when Reload game can run (see <see cref="ReloadBlock"/>).</summary>
     public bool CanReload => ReloadBlock == null;
 
+    /// <summary>The mission start of the game that runs, or null for a play from the camera or at a base.</summary>
+    public IMissionStart? Mission => game?.Mission;
+
+    /// <summary>
+    /// Why Restart the mission cannot run now, or null when it can: a mission play runs, the player is in the game, and
+    /// the game sent no error event.
+    /// </summary>
+    public string? RestartBlock =>
+        game is not { Mission: not null } ? "Available while a mission play runs."
+        : !CanRestart(game) ? "Available while the player is in the game."
+        : null;
+
+
+    /// <summary>
+    /// Asks for a mission play (section 5.6 of the M6c design). It runs at the next <see cref="Update"/>, as
+    /// <see cref="Request"/> does. While a mission play runs and the player is in the game, the game starts again at the
+    /// new start (section 5.8). Else a running game closes first.
+    /// </summary>
+    /// <param name="package">The ship package, or null for the package of a new multiplayer character (D15).</param>
+    /// <returns>The result of the request, when the play started or did not start.</returns>
+    public Task<PlayRequestResult> RequestMission(IMissionStart mission, string? package) =>
+        Replace(new PlayRequest(null, package, clock()) { Mission = mission });
+
+    /// <summary>Play > Restart the mission: the running mission play starts again from its start, with the current
+    /// save. It does nothing when <see cref="RestartBlock"/> gives a reason.</summary>
+    public void RestartMission()
+    {
+        if (RestartBlock == null)
+        {
+            RequestMission(game!.Mission!, game.Args.Package);
+        }
+    }
+
     /// <summary>True when <see cref="Stop"/> ends the game process at once: the game does not respond, or it did not
     /// exit in 5 s after stop. The Stop button is then Force stop.</summary>
     public bool ForceStop => game is { Killed: false } run &&
@@ -156,13 +198,15 @@ internal sealed class PlayController : IDisposable
     /// <param name="start">The start. A start in space is the camera of Play from camera. The start check of section 9.5
     /// moves it when the game starts.</param>
     /// <param name="package">The ship package, or null for the package of a new multiplayer character (D15).</param>
-    public void Request(PlayStart start, string? package) => pending = new PlayRequest(start, package, clock());
+    /// <returns>The result of the request, when the play started or did not start.</returns>
+    public Task<PlayRequestResult> Request(PlayStart start, string? package) =>
+        Replace(new PlayRequest(start, package, clock()));
 
     /// <summary>Stops the game, or ends its process at once when <see cref="ForceStop"/> is true. A request that waits
     /// is dropped.</summary>
     public void Stop()
     {
-        pending = null;
+        DropRequests("Stop ended the play request, so the play did not start.");
         ReportCrashNow();
         if (game is not { Killed: false } run)
         {
@@ -216,6 +260,15 @@ internal sealed class PlayController : IDisposable
 
         if (game is { } running)
         {
+            // A mission play while a mission play runs starts the game again at the new start (section 5.8 of the M6c
+            // design). The process stays.
+            if (request.Mission != null && running.Mission != null && CanRestart(running))
+            {
+                pending = null;
+                Restart(running, request);
+                return;
+            }
+
             // A second Play: the running game exits first (section 9.9). The request runs after the exit.
             if (!running.Ending)
             {
@@ -234,7 +287,7 @@ internal sealed class PlayController : IDisposable
         }
 
         pending = null;
-        Begin(request);
+        Finish(request, Begin(request));
     }
 
     /// <summary>
@@ -245,7 +298,7 @@ internal sealed class PlayController : IDisposable
     /// most 2 s to exit, and then the job ends it. Else the game gets stop.</param>
     public void SessionEnding(bool windowClose)
     {
-        pending = null;
+        DropRequests("The profile closed, so the play did not start.");
         // The validation of the session stops, so a crash report cannot wait for it.
         ReportCrashNow();
         if (game is not { } run)
@@ -272,18 +325,19 @@ internal sealed class PlayController : IDisposable
     /// <summary>Ends the game process, because the job closes.</summary>
     public void Dispose()
     {
+        DropRequests("The editor closed, so the play did not start.");
         editor.Validated -= OnValidated;
         game?.Process.Dispose();
         game = null;
     }
 
-    private void Begin(PlayRequest request)
+    private PlayRequestResult Begin(PlayRequest request)
     {
         ReportCrashNow();
         if (editor.Session is not { } session)
         {
-            Log(ConsoleSeverity.Warning, "Play needs an open profile whose game data loaded.");
-            return;
+            Log(ConsoleSeverity.Warning, NoProfile);
+            return Refused("NoProfile", NoProfile);
         }
 
         // Play writes its config and saves next to the profile file, so a profile file in the game folder would make it
@@ -291,7 +345,7 @@ internal sealed class PlayController : IDisposable
         if (session.BaseFolder != null && GameFolders.Overlaps(session.ProfilePath, session.BaseFolder))
         {
             Log(ConsoleSeverity.Error, GameTexts.PlayRefused);
-            return;
+            return Refused("ProfileInGameFolder", GameTexts.PlayRefused);
         }
 
         // The start check of Play from camera (section 9.5, D40). A save does not change the Scene, so the check runs
@@ -302,23 +356,35 @@ internal sealed class PlayController : IDisposable
         {
             if (editor.SpawnShapes(camera.System) is not { } shapes)
             {
-                Log(ConsoleSeverity.Warning, "Play from camera stopped: the Scene does not show " +
-                                             $"{SystemText(camera.System)} now, so Play cannot check the start at " +
-                                             "the camera. Open the system, then press Play.");
-                return;
+                var message = "Play from camera stopped: the Scene does not show " +
+                              $"{SystemText(camera.System)} now, so Play cannot check the start at " +
+                              "the camera. Open the system, then press Play.";
+                Log(ConsoleSeverity.Warning, message);
+                return Refused("NoSceneSystem", message);
             }
 
             check = SpawnPoint.FromCamera(camera, shapes);
             start = check.Start;
         }
 
-        if (!SaveForPlay(session))
+        if (SaveForPlay(session) is { } saveError)
         {
-            return;
+            return new PlayRequestResult(Status) { Error = saveError };
+        }
+
+        // A mission play makes its start from the model of the saved script (section 5.6 of the M6c design).
+        if (request.Mission is { } mission)
+        {
+            if (mission.Prepare() is not { } fromSave)
+            {
+                return Refused("StartRefused", mission.Refusal ?? NoStart);
+            }
+
+            start = fromSave;
         }
 
         session = editor.Session ?? session;
-        var args = new PlayArgs(session.ProfilePath, session.ActiveMod, session.Saves, start, request.Package);
+        var args = new PlayArgs(session.ProfilePath, session.ActiveMod, session.Saves, start!, request.Package);
         // The process gives its events on the UI thread after this method, so the callbacks find the run.
         GameRun? run = null;
         PlayProcess process;
@@ -329,12 +395,19 @@ internal sealed class PlayController : IDisposable
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException)
         {
-            Log(ConsoleSeverity.Error, $"Play could not start the game: {e.Message}");
-            return;
+            var message = $"Play could not start the game: {e.Message}";
+            Log(ConsoleSeverity.Error, message);
+            return Refused("ProcessStart", message);
         }
 
-        run = new GameRun(process, args, request.Time, clock()) { Lines = editor.Log.BeginGameRun() };
+        run = new GameRun(process, args, request.Time, clock()) { Lines = editor.Log.BeginGameRun(), Mission = request.Mission };
         game = run;
+        if (request.Mission is { } started)
+        {
+            run.Lines.Layer = started.SetupTriggers;
+            StartNotes(started);
+        }
+
         // The lines of the start check belong to a game that started.
         foreach (var (severity, message) in check?.Lines ?? [])
         {
@@ -347,15 +420,60 @@ internal sealed class PlayController : IDisposable
         }
 
         CheckGate(run);
+        return new PlayRequestResult(Status);
     }
 
-    /// <summary>The save of Play for each case of section 9.2. Returns false when Play stops.</summary>
-    private bool SaveForPlay(PlaySession session)
+    /// <summary>The start note of a mission play, and the note of an approximate start (section 8.4 of the M6c
+    /// design).</summary>
+    private void StartNotes(IMissionStart mission)
+    {
+        Log(ConsoleSeverity.Info, MissionPlayTexts.Start(mission));
+        if (mission.Approximate)
+        {
+            Log(ConsoleSeverity.Info, MissionPlayTexts.Approximate);
+        }
+    }
+
+    /// <summary>True when a mission play can start again: the player is in the game, the game sent no error event,
+    /// and it responds.</summary>
+    private static bool CanRestart(GameRun run) => run.Spawned && !run.Ending && run.Error == null && !run.NotResponding;
+
+    /// <summary>
+    /// A new mission play while a mission play runs (section 5.8 of the M6c design): Play saves the active mod, and the
+    /// game starts again at the new start. A save with new files waits for its validation, as a reload does. Without new
+    /// files, the restart goes at once. A newer request takes the place of a request that waits for its restart.
+    /// </summary>
+    private void Restart(GameRun run, PlayRequest request)
+    {
+        if (editor.Session is not { } session)
+        {
+            Log(ConsoleSeverity.Warning, NoProfile);
+            Finish(request, Refused("NoProfile", NoProfile));
+            return;
+        }
+
+        if (SaveForPlay(session) is { } saveError)
+        {
+            Finish(request, new PlayRequestResult(Status) { Error = saveError });
+            return;
+        }
+
+        if (run.Wanted is { } earlier)
+        {
+            Finish(earlier, Refused("Replaced", ReplacedText));
+        }
+
+        run.Wanted = request;
+        CheckReload(run);
+    }
+
+    /// <summary>The save of Play for each case of section 9.2. Returns the error when Play stops, else null.</summary>
+    private EditError? SaveForPlay(PlaySession session)
     {
         if (session.ActiveMod is not { } mod)
         {
             Log(ConsoleSeverity.Info, "No mod is active, so Play uses the saved files of all mods of the profile.");
-            return true;
+            return null;
         }
 
         // Another editor has the mod open, a recovery file waits, or the edits of a repo mod are not allowed (D5). The
@@ -363,20 +481,31 @@ internal sealed class PlayController : IDisposable
         if (session.NoEditReason is { } reason)
         {
             Log(ConsoleSeverity.Info, $"Play uses the saved files of mod '{mod}'. The editor takes no edits for it now: {reason}");
-            return true;
+            return null;
         }
 
         var outcome = editor.Save();
         if (!outcome.Saved)
         {
             Log(ConsoleSeverity.Error, "Play stopped: the save did not complete. The Console tells why.");
-            return false;
+            return outcome.Failure switch
+            {
+                SaveFailure.Blocked => new EditError(EditErrorKind.SaveBlocked, "SaveBlocked",
+                    $"The save gate found errors in mod '{mod}', so Play did not save and did not start. The Console " +
+                    "lists the errors."),
+                SaveFailure.ChangedOnDisk => new EditError(EditErrorKind.ChangedOnDisk, "ChangedOnDisk",
+                    $"Files of mod '{mod}' changed outside the editor, so Play did not save and did not start. The " +
+                    "editor asks the user what to do with the files."),
+                _ => new EditError(EditErrorKind.Refused, "NotSaved",
+                    "The save did not complete, so Play did not start. The Console tells why."),
+            };
         }
 
         if (outcome.Incomplete)
         {
             Log(ConsoleSeverity.Error, $"Play stopped: save {outcome.Number} is not complete.");
-            return false;
+            return new EditError(EditErrorKind.Refused, "SaveIncomplete",
+                $"Save {outcome.Number} is not complete, so Play did not start. The Console tells why.");
         }
 
         if (outcome.Number > 0)
@@ -384,7 +513,7 @@ internal sealed class PlayController : IDisposable
             Log(ConsoleSeverity.Info, $"Play: saved mod '{mod}' (save {outcome.Number}). Waiting for its validation.");
         }
 
-        return true;
+        return null;
     }
 
     /// <summary>
@@ -508,7 +637,9 @@ internal sealed class PlayController : IDisposable
     /// </summary>
     /// <remarks>One reload runs at a time. A newer save during a reload waits for the end of the reload, and the trigger
     /// then looks only at the last save, so the older saves drop. A save that is not complete gets no validation
-    /// (D59). The save that completes it starts the validation.</remarks>
+    /// (D59). The save that completes it starts the validation. A mission play starts again from its start in place of
+    /// a reload (section 5.8 of the M6c design). A new mission play that waits for a restart gets it also without a new
+    /// save.</remarks>
     private void CheckReload(GameRun run)
     {
         if (!run.Spawned || run.Ending || run.Error != null || run.Reload != null || editor.Session is not { } session)
@@ -517,9 +648,16 @@ internal sealed class PlayController : IDisposable
         }
 
         var save = session.Saves;
-        if (save < run.Shown || save == run.Shown && run.Whole || save == run.FailedReload ||
-            LastSaveIncomplete(session) || editor.Validation is { Running: true })
+        var newSave = !(save < run.Shown || save == run.Shown && run.Whole || save == run.FailedReload);
+        if (!newSave && run.Wanted == null || LastSaveIncomplete(session) || editor.Validation is { Running: true })
         {
+            return;
+        }
+
+        if (!newSave)
+        {
+            // The files of the game did not change, so the new start needs no validation.
+            SendRestart(run, save, null);
             return;
         }
 
@@ -547,10 +685,88 @@ internal sealed class PlayController : IDisposable
                     $" The validation of {EditController.SaveText(save)} found {Errors(errors)}.");
             }
 
+            // The game keeps its files, so a new mission play that waited does not start.
+            if (run.Wanted is { } wanted)
+            {
+                run.Wanted = null;
+                var message = $"Play did not start {wanted.Mission!.Slot} from {wanted.Mission.StartName}: the " +
+                              $"validation of {EditController.SaveText(save)} found {Errors(errors)}.";
+                Log(ConsoleSeverity.Warning, message);
+                Finish(wanted, Refused("ValidationErrors", message));
+            }
+
             return;
         }
 
-        SendReload(run, save, lastSave.Save == save ? lastSave.At : null);
+        var savedAt = lastSave.Save == save ? lastSave.At : (TimeSpan?)null;
+        if (run.Mission != null)
+        {
+            SendRestart(run, save, savedAt);
+            return;
+        }
+
+        SendReload(run, save, savedAt);
+    }
+
+    /// <summary>
+    /// Starts the mission play again (section 5.8 of the M6c design): from the start of a new mission play that waits,
+    /// else from the start of the running play, not from the play start of the settings. The editor makes the plan again
+    /// from the new model and writes the start save and the test layer, then the game gets restart. A start that cannot
+    /// start keeps the game and its mission, and the Console tells why. The process reads its start save and its layer
+    /// from the folders of its arguments. A start that needs other folders closes the game and plays again.
+    /// </summary>
+    private void SendRestart(GameRun run, int save, TimeSpan? savedAt)
+    {
+        var wanted = run.Wanted;
+        run.Wanted = null;
+        var mission = wanted?.Mission ?? run.Mission!;
+        if (mission.Prepare() is not { } start)
+        {
+            // The trigger of the reload does not send this save again. Reload game and a new save do.
+            run.FailedReload = save;
+            if (wanted != null)
+            {
+                Finish(wanted, Refused("StartRefused", mission.Refusal ?? NoStart));
+            }
+
+            return;
+        }
+
+        if (start != run.Args.Start)
+        {
+            var again = wanted ?? new PlayRequest(null, run.Args.Package, clock()) { Mission = mission };
+            if (pending == null)
+            {
+                pending = again;
+            }
+            else
+            {
+                Finish(again, Refused("Replaced", ReplacedText));
+            }
+
+            SendStop(run);
+            return;
+        }
+
+        run.Mission = mission;
+        run.Reload = new ReloadRun(save, clock(), savedAt) { Restart = true };
+        // The restart loads all game data again, so the Console counts the engine lines of the run again.
+        run.Lines.LoadStarted();
+        run.Lines.Layer = mission.SetupTriggers;
+        if (wanted != null)
+        {
+            StartNotes(mission);
+        }
+        else
+        {
+            Log(ConsoleSeverity.Info, MissionPlayTexts.Restart(save, mission));
+        }
+
+        Send(run, PlayCommandKind.Restart, save);
+        if (wanted != null)
+        {
+            Finish(wanted, new PlayRequestResult(Status));
+        }
     }
 
     /// <summary>True when the last save of the session is not complete. The save journal holds it, so it gets no
@@ -637,6 +853,29 @@ internal sealed class PlayController : IDisposable
                                            $"running game keeps {Shown(run)}: {failed.Message.TrimEnd('.')}.");
                 CheckReload(run);
                 break;
+            case PlayEvent.Restarted restarted when run.Reload is { Restart: true } reload && !run.Ending:
+                var current = editor.Session?.Saves ?? reload.Save;
+                run.Reload = null;
+                run.NotResponding = false;
+                run.Place = StatusPlace(restarted.System, restarted.Base);
+                run.Shown = Math.Max(current, reload.Save);
+                run.Whole = current <= reload.Save;
+                Log(ConsoleSeverity.Info, $"The game started {run.Mission!.Slot} again from {run.Mission.StartName} " +
+                                          $"with {EditController.SaveText(reload.Save)} (restart " +
+                                          $"{Seconds(TimeSpan.FromMilliseconds(restarted.Ms))} s).");
+                CheckReload(run);
+                break;
+            case PlayEvent.RestartFailed failed when run.Reload is { Restart: true } reload && !run.Ending:
+                // The game goes on at the place of the player with its data (section 5.8 of the M6c design).
+                run.Reload = null;
+                run.NotResponding = false;
+                run.FailedReload = reload.Save;
+                Log(ConsoleSeverity.Warning, MissionPlayTexts.RestartFailed(run.Mission!, failed.Message));
+                CheckReload(run);
+                break;
+            case PlayEvent.MissionChanges changes:
+                editor.MissionChanged(changes);
+                break;
             case PlayEvent.Error error:
                 run.Error = error;
                 run.ErrorAt = clock();
@@ -694,6 +933,12 @@ internal sealed class PlayController : IDisposable
 
         game = null;
         run.Process.Dispose();
+        if (run.Wanted is { } wanted)
+        {
+            run.Wanted = null;
+            Finish(wanted, Refused("GameClosed", "The game closed before the mission play started again."));
+        }
+
         // A kill sets the exit code, so the code tells nothing.
         int? exitCode = run.Killed ? null : code;
         // The line of the kill told why the editor ended the game. After an error event, the cause of that error
@@ -846,10 +1091,65 @@ internal sealed class PlayController : IDisposable
 
     private void Log(ConsoleSeverity severity, string message) => editor.Log.Add(severity, Source, message);
 
+    /// <summary>The text of a request without an open profile.</summary>
+    private const string NoProfile = "Play needs an open profile whose game data loaded.";
+
+    /// <summary>The text of a mission start that refused without a reason.</summary>
+    private const string NoStart = "The mission play cannot start. The Console tells why.";
+
+    /// <summary>The text of a request that a newer request replaced.</summary>
+    private const string ReplacedText = "A newer play request replaced this request, so this play did not start.";
+
+    /// <summary>Puts a new request in place of the request that waits, which then gives its refusal.</summary>
+    private Task<PlayRequestResult> Replace(PlayRequest request)
+    {
+        if (pending is { } earlier)
+        {
+            Finish(earlier, Refused("Replaced", ReplacedText));
+        }
+
+        pending = request;
+        return request.Result.Task;
+    }
+
+    /// <summary>Drops the request that waits and a new mission play that waits for its restart. Each gives its
+    /// refusal.</summary>
+    private void DropRequests(string message)
+    {
+        if (pending is { } request)
+        {
+            pending = null;
+            Finish(request, Refused("Dropped", message));
+        }
+
+        if (game?.Wanted is { } wanted)
+        {
+            game.Wanted = null;
+            Finish(wanted, Refused("Dropped", message));
+        }
+    }
+
+    /// <summary>Gives a request its result, with the plan of its mission start.</summary>
+    private static void Finish(PlayRequest request, PlayRequestResult result) =>
+        request.Result.TrySetResult(result.Plan == null && request.Mission?.Plan is { } plan ? result with { Plan = plan } : result);
+
+    private PlayRequestResult Refused(string detail, string message) =>
+        PlayRequestResult.Refused(Status, detail, message);
+
     private static string Errors(int count) => count == 1 ? "1 error" : $"{count} errors";
 
+    /// <param name="Start">The start, or null for a mission play, which prepares its start after the save.</param>
     /// <param name="Time">The time of the request, for the time from Play to flight.</param>
-    private sealed record PlayRequest(PlayStart Start, string? Package, TimeSpan Time);
+    private sealed record PlayRequest(PlayStart? Start, string? Package, TimeSpan Time)
+    {
+        /// <summary>The mission start of a mission play, or null.</summary>
+        public IMissionStart? Mission { get; init; }
+
+        /// <summary>The result of the request. Its continuations run on the thread pool, not in the frame of the
+        /// editor.</summary>
+        public TaskCompletionSource<PlayRequestResult> Result { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
 
     /// <param name="Code">The exit code, or null when the editor ended the game.</param>
     /// <param name="Save">The gate save, whose validation the report waits for.</param>
@@ -858,7 +1158,11 @@ internal sealed class PlayController : IDisposable
     /// <summary>A reload that the game did not end yet.</summary>
     /// <param name="Sent">The time of the reload command, for the watchdog.</param>
     /// <param name="SavedAt">The time of the save, or null for Reload game.</param>
-    private sealed record ReloadRun(int Save, TimeSpan Sent, TimeSpan? SavedAt);
+    private sealed record ReloadRun(int Save, TimeSpan Sent, TimeSpan? SavedAt)
+    {
+        /// <summary>True for a restart of a mission play (section 5.8 of the M6c design).</summary>
+        public bool Restart { get; init; }
+    }
 
     /// <summary>One game process and the state of its play.</summary>
     private sealed class GameRun(PlayProcess process, PlayArgs args, TimeSpan requested, TimeSpan started)
@@ -923,5 +1227,12 @@ internal sealed class PlayController : IDisposable
 
         /// <summary>The engine lines of the run for the Console: the count of each key and the notice.</summary>
         public required GameRunLines Lines { get; init; }
+
+        /// <summary>The mission start of a mission play, or null. A new mission play replaces it when the game starts
+        /// again at the new start.</summary>
+        public IMissionStart? Mission { get; set; }
+
+        /// <summary>A new mission play that waits for its restart, or null (section 5.8 of the M6c design).</summary>
+        public PlayRequest? Wanted { get; set; }
     }
 }

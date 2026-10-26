@@ -129,6 +129,14 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         }
         ImGui.EndDisabled();
 
+        var autoSave = settings.AutoSavePlay;
+        if (ImGui.Checkbox(AutoSavePlayLabel, ref autoSave))
+        {
+            settings.AutoSavePlay = autoSave;
+            window.Settings.Save();
+        }
+        ImGui.SetItemTooltip(AutoSavePlayTip);
+
         ImGui.SeparatorText("Agent tool groups");
         ImGui.SetItemTooltip("The agent can use the tools of the selected groups. A tool of a cleared group tells the agent " +
                              "that you cleared the group.");
@@ -147,6 +155,13 @@ internal sealed class AgentMenu(EditorWindow window, AgentController controller)
         if (ImGui.CollapsingHeader("Advanced"))
             Limits(settings);
     }
+
+    /// <summary>The label of the setting of the agent play rule (user decision of 2026-10-20 of the M6c design).</summary>
+    internal const string AutoSavePlayLabel = "Auto-save and continue when an MCP agent starts Play";
+
+    internal const string AutoSavePlayTip =
+        "When an agent starts Play and the active mod has unsaved edits, the editor saves them and plays. Off: the editor " +
+        "asks you first, and Cancel gives the agent an error. Your own F5 and Ctrl+F5 always save first.";
 
     private static string GroupTip(ToolGroup group) => group switch
     {

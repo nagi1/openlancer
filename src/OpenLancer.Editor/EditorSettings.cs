@@ -7,6 +7,7 @@ using System.Text.Json.Serialization;
 using OpenLancer.Data;
 using OpenLancer.Data.Games;
 using OpenLancer.Data.Missions;
+using OpenLancer.Data.Missions.Run;
 using OpenLancer.Data.Mods;
 using OpenLancer.Data.Publishing;
 using OpenLancer.Runtime.Scene;
@@ -30,6 +31,35 @@ internal sealed record RecentProfile(string Path, DateTime LastOpenedUtc);
 /// default folder next to the game.</param>
 internal sealed record LinkedGame(string Path, DateTime LinkedUtc, string LastName, string? LastBuild,
     string? PlayCopy = null);
+
+/// <summary>The play start of a mission script (section 5.2 of the M6c design, decision D762).</summary>
+/// <param name="Trigger">The nickname of the trigger of the start, or an empty text for the mission start.</param>
+/// <param name="Place">The start place: <c>suggested</c>, <c>camera</c>, or <c>base:</c> with the nickname of a base, as
+/// the agent tools write it.</param>
+internal sealed record PlayStartSetting(string Trigger, string Place)
+{
+    /// <summary>The setting of a start and a place.</summary>
+    public static PlayStartSetting Of(MissionStartPoint start, StartPlaceChoice place, string? dock) =>
+        new(start.Trigger ?? "", place switch
+        {
+            StartPlaceChoice.Camera => "camera",
+            StartPlaceChoice.Base when dock != null => RunJson.BasePlacePrefix + dock,
+            _ => "suggested",
+        });
+
+    /// <summary>The start of the setting.</summary>
+    [JsonIgnore]
+    public MissionStartPoint Start => Trigger.Trim().Length == 0 ? MissionStartPoint.MissionStart : MissionStartPoint.At(Trigger);
+
+    /// <summary>The place choice and the base of the setting. A text that this editor does not know gives the
+    /// suggestion.</summary>
+    [JsonIgnore]
+    public (StartPlaceChoice Place, string? Base) PlaceChoice =>
+        Place == "camera" ? (StartPlaceChoice.Camera, null)
+        : Place.StartsWith(RunJson.BasePlacePrefix, StringComparison.Ordinal) &&
+          Place[RunJson.BasePlacePrefix.Length..].Trim() is { Length: > 0 } dock ? (StartPlaceChoice.Base, dock)
+        : (StartPlaceChoice.Suggested, null);
+}
 
 /// <summary>The choices of the Export dialog for one mod (milestone M11).</summary>
 /// <param name="Targets">The ids of the checked targets.</param>
@@ -110,6 +140,12 @@ internal sealed class AgentSettings
 
     /// <summary>The names of the tool groups that the user hides (decision D725).</summary>
     public List<string> HiddenGroups { get; set; } = [];
+
+    /// <summary>
+    /// True when a play request of an agent saves the unsaved edits of the active mod without a question (user decision
+    /// of 2026-10-20 of the M6c design). It is off by default: the editor then asks the user first.
+    /// </summary>
+    public bool AutoSavePlay { get; set; }
 
     public AgentLimits Limits { get; set; } = new();
 
@@ -296,6 +332,13 @@ internal sealed class EditorSettings
     /// <summary>The choices of the Export dialog of each mod, by the full path of the mod folder.</summary>
     public Dictionary<string, ExportChoices> Exports { get; set; } = new(PathComparer);
 
+    /// <summary>
+    /// The play start of each mission script, by the full path of the profile file and the install path of the script
+    /// (decision D762 of the M6c design). A script that is not in the list plays from the mission start. The play start
+    /// is not data of the mod, so a change of it has no Undo entry.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, PlayStartSetting>> PlayStarts { get; set; } = new(PathComparer);
+
     /// <summary>The state of the Mods window (milestone M11c).</summary>
     public ModsWindowSettings ModsWindow { get; set; } = new();
 
@@ -467,6 +510,9 @@ internal sealed class EditorSettings
         settings.ActiveMods = new Dictionary<string, string>(settings.ActiveMods, PathComparer);
         settings.PlayPackages = new Dictionary<string, string>(settings.PlayPackages, PathComparer);
         settings.Exports = new Dictionary<string, ExportChoices>(settings.Exports, PathComparer);
+        settings.PlayStarts = settings.PlayStarts.Where(p => p.Value != null).ToDictionary(p => p.Key,
+            p => new Dictionary<string, PlayStartSetting>(p.Value.Where(s => s.Value is { Trigger: not null, Place: not null }),
+                StringComparer.OrdinalIgnoreCase), PathComparer);
         return settings;
     }
 
@@ -498,6 +544,48 @@ internal sealed class EditorSettings
     /// <summary>The nickname of the ship package of Play for a profile, or null for the default package.</summary>
     public string? PlayPackageOf(string profilePath) =>
         PlayPackages.TryGetValue(profilePath, out var package) && !string.IsNullOrWhiteSpace(package) ? package : null;
+
+    /// <summary>The play start of a mission script of a profile, or the mission start with the suggested place.</summary>
+    /// <param name="script">The install path of the script.</param>
+    public PlayStartSetting PlayStartOf(string profilePath, string script) =>
+        PlayStarts.TryGetValue(profilePath, out var scripts) && scripts.TryGetValue(script, out var start)
+            ? start
+            : new PlayStartSetting("", "suggested");
+
+    /// <summary>Stores the play start of a mission script. The mission start with the suggested place removes the
+    /// entry.</summary>
+    public void SetPlayStart(string profilePath, string script, PlayStartSetting start)
+    {
+        if (!PlayStarts.TryGetValue(profilePath, out var scripts))
+        {
+            PlayStarts[profilePath] = scripts = new Dictionary<string, PlayStartSetting>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        if (start.Trigger.Trim().Length == 0 && start.Place == "suggested")
+        {
+            scripts.Remove(script);
+        }
+        else
+        {
+            scripts[script] = start;
+        }
+    }
+
+    /// <summary>Moves the play start of a script to the new name of its trigger (section 5.2 of the M6c design).</summary>
+    /// <returns>True when the play start changed.</returns>
+    public bool RenamePlayStart(string profilePath, string script, string from, string to)
+    {
+        var start = PlayStartOf(profilePath, script);
+        var point = start.Start;
+        var renamed = point.Renamed(from, to);
+        if (ReferenceEquals(renamed, point))
+        {
+            return false;
+        }
+
+        SetPlayStart(profilePath, script, start with { Trigger = renamed.Trigger! });
+        return true;
+    }
 
     /// <summary>The choices of the Export dialog for a mod folder, or null before the first export of the mod.</summary>
     public ExportChoices? ExportOf(string modFolder) => Exports.GetValueOrDefault(modFolder);
