@@ -59,7 +59,7 @@ A zone with less damage, for example a radiation cloud, does not move the start.
 
 The check knows the objects and the zones of the system. It does not know mines, asteroids or other ships.
 
-The check reads the Scene. So Play first lets the Scene show each edit, also while another tab shows. When a new model of an edit waits for the load of the game data, Play waits for the end of the load, and the Console tells why.
+The check reads the Scene. So Play first lets the Scene show each edit, also while another tab shows. A new model of an edit can wait for the load of the game data. Then Play waits for the end of the load, and the Console tells why.
 
 ## Play at base
 
