@@ -54,6 +54,7 @@ internal sealed class AnimationClips
     private readonly IReadOnlyList<AnimationSkeleton> skeletons;
     private readonly Dictionary<string, AnimationClip> byName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AnimationSkeleton[]> byArchive = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SkeletonParts> partsByArchive = new(StringComparer.OrdinalIgnoreCase);
 
     // The rows of the list in the order of the clips, with their labels, so an opening does not make the labels again.
     private readonly ListPickerRow[] rows;
@@ -73,6 +74,8 @@ internal sealed class AnimationClips
         {
             byArchive[archive] = skeletons.Where(s => s.Archives.Contains(archive, StringComparer.OrdinalIgnoreCase))
                 .ToArray();
+            partsByArchive[archive] = byArchive[archive]
+                .Aggregate(SkeletonParts.None, (parts, skeleton) => parts | skeleton.Parts);
         }
 
         rows = clips.Select(c => new ListPickerRow(ListRowKind.Entry, c.Name, c.Name, null) { Note = Label(c.Name) })
@@ -107,8 +110,7 @@ internal sealed class AnimationClips
 
     /// <summary>The kinds of body parts of the skeletons that list the file of a clip. None when no skeleton lists
     /// it.</summary>
-    public SkeletonParts PartsOf(AnimationClip clip) =>
-        SkeletonsOf(clip).Aggregate(SkeletonParts.None, (parts, skeleton) => parts | skeleton.Parts);
+    public SkeletonParts PartsOf(AnimationClip clip) => partsByArchive.GetValueOrDefault(clip.Archive);
 
     /// <summary>The skeletons that list the file of a clip, as a line of the pane, for example "Skeletons: male body,
     /// female body".</summary>
@@ -206,9 +208,9 @@ internal sealed class AnimationClips
     /// <summary>True when a clip of skeletons with these parts fits the body part filter.</summary>
     internal static bool Fits(SkeletonParts parts, ClipPart part) => part switch
     {
-        ClipPart.Body => parts.HasFlag(SkeletonParts.Body),
-        ClipPart.Head => parts.HasFlag(SkeletonParts.Head),
-        ClipPart.Hands => parts.HasFlag(SkeletonParts.Hands),
+        ClipPart.Body => (parts & SkeletonParts.Body) != 0,
+        ClipPart.Head => (parts & SkeletonParts.Head) != 0,
+        ClipPart.Hands => (parts & SkeletonParts.Hands) != 0,
         ClipPart.Other => parts == SkeletonParts.None,
         _ => true,
     };
