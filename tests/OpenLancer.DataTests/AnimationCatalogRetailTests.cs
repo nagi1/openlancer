@@ -4,9 +4,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using LibreLancer.Data.IO;
+using LibreLancer.Data.Schema;
 using LibreLancer.Thn;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Thn;
+using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Inspector;
 using OpenLancer.Runtime.Thn;
 using Xunit;
@@ -14,14 +16,19 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// The clip list of the animation picker on the retail data (section 12.1 of the M8b design): the list has the names of
-/// the animation table of the engine, the last file wins for a name in two files, each START_MOTION value on a character
-/// is in the list, and each costume has a standing idle for the clip preview.
+/// The clip list of the animation picker on the retail data (section 12.1 of the M8b design). The list has the names of
+/// the animation table of the engine, and the last file wins for a name in two files. Each START_MOTION value on a
+/// character is in the list.
 /// </summary>
 public sealed class AnimationCatalogRetailTests(ITestOutputHelper output)
 {
-    /// <summary>The list has the names of the table that the engine plays from, without letter case. A facial clip that
-    /// two files have comes from the later file, FacialJuni.anm.</summary>
+    private const string Flicker = "Sc_ADHEAD_MOTION_FLCKR_EYES_000LV_XA_06";
+
+    /// <summary>
+    /// The list has the names of the table that the engine plays from, without letter case. A facial clip that four files
+    /// have comes from the last file, FacialJuni.anm. The clip also belongs to the skeletons of the other files, so a
+    /// male head gets it in the group of its own skeletons.
+    /// </summary>
     [Fact]
     public void TheListHasTheNamesOfTheEngineTable()
     {
@@ -34,16 +41,24 @@ public sealed class AnimationCatalogRetailTests(ITestOutputHelper output)
 
         Assert.Equal(table.Count, clips.Clips.Count);
         Assert.True(clips.Clips.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(table));
-        var flicker = clips.Find("Sc_ADHEAD_MOTION_FLCKR_EYES_000LV_XA_06");
+        var flicker = clips.Find(Flicker);
         Assert.NotNull(flicker);
-        Assert.Equal("FacialJuni.anm", Path.GetFileName(flicker.Archive.Replace('\\', '/')), ignoreCase: true);
+        Assert.Equal("FacialJuni.anm", FileName(flicker.Archive), ignoreCase: true);
+        Assert.Contains("FacialMale.anm", flicker.Archives.Select(FileName), StringComparer.OrdinalIgnoreCase);
+        var males = data.Items.Costumes.Where(c => c.Head?.Sex == FLGender.male).ToList();
+        Assert.NotEmpty(males);
+        Assert.All(males, costume => Assert.Equal("Skeletons of the target",
+            clips.Model(Flicker, AnimationClips.Bodyparts(costume), "the target").Rows.Single(r => r.Value == Flicker)
+                .Group));
         output.WriteLine($"{clips.Clips.Count} clips in {clips.Clips.Select(c => c.Archive).Distinct().Count()} files, " +
-                         $"read in {read.TotalMilliseconds:0.0} ms.");
+                         $"read in {read.TotalMilliseconds:0.0} ms. {Flicker} is in {flicker.Archives.Count} files.");
     }
 
     /// <summary>
-    /// Each START_MOTION value of the retail cutscenes whose first target is a character (DEFORMABLE) is in the list. A
-    /// value on a COMPOUND names a script of its model, so the row of such an event keeps its text field (risk R5).
+    /// Each START_MOTION value of the retail cutscenes whose first target is a character (DEFORMABLE) is in the list. The
+    /// test chooses the row as the Inspector does: from the targets of the Timeline event and the entities of the
+    /// script. A value on a COMPOUND names a script of its model, so the row of such an event keeps its text field (risk
+    /// R5).
     /// </summary>
     [Fact]
     public void EachRetailAnimationOfACharacterIsInTheList()
@@ -57,17 +72,17 @@ public sealed class AnimationCatalogRetailTests(ITestOutputHelper output)
         var otherFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in VfsFiles.Find(view, ".thn"))
         {
-            var model = ThnScriptModel.From(evaluator.Evaluate(view.ReadAllBytes(file), file), ThnElementId.Counter());
-            foreach (var ev in model.Events)
+            var script = ThnScriptModel.From(evaluator.Evaluate(view.ReadAllBytes(file), file), ThnElementId.Counter());
+            foreach (var ev in TimelineModel.Build(file, script, evaluator.Symbols, ScriptPlay.Normal).Events)
             {
-                if (ThnSchema.TypeOf(ThnElementKind.Event, ev.Table, evaluator.Symbols) != "START_MOTION" ||
-                    ThnElementPaths.Get(ThnElementKind.Event, ev.Table, path) is not ThnText value)
+                if (ev.Kind != EventTypes.StartMotion ||
+                    script.Element(ThnElementKind.Event, ev.Ref.Id) is not { } element ||
+                    ThnElementPaths.Get(ThnElementKind.Event, element.Table, path) is not ThnText value)
+                {
                     continue;
-                var target = ev.Table.List.Length > 2 && ev.Table.List[2] is ThnTable { List: [ThnText first, ..] }
-                    ? model.EntityNamed(first.Value)
-                    : null;
-                var type = target == null ? null : ThnSchema.TypeOf(ThnElementKind.Entity, target.Table, evaluator.Symbols);
-                if (!ThnAnimationPicker.Applies(EventTypes.StartMotion, path.Text, type))
+                }
+
+                if (!ThnAnimationPicker.Applies(ev.Kind, path.Text, script, ev.Targets))
                 {
                     others++;
                     otherFiles.Add(file);
@@ -76,7 +91,9 @@ public sealed class AnimationCatalogRetailTests(ITestOutputHelper output)
 
                 characters++;
                 if (!clips.Contains(value.Value))
+                {
                     missing.Add($"{file}: {value.Value}");
+                }
             }
         }
 
@@ -86,4 +103,6 @@ public sealed class AnimationCatalogRetailTests(ITestOutputHelper output)
         Assert.True(characters > 10_000, $"Only {characters} values on a DEFORMABLE.");
         Assert.True(others > 0);
     }
+
+    private static string FileName(string archive) => Path.GetFileName(archive.Replace('\\', '/'));
 }

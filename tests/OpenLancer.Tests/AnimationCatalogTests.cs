@@ -30,19 +30,24 @@ public sealed class AnimationCatalogTests
     }
 
     /// <summary>The engine loads the files in the order of the [Animations] lines, and a later file replaces a name
-    /// without letter case. So the clip has the spelling and the file of the last file.</summary>
+    /// without letter case. So the clip has the spelling and the file of the last file. It also keeps each file with
+    /// the name, in load order, for the skeleton groups of the list.</summary>
     [Fact]
     public void TheLastFileWinsForADuplicateName()
     {
         using var ws = new TestWorkspace();
         Write(ws, "first.anm", AnimationFiles.Build(true, "Sc_Walk", "Sc_Run"));
         Write(ws, "second.anm", AnimationFiles.Build(true, "Sc_RUN", "Sc_Talk"));
+        Write(ws, "third.anm", AnimationFiles.Build(true, "sc_run"));
         var files = FileSystem.FromPath(ws.Base);
 
-        var clips = AnimationCatalog.Read(files, [$"{Folder}/first.anm", $"{Folder}/second.anm"]);
+        var clips = AnimationCatalog.Read(files,
+            [$"{Folder}/first.anm", $"{Folder}/second.anm", $"{Folder}/third.anm", $"{Folder}/third.anm"]);
 
-        Assert.Equal([("Sc_RUN", "second.anm"), ("Sc_Talk", "second.anm"), ("Sc_Walk", "first.anm")],
+        Assert.Equal([("sc_run", "third.anm"), ("Sc_Talk", "second.anm"), ("Sc_Walk", "first.anm")],
             clips.Select(c => (c.Name, Path.GetFileName(c.Archive))));
+        Assert.Equal(["first.anm", "second.anm", "third.anm"], clips[0].Archives.Select(a => Path.GetFileName(a)));
+        Assert.Equal([$"{Folder}/first.anm"], clips[2].Archives);
     }
 
     /// <summary>

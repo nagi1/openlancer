@@ -7,6 +7,7 @@ using LibreLancer.Data.GameData;
 using LibreLancer.Data.Ini;
 using LibreLancer.Data.Schema;
 using OpenLancer.Data.Editing.Lists;
+using OpenLancer.Data.Thn;
 
 namespace OpenLancer.Editor.Inspector;
 
@@ -33,7 +34,8 @@ internal enum ClipPart
 /// The animation clips of the game data for the picker of the animation of a START_MOTION event (section 12.1 of the
 /// M8b design), without ImGui. The clips are the scripts of the files that the <c>[Animations]</c> lines of
 /// bodyparts.ini name, in the load order of the engine: for a name in two files, the last file wins. The skeletons of
-/// bodyparts.ini group the clips by the files of their <c>[PetalAnimations]</c>.
+/// bodyparts.ini group the clips by the files of their <c>[PetalAnimations]</c>. A name in two files belongs to the
+/// skeletons of both files.
 /// </summary>
 internal sealed class AnimationClips
 {
@@ -52,9 +54,10 @@ internal sealed class AnimationClips
     ];
 
     private readonly IReadOnlyList<AnimationSkeleton> skeletons;
-    private readonly Dictionary<string, AnimationClip> byName = new(StringComparer.OrdinalIgnoreCase);
+
+    // The index of each clip name in Clips and in rows, without letter case.
+    private readonly Dictionary<string, int> byName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, AnimationSkeleton[]> byArchive = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, SkeletonParts> partsByArchive = new(StringComparer.OrdinalIgnoreCase);
 
     // The rows of the list in the order of the clips, with their labels, so an opening does not make the labels again.
     private readonly ListPickerRow[] rows;
@@ -65,17 +68,15 @@ internal sealed class AnimationClips
     {
         Clips = clips;
         this.skeletons = skeletons;
-        foreach (var clip in clips)
+        for (var i = 0; i < clips.Count; i++)
         {
-            byName[clip.Name] = clip;
+            byName[clips[i].Name] = i;
         }
 
-        foreach (var archive in clips.Select(c => c.Archive).Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var archive in clips.SelectMany(c => c.Archives).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             byArchive[archive] = skeletons.Where(s => s.Archives.Contains(archive, StringComparer.OrdinalIgnoreCase))
                 .ToArray();
-            partsByArchive[archive] = byArchive[archive]
-                .Aggregate(SkeletonParts.None, (parts, skeleton) => parts | skeleton.Parts);
         }
 
         rows = clips.Select(c => new ListPickerRow(ListRowKind.Entry, c.Name, c.Name, null) { Note = Label(c.Name) })
@@ -105,14 +106,29 @@ internal sealed class AnimationClips
     /// <summary>True when the game has a clip with the name, without letter case.</summary>
     public bool Contains(string name) => byName.ContainsKey(name);
 
-    /// <summary>The clip with a name without letter case, or null.</summary>
-    public AnimationClip? Find(string name) => byName.GetValueOrDefault(name);
+    /// <summary>The clip with a name without letter case, or null. The name keeps its spaces, as the game looks it
+    /// up.</summary>
+    public AnimationClip? Find(string name) => byName.TryGetValue(name, out var index) ? Clips[index] : null;
 
-    /// <summary>The kinds of body parts of the skeletons that list the file of a clip. None when no skeleton lists
-    /// it.</summary>
-    public SkeletonParts PartsOf(AnimationClip clip) => partsByArchive.GetValueOrDefault(clip.Archive);
+    /// <summary>The label of a clip of the list (see <see cref="Label"/>), which the list made once.</summary>
+    public string LabelOf(AnimationClip clip) => byName.TryGetValue(clip.Name, out var index) ? rows[index].Note : "";
 
-    /// <summary>The skeletons that list the file of a clip, as a line of the pane, for example "Skeletons: male body,
+    /// <summary>The kinds of body parts of the skeletons that list a file of a clip. None when no skeleton lists
+    /// one.</summary>
+    public SkeletonParts PartsOf(AnimationClip clip) =>
+        SkeletonsOf(clip).Aggregate(SkeletonParts.None, (parts, skeleton) => parts | skeleton.Parts);
+
+    /// <summary>The files of a clip, as a line of the pane, for example "File: body_m.anm". For a name in more files,
+    /// the line names each file and the file that the game plays.</summary>
+    public static string FileText(AnimationClip clip)
+    {
+        var names = clip.Archives.Select(FileName).ToList();
+        return names.Count < 2
+            ? $"File: {FileName(clip.Archive)}"
+            : $"Files: {string.Join(", ", names)}. The game plays the clip of the last file, {FileName(clip.Archive)}.";
+    }
+
+    /// <summary>The skeletons that list a file of a clip, as a line of the pane, for example "Skeletons: male body,
     /// female body".</summary>
     public string SkeletonText(AnimationClip clip)
     {
@@ -179,11 +195,12 @@ internal sealed class AnimationClips
 
         var own = skeletons.Where(s => s.Bodyparts.Overlaps(costume)).SelectMany(s => s.Archives)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mine = Clips.Select(c => c.Archives.Any(own.Contains)).ToArray();
         var header = $"Skeletons of {target}";
         var ordered = new List<ListPickerRow>(rows.Length);
         for (var i = 0; i < rows.Length; i++)
         {
-            if (own.Contains(Clips[i].Archive))
+            if (mine[i])
             {
                 ordered.Add(rows[i] with { Group = header });
             }
@@ -191,7 +208,7 @@ internal sealed class AnimationClips
 
         for (var i = 0; i < rows.Length; i++)
         {
-            if (!own.Contains(Clips[i].Archive))
+            if (!mine[i])
             {
                 ordered.Add(rows[i] with { Group = OtherSkeletons });
             }
@@ -246,8 +263,11 @@ internal sealed class AnimationClips
     private static string? Named(IReadOnlyList<string> characters, string? name) =>
         name == null ? null : characters.FirstOrDefault(c => c.Equals(name, StringComparison.OrdinalIgnoreCase));
 
-    private IReadOnlyList<AnimationSkeleton> SkeletonsOf(AnimationClip clip) =>
-        byArchive.GetValueOrDefault(clip.Archive) ?? [];
+    /// <summary>The skeletons that list a file of a clip, each skeleton once, in the order of the files.</summary>
+    private IEnumerable<AnimationSkeleton> SkeletonsOf(AnimationClip clip) =>
+        clip.Archives.SelectMany(archive => byArchive.GetValueOrDefault(archive) ?? []).Distinct();
+
+    private static string FileName(string archive) => Path.GetFileName(archive.Replace('\\', '/'));
 
     /// <summary>A skeleton as text, for example "male body" or "hands".</summary>
     private static string Describe(AnimationSkeleton skeleton)
@@ -274,25 +294,37 @@ internal sealed class AnimationClips
 }
 
 /// <summary>
-/// The clips of the game data that the editor loaded last. New game data, for example after a save or a change of the
-/// active mod, reads them again. <see cref="Reset"/> forgets the data when the profile closes.
+/// The state of the clip picker in a profile session, without ImGui. It holds the clips of the game data that the
+/// editor loaded last, and the body part filter. It also holds the character of the clip preview that the user chose
+/// for the shown event. New game data, for example after a save or a change of the active mod, reads the clips again.
+/// <see cref="Reset"/> forgets all when the profile closes.
 /// </summary>
 /// <typeparam name="TData">The game data. A test can use another class.</typeparam>
-internal sealed class AnimationClipsCache<TData>(Func<TData, AnimationClips> read) where TData : class
+internal sealed class ClipPickerState<TData>(Func<TData, AnimationClips> read) where TData : class
 {
+    /// <summary>The reason when the editor has no game data.</summary>
+    public const string NotLoaded = "The game data is not loaded.";
+
     /// <summary>The reason when the game data has no clip.</summary>
     public const string NoClips = "The editor found no animation clips in the game data.";
 
     private TData? data;
     private AnimationClips? clips;
     private string? error;
+    private ThnRef? shown;
+
+    /// <summary>The body part filter of the list.</summary>
+    public ClipPart Part { get; set; }
+
+    /// <summary>The character of the clip preview that the user chose for the shown event, or null.</summary>
+    public string? Chosen { get; set; }
 
     /// <summary>The clips of the game data, or null with the reason when the list is not available.</summary>
     public AnimationClips? Get(TData? current, out string? reason)
     {
         if (current == null)
         {
-            reason = "The game data is not loaded.";
+            reason = NotLoaded;
             return null;
         }
 
@@ -321,11 +353,24 @@ internal sealed class AnimationClipsCache<TData>(Func<TData, AnimationClips> rea
         return clips;
     }
 
-    /// <summary>Forgets the game data and the clips.</summary>
+    /// <summary>Takes the event that the picker shows. Another event forgets the chosen character.</summary>
+    public void Show(ThnRef element)
+    {
+        if (!Equals(shown, element))
+        {
+            shown = element;
+            Chosen = null;
+        }
+    }
+
+    /// <summary>Forgets the game data, the clips, the shown event, the chosen character and the filter.</summary>
     public void Reset()
     {
         data = null;
         clips = null;
         error = null;
+        shown = null;
+        Chosen = null;
+        Part = ClipPart.All;
     }
 }

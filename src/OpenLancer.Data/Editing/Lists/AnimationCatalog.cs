@@ -7,8 +7,13 @@ using LibreLancer.Data.Schema;
 
 namespace OpenLancer.Data.Editing.Lists;
 
-/// <summary>A clip and the animation file that contains it.</summary>
-public sealed record AnimationClip(string Name, string Archive);
+/// <summary>A clip and the animation files that contain it.</summary>
+/// <param name="Archive">The last file with the name. The game plays the clip of this file.</param>
+public sealed record AnimationClip(string Name, string Archive)
+{
+    /// <summary>Each file with the name, in load order. The last file is <see cref="Archive"/>.</summary>
+    public IReadOnlyList<string> Archives { get; init; } = [Archive];
+}
 
 /// <summary>The body parts of a skeleton of bodyparts.ini.</summary>
 [Flags]
@@ -34,7 +39,11 @@ public sealed record AnimationSkeleton(IReadOnlyList<string> Archives, FLGender 
 /// <summary>The animation clips and the skeletons of the active data view.</summary>
 public static class AnimationCatalog
 {
-    /// <summary>Reads the animations that the game loads, in load order. A later file replaces a duplicate name.</summary>
+    /// <summary>
+    /// Reads the animations that the game loads. The files are in load order, and a later file replaces a name without
+    /// letter case. So a clip has the spelling and the file of the last file, and it also keeps the earlier files with
+    /// the name. The result is sorted by name.
+    /// </summary>
     public static IReadOnlyList<AnimationClip> Read(FileSystem files, IEnumerable<string> archives)
     {
         var clips = new Dictionary<string, AnimationClip>(StringComparer.OrdinalIgnoreCase);
@@ -43,7 +52,11 @@ public static class AnimationCatalog
             using var stream = files.Open(path);
             foreach (var name in AnimationNames.Scripts(stream, path))
             {
-                clips[name] = new AnimationClip(name, path);
+                IReadOnlyList<string> earlier = clips.TryGetValue(name, out var clip) ? clip.Archives : [];
+                clips[name] = new AnimationClip(name, path)
+                {
+                    Archives = earlier.Contains(path) ? earlier : [.. earlier, path],
+                };
             }
         }
 

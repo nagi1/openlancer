@@ -15,9 +15,9 @@ using Xunit;
 namespace OpenLancer.DataTests;
 
 /// <summary>
-/// The clip preview of the animation picker on the retail data (section 12.1 of the M8b design): a clip moves the bones
-/// and the root of a real character, the preview copies the models of a scene character, and the body of each costume
-/// gets a standing idle of its sex for a head clip.
+/// The clip preview of the animation picker on the retail data (section 12.1 of the M8b design). A clip moves the bones
+/// and the root of a real character. The preview copies the models of a scene character. A head clip plays over a
+/// standing idle of the sex of the body of each costume.
 /// </summary>
 public sealed class AnimationPreviewRetailTests
 {
@@ -35,7 +35,10 @@ public sealed class AnimationPreviewRetailTests
         {
             if (!x.joint.Channel.HasOrientation || x.joint.Channel.FrameCount < 2 ||
                 x.joint.Channel.Duration < 0.1f || !skeleton.BodySkinning.Bones.ContainsKey(x.joint.ChildName))
+            {
                 return false;
+            }
+
             var channel = x.joint.Channel;
             var a = 0;
             var b = 0;
@@ -67,7 +70,10 @@ public sealed class AnimationPreviewRetailTests
         {
             if (!string.Equals(x.map.ParentName, "Root", StringComparison.OrdinalIgnoreCase) ||
                 !x.map.Channel.HasPosition || x.map.Channel.FrameCount < 2 || x.map.Channel.Duration < 0.1f)
+            {
                 return false;
+            }
+
             var channel = x.map.Channel;
             var a = 0;
             var b = 0;
@@ -131,7 +137,9 @@ public sealed class AnimationPreviewRetailTests
             var path = costume.Body.Path ?? "";
             if (costume.Body.Sex == FLGender.female && !path.Contains("female", StringComparison.OrdinalIgnoreCase) &&
                 !path.Contains("juni", StringComparison.OrdinalIgnoreCase))
+            {
                 noWord++;
+            }
         }
 
         Assert.True(noWord > 0, "No female body without a sex word in its path.");

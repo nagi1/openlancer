@@ -607,7 +607,7 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         // model, so its row keeps the text field.
         if (kind == ThnElementKind.Event && path.Text == ThnAnimationPicker.AnimationPath &&
             workspace.Timeline?.Event(target.Id) is { } info &&
-            ThnAnimationPicker.Applies(info.Kind, path.Text, FirstTargetType(workspace, info)))
+            ThnAnimationPicker.Applies(info.Kind, path.Text, workspace.Working, info.Targets))
         {
             animations.Draw(workspace, label, field, info, note, Parser(row.Kind));
             return;
@@ -830,13 +830,6 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
             }
         }
     }
-
-    /// <summary>The type of the entity of the first target of an event, or null when the target names no entity of the
-    /// script.</summary>
-    private static string? FirstTargetType(CutsceneWorkspace workspace, TimelineEvent info) =>
-        info.Targets.Count > 0 && workspace.Working?.EntityNamed(info.Targets[0]) is { } entity
-            ? ThnSchema.TypeOf(ThnElementKind.Entity, entity.Table, Symbols)
-            : null;
 
     private static Func<string, ThnFieldParse> Parser(ThnKeyKind kind) =>
         text => ThnFieldEdit.Parse(kind, text, ThornEvaluator.Instance);

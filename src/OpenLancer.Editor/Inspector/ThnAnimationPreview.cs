@@ -24,17 +24,41 @@ internal enum PreviewDrag
     Zoom,
 }
 
+/// <summary>The camera of the clip preview.</summary>
+/// <param name="Zoom">The factor of the distance of the camera.</param>
+/// <param name="Yaw">The orbit angle around the vertical axis, in radians.</param>
+/// <param name="Pitch">The orbit angle up or down, in radians.</param>
+/// <param name="Pan">The move of the center of the view.</param>
+internal readonly record struct PreviewView(float Zoom, float Yaw, float Pitch, Vector3 Pan)
+{
+    /// <summary>The view of a new clip preview, and the view after <b>Reset view</b>.</summary>
+    public static PreviewView Start => new(1, 0, 0, Vector3.Zero);
+
+    /// <summary>The view after F, as in the Unity animation preview: the pan and the zoom go back, and the orbit
+    /// stays.</summary>
+    public PreviewView Framed() => this with { Zoom = 1, Pan = Vector3.Zero };
+}
+
 /// <summary>
-/// The clip preview of the animation picker: it plays a clip in a loop on a copy of a character of the scene, in its own
-/// world with the lights of the asset thumbnails. The controls follow the Unity animation preview: a drag with the left or
-/// the middle button pans, a drag with the right button or Alt and the left button orbits, and the wheel or Alt and the
-/// right button zooms. F puts back the view.
+/// The clip that the clip preview plays. A change of a part starts the clip again. The game data is a part, because a
+/// reload after a save can change a clip while the models stay the same.
+/// </summary>
+/// <param name="Data">The game data that gives the animation table.</param>
+/// <param name="Models">The models of the character.</param>
+/// <param name="Clip">The name of the clip.</param>
+/// <param name="Idle">The name of the idle below the clip, or null.</param>
+internal readonly record struct PreviewClip(object Data, CharacterModels Models, string Clip, string? Idle);
+
+/// <summary>
+/// The clip preview of the animation picker. It plays a clip in a loop on a copy of a character of the scene. The copy
+/// is in its own world, with the lights of the asset thumbnails. The controls follow the Unity animation preview (see
+/// <see cref="Controls"/>).
 /// </summary>
 internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
 {
-    /// <summary>The controls, for the hint of the pane.</summary>
-    public const string Controls =
-        "Drag or middle drag: pan. Right drag or Alt+drag: orbit. Wheel or Alt+right drag: zoom. F: reset the view.";
+    /// <summary>The controls, for the hint of the pane. They are the controls of the Unity animation preview.</summary>
+    public const string Controls = "Drag or middle drag: pan. Right drag or Alt+drag: orbit. Wheel or Alt+right drag: " +
+                                   "zoom. Shift: faster orbit and zoom. F: put back the pan and the zoom.";
 
     /// <summary>The size of the render target in pixels.</summary>
     private const int Size = 512;
@@ -42,8 +66,15 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
     /// <summary>The vertical field of view of the camera in degrees, as <see cref="LookAtCamera"/> has it.</summary>
     private const float FieldOfView = 50;
 
-    /// <summary>The angle of an orbit for each pixel of a drag, in radians.</summary>
-    private const float OrbitSpeed = 0.01f;
+    /// <summary>The angle of an orbit for a drag across the view, in degrees, as in the Unity animation
+    /// preview.</summary>
+    private const float OrbitAngle = 140;
+
+    /// <summary>Shift makes an orbit this many times faster, as in the Unity animation preview.</summary>
+    private const float FastOrbit = 3;
+
+    /// <summary>Shift makes a zoom this many times faster, as in the Unity animation preview.</summary>
+    private const float FastZoom = 4;
 
     /// <summary>The wheel steps of a zoom for each pixel of a drag.</summary>
     private const float DragZoomSpeed = 0.02f;
@@ -59,16 +90,13 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
     private RenderTarget2D? target;
     private ImTextureRef? image;
     private Scene? scene;
-    private (CharacterModels Models, string Clip, string? Idle)? current;
+    private PreviewClip? current;
     private string? problem;
     private double playTime;
     private long lastFrame;
     private Vector3 cameraCenter;
     private float cameraDistance;
-    private float zoom = 1;
-    private float yaw;
-    private float pitch;
-    private Vector3 pan;
+    private PreviewView view = PreviewView.Start;
 
     /// <summary>Plays a clip on a copy of a character and draws the view and its controls.</summary>
     /// <param name="models">The models of the character of the scene, or null when the scene has no such
@@ -85,11 +113,18 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
             return;
         }
 
+        var session = window.Session;
+        if (session?.GameData is not { } data)
+        {
+            ImGui.TextWrapped(ClipPickerState<GameDataManager>.NotLoaded);
+            return;
+        }
+
         try
         {
-            if (current is not { } key || key.Models != models || key.Clip != clip || key.Idle != idle)
+            if (current != new PreviewClip(data, models, clip, idle))
             {
-                Start(models, clip, idle);
+                Start(session, data, models, clip, idle);
             }
 
             if (problem != null || scene == null)
@@ -105,24 +140,25 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
             if (playTime >= scene.Duration)
             {
                 // The clip starts again with a new copy of the character.
-                Start(models, clip, idle);
+                Start(session, data, models, clip, idle);
                 lastFrame = now;
             }
 
             var shown = scene!;
             Advance(shown.Skeleton, shown.Character, elapsed);
-            var rotation = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0);
-            var center = cameraCenter + shown.Character.Translate + pan;
-            var offset = Vector3.Transform(new Vector3(0, cameraDistance * 0.05f, -cameraDistance), rotation) * zoom;
+            var rotation = Quaternion.CreateFromYawPitchRoll(view.Yaw, view.Pitch, 0);
+            var center = cameraCenter + shown.Character.Translate + view.Pan;
+            var offset = Vector3.Transform(new Vector3(0, cameraDistance * 0.05f, -cameraDistance), rotation) *
+                         view.Zoom;
             camera.Update(Size, Size, center + offset, center, Matrix4x4.CreateFromQuaternion(rotation));
             Render(shown.World, elapsed);
             if (ImGui.Button("Reset view"))
             {
-                ResetView();
+                view = PreviewView.Start;
             }
 
-            ImGui.SetItemTooltip("Puts back the camera of the clip preview. F does the same when the pointer is on the " +
-                                 "clip preview.");
+            ImGui.SetItemTooltip("Puts back the pan, the zoom and the orbit of the clip preview. F puts back only the " +
+                                 "pan and the zoom.");
             var available = ImGui.GetContentRegionAvail();
             var side = Math.Max(64, Math.Min(available.X, available.Y));
             var origin = ImGui.GetCursorScreenPos();
@@ -133,12 +169,12 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
             {
                 if (io.MouseWheel != 0)
                 {
-                    zoom = Zoom(zoom, io.MouseWheel);
+                    view = view with { Zoom = Zoom(view.Zoom, io.MouseWheel, io.KeyShift) };
                 }
 
                 if (!io.WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F, false))
                 {
-                    ResetView();
+                    view = view.Framed();
                 }
             }
 
@@ -147,13 +183,17 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
                 switch (DragOf(button, io.KeyAlt))
                 {
                     case PreviewDrag.Pan:
-                        pan = Pan(pan, io.MouseDelta, rotation, cameraDistance * zoom, side);
+                        view = view with
+                        {
+                            Pan = Pan(view.Pan, io.MouseDelta, rotation, cameraDistance * view.Zoom, side),
+                        };
                         break;
                     case PreviewDrag.Orbit:
-                        (yaw, pitch) = Orbit(yaw, pitch, io.MouseDelta);
+                        var (yaw, pitch) = Orbit(view.Yaw, view.Pitch, io.MouseDelta, side, io.KeyShift);
+                        view = view with { Yaw = yaw, Pitch = pitch };
                         break;
                     case PreviewDrag.Zoom:
-                        zoom = Zoom(zoom, DragZoom(io.MouseDelta));
+                        view = view with { Zoom = Zoom(view.Zoom, DragZoom(io.MouseDelta), io.KeyShift) };
                         break;
                 }
             }
@@ -163,15 +203,15 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
         }
         catch (Exception e)
         {
-            problem = $"The editor cannot preview this clip: {e.Message}";
+            problem = $"The clip preview cannot play this clip: {e.Message}";
             FLLog.Warning("Clip preview", e.ToString());
             ImGui.TextWrapped(problem);
         }
     }
 
     /// <summary>
-    /// What a drag with a mouse button does, as in the Unity animation preview: the left or the middle button pans, the
-    /// right button or Alt and the left button orbits, and Alt and the right button zooms.
+    /// What a drag with a mouse button does, as in the Unity animation preview. The left or the middle button pans. The
+    /// right button, or Alt and the left button, orbits. Alt and the right button zoom.
     /// </summary>
     internal static PreviewDrag DragOf(ImGuiMouseButton button, bool alt) => button switch
     {
@@ -181,10 +221,17 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
         _ => PreviewDrag.None,
     };
 
-    /// <summary>The yaw and the pitch after an orbit drag, in radians. The pitch stays from -90 to 90 degrees, as in the
-    /// Unity animation preview.</summary>
-    internal static (float Yaw, float Pitch) Orbit(float yaw, float pitch, Vector2 delta) =>
-        (yaw - delta.X * OrbitSpeed, Math.Clamp(pitch - delta.Y * OrbitSpeed, -MathF.PI / 2, MathF.PI / 2));
+    /// <summary>
+    /// The yaw and the pitch after an orbit drag, in radians, as in the Unity animation preview. A drag across the view
+    /// turns 140 degrees, and Shift makes it 3 times faster. The pitch stays from -90 to 90 degrees.
+    /// </summary>
+    /// <param name="side">The size of the view in pixels.</param>
+    /// <param name="fast">True while Shift is down.</param>
+    internal static (float Yaw, float Pitch) Orbit(float yaw, float pitch, Vector2 delta, float side, bool fast)
+    {
+        var speed = OrbitAngle * MathF.PI / 180 / Math.Max(1, side) * (fast ? FastOrbit : 1);
+        return (yaw - delta.X * speed, Math.Clamp(pitch - delta.Y * speed, -MathF.PI / 2, MathF.PI / 2));
+    }
 
     /// <summary>The pan after a drag: the point under the pointer moves with the pointer, in the plane of the
     /// view.</summary>
@@ -199,8 +246,11 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
         return current + (-delta.X * right + delta.Y * up) * amount;
     }
 
-    /// <summary>The zoom after wheel steps: a step up moves the camera closer.</summary>
-    internal static float Zoom(float current, float wheel) => Math.Clamp(current * MathF.Pow(0.85f, wheel), 0.35f, 4f);
+    /// <summary>The zoom after wheel steps: a step up moves the camera closer. Shift makes a step 4 times larger, as in
+    /// the Unity animation preview.</summary>
+    /// <param name="fast">True while Shift is down.</param>
+    internal static float Zoom(float current, float wheel, bool fast) =>
+        Math.Clamp(current * MathF.Pow(0.85f, wheel * (fast ? FastZoom : 1)), 0.35f, 4f);
 
     /// <summary>The wheel steps of a zoom drag: a drag to the right or up moves the camera closer, as in Unity.</summary>
     internal static float DragZoom(Vector2 delta) => (delta.X - delta.Y) * DragZoomSpeed;
@@ -230,16 +280,23 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
         return Math.Max(0.1f, duration);
     }
 
-    /// <summary>Frees the render target and the renderer, and forgets the character and the session.</summary>
-    public void Dispose()
+    /// <summary>Frees the copy of the character and its world, and forgets the clip. The renderer stays. Call it when
+    /// the list closes, so the clip preview does not keep the animations of the game data.</summary>
+    public void Release()
     {
         scene?.World.Dispose();
         scene = null;
+        current = null;
+        problem = null;
+    }
+
+    /// <summary>Frees the render target and the renderer, and forgets the character and the session.</summary>
+    public void Dispose()
+    {
+        Release();
         renderer?.Dispose();
         renderer = null;
-        current = null;
         owner = null;
-        problem = null;
         if (target != null)
         {
             ImGuiHelper.DeregisterTexture(target.Texture);
@@ -263,19 +320,10 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
         return null;
     }
 
-    private void ResetView()
-    {
-        zoom = 1;
-        yaw = 0;
-        pitch = 0;
-        pan = Vector3.Zero;
-    }
-
     /// <summary>Makes a new copy of the character and starts the clip on it. The script comes from the animation table of
     /// the engine, so it is the script that the game plays.</summary>
-    private void Start(CharacterModels models, string clip, string? idle)
+    private void Start(EditorSession session, GameDataManager data, CharacterModels models, string clip, string? idle)
     {
-        var session = window.Session ?? throw new InvalidOperationException("No game data is open.");
         if (!ReferenceEquals(owner, session))
         {
             // The renderer holds the resources of the session.
@@ -283,13 +331,11 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
             owner = session;
         }
 
-        current = (models, clip, idle);
-        problem = null;
+        Release();
+        current = new PreviewClip(data, models, clip, idle);
         lastFrame = 0;
         playTime = 0;
-        scene?.World.Dispose();
-        scene = null;
-        var scripts = session.GameData!.GetCharacterAnimations().Scripts;
+        var scripts = data.GetCharacterAnimations().Scripts;
         if (!scripts.TryGetValue(clip, out var script))
         {
             problem = ThnAnimationPicker.UnknownClip;
