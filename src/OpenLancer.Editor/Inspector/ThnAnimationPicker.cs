@@ -2,199 +2,231 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Numerics;
-using System.Text.RegularExpressions;
 using ImGuiNET;
-using OpenLancer.Data.Editing.Lists;
+using LibreLancer;
+using LibreLancer.Data.GameData;
+using LibreLancer.Data.Schema;
+using LibreLancer.ImUI;
+using LibreLancer.Thn;
 using OpenLancer.Data.Thn;
 using OpenLancer.Editor.Cutscene;
 using OpenLancer.Editor.Ui;
-using LibreLancer.ImUI;
 using OpenLancer.Studio.Commands;
 
 namespace OpenLancer.Editor.Inspector;
 
-/// <summary>Selects and previews animation clips on the target of a motion event.</summary>
-internal sealed class ThnAnimationPicker(EditorWindow window) : IDisposable
+/// <summary>
+/// The Animation row of a START_MOTION event whose first target is a character (a DEFORMABLE entity), as section 12.1
+/// of the M8b design plans it. The field opens the list picker with the clips of the game data, grouped by the
+/// skeletons of the costume of the target. The side pane plays the hovered clip on a character of the scene: the clip
+/// preview. The <b>Preview</b> button plays the cutscene preview from the time of the event.
+/// </summary>
+/// <remarks>A COMPOUND plays the scripts of its own model, not the clips of the <c>.anm</c> files (GameObject.cs:602-605),
+/// so the row of another target keeps its text field (risk R5 of the M8b design).</remarks>
+internal sealed class ThnAnimationPicker(EditorWindow window, PropertyGrid grid) : IDisposable
 {
-    private static readonly string[] Characters = ["All", "Juni", "Trent", "Orillion", "King", "Female", "Male"];
-    private static readonly string[] Parts = ["All", "Body", "Head", "Hands", "Other"];
-    private object? loadedData;
-    private IReadOnlyList<AnimationClip> clips = [];
-    private string? error;
-    private string search = "";
-    private int character;
-    private int part;
-    private AnimationClip? hoveredClip;
-    private ThnRef? previewEvent;
-    private string? eventTarget;
-    private bool manualCharacter;
+    /// <summary>The path of the animation of a START_MOTION event.</summary>
+    public const string AnimationPath = "props.animation";
+
+    /// <summary>The warning of a clip name that the game does not have.</summary>
+    public const string UnknownClip = "The game has no animation with this name. The character does not move.";
+
+    private const string Character = "DEFORMABLE";
+    private const string NotSet = "Not set";
+
+    private const string Note =
+        "The clip that the character plays (StartMotionEvent.cs:34). The list has the clips of the files that the " +
+        "[Animations] lines of bodyparts.ini name. Hover over a clip to play it in the clip preview.";
+
+    // The size of the side pane in unscaled points.
+    private const float PaneWidth = 420;
+    private const float PaneHeight = 540;
+
+    private static readonly string[] PartNames = Enum.GetNames<ClipPart>();
+
+    private readonly AnimationClipsCache<GameDataManager> cache = new(AnimationClips.Read);
     private readonly ThnAnimationPreview preview = new(window);
+    private ClipPart part;
 
-    /// <summary>Draws the picker and the preview button.</summary>
-    public void Draw(CutsceneWorkspace workspace, ThnFieldState field, ThnTable table)
+    // The event of the last draw, and the character of the clip preview that the user chose for it, or null.
+    private ThnRef? shownEvent;
+    private string? chosen;
+
+    /// <summary>True when the row of a value gets the picker: the animation of a START_MOTION event whose first target
+    /// is a DEFORMABLE entity of the script.</summary>
+    /// <param name="targetType">The type of the entity of the first target, or null when the target names no
+    /// entity.</param>
+    public static bool Applies(EventTypes? eventType, string path, string? targetType) =>
+        eventType == EventTypes.StartMotion && path == AnimationPath && targetType == Character;
+
+    /// <summary>
+    /// Draws the Animation row. When the clip list is not available, the row keeps its text field, and its note gives
+    /// the reason.
+    /// </summary>
+    /// <param name="note">The note of the schema row, or null.</param>
+    /// <param name="parse">Gives the value of a text.</param>
+    public void Draw(CutsceneWorkspace workspace, string label, ThnFieldState field, TimelineEvent info, string? note,
+        Func<string, ThnFieldParse> parse)
     {
-        Load();
-        var current = field.Value is ThnText text ? text.Value : "";
-        var targetName = TargetName(table);
-        if (!Equals(previewEvent, field.Target) || !string.Equals(eventTarget, targetName, StringComparison.OrdinalIgnoreCase))
+        var data = window.Session?.GameData;
+        if (cache.Get(data, out var reason) is not { } clips)
         {
-            previewEvent = field.Target;
-            eventTarget = targetName;
-            manualCharacter = false;
-            character = 0;
-            hoveredClip = clips.FirstOrDefault(c => string.Equals(current, c.Name, StringComparison.OrdinalIgnoreCase));
+            grid.ThnTextRow(label, field, note == null ? reason : $"{reason}\n\n{note}", parse, NotSet);
+            return;
         }
-        if (!manualCharacter && workspace.Visible is { } player)
+
+        if (!Equals(shownEvent, field.Target))
         {
-            var actor = player.CharacterOf(targetName);
-            var voice = player.VoiceOf(targetName);
-            var auto = CharacterIndex(targetName, voice?.Actor, voice?.Voice, actor?.Skeleton.Head?.Path, actor?.Skeleton.Body.Path);
-            if (auto != 0)
-                character = auto;
+            shownEvent = field.Target;
+            chosen = null;
         }
-        ImGui.BeginDisabled(field.ReadOnly != null || loadedData == null);
-        ImGui.SetNextItemWidth(Math.Max(1, ImGui.GetContentRegionAvail().X - 76));
-        ImGui.SetNextWindowSizeConstraints(new Vector2(940 * ImGuiHelper.Scale, 0),
-            new Vector2(float.MaxValue, 700 * ImGuiHelper.Scale));
-        if (ImGui.BeginCombo("##clip", current.Length == 0 ? "Choose an animation" : current))
+
+        var target = info.Targets.Count > 0 ? info.Targets[0] : "";
+        var current = ThnFieldEdit.Format(field.Kind, field.Value).Trim();
+        var clip = clips.Find(current);
+        grid.ThnRow(label, field, note ?? Note, () =>
         {
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputTextWithHint("##search", "Search animations", ref search, 128);
-            ImGui.Text("Character");
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.Combo("##character", ref character, Characters, Characters.Length))
-                manualCharacter = true;
-            ImGui.SetItemTooltip("The event target sets this filter. You can select another character.");
-            ImGui.Text("Body part");
-            ImGui.SetNextItemWidth(-1);
-            ImGui.Combo("##part", ref part, Parts, Parts.Length);
-            ImGui.SetItemTooltip("Filter by body part.");
-            if (error != null)
-                ImGui.TextWrapped(error);
-            ImGui.TextWrapped("Hover over an animation to preview it. Click to use it.");
-            ImGui.TextDisabled("Labels are suggestions from file names. Preview each clip to check it.");
-            var previewWidth = 390 * ImGuiHelper.Scale;
-            var listWidth = Math.Max(200 * ImGuiHelper.Scale, ImGui.GetContentRegionAvail().X - previewWidth - ImGui.GetStyle().ItemSpacing.X);
-            ImGui.BeginChild("##clips", new Vector2(listWidth, 460 * ImGuiHelper.Scale), ImGuiChildFlags.None, ImGuiWindowFlags.HorizontalScrollbar);
-            foreach (var clip in clips.Where(c => AnimationCatalog.Matches(c, Characters[character], Parts[part], search)))
+            var style = ImGui.GetStyle();
+            var button = ImGui.CalcTextSize("Preview").X + 2 * style.FramePadding.X;
+            var (text, dim, color) = current.Length == 0 ? (NotSet, "", EditorTheme.TextDim)
+                : clip != null ? (current, AnimationClips.Label(clip.Name), EditorTheme.Text)
+                : ($"Missing ({ObjectKinds.Thn.Clip.Label}): {current}", "", EditorTheme.Warning);
+            ImGui.BeginDisabled(field.ReadOnly != null);
+            var clicked = PropertyGrid.PickerField(text, dim, color, false, clip != null ? ObjectKinds.Thn.Clip : null,
+                -(button + style.ItemInnerSpacing.X));
+            ImGui.EndDisabled();
+            ImGui.SetItemTooltip(clip != null ? $"{clip.Name}\n{clips.SkeletonText(clip)}\n\nClick to pick a clip."
+                : current.Length > 0 ? $"{UnknownClip}\n\nClick to pick a clip."
+                : "Click to pick a clip.");
+            grid.ThnListPopup(field, clicked,
+                () => clips.Model(current, AnimationClips.Bodyparts(CostumeOf(workspace, data, target)), target),
+                ObjectKinds.Thn.Clip, parse, new ListPickerPane(PaneWidth, PaneHeight, PartFilter,
+                    row => clips.Shows(row, part), row => Pane(workspace, data, clips, row, target)));
+            ImGui.SameLine(0, style.ItemInnerSpacing.X);
+            // The button only plays the preview, so it stays active in the read-only state.
+            ImGui.BeginDisabled(current.Length == 0 || workspace.Transport == null);
+            if (ImGui.Button("Preview"))
             {
-                ImGui.PushID(clip.Archive + "/" + clip.Name);
-                if (ImGui.Selectable(AnimationCatalog.Label(clip.Name) + "  -  " + clip.Name,
-                        string.Equals(current, clip.Name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    window.Edits.Execute(() => ThnEdits.Set(field.Target, field.Path, new ThnText(clip.Name)));
-                    ImGui.CloseCurrentPopup();
-                }
-                if (ImGui.IsItemHovered())
-                    hoveredClip = clip;
-                ImGui.PopID();
+                workspace.Transport!.Seek(info.Time);
+                workspace.Transport.Play();
             }
-            ImGui.EndChild();
-            ImGui.SameLine();
-            ImGui.BeginChild("##animation-preview", new Vector2(previewWidth, 460 * ImGuiHelper.Scale),
-                ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoScrollbar);
-            if (hoveredClip is { } shown)
+
+            ImGui.EndDisabled();
+            ImGui.SetItemTooltip("Plays the cutscene preview from the time of this event.");
+            if (current.Length > 0 && clip == null)
             {
-                ImGui.Text(AnimationCatalog.Label(shown.Name) + " - " + AnimationCatalog.Part(shown));
-                ImGui.TextDisabled(shown.Name);
-                ImGui.TextDisabled("Scroll: zoom. Drag: rotate.");
-                ImGui.TextDisabled("Right drag or Shift + drag: move.");
-                var chosen = PreviewTarget(workspace, targetName, character);
-                if (chosen == null)
-                    ImGui.TextWrapped("This character is not in the scene. Select another character or use All.");
-                else
-                {
-                    ImGui.Text("Character: " + chosen);
-                    if (!string.Equals(chosen, targetName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        ImGui.TextWrapped("The event targets " + targetName + ".");
-                        if (table.List.Length > 2 && table.List[2] is ThnTable { List.Length: > 0 } targets &&
-                            ImGui.Button("Use this character for the event"))
-                            window.Edits.Execute(() => ThnEdits.Set(field.Target, new ThnPath("targets"),
-                                ThnFieldEdit.TargetsValue(targets, 0, chosen)));
-                    }
-                    preview.Draw(workspace.Visible?.CharacterOf(chosen), shown);
-                }
+                ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Warning);
+                ImGui.TextWrapped(UnknownClip);
+                ImGui.PopStyleColor();
             }
-            else
-            {
-                ImGui.TextWrapped("Hover over an animation to see it here.");
-            }
-            ImGui.EndChild();
-            ImGui.EndCombo();
-        }
-        ImGui.SameLine();
-        ImGui.BeginDisabled(current.Length == 0 || workspace.Transport == null);
-        if (ImGui.Button("Preview"))
-        {
-            var time = table.List.Length > 0 && table.List[0] is ThnNumber number ? number.Value : 0;
-            workspace.Transport!.Seek(time);
-            workspace.Transport.Play();
-        }
-        ImGui.EndDisabled();
-        ImGui.SetItemTooltip("Play the cutscene from this event. The target plays the selected animation.");
-        ImGui.EndDisabled();
+        });
     }
 
-    private static string? PreviewTarget(CutsceneWorkspace workspace, string target, int choice)
+    /// <summary>Forgets the game data and the choices of the session, and frees the clip preview. Call it when the
+    /// profile closes.</summary>
+    public void Reset()
     {
-        if (choice is 0 or 5 or 6)
-            return target;
-        var player = workspace.Visible;
-        if (player == null)
-            return target;
-        int CharacterOf(string name)
-        {
-            var source = player.CharacterOf(name);
-            var voice = player.VoiceOf(name);
-            return source == null ? 0 : CharacterIndex(name, voice?.Actor, voice?.Voice,
-                source.Skeleton.Head?.Path, source.Skeleton.Body.Path);
-        }
-        if (CharacterOf(target) == choice)
-            return target;
-        return workspace.Working?.Entities.Select(e => ThnScriptModel.NameOf(e.Table)).OfType<string>()
-            .FirstOrDefault(name => CharacterOf(name) == choice);
+        cache.Reset();
+        preview.Dispose();
+        shownEvent = null;
+        chosen = null;
+        part = ClipPart.All;
     }
-
-    internal static int CharacterIndex(params string?[] hints)
-    {
-        var text = string.Join(" ", hints).ToLowerInvariant();
-        if (text.Contains("juni")) return 1;
-        if (text.Contains("trent")) return 2;
-        if (text.Contains("orillion") || text.Contains("orilion")) return 3;
-        if (Regex.IsMatch(text, @"(?<![a-z0-9])king(?![a-z0-9])")) return 4;
-        if (text.Contains("female")) return 5;
-        if (text.Contains("male")) return 6;
-        return 0;
-    }
-
-    internal static string TargetName(ThnTable table) =>
-        table.List.Length > 2 && table.List[2] is ThnTable targets &&
-        targets.List.Length > 0 && targets.List[0] is ThnText name ? name.Value : "";
 
     public void Dispose() => preview.Dispose();
 
-    private void Load()
+    /// <summary>The body part filter below the search field. Returns true when it changed.</summary>
+    private bool PartFilter()
     {
-        var data = window.Session?.GameData;
-        if (ReferenceEquals(data, loadedData))
-            return;
-        loadedData = data;
-        clips = [];
-        error = null;
-        if (data == null)
-            return;
-        try
-        {
-            var files = data.Items.Ini.Bodyparts.Animations.Select(data.Items.DataPath).OfType<string>();
-            clips = AnimationCatalog.Read(data.Items.VFS, files);
-            if (clips.Count == 0)
-                error = "No animation clips were found in the game data.";
-        }
-        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
-        {
-            error = "Cannot read the animation files: " + e.Message;
-        }
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text("Body part");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(MathF.Round(160 * ImGuiHelper.Scale));
+        var index = (int)part;
+        EditorTheme.PushMenuColors();
+        var changed = ImGui.Combo("##part", ref index, PartNames, PartNames.Length);
+        EditorTheme.PopMenuColors();
+        ImGui.SetItemTooltip("Shows the clips of the files of the skeletons with this body part. Other shows the clips " +
+                             "of the files that no skeleton of bodyparts.ini lists.");
+        part = (ClipPart)index;
+        return changed;
     }
+
+    /// <summary>The side pane: the hovered clip, its file and its skeletons, the character of the clip preview, the
+    /// hints, and the clip preview.</summary>
+    private void Pane(CutsceneWorkspace workspace, GameDataManager? data, AnimationClips clips, ListPickerRow? row,
+        string target)
+    {
+        if (row == null)
+        {
+            ImGui.TextDisabled("Hover over a clip to see it here.");
+            return;
+        }
+
+        if (clips.Find(row.Value) is not { } clip)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.Warning);
+            ImGui.TextWrapped($"{row.Value}: {UnknownClip}");
+            ImGui.PopStyleColor();
+            return;
+        }
+
+        if (row.Note.Length > 0)
+        {
+            ImGui.Text(row.Note);
+        }
+
+        ImGui.Text(clip.Name);
+        ImGui.TextDisabled($"File: {Path.GetFileName(clip.Archive.Replace('\\', '/'))}");
+        ImGui.TextDisabled(clips.SkeletonText(clip));
+        var characters = Characters(workspace);
+        var on = AnimationClips.PreviewOn(characters, chosen, target);
+        ImGui.AlignTextToFramePadding();
+        ImGui.Text("Preview on");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(-1);
+        EditorTheme.PushMenuColors();
+        if (ImGui.BeginCombo("##preview-on", on ?? "No character"))
+        {
+            foreach (var name in characters)
+            {
+                var selected = name.Equals(on, StringComparison.OrdinalIgnoreCase);
+                if (ImGui.Selectable(name, selected) && !selected)
+                {
+                    chosen = name;
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        EditorTheme.PopMenuColors();
+        ImGui.SetItemTooltip("The character of the scene that plays the clip preview. The event keeps its target.");
+        ImGui.PushStyleColor(ImGuiCol.Text, EditorTheme.TextDim);
+        ImGui.TextWrapped("Labels come from words in the clip names. Preview each clip to check it.");
+        ImGui.TextWrapped(ThnAnimationPreview.Controls);
+        ImGui.PopStyleColor();
+        if (on == null)
+        {
+            ImGui.TextWrapped("The script has no character for the clip preview.");
+            return;
+        }
+
+        var sex = CostumeOf(workspace, data, on)?.Body?.Sex ?? FLGender.unset;
+        preview.Draw(workspace.Visible?.CharacterOf(on), clip.Name, clips.IdleFor(clip, sex));
+    }
+
+    /// <summary>The names of the characters (DEFORMABLE entities) of the open script.</summary>
+    private static List<string> Characters(CutsceneWorkspace workspace) =>
+        workspace.Working?.Entities
+            .Where(e => ThnSchema.TypeOf(ThnElementKind.Entity, e.Table, CutsceneWorkspace.Symbols) == Character)
+            .Select(e => ThnScriptModel.NameOf(e.Table)).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? [];
+
+    /// <summary>The costume of the entity with a name: its <c>template_name</c> in the costumes of the game data, or
+    /// null.</summary>
+    private static Costume? CostumeOf(CutsceneWorkspace workspace, GameDataManager? data, string name) =>
+        workspace.Working?.EntityNamed(name)?.Table["template_name"] is ThnText { Value: var template }
+            ? data?.Items.Costumes.Get(template)
+            : null;
 }

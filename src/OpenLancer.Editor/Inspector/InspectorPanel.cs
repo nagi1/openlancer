@@ -107,7 +107,7 @@ internal sealed class InspectorPanel : IDisposable
         starSystemPage.Reset();
         fieldPage.Reset();
         missionPage.Reset();
-        thnPage.Dispose();
+        thnPage.Reset();
     }
 
     /// <summary>Frees the native editors of the pages.</summary>

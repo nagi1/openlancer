@@ -1,121 +1,113 @@
-using OpenLancer.Data.Editing.Lists;
 using System.IO;
 using System.Linq;
-using System.Numerics;
+using System.Text;
+using LibreLancer.Data.Ini;
 using LibreLancer.Data.IO;
+using LibreLancer.Data.Schema;
+using OpenLancer.Data.Editing.Lists;
 using Xunit;
-using OpenLancer.Data.Thn;
-using OpenLancer.Editor.Inspector;
-using LibreLancer.Utf.Anm;
 
 namespace OpenLancer.Tests;
 
+/// <summary>The clips and the skeletons of the animation picker (section 12.1 of the M8b design), with hand-written
+/// files.</summary>
 public sealed class AnimationCatalogTests
 {
-    [Fact]
-    public void PreviewUsesTheFirstEventTarget()
-    {
-        var targets = ThnTable.FromList(new ThnText("Juni"), new ThnText("Trent"));
-        var ev = ThnTable.FromList(new ThnNumber(0), new ThnNumber(0), targets);
-        Assert.Equal("Juni", ThnAnimationPicker.TargetName(ev));
-        Assert.StartsWith("FMBODY", ThnAnimationPreview.IdlePrefix("female_body.dfm", null));
-        Assert.StartsWith("FMBODY", ThnAnimationPreview.IdlePrefix("body.dfm", "juni_head.dfm"));
-        Assert.StartsWith("MLBODY", ThnAnimationPreview.IdlePrefix("male_body.dfm", null));
-        Assert.Equal("", ThnAnimationPicker.TargetName(ThnTable.Empty));
-        Assert.Equal("", ThnAnimationPicker.TargetName(ThnTable.FromList(new ThnNumber(0), new ThnNumber(0), ThnTable.Empty)));
-    }
-
-    [Fact]
-    public void PreviewZoomMovesCloserAndHasLimits()
-    {
-        Assert.True(ThnAnimationPreview.Zoom(1, 1) < 1);
-        Assert.True(ThnAnimationPreview.Zoom(1, -1) > 1);
-        Assert.Equal(0.35f, ThnAnimationPreview.Zoom(1, 100));
-        Assert.Equal(4f, ThnAnimationPreview.Zoom(1, -100));
-    }
-
-    [Fact]
-    public void CharacterFilterUsesTheTargetAndAppearance()
-    {
-        Assert.Equal(1, ThnAnimationPicker.CharacterIndex("actor_juni", null, "female_body"));
-        Assert.Equal(2, ThnAnimationPicker.CharacterIndex("actor", "TRENT", "male_body"));
-        Assert.Equal(3, ThnAnimationPicker.CharacterIndex("Orilion", "male_body"));
-        Assert.Equal(5, ThnAnimationPicker.CharacterIndex("female_body"));
-        Assert.Equal(6, ThnAnimationPicker.CharacterIndex("male_body"));
-        Assert.Equal(0, ThnAnimationPicker.CharacterIndex("unknown"));
-        Assert.Equal(0, ThnAnimationPicker.CharacterIndex("walking"));
-        Assert.Equal(4, ThnAnimationPicker.CharacterIndex("actor_king"));
-    }
-
-    [Fact]
-    public void PreviewPanMovesInCameraSpaceAndScalesWithDistance()
-    {
-        var horizontal = ThnAnimationPreview.Pan(Vector3.Zero, new Vector2(20, 0), Quaternion.Identity, 2, 400);
-        var vertical = ThnAnimationPreview.Pan(Vector3.Zero, new Vector2(0, 20), Quaternion.Identity, 2, 400);
-        Assert.True(horizontal.X > 0);
-        Assert.True(vertical.Y > 0);
-        var farther = ThnAnimationPreview.Pan(Vector3.Zero, new Vector2(20, 0), Quaternion.Identity, 4, 400);
-        Assert.Equal(horizontal.X * 2, farther.X, 5);
-    }
-
-    [Fact]
-    public void PreviewDurationCoversTheFullMotion()
-    {
-        var script = new Script("motion");
-        script.JointMaps.Add(new JointMap { Channel = new Channel { FrameCount = 5, Interval = 0.5f } });
-        script.JointMaps.Add(new JointMap { Channel = new Channel { FrameCount = 3, Interval = 0.25f } });
-        Assert.Equal(2f, ThnAnimationPreview.ClipDuration(script));
-        Assert.Equal(0.1f, ThnAnimationPreview.ClipDuration(new Script("empty")));
-    }
+    private const string Folder = "DATA/CHARACTERS/ANIMATIONS";
 
     [Fact]
     public void ReadsClipNamesFromTheActiveDataFiles()
     {
         using var ws = new TestWorkspace();
-        var folder = Path.Combine(ws.Base, "DATA", "CHARACTERS", "ANIMATIONS");
-        Directory.CreateDirectory(folder);
-        File.WriteAllBytes(Path.Combine(folder, "bodygenericfemale.anm"), AnimationNamesTests.Build().Bytes);
+        Write(ws, "bodygenericfemale.anm", AnimationFiles.Build());
         var files = FileSystem.FromPath(ws.Base);
-        var clips = AnimationCatalog.Read(files, ["DATA/CHARACTERS/ANIMATIONS/bodygenericfemale.anm"]);
-        Assert.Equal(new[] { "Sc_Run", "Sc_Walk" }, clips.Select(c => c.Name));
-        Assert.All(clips, c => Assert.True(AnimationCatalog.Matches(c, "Juni", "Body", "")));
-    }
 
-    [Fact]
-    public void LaterRegisteredArchivesReplaceDuplicateNames()
-    {
-        using var ws = new TestWorkspace();
-        var folder = Path.Combine(ws.Base, "DATA", "CHARACTERS", "ANIMATIONS");
-        Directory.CreateDirectory(folder);
-        File.WriteAllBytes(Path.Combine(folder, "first.anm"), AnimationNamesTests.Build().Bytes);
-        File.WriteAllBytes(Path.Combine(folder, "second.anm"), AnimationNamesTests.Build().Bytes);
-        var files = FileSystem.FromPath(ws.Base);
-        var clips = AnimationCatalog.Read(files, ["DATA/CHARACTERS/ANIMATIONS/first.anm",
-            "DATA/CHARACTERS/ANIMATIONS/second.anm"]);
-        Assert.Equal(2, clips.Count);
-        Assert.All(clips, c => Assert.EndsWith("second.anm", c.Archive));
+        var clips = AnimationCatalog.Read(files, [$"{Folder}/bodygenericfemale.anm"]);
+
+        Assert.Equal(["Sc_Run", "Sc_Walk"], clips.Select(c => c.Name));
+        Assert.All(clips, c => Assert.Equal($"{Folder}/bodygenericfemale.anm", c.Archive));
         Assert.Empty(AnimationCatalog.Read(files, []));
     }
 
+    /// <summary>The engine loads the files in the order of the [Animations] lines, and a later file replaces a name
+    /// without letter case. So the clip has the spelling and the file of the last file.</summary>
     [Fact]
-    public void FiltersCharacterPartAndSearchWithoutCase()
+    public void TheLastFileWinsForADuplicateName()
     {
-        var female = new AnimationClip("Clip_Walk", "DATA/CHARACTERS/ANIMATIONS/bodygenericfemale.anm");
-        var juni = new AnimationClip("Clip_Talk", "DATA/CHARACTERS/ANIMATIONS/facialjuni.anm");
-        var male = new AnimationClip("Clip_Wave", "DATA/CHARACTERS/ANIMATIONS/handmale.anm");
-        var trent = new AnimationClip("Clip_Face", "DATA/CHARACTERS/ANIMATIONS/facialtrent.anm");
-        Assert.Equal("Body", AnimationCatalog.Part(female));
-        Assert.Equal("Head", AnimationCatalog.Part(juni));
-        Assert.Equal("Hands", AnimationCatalog.Part(male));
-        Assert.True(AnimationCatalog.Matches(female, "Juni", "Body", "WALK"));
-        Assert.True(AnimationCatalog.Matches(juni, "Juni", "Head", "talk"));
-        Assert.False(AnimationCatalog.Matches(juni, "Trent", "Head", ""));
-        Assert.False(AnimationCatalog.Matches(female, "Juni", "Hands", ""));
-        Assert.False(AnimationCatalog.Matches(male, "Juni", "All", ""));
-        Assert.True(AnimationCatalog.Matches(male, "Trent", "Hands", "wave"));
-        Assert.False(AnimationCatalog.Matches(trent, "Orillion", "Head", ""));
-        Assert.True(AnimationCatalog.Matches(male, "All", "All", ""));
-        Assert.True(AnimationCatalog.Matches(female, "Juni", "Body", "walk"));
-        Assert.Equal("Walk", AnimationCatalog.Label("Sc_FMBODY_WLKG_TEST"));
+        using var ws = new TestWorkspace();
+        Write(ws, "first.anm", AnimationFiles.Build(true, "Sc_Walk", "Sc_Run"));
+        Write(ws, "second.anm", AnimationFiles.Build(true, "Sc_RUN", "Sc_Talk"));
+        var files = FileSystem.FromPath(ws.Base);
+
+        var clips = AnimationCatalog.Read(files, [$"{Folder}/first.anm", $"{Folder}/second.anm"]);
+
+        Assert.Equal([("Sc_RUN", "second.anm"), ("Sc_Talk", "second.anm"), ("Sc_Walk", "first.anm")],
+            clips.Select(c => (c.Name, Path.GetFileName(c.Archive))));
+    }
+
+    /// <summary>
+    /// A body part belongs to the last [PetalAnimations] and the last [Skeleton] before it. A [Skeleton] without a new
+    /// [PetalAnimations] starts a skeleton with the same files. A sex that is not male or female gives no sex, and a
+    /// skeleton without a body part is not in the list.
+    /// </summary>
+    [Fact]
+    public void TheSkeletonsComeFromTheBlocksOfBodyparts()
+    {
+        const string text = """
+            [Animations]
+            anim = characters\animations\body_m.anm
+            [DetailSwitchTable]
+            switch = 100, 10.0
+            [PetalAnimations]
+            anim = characters\animations\body_m.anm
+            anim = characters\animations\shared.anm
+            [Skeleton]
+            sex = male
+            [Body]
+            nickname = body_a
+            mesh = characters\body_a.dfm
+            [Body]
+            nickname = BODY_B
+            [Skeleton]
+            sex = female
+            [Head]
+            nickname = head_f
+            [PetalAnimations]
+            anim = characters\animations\hands.anm
+            [Skeleton]
+            sex = none
+            [LeftHand]
+            nickname = hand_l
+            [RightHand]
+            nickname = hand_r
+            [Accessory]
+            nickname = hat
+            [PetalAnimations]
+            anim = characters\animations\unused.anm
+            [Skeleton]
+            sex = male
+            """;
+        var sections = IniFile.ParseFile("bodyparts.ini", new MemoryStream(Encoding.ASCII.GetBytes(text))).ToList();
+
+        var skeletons = AnimationCatalog.Skeletons(sections, path => $"DATA\\{path}");
+
+        Assert.Equal(3, skeletons.Count);
+        var (male, female, hands) = (skeletons[0], skeletons[1], skeletons[2]);
+        Assert.Equal([@"DATA\characters\animations\body_m.anm", @"DATA\characters\animations\shared.anm"], male.Archives);
+        Assert.Equal((FLGender.male, SkeletonParts.Body), (male.Sex, male.Parts));
+        Assert.True(male.Bodyparts.SetEquals(["body_a", "body_b"]));
+        Assert.Contains("Body_A", male.Bodyparts);
+        Assert.Equal(male.Archives, female.Archives);
+        Assert.Equal((FLGender.female, SkeletonParts.Head), (female.Sex, female.Parts));
+        Assert.Equal([@"DATA\characters\animations\hands.anm"], hands.Archives);
+        Assert.Equal((FLGender.unset, SkeletonParts.Hands), (hands.Sex, hands.Parts));
+        Assert.True(hands.Bodyparts.SetEquals(["hand_l", "hand_r"]));
+    }
+
+    private static void Write(TestWorkspace ws, string name, (byte[] Bytes, int DataOffset) file)
+    {
+        var folder = Path.Combine(ws.Base, "DATA", "CHARACTERS", "ANIMATIONS");
+        Directory.CreateDirectory(folder);
+        File.WriteAllBytes(Path.Combine(folder, name), file.Bytes);
     }
 }

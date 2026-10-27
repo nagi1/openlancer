@@ -1,224 +1,335 @@
 using System;
 using System.Diagnostics;
 using System.Numerics;
-using System.Linq;
+using ImGuiNET;
 using LibreLancer;
 using LibreLancer.Graphics;
-using LibreLancer.Data.GameData;
 using LibreLancer.ImUI;
 using LibreLancer.Render;
 using LibreLancer.Render.Cameras;
-using LibreLancer.Utf.Mat;
-using LibreLancer.Utf.Anm;
 using LibreLancer.Thn;
+using LibreLancer.Utf.Anm;
 using LibreLancer.World;
-using ImGuiNET;
-using OpenLancer.Data.Editing.Lists;
+using OpenLancer.Editor.Assets;
+using OpenLancer.Runtime.Thn;
 
 namespace OpenLancer.Editor.Inspector;
 
-/// <summary>Shows an animation on an independent copy of a scene character.</summary>
+/// <summary>What a drag on the clip preview does.</summary>
+internal enum PreviewDrag
+{
+    None,
+    Pan,
+    Orbit,
+    Zoom,
+}
+
+/// <summary>
+/// The clip preview of the animation picker: it plays a clip in a loop on a copy of a character of the scene, in its own
+/// world with the lights of the asset thumbnails. The controls follow the Unity animation preview: a drag with the left or
+/// the middle button pans, a drag with the right button or Alt and the left button orbits, and the wheel or Alt and the
+/// right button zooms. F puts back the view.
+/// </summary>
 internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
 {
+    /// <summary>The controls, for the hint of the pane.</summary>
+    public const string Controls =
+        "Drag or middle drag: pan. Right drag or Alt+drag: orbit. Wheel or Alt+right drag: zoom. F: reset the view.";
+
+    /// <summary>The size of the render target in pixels.</summary>
     private const int Size = 512;
+
+    /// <summary>The vertical field of view of the camera in degrees, as <see cref="LookAtCamera"/> has it.</summary>
+    private const float FieldOfView = 50;
+
+    /// <summary>The angle of an orbit for each pixel of a drag, in radians.</summary>
+    private const float OrbitSpeed = 0.01f;
+
+    /// <summary>The wheel steps of a zoom for each pixel of a drag.</summary>
+    private const float DragZoomSpeed = 0.02f;
+
+    /// <summary>The objects of the clip that the preview plays.</summary>
+    /// <param name="Duration">The length of one loop in seconds.</param>
+    /// <param name="Character">The copy of the character. Its object is the actor in the world.</param>
+    private sealed record Scene(GameWorld World, ThnSceneObject Character, DfmSkeletonManager Skeleton, float Duration);
+
+    private readonly LookAtCamera camera = new();
     private EditorSession? owner;
     private SystemRenderer? renderer;
-    private GameWorld? world;
-    private GameObject? actor;
-    private ThnSceneObject? character;
-    private DfmSkeletonManager? skeleton;
-    private AnmFile? archive;
-    private string? archivePath;
-    private float duration;
+    private RenderTarget2D? target;
+    private ImTextureRef? image;
+    private Scene? scene;
+    private (CharacterModels Models, string Clip, string? Idle)? current;
+    private string? problem;
     private double playTime;
+    private long lastFrame;
     private Vector3 cameraCenter;
     private float cameraDistance;
     private float zoom = 1;
     private float yaw;
     private float pitch;
     private Vector3 pan;
-    private RenderTarget2D? target;
-    private ImTextureRef? image;
-    private readonly LookAtCamera camera = new();
-    private (CharacterRenderer Source, AnimationClip Clip)? current;
-    private long lastFrame;
-    private string? problem;
 
-    public void Draw(CharacterRenderer? source, AnimationClip clip)
+    /// <summary>Plays a clip on a copy of a character and draws the view and its controls.</summary>
+    /// <param name="models">The models of the character of the scene, or null when the scene has no such
+    /// character.</param>
+    /// <param name="clip">The name of the clip.</param>
+    /// <param name="idle">The name of the idle that plays below the clip, or null (see
+    /// <see cref="AnimationClips.IdleFor"/>).</param>
+    public void Draw(CharacterModels? models, string clip, string? idle)
     {
-        if (source == null)
+        if (models == null)
         {
-            ImGui.TextWrapped("The scene character is not ready. Select a character target and wait for the scene to load.");
+            ImGui.TextWrapped("The cutscene preview does not have this character now. Open the cutscene preview and " +
+                              "wait until the scene loads.");
             return;
         }
+
         try
         {
-            if (current is not { } key || !SameAppearance(key.Source, source) || key.Clip != clip)
-                Start(source, clip);
-            if (problem != null)
+            if (current is not { } key || key.Models != models || key.Clip != clip || key.Idle != idle)
             {
-                ImGui.TextWrapped(problem);
+                Start(models, clip, idle);
+            }
+
+            if (problem != null || scene == null)
+            {
+                ImGui.TextWrapped(problem ?? "");
                 return;
             }
+
             var now = Stopwatch.GetTimestamp();
             var elapsed = lastFrame == 0 ? 0 : Math.Min(0.1, Stopwatch.GetElapsedTime(lastFrame, now).TotalSeconds);
             lastFrame = now;
             playTime += elapsed;
-            if (playTime >= duration)
+            if (playTime >= scene.Duration)
             {
-                Start(source, clip);
+                // The clip starts again with a new copy of the character.
+                Start(models, clip, idle);
                 lastFrame = now;
             }
-            Advance(skeleton!, character!, elapsed);
-            var center = cameraCenter + character!.Translate + pan;
+
+            var shown = scene!;
+            Advance(shown.Skeleton, shown.Character, elapsed);
             var rotation = Quaternion.CreateFromYawPitchRoll(yaw, pitch, 0);
+            var center = cameraCenter + shown.Character.Translate + pan;
             var offset = Vector3.Transform(new Vector3(0, cameraDistance * 0.05f, -cameraDistance), rotation) * zoom;
-            camera.Update(Size, Size, center + offset, center);
-            Render(elapsed);
+            camera.Update(Size, Size, center + offset, center, Matrix4x4.CreateFromQuaternion(rotation));
+            Render(shown.World, elapsed);
             if (ImGui.Button("Reset view"))
             {
-                zoom = 1;
-                yaw = pitch = 0;
-                pan = Vector3.Zero;
+                ResetView();
             }
+
+            ImGui.SetItemTooltip("Puts back the camera of the clip preview. F does the same when the pointer is on the " +
+                                 "clip preview.");
             var available = ImGui.GetContentRegionAvail();
-            var side = Math.Max(64, Math.Min(350 * ImGuiHelper.Scale, Math.Min(available.X, available.Y)));
+            var side = Math.Max(64, Math.Min(available.X, available.Y));
             var origin = ImGui.GetCursorScreenPos();
-            ImGui.InvisibleButton("##animation-view", new Vector2(side, side),
+            ImGui.InvisibleButton("##clip-preview", new Vector2(side),
                 ImGuiButtonFlags.MouseButtonLeft | ImGuiButtonFlags.MouseButtonRight | ImGuiButtonFlags.MouseButtonMiddle);
             var io = ImGui.GetIO();
-            if (ImGui.IsItemHovered() && io.MouseWheel != 0)
-                zoom = Zoom(zoom, io.MouseWheel);
-            if (ImGui.IsItemActive())
+            if (ImGui.IsItemHovered())
             {
-                var move = ImGui.IsMouseDragging(ImGuiMouseButton.Right) || ImGui.IsMouseDragging(ImGuiMouseButton.Middle) ||
-                           io.KeyShift && ImGui.IsMouseDragging(ImGuiMouseButton.Left);
-                if (move)
-                    pan = Pan(pan, io.MouseDelta, rotation, cameraDistance * zoom, side);
-                else if (ImGui.IsMouseDragging(ImGuiMouseButton.Left))
+                if (io.MouseWheel != 0)
                 {
-                    yaw -= io.MouseDelta.X * 0.01f;
-                    pitch = Math.Clamp(pitch - io.MouseDelta.Y * 0.01f, -1.3f, 1.3f);
+                    zoom = Zoom(zoom, io.MouseWheel);
+                }
+
+                if (!io.WantTextInput && ImGui.IsKeyPressed(ImGuiKey.F, false))
+                {
+                    ResetView();
                 }
             }
+
+            if (ImGui.IsItemActive() && Dragged() is { } button)
+            {
+                switch (DragOf(button, io.KeyAlt))
+                {
+                    case PreviewDrag.Pan:
+                        pan = Pan(pan, io.MouseDelta, rotation, cameraDistance * zoom, side);
+                        break;
+                    case PreviewDrag.Orbit:
+                        (yaw, pitch) = Orbit(yaw, pitch, io.MouseDelta);
+                        break;
+                    case PreviewDrag.Zoom:
+                        zoom = Zoom(zoom, DragZoom(io.MouseDelta));
+                        break;
+                }
+            }
+
             ImGui.GetWindowDrawList().AddImage(image!.Value, origin, origin + new Vector2(side),
                 new Vector2(0, 1), new Vector2(1, 0));
         }
         catch (Exception e)
         {
-            problem = "Cannot preview this animation: " + e.Message;
-            LibreLancer.FLLog.Warning("Animation preview", e.ToString());
+            problem = $"The editor cannot preview this clip: {e.Message}";
+            FLLog.Warning("Clip preview", e.ToString());
             ImGui.TextWrapped(problem);
         }
     }
 
-    private void Start(CharacterRenderer source, AnimationClip clip)
+    /// <summary>
+    /// What a drag with a mouse button does, as in the Unity animation preview: the left or the middle button pans, the
+    /// right button or Alt and the left button orbits, and Alt and the right button zooms.
+    /// </summary>
+    internal static PreviewDrag DragOf(ImGuiMouseButton button, bool alt) => button switch
     {
-        current = (source, clip);
-        problem = null;
-        lastFrame = 0;
-        playTime = 0;
-        var session = window.Session ?? throw new InvalidOperationException("No game data is open.");
-        if (!ReferenceEquals(owner, session))
-        {
-            Dispose();
-            owner = session;
-            current = (source, clip);
-        }
-        world?.Dispose();
-        world = null;
-        var animation = session.GameData!.GetCharacterAnimations();
-        if (!string.Equals(archivePath, clip.Archive, StringComparison.OrdinalIgnoreCase) || archive == null)
-        {
-            using var stream = session.GameData.Items.VFS.Open(clip.Archive);
-            archive = new AnmFile(clip.Archive, stream);
-            archive.Buffer.Commit();
-            archivePath = clip.Archive;
-        }
-        if (!archive.Scripts.TryGetValue(clip.Name, out var script))
-            throw new InvalidOperationException("The animation is not in the selected file.");
-        var original = source.Skeleton;
-        skeleton = new DfmSkeletonManager(original.Body, original.Head, original.LeftHand, original.RightHand);
-        if (AnimationCatalog.Part(clip) is "Head" or "Hands")
-        {
-            var prefix = IdlePrefix(original.Body.Path, original.Head?.Path);
-            var idle = animation.Scripts.Values.FirstOrDefault(x => x.Name.Contains(prefix, StringComparison.OrdinalIgnoreCase));
-            if (idle != null)
-                skeleton.StartScript(idle, 0, 1, 0, true);
-        }
-        duration = ClipDuration(script);
-        skeleton.StartScript(script, 0, 1, duration);
-        renderer ??= CreateRenderer();
-        target ??= new RenderTarget2D(window.RenderContext, Size, Size);
-        if (image == null)
-            image = ImGuiHelper.RegisterTexture(target.Texture);
-        world = new GameWorld(renderer, null, session.Resources, null, false);
-        actor = new GameObject { RenderComponent = new CharacterRenderer(skeleton)
-        {
-            Accessory = source.Accessory, AccessoryModel = source.AccessoryModel
-        }};
-        actor.SetTransform(Transform3D.Identity);
-        world.AddObject(actor);
-        character = new ThnSceneObject { Name = "Animation preview", Object = actor, Rotate = Quaternion.Identity };
-        var bounds = skeleton.Bounds;
-        var center = (bounds.Min + bounds.Max) * 0.5f;
-        var radius = Math.Max(0.5f, Vector3.Distance(bounds.Min, bounds.Max) * 0.5f);
-        cameraCenter = center;
-        cameraDistance = radius * 2.35f;
-    }
+        ImGuiMouseButton.Left => alt ? PreviewDrag.Orbit : PreviewDrag.Pan,
+        ImGuiMouseButton.Right => alt ? PreviewDrag.Zoom : PreviewDrag.Orbit,
+        ImGuiMouseButton.Middle => PreviewDrag.Pan,
+        _ => PreviewDrag.None,
+    };
 
+    /// <summary>The yaw and the pitch after an orbit drag, in radians. The pitch stays from -90 to 90 degrees, as in the
+    /// Unity animation preview.</summary>
+    internal static (float Yaw, float Pitch) Orbit(float yaw, float pitch, Vector2 delta) =>
+        (yaw - delta.X * OrbitSpeed, Math.Clamp(pitch - delta.Y * OrbitSpeed, -MathF.PI / 2, MathF.PI / 2));
+
+    /// <summary>The pan after a drag: the point under the pointer moves with the pointer, in the plane of the
+    /// view.</summary>
+    /// <param name="rotation">The rotation of the camera.</param>
+    /// <param name="distance">The distance of the camera from the center.</param>
+    /// <param name="side">The size of the view in pixels.</param>
     internal static Vector3 Pan(Vector3 current, Vector2 delta, Quaternion rotation, float distance, float side)
     {
-        var amount = 2 * distance * MathF.Tan(25 * MathF.PI / 180) / Math.Max(1, side);
+        var amount = 2 * distance * MathF.Tan(FieldOfView / 2 * MathF.PI / 180) / Math.Max(1, side);
         var right = Vector3.Transform(-Vector3.UnitX, rotation);
         var up = Vector3.Transform(Vector3.UnitY, rotation);
         return current + (-delta.X * right + delta.Y * up) * amount;
     }
 
+    /// <summary>The zoom after wheel steps: a step up moves the camera closer.</summary>
     internal static float Zoom(float current, float wheel) => Math.Clamp(current * MathF.Pow(0.85f, wheel), 0.35f, 4f);
 
+    /// <summary>The wheel steps of a zoom drag: a drag to the right or up moves the camera closer, as in Unity.</summary>
+    internal static float DragZoom(Vector2 delta) => (delta.X - delta.Y) * DragZoomSpeed;
+
+    /// <summary>Advances the clip and moves the character by the root motion of the clip.</summary>
     internal static void Advance(DfmSkeletonManager skeleton, ThnSceneObject character, double elapsed)
     {
         skeleton.UpdateScripts(elapsed);
         character.Update();
     }
 
+    /// <summary>The length of a clip: the longest channel of its joint maps and its object maps, and at least
+    /// 0.1 s.</summary>
     internal static float ClipDuration(Script script)
     {
         var duration = 0f;
         foreach (var joint in script.JointMaps)
+        {
             duration = Math.Max(duration, joint.Channel.Duration);
+        }
+
         foreach (var obj in script.ObjectMaps)
+        {
             duration = Math.Max(duration, obj.Channel.Duration);
+        }
+
         return Math.Max(0.1f, duration);
     }
 
-    private static bool SameAppearance(CharacterRenderer first, CharacterRenderer second) =>
-        ReferenceEquals(first.Skeleton.Body, second.Skeleton.Body) &&
-        ReferenceEquals(first.Skeleton.Head, second.Skeleton.Head) &&
-        ReferenceEquals(first.Skeleton.LeftHand, second.Skeleton.LeftHand) &&
-        ReferenceEquals(first.Skeleton.RightHand, second.Skeleton.RightHand) &&
-        ReferenceEquals(first.AccessoryModel, second.AccessoryModel);
-
-    internal static string IdlePrefix(string body, string? head)
+    /// <summary>Frees the render target and the renderer, and forgets the character and the session.</summary>
+    public void Dispose()
     {
-        var appearance = body + " " + head;
-        var female = appearance.Contains("female", StringComparison.OrdinalIgnoreCase) ||
-                     appearance.Contains("juni", StringComparison.OrdinalIgnoreCase);
-        return female ? "FMBODY_STND_IDLE" : "MLBODY_STND_IDLE";
+        scene?.World.Dispose();
+        scene = null;
+        renderer?.Dispose();
+        renderer = null;
+        current = null;
+        owner = null;
+        problem = null;
+        if (target != null)
+        {
+            ImGuiHelper.DeregisterTexture(target.Texture);
+            target.Dispose();
+            target = null;
+            image = null;
+        }
     }
 
-    private SystemRenderer CreateRenderer()
+    /// <summary>The button of the drag that is active now, or null.</summary>
+    private static ImGuiMouseButton? Dragged()
     {
-        var lighting = new SystemLighting();
-        foreach (var direction in new[] { new Vector3(0, -1, 0), new Vector3(0, 0, 1) })
-            lighting.Lights.Add(new DynamicLight { Light = new RenderLight
-                { Kind = LightKind.Directional, Direction = direction, Color = Color3f.White } });
-        return new SystemRenderer(camera, window.Session!.Resources, window)
-            { NullColor = new Color4(56, 57, 58, 255), SystemLighting = lighting };
+        foreach (var button in new[] { ImGuiMouseButton.Left, ImGuiMouseButton.Right, ImGuiMouseButton.Middle })
+        {
+            if (ImGui.IsMouseDragging(button))
+            {
+                return button;
+            }
+        }
+
+        return null;
     }
 
-    private void Render(double elapsed)
+    private void ResetView()
+    {
+        zoom = 1;
+        yaw = 0;
+        pitch = 0;
+        pan = Vector3.Zero;
+    }
+
+    /// <summary>Makes a new copy of the character and starts the clip on it. The script comes from the animation table of
+    /// the engine, so it is the script that the game plays.</summary>
+    private void Start(CharacterModels models, string clip, string? idle)
+    {
+        var session = window.Session ?? throw new InvalidOperationException("No game data is open.");
+        if (!ReferenceEquals(owner, session))
+        {
+            // The renderer holds the resources of the session.
+            Dispose();
+            owner = session;
+        }
+
+        current = (models, clip, idle);
+        problem = null;
+        lastFrame = 0;
+        playTime = 0;
+        scene?.World.Dispose();
+        scene = null;
+        var scripts = session.GameData!.GetCharacterAnimations().Scripts;
+        if (!scripts.TryGetValue(clip, out var script))
+        {
+            problem = ThnAnimationPicker.UnknownClip;
+            return;
+        }
+
+        var skeleton = new DfmSkeletonManager(models.Body, models.Head, models.LeftHand, models.RightHand);
+        if (idle != null && scripts.TryGetValue(idle, out var idleScript))
+        {
+            skeleton.StartScript(idleScript, 0, 1, 0, true);
+        }
+
+        var duration = ClipDuration(script);
+        skeleton.StartScript(script, 0, 1, duration);
+        renderer ??= new SystemRenderer(camera, session.Resources, window)
+        {
+            NullColor = ThumbnailRenderer.NullColor,
+            SystemLighting = ThumbnailRenderer.Lighting,
+        };
+        target ??= new RenderTarget2D(window.RenderContext, Size, Size);
+        image ??= ImGuiHelper.RegisterTexture(target.Texture);
+        var world = new GameWorld(renderer, null, session.Resources, null, false);
+        var actor = new GameObject
+        {
+            RenderComponent = new CharacterRenderer(skeleton)
+            {
+                Accessory = models.Accessory,
+                AccessoryModel = models.AccessoryModel,
+            },
+        };
+        actor.SetTransform(Transform3D.Identity);
+        world.AddObject(actor);
+        var character = new ThnSceneObject { Name = "Clip preview", Object = actor, Rotate = Quaternion.Identity };
+        scene = new Scene(world, character, skeleton, duration);
+        var bounds = skeleton.Bounds;
+        cameraCenter = (bounds.Min + bounds.Max) * 0.5f;
+        cameraDistance = Math.Max(0.5f, Vector3.Distance(bounds.Min, bounds.Max) * 0.5f) * ThumbnailRenderer.CameraDistance;
+    }
+
+    private void Render(GameWorld world, double elapsed)
     {
         var context = window.RenderContext;
         var previous = context.RenderTarget;
@@ -227,7 +338,7 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
         try
         {
             context.Cull = true;
-            world!.RenderUpdate(elapsed);
+            world.RenderUpdate(elapsed);
             renderer!.Draw(Size, Size);
         }
         finally
@@ -237,26 +348,6 @@ internal sealed class ThnAnimationPreview(EditorWindow window) : IDisposable
             context.BlendMode = BlendMode.Normal;
             context.Cull = false;
             context.RenderTarget = previous;
-        }
-    }
-
-    public void Dispose()
-    {
-        world?.Dispose();
-        renderer?.Dispose();
-        current = null;
-        owner = null;
-        archive = null;
-        archivePath = null;
-        character = null;
-        renderer = null;
-        world = null;
-        if (target != null)
-        {
-            ImGuiHelper.DeregisterTexture(target.Texture);
-            target.Dispose();
-            target = null;
-            image = null;
         }
     }
 }

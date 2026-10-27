@@ -1,15 +1,37 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using LibreLancer.Data.Ini;
 using LibreLancer.Data.IO;
+using LibreLancer.Data.Schema;
 
 namespace OpenLancer.Data.Editing.Lists;
 
-/// <summary>A clip and the animation archive that contains it.</summary>
+/// <summary>A clip and the animation file that contains it.</summary>
 public sealed record AnimationClip(string Name, string Archive);
 
-/// <summary>The animation names in the active data view.</summary>
+/// <summary>The body parts of a skeleton of bodyparts.ini.</summary>
+[Flags]
+public enum SkeletonParts
+{
+    None = 0,
+    Body = 1,
+    Head = 2,
+    Hands = 4,
+}
+
+/// <summary>
+/// A skeleton of bodyparts.ini: the animation files of its <c>[PetalAnimations]</c>, the sex of its <c>[Skeleton]</c>,
+/// and the body parts that follow them.
+/// </summary>
+/// <param name="Archives">The animation files, as data paths.</param>
+/// <param name="Sex">The sex that the <c>[Skeleton]</c> names, or unset for another value, for example "none".</param>
+/// <param name="Parts">The kinds of the body parts.</param>
+/// <param name="Bodyparts">The nicknames of the body parts, without letter case.</param>
+public sealed record AnimationSkeleton(IReadOnlyList<string> Archives, FLGender Sex, SkeletonParts Parts,
+    IReadOnlySet<string> Bodyparts);
+
+/// <summary>The animation clips and the skeletons of the active data view.</summary>
 public static class AnimationCatalog
 {
     /// <summary>Reads the animations that the game loads, in load order. A later file replaces a duplicate name.</summary>
@@ -20,57 +42,80 @@ public static class AnimationCatalog
         {
             using var stream = files.Open(path);
             foreach (var name in AnimationNames.Scripts(stream, path))
+            {
                 clips[name] = new AnimationClip(name, path);
+            }
         }
+
         return clips.Values.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
-    /// <summary>Returns true when a clip matches the chosen character, part and search text.</summary>
-    public static bool Matches(AnimationClip clip, string character, string part, string search)
+    /// <summary>
+    /// The skeletons of the sections of bodyparts.ini, in the order of the file. A body part belongs to the last
+    /// <c>[PetalAnimations]</c> and the last <c>[Skeleton]</c> before it. The engine gives a body part the sex of the
+    /// last <c>[Skeleton]</c> in the same way (BodypartsIni.cs:43-60), but it ignores <c>[PetalAnimations]</c>
+    /// (BodypartsIni.cs:40-42). So the skeletons only order and filter the clip list of the editor. For a sex such as
+    /// "none", the engine keeps the sex of the earlier <c>[Skeleton]</c>, but here the skeleton has no sex. A skeleton
+    /// without a body part is not in the result.
+    /// </summary>
+    /// <param name="dataPath">Gives the data path of a file name of <c>[PetalAnimations]</c>, or null.</param>
+    public static IReadOnlyList<AnimationSkeleton> Skeletons(IEnumerable<Section> bodyparts,
+        Func<string, string?> dataPath)
     {
-        var archive = Path.GetFileNameWithoutExtension(clip.Archive.Replace('\\', '/')).ToLowerInvariant();
-        var female = archive.Contains("female") || archive.Contains("juni");
-        var male = !female && (archive.Contains("male") || archive.Contains("trent"));
-        var fitsCharacter = character switch
+        var skeletons = new List<AnimationSkeleton>();
+        IReadOnlyList<string> archives = [];
+        var sex = FLGender.unset;
+        var parts = SkeletonParts.None;
+        HashSet<string>? names = null;
+        foreach (var section in bodyparts)
         {
-            "Juni" => !male && !archive.Contains("trent"),
-            "Trent" => !female && !archive.Contains("juni"),
-            "Orillion" or "King" => !female && !archive.Contains("trent"),
-            "Female" => !male && !archive.Contains("trent"),
-            "Male" => !female && !archive.Contains("juni"),
-            _ => true,
-        };
-        var kind = Part(clip);
-        return fitsCharacter && (part == "All" || part == kind) &&
-               (search.Length == 0 || clip.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                archive.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                Label(clip.Name).Contains(search, StringComparison.OrdinalIgnoreCase));
-    }
+            var part = section.Name.ToLowerInvariant() switch
+            {
+                "body" => SkeletonParts.Body,
+                "head" => SkeletonParts.Head,
+                "lefthand" or "righthand" => SkeletonParts.Hands,
+                _ => SkeletonParts.None,
+            };
+            if (part != SkeletonParts.None)
+            {
+                if (section["nickname"] is { Count: > 0 } nickname)
+                {
+                    names ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    names.Add(nickname[0].ToString()!);
+                    parts |= part;
+                }
 
-    /// <summary>Gives the body part named by the archive.</summary>
-    public static string Part(AnimationClip clip)
-    {
-        var archive = Path.GetFileNameWithoutExtension(clip.Archive.Replace('\\', '/'));
-        if (archive.StartsWith("body", StringComparison.OrdinalIgnoreCase)) return "Body";
-        if (archive.StartsWith("facial", StringComparison.OrdinalIgnoreCase)) return "Head";
-        if (archive.StartsWith("hand", StringComparison.OrdinalIgnoreCase)) return "Hands";
-        return "Other";
-    }
+                continue;
+            }
 
-    /// <summary>Gives a short label from the words in a clip name.</summary>
-    public static string Label(string name)
-    {
-        var n = name.ToUpperInvariant();
-        if (n.Contains("WALK") || n.Contains("WLKG")) return "Walk";
-        if (n.Contains("SHRG")) return "Shrug";
-        if (n.Contains("NOD")) return "Nod";
-        if (n.Contains("SHAKHEAD")) return "Shake head";
-        if (n.Contains("LSTN")) return "Listen";
-        if (n.Contains("WALLA") || n.Contains("TALK")) return "Talk";
-        if (n.Contains("GEST")) return "Gesture";
-        if (n.Contains("SIT")) return "Sit";
-        if (n.Contains("TURN")) return "Turn";
-        if (n.Contains("IDLE")) return "Idle";
-        return "Animation";
+            if (section.Name.Equals("PetalAnimations", StringComparison.OrdinalIgnoreCase))
+            {
+                Close();
+                archives = section.Where(e => e.Count > 0).Select(e => dataPath(e[0].ToString()!)).OfType<string>()
+                    .ToList();
+            }
+            else if (section.Name.Equals("Skeleton", StringComparison.OrdinalIgnoreCase))
+            {
+                Close();
+                sex = section["sex"] is { Count: > 0 } value &&
+                      Enum.TryParse<FLGender>(value[0].ToString(), true, out var named)
+                    ? named
+                    : FLGender.unset;
+            }
+        }
+
+        Close();
+        return skeletons;
+
+        void Close()
+        {
+            if (names != null)
+            {
+                skeletons.Add(new AnimationSkeleton(archives, sex, parts, names));
+            }
+
+            names = null;
+            parts = SkeletonParts.None;
+        }
     }
 }

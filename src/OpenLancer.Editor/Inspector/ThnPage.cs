@@ -41,7 +41,7 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
 
     private readonly ThnCurveEditor curves = new(window, grid);
     private readonly ThnPathKeysEditor pathKeys = new(window, grid);
-    private readonly ThnAnimationPicker animations = new(window);
+    private readonly ThnAnimationPicker animations = new(window, grid);
 
     // The text of the time shift of a set of events.
     private string shift = "0";
@@ -56,6 +56,11 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
     /// <summary>Ends an open drag of a curve point, for example when the window closes.</summary>
     public void EndDrag() => curves.End();
 
+    /// <summary>Forgets the game data of the session and frees the clip preview. Call it when the profile
+    /// closes.</summary>
+    public void Reset() => animations.Reset();
+
+    /// <summary>Frees the clip preview.</summary>
     public void Dispose() => animations.Dispose();
 
     private static IReadOnlyDictionary<string, ThnSymbolInfo> Symbols => CutsceneWorkspace.Symbols;
@@ -598,11 +603,13 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
             note = note == null ? ThnPose.ReferencePoseNote : $"{ThnPose.ReferencePoseNote}\n\n{note}";
         }
 
-        if (kind == ThnElementKind.Event && path.Text == "props.animation" &&
-            ThnSchema.TypeOf(kind, table, Symbols) == "START_MOTION")
+        // The animation of a START_MOTION event on a character gets the clip picker. A COMPOUND plays the scripts of its
+        // model, so its row keeps the text field.
+        if (kind == ThnElementKind.Event && path.Text == ThnAnimationPicker.AnimationPath &&
+            workspace.Timeline?.Event(target.Id) is { } info &&
+            ThnAnimationPicker.Applies(info.Kind, path.Text, FirstTargetType(workspace, info)))
         {
-            grid.ThnRow("Animation", field, "Select a clip and play it on the event target.",
-                () => animations.Draw(workspace, field, table));
+            animations.Draw(workspace, label, field, info, note, Parser(row.Kind));
             return;
         }
 
@@ -823,6 +830,13 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
             }
         }
     }
+
+    /// <summary>The type of the entity of the first target of an event, or null when the target names no entity of the
+    /// script.</summary>
+    private static string? FirstTargetType(CutsceneWorkspace workspace, TimelineEvent info) =>
+        info.Targets.Count > 0 && workspace.Working?.EntityNamed(info.Targets[0]) is { } entity
+            ? ThnSchema.TypeOf(ThnElementKind.Entity, entity.Table, Symbols)
+            : null;
 
     private static Func<string, ThnFieldParse> Parser(ThnKeyKind kind) =>
         text => ThnFieldEdit.Parse(kind, text, ThornEvaluator.Instance);
