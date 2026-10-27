@@ -106,8 +106,8 @@ internal sealed class AnimationClips
     /// <summary>True when the game has a clip with the name, without letter case.</summary>
     public bool Contains(string name) => byName.ContainsKey(name);
 
-    /// <summary>The clip with a name without letter case, or null. The name keeps its spaces, as the game looks it
-    /// up.</summary>
+    /// <summary>The clip with a name without letter case, or null. The name keeps its spaces, because the game finds the
+    /// clip by the name as it is.</summary>
     public AnimationClip? Find(string name) => byName.TryGetValue(name, out var index) ? Clips[index] : null;
 
     /// <summary>The label of a clip of the list (see <see cref="Label"/>), which the list made once.</summary>

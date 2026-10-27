@@ -155,7 +155,7 @@ public sealed class ListPickerModelTests
         Assert.Equal(["Sc_a", "Animation"], ListPickerModel.Footer(known.Rows[1], "Animation", _ => 0));
     }
 
-    /// <summary>A caller list keeps the spaces of the value, so a value with a space at the start or at the end gets the
+    /// <summary>A caller list keeps the spaces of the value. So a value with a space at the start or at the end gets the
     /// "Missing" row. An INI list trims the value, as the INI reader does.</summary>
     [Fact]
     public void ACallerListKeepsTheSpacesOfTheValue()
@@ -210,6 +210,18 @@ public sealed class ListPickerModelTests
         Assert.True(ListPicker.Cancels(escape: true, dropdown: false));
         Assert.False(ListPicker.Cancels(escape: true, dropdown: true));
         Assert.False(ListPicker.Cancels(escape: false, dropdown: false));
+    }
+
+    /// <summary>Up and Down step the selection, but while a dropdown of the pane is open, they belong to the dropdown and
+    /// the selection stays.</summary>
+    [Fact]
+    public void ArrowKeysInADropdownOfThePaneKeepTheSelection()
+    {
+        Assert.Equal(1, ListPicker.ArrowStep(down: true, up: false, dropdown: false));
+        Assert.Equal(-1, ListPicker.ArrowStep(down: false, up: true, dropdown: false));
+        Assert.Equal(0, ListPicker.ArrowStep(down: false, up: false, dropdown: false));
+        Assert.Equal(0, ListPicker.ArrowStep(down: true, up: false, dropdown: true));
+        Assert.Equal(0, ListPicker.ArrowStep(down: false, up: true, dropdown: true));
     }
 
     /// <summary>The list filters its rows again only for new rows, a new search text or a change of a filter of the pane.

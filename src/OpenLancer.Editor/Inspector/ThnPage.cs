@@ -49,9 +49,13 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
     /// <summary>True while a drag of a curve point is open.</summary>
     public bool IsDragging => curves.IsDragging;
 
-    /// <summary>Ends a drag of a curve point on the release of the left button. Call it once in each frame, before the
-    /// page draws.</summary>
-    public void Frame() => curves.Frame();
+    /// <summary>Ends a drag of a curve point on the release of the left button, and frees the clip preview after the list
+    /// closes. Call it once in each frame, before the page draws.</summary>
+    public void Frame()
+    {
+        curves.Frame();
+        animations.Frame();
+    }
 
     /// <summary>Ends an open drag of a curve point, for example when the window closes.</summary>
     public void EndDrag() => curves.End();

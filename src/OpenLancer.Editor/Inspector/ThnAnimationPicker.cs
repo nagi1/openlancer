@@ -60,8 +60,25 @@ internal sealed class ThnAnimationPicker(EditorWindow window, PropertyGrid grid)
     private readonly ClipPickerState<GameDataManager> state = new(AnimationClips.Read);
     private readonly ThnAnimationPreview preview = new(window);
 
-    // The frame in which the side pane drew last. The clip preview frees its character in a frame without the pane.
+    // The frame in which the side pane drew last, or -1 when the clip preview has no character.
     private int paneFrame = -1;
+
+    /// <summary>True when the clip preview frees its character at the start of a frame: the side pane drew before, but
+    /// not in the last frame. The list then closed, or the row of the animation did not draw.</summary>
+    /// <param name="paneFrame">The frame in which the side pane drew last, or -1.</param>
+    /// <param name="frame">The frame that starts.</param>
+    internal static bool Releases(int paneFrame, int frame) => paneFrame >= 0 && paneFrame < frame - 1;
+
+    /// <summary>Frees the clip preview when the side pane did not draw in the last frame. Call it once in each frame,
+    /// before the page draws.</summary>
+    public void Frame()
+    {
+        if (Releases(paneFrame, ImGui.GetFrameCount()))
+        {
+            preview.Release();
+            paneFrame = -1;
+        }
+    }
 
     /// <summary>True when the row of a value gets the picker: the animation of a START_MOTION event whose first target
     /// is a DEFORMABLE entity of the script.</summary>
@@ -141,7 +158,7 @@ internal sealed class ThnAnimationPicker(EditorWindow window, PropertyGrid grid)
         state.Show(field.Target);
         var script = workspace.Working;
         var target = info.Targets.Count > 0 ? info.Targets[0] : "";
-        // The game looks up the name as it is, so the value keeps its spaces.
+        // The game finds the clip by the name as it is, so the value keeps its spaces.
         var current = ThnFieldEdit.Format(field.Kind, field.Value);
         var clip = clips.Find(current);
         grid.ThnRow(label, field, note ?? Note, () =>
@@ -164,12 +181,6 @@ internal sealed class ThnAnimationPicker(EditorWindow window, PropertyGrid grid)
                 () => clips.Model(current, AnimationClips.Bodyparts(CostumeOf(script, data, target)), target),
                 ObjectKinds.Thn.Clip, parse, new ListPickerPane(PaneWidth, PaneHeight, PartFilter,
                     row => clips.Shows(row, state.Part), row => Pane(workspace, data, clips, row, target)));
-            if (paneFrame != ImGui.GetFrameCount())
-            {
-                // The list is closed, so the clip preview frees its copy of the character.
-                preview.Release();
-            }
-
             ImGui.SameLine(0, style.ItemInnerSpacing.X);
             // The button only plays the preview, so it stays active in the read-only state.
             var disabled = PreviewDisabled(current, workspace.Transport != null, workspace.Problem);

@@ -195,8 +195,8 @@ public sealed class ThnAnimationPickerTests
         Assert.False(clips.Contains("Sc_typo"));
     }
 
-    /// <summary>The game looks up a clip name as it is, so a value with a space at the start or at the end is not a clip.
-    /// The list then shows the "Missing" row, so a click on the clip corrects the value.</summary>
+    /// <summary>The game finds a clip by the name as it is. So a value with a space at the start or at the end is not a
+    /// clip. The list then shows the "Missing" row, so a click on the clip corrects the value.</summary>
     [Fact]
     public void AValueWithSpacesIsNotAClip()
     {
@@ -344,6 +344,21 @@ public sealed class ThnAnimationPickerTests
         state.Chosen = "Guard";
         state.Show(second);
         Assert.Null(state.Chosen);
+    }
+
+    /// <summary>The clip preview keeps its character while the side pane draws in each frame. It frees the character at
+    /// the start of the first frame after a frame without the pane, for example after a click on another element of the
+    /// Timeline.</summary>
+    [Fact]
+    public void TheClipPreviewFreesItsCharacterAfterAFrameWithoutThePane()
+    {
+        // The pane never drew.
+        Assert.False(ThnAnimationPicker.Releases(-1, 10));
+        // The pane drew in the last frame.
+        Assert.False(ThnAnimationPicker.Releases(9, 10));
+        // The pane did not draw in the last frame.
+        Assert.True(ThnAnimationPicker.Releases(8, 10));
+        Assert.True(ThnAnimationPicker.Releases(2, 10));
     }
 
     /// <summary>Reset and Dispose of the picker free a clip preview that never drew, and they can run more than once. The

@@ -188,8 +188,8 @@ internal sealed class ListPickerModel
         return lines;
     }
 
-    /// <summary>The dim text at the right of a row: the nickname when the row shows another name, the note and the tag,
-    /// with one space between them.</summary>
+    /// <summary>The dim text at the right of a row. It has the nickname when the row shows another name, the note and
+    /// the tag, with one space between them.</summary>
     public static string Note(ListPickerRow row)
     {
         var nickname = row.Kind == ListRowKind.Entry && !Is(row.Name, row.Value) ? row.Value : "";
@@ -329,7 +329,7 @@ internal sealed class ListPicker
             selected = model.Current;
             paneRow = selected;
             route(popup, session.Frame(popup, frame, true, false, false, owns(popup)), Value());
-            Content(kind, usedBy, pane);
+            Content(kind, usedBy, pane, false);
             ImGui.EndPopup();
             return;
         }
@@ -337,7 +337,7 @@ internal sealed class ListPicker
         // A dropdown of the pane is a popup in this popup. Read it before the content, because the dropdown can close
         // in the content.
         var dropdown = shown && ImGui.IsPopupOpen("", ImGuiPopupFlags.AnyPopupId);
-        var (changed, close) = shown ? Content(kind, usedBy, pane) : (false, false);
+        var (changed, close) = shown ? Content(kind, usedBy, pane, dropdown) : (false, false);
         var escape = Cancels(ImGui.IsKeyPressed(ImGuiKey.Escape, false), dropdown);
         // Enter and a double-click assign the row in this frame and close the popup. The next frame ends the edit and
         // keeps the value.
@@ -378,6 +378,11 @@ internal sealed class ListPicker
     /// <param name="dropdown">True when a popup in the list popup was open at the start of the frame.</param>
     internal static bool Cancels(bool escape, bool dropdown) => escape && !dropdown;
 
+    /// <summary>The step of the selection for the arrow keys: 1 for Down, -1 for Up and 0 for no step. While a dropdown
+    /// of the pane is open, the arrow keys belong to the dropdown, so the selection does not move.</summary>
+    /// <param name="dropdown">True when a popup in the list popup was open at the start of the frame.</param>
+    internal static int ArrowStep(bool down, bool up, bool dropdown) => dropdown ? 0 : down ? 1 : up ? -1 : 0;
+
     /// <summary>
     /// The lines of the list for the visible rows: a row index, or the complement of a row index for the header of the
     /// group of that row. A row with a group gets a header when the row above it is in another group.
@@ -406,7 +411,9 @@ internal sealed class ListPicker
 
     /// <summary>Draws the search field, the rows, and the footer or the pane. Returns whether the selection changed, and
     /// whether the popup closes.</summary>
-    private (bool Changed, bool Close) Content(ObjectKind kind, Func<ListEntry, int> usedBy, ListPickerPane? pane)
+    /// <param name="dropdown">True when a popup in the list popup was open at the start of the frame.</param>
+    private (bool Changed, bool Close) Content(ObjectKind kind, Func<ListEntry, int> usedBy, ListPickerPane? pane,
+        bool dropdown)
     {
         var rows = model!;
         if (ImGui.IsWindowAppearing())
@@ -422,9 +429,10 @@ internal sealed class ListPicker
         var changed = false;
         var close = false;
         var scroll = ImGui.IsWindowAppearing() ? selected : -1;
-        if (ImGui.IsKeyPressed(ImGuiKey.DownArrow) || ImGui.IsKeyPressed(ImGuiKey.UpArrow))
+        var step = ArrowStep(ImGui.IsKeyPressed(ImGuiKey.DownArrow), ImGui.IsKeyPressed(ImGuiKey.UpArrow), dropdown);
+        if (step != 0)
         {
-            var next = ListPickerModel.Step(visibleRows, selected, ImGui.IsKeyPressed(ImGuiKey.DownArrow) ? 1 : -1);
+            var next = ListPickerModel.Step(visibleRows, selected, step);
             changed = next != selected;
             selected = next;
             scroll = selected;
