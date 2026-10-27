@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using LibreLancer.Data.Ini;
 using OpenLancer.Data.Editing;
 using OpenLancer.Data.Editing.Lists;
@@ -128,6 +129,69 @@ public sealed class ListPickerModelTests
         Assert.Equal(["New one (li_new)", "Loadout", "The active mod 'act' adds it. It is not saved.", "Used by 3 lines",
             "type = STATION"], footer);
         Assert.Equal(["li_typo: no loadout has this name."], ListPickerModel.Footer(model.Rows[1], "Loadout", _ => 0));
+    }
+
+    private static ListPickerRow Row(string value, string? group = null, string note = "") =>
+        new(ListRowKind.Entry, value, value, null) { Group = group, Note = note };
+
+    /// <summary>The rows of a list that the caller makes keep its order and its groups. A value outside the list gets
+    /// the "Missing" row first, and the list has no "None" (section 12.1 of the M8b design).</summary>
+    [Fact]
+    public void ACallerListKeepsItsOrderAndGetsTheMissingRow()
+    {
+        ListPickerRow[] rows = [Row("Sc_b", "Mine"), Row("Sc_a", "Mine"), Row("Sc_c", "Other")];
+
+        var missing = new ListPickerModel(rows, "Sc_typo");
+        Assert.Equal([ListRowKind.Missing, ListRowKind.Entry, ListRowKind.Entry, ListRowKind.Entry],
+            missing.Rows.Select(r => r.Kind));
+        Assert.Equal(["Sc_typo", "Sc_b", "Sc_a", "Sc_c"], missing.Rows.Select(r => r.Value));
+        Assert.Equal(0, missing.Current);
+
+        var known = new ListPickerModel(rows, "SC_A");
+        Assert.Equal(1, known.Current);
+        Assert.DoesNotContain(known.Rows, r => r.Kind is ListRowKind.Missing or ListRowKind.None);
+        Assert.Equal(-1, new ListPickerModel(rows, "").Current);
+        // A row without an entry gets its name and the kind in the footer.
+        Assert.Equal(["Sc_a", "Animation"], ListPickerModel.Footer(known.Rows[1], "Animation", _ => 0));
+    }
+
+    /// <summary>The search also finds the note of a row, and a second filter hides entries but not the "Missing"
+    /// row.</summary>
+    [Fact]
+    public void TheSearchFindsTheNoteAndASecondFilterHidesEntries()
+    {
+        var model = new ListPickerModel([Row("Sc_one", note: "Walk"), Row("Sc_two", note: "Talk"), Row("Sc_three")], "Sc_typo");
+
+        Assert.Equal(["Sc_one"], model.Visible("walk").Select(i => model.Rows[i].Value));
+        Assert.Equal(["Sc_typo", "Sc_two", "Sc_three"],
+            model.Visible("", r => r.Value != "Sc_one").Select(i => model.Rows[i].Value));
+        Assert.Empty(model.Visible("walk", r => r.Value != "Sc_one"));
+    }
+
+    /// <summary>A header line comes before the first visible row of each group, so a filter that hides the first row of
+    /// a group keeps its header. A row without a group gets no header.</summary>
+    [Fact]
+    public void AGroupGetsAHeaderAboveItsFirstVisibleRow()
+    {
+        var model = new ListPickerModel([Row("a", "Mine"), Row("b", "Mine"), Row("c", "Other"), Row("d", "Other")], "x");
+
+        Assert.Equal([0, ~1, 1, 2, ~3, 3, 4], ListPicker.Lines(model.Rows, model.Visible("")));
+        Assert.Equal([~2, 2, ~4, 4], ListPicker.Lines(model.Rows, [2, 4]));
+        Assert.Equal([0, 1], ListPicker.Lines([Row("a"), Row("b")], [0, 1]));
+    }
+
+    /// <summary>A popup that does not fit below its field moves left and up into the work area. A popup that is larger
+    /// than the area starts at the top left corner of the area.</summary>
+    [Fact]
+    public void APopupMovesToStayInsideTheWindow()
+    {
+        var min = new Vector2(0, 20);
+        var max = new Vector2(1000, 800);
+
+        Assert.Equal(new Vector2(100, 300), ListPicker.PopupPos(new Vector2(100, 300), new Vector2(400, 400), min, max));
+        Assert.Equal(new Vector2(600, 400), ListPicker.PopupPos(new Vector2(900, 700), new Vector2(400, 400), min, max));
+        Assert.Equal(new Vector2(600, 700), ListPicker.PopupPos(new Vector2(900, 700), new Vector2(400, 0), min, max));
+        Assert.Equal(new Vector2(0, 20), ListPicker.PopupPos(new Vector2(900, 700), new Vector2(1200, 900), min, max));
     }
 }
 
