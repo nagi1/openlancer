@@ -72,14 +72,15 @@ internal sealed class ListPickerModel
                     string.IsNullOrWhiteSpace(e.Name) ? e.Entry.Value : e.Name, e.Entry))
                 .OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(r => r.Value, StringComparer.OrdinalIgnoreCase)
-                .ToList(), none, current, currentExists)
+                .ToList(), none, current.Trim(), currentExists)
     {
     }
 
     /// <summary>The rows of a list that the caller orders and groups, for example the animation clips of a cutscene
     /// event. A value outside the list gets the "Missing" row first. The list has no "None".</summary>
     /// <param name="entries">The entry rows, in the order of the list.</param>
-    /// <param name="current">The value of the field: empty when the field has no value.</param>
+    /// <param name="current">The value of the field: empty when the field has no value. The value keeps its spaces, so a
+    /// value with a space at the start or at the end gets the "Missing" row.</param>
     public ListPickerModel(IReadOnlyList<ListPickerRow> entries, string current)
         : this(entries, false, current, false)
     {
@@ -90,7 +91,6 @@ internal sealed class ListPickerModel
         var rows = new List<ListPickerRow>(entries.Count + 2);
         if (none)
             rows.Add(new ListPickerRow(ListRowKind.None, "", "None", null));
-        current = current.Trim();
         if (current.Length > 0 && !entries.Any(r => Is(r.Value, current)))
             rows.Add(new ListPickerRow(currentExists ? ListRowKind.Other : ListRowKind.Missing, current, current, null));
         rows.AddRange(entries);
@@ -188,6 +188,15 @@ internal sealed class ListPickerModel
         return lines;
     }
 
+    /// <summary>The dim text at the right of a row: the nickname when the row shows another name, the note and the tag,
+    /// with one space between them.</summary>
+    public static string Note(ListPickerRow row)
+    {
+        var nickname = row.Kind == ListRowKind.Entry && !Is(row.Name, row.Value) ? row.Value : "";
+        var tag = row.Tag.Length > 0 ? $"[{row.Tag}]" : "";
+        return string.Join(" ", new[] { nickname, row.Note, tag }.Where(text => text.Length > 0));
+    }
+
     private static int IndexOf(IReadOnlyList<int> visible, int row)
     {
         for (var i = 0; i < visible.Count; i++)
@@ -215,6 +224,36 @@ internal sealed record ListPickerPane(float Width, float Height, Func<bool>? Fil
     Action<ListPickerRow?> Draw);
 
 /// <summary>
+/// The rows that the filters of an open list picker show, and the lines of the list, without ImGui. It filters the rows
+/// again only for new rows, for example after an opening. It also filters them again when the search text or a filter
+/// of the pane changes.
+/// </summary>
+internal sealed class ListPickerFilter
+{
+    private ListPickerModel? model;
+    private string text = "";
+    private (List<int> Rows, List<int> Lines) visible;
+
+    /// <summary>The rows that the filters show, and the lines of the list (see <see cref="ListPicker.Lines"/>).</summary>
+    /// <param name="filter">The search text.</param>
+    /// <param name="filtersChanged">True when a filter of the pane changed in this frame.</param>
+    /// <param name="shows">The filter of the pane, or null.</param>
+    public (List<int> Rows, List<int> Lines) Get(ListPickerModel rows, string filter, bool filtersChanged,
+        Func<ListPickerRow, bool>? shows)
+    {
+        if (filtersChanged || !ReferenceEquals(rows, model) || filter != text)
+        {
+            var shown = rows.Visible(filter, shows);
+            visible = (shown, ListPicker.Lines(rows.Rows, shown));
+            model = rows;
+            text = filter;
+        }
+
+        return visible;
+    }
+}
+
+/// <summary>
 /// The popup of the list picker, as the Unity object picker (decision D113): a search field with the focus, "None", the
 /// "Missing" value and the entries, and a footer with the hovered or selected entry. A click on a row and the arrow keys
 /// assign the value at once. Enter assigns the selected row and closes. A double-click and a click outside close and keep
@@ -231,14 +270,11 @@ internal sealed class ListPicker
     private const int VisibleRows = 14;
 
     private readonly PopupSession session = new();
+    private readonly ListPickerFilter visible = new();
     private string filter = "";
     private int selected = -1;
     private int hovered = -1;
     private ListPickerModel? model;
-
-    // The rows that the filters show, and the lines of the list (see Lines). Null after an opening.
-    private (List<int> Rows, List<int> Lines)? visible;
-    private string visibleFilter = "";
 
     // The row of the pane: the row that the mouse hovered or the keys selected last.
     private int paneRow = -1;
@@ -290,7 +326,6 @@ internal sealed class ListPicker
             // The opening goes to the field edits first, so the edit starts from the value of the opening.
             model = makeModel();
             filter = "";
-            visible = null;
             selected = model.Current;
             paneRow = selected;
             route(popup, session.Frame(popup, frame, true, false, false, owns(popup)), Value());
@@ -299,8 +334,11 @@ internal sealed class ListPicker
             return;
         }
 
+        // A dropdown of the pane is a popup in this popup. Read it before the content, because the dropdown can close
+        // in the content.
+        var dropdown = shown && ImGui.IsPopupOpen("", ImGuiPopupFlags.AnyPopupId);
         var (changed, close) = shown ? Content(kind, usedBy, pane) : (false, false);
-        var escape = ImGui.IsKeyPressed(ImGuiKey.Escape, false);
+        var escape = Cancels(ImGui.IsKeyPressed(ImGuiKey.Escape, false), dropdown);
         // Enter and a double-click assign the row in this frame and close the popup. The next frame ends the edit and
         // keeps the value.
         var events = session.Frame(popup, frame, shown, escape, changed, owns(popup));
@@ -323,6 +361,22 @@ internal sealed class ListPicker
     /// <param name="size">The size of the popup. A height of 0 does not move the popup up.</param>
     internal static Vector2 PopupPos(Vector2 anchor, Vector2 size, Vector2 min, Vector2 max) =>
         new(Math.Max(min.X, Math.Min(anchor.X, max.X - size.X)), Math.Max(min.Y, Math.Min(anchor.Y, max.Y - size.Y)));
+
+    /// <summary>
+    /// The row of the side pane after a frame. The hovered row takes the pane only when the mouse moved or the wheel
+    /// turned. ImGui also gives the hovered row under a mouse that does not move. So without this rule, the row under
+    /// the mouse takes back the pane after each arrow key.
+    /// </summary>
+    /// <param name="paneRow">The row of the pane before the rows draw. An arrow key sets it to the selection.</param>
+    /// <param name="hovered">The row under the mouse, or -1.</param>
+    /// <param name="mouseMoved">True when the mouse moved or the wheel turned in this frame.</param>
+    internal static int PaneRow(int paneRow, int hovered, bool mouseMoved) =>
+        hovered >= 0 && mouseMoved ? hovered : paneRow;
+
+    /// <summary>True when Esc cancels the pick. While a dropdown of the pane is open, Esc closes only the
+    /// dropdown.</summary>
+    /// <param name="dropdown">True when a popup in the list popup was open at the start of the frame.</param>
+    internal static bool Cancels(bool escape, bool dropdown) => escape && !dropdown;
 
     /// <summary>
     /// The lines of the list for the visible rows: a row index, or the complement of a row index for the header of the
@@ -364,14 +418,7 @@ internal sealed class ListPicker
         var enter = ImGui.InputTextWithHint("##filter", $"{EditorIcons.MagnifyingGlass}  Search", ref filter, 64,
             ImGuiInputTextFlags.EnterReturnsTrue);
         var filtersChanged = pane?.Filters?.Invoke() == true;
-        if (filtersChanged || visible == null || filter != visibleFilter)
-        {
-            var shownRows = rows.Visible(filter, pane?.Shows);
-            visible = (shownRows, Lines(rows.Rows, shownRows));
-            visibleFilter = filter;
-        }
-
-        var (visibleRows, lines) = visible.Value;
+        var (visibleRows, lines) = visible.Get(rows, filter, filtersChanged, pane?.Shows);
         var changed = false;
         var close = false;
         var scroll = ImGui.IsWindowAppearing() ? selected : -1;
@@ -439,7 +486,6 @@ internal sealed class ListPicker
                 if (ImGui.IsItemHovered())
                 {
                     hovered = index;
-                    paneRow = index;
                 }
 
                 if (index == scroll)
@@ -447,12 +493,7 @@ internal sealed class ListPicker
                     ImGui.SetScrollHereY();
                 }
 
-                var dim = item.Kind == ListRowKind.Entry &&
-                          !string.Equals(item.Name, item.Value, StringComparison.OrdinalIgnoreCase)
-                    ? item.Value
-                    : "";
-                var tag = item.Tag.Length > 0 ? $"[{item.Tag}]" : "";
-                var note = $"{dim} {item.Note} {tag}".Trim();
+                var note = ListPickerModel.Note(item);
                 if (note.Length > 0)
                 {
                     ImGui.SameLine();
@@ -465,6 +506,8 @@ internal sealed class ListPicker
         ImGui.EndChild();
         if (pane != null)
         {
+            var io = ImGui.GetIO();
+            paneRow = PaneRow(paneRow, hovered, io.MouseDelta != Vector2.Zero || io.MouseWheel != 0);
             ImGui.SameLine();
             ImGui.BeginChild("##pane", new Vector2(MathF.Round(pane.Width * ImGuiHelper.Scale), height),
                 ImGuiChildFlags.None, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);

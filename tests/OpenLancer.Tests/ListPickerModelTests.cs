@@ -18,6 +18,9 @@ public sealed class ListPickerModelTests
     private static ListEntry Entry(string value, ValueOrigin origin = ValueOrigin.Base, bool unsaved = false) =>
         new(value, null, origin, origin == ValueOrigin.ActiveMod ? "act" : null, "type = STATION") { Unsaved = unsaved };
 
+    private static ListPickerRow Row(string value, string? group = null, string note = "") =>
+        new(ListRowKind.Entry, value, value, null) { Group = group, Note = note };
+
     private static readonly (ListEntry, string)[] Entries =
     [
         (Entry("li_b"), "Bravo"),
@@ -131,9 +134,6 @@ public sealed class ListPickerModelTests
         Assert.Equal(["li_typo: no loadout has this name."], ListPickerModel.Footer(model.Rows[1], "Loadout", _ => 0));
     }
 
-    private static ListPickerRow Row(string value, string? group = null, string note = "") =>
-        new(ListRowKind.Entry, value, value, null) { Group = group, Note = note };
-
     /// <summary>The rows of a list that the caller makes keep its order and its groups. A value outside the list gets
     /// the "Missing" row first, and the list has no "None" (section 12.1 of the M8b design).</summary>
     [Fact]
@@ -153,6 +153,93 @@ public sealed class ListPickerModelTests
         Assert.Equal(-1, new ListPickerModel(rows, "").Current);
         // A row without an entry gets its name and the kind in the footer.
         Assert.Equal(["Sc_a", "Animation"], ListPickerModel.Footer(known.Rows[1], "Animation", _ => 0));
+    }
+
+    /// <summary>A caller list keeps the spaces of the value, so a value with a space at the start or at the end gets the
+    /// "Missing" row. An INI list trims the value, as the INI reader does.</summary>
+    [Fact]
+    public void ACallerListKeepsTheSpacesOfTheValue()
+    {
+        var spaced = new ListPickerModel([Row("Sc_a"), Row("Sc_b")], " Sc_a ");
+        Assert.Equal(ListRowKind.Missing, spaced.Rows[0].Kind);
+        Assert.Equal(" Sc_a ", spaced.Rows[0].Value);
+        Assert.Equal(0, spaced.Current);
+
+        var ini = new ListPickerModel(Entries, none: true, current: " li_a ");
+        Assert.DoesNotContain(ini.Rows, r => r.Kind == ListRowKind.Missing);
+        Assert.Equal("li_a", ini.Rows[ini.Current].Value);
+    }
+
+    /// <summary>The dim text of a row has the nickname when the row shows another name, the note and the tag, with one
+    /// space between them.</summary>
+    [Fact]
+    public void TheDimTextOfARowHasOneSpaceBetweenItsParts()
+    {
+        var model = new ListPickerModel(Entries, none: true, current: "li_typo");
+
+        Assert.Equal("li_new [new]", ListPickerModel.Note(model.Rows.Single(r => r.Value == "li_new")));
+        Assert.Equal("li_a", ListPickerModel.Note(model.Rows.Single(r => r.Value == "li_a")));
+        Assert.Equal("", ListPickerModel.Note(model.Rows.Single(r => r.Value == "li_c")));
+        Assert.Equal("", ListPickerModel.Note(model.Rows[0]));
+        Assert.Equal("Walk", ListPickerModel.Note(Row("Sc_a", note: "Walk")));
+        Assert.Equal("li_x Walk [mod]", ListPickerModel.Note(
+            new ListPickerRow(ListRowKind.Entry, "li_x", "Name", Entry("li_x", ValueOrigin.ActiveMod)) { Note = "Walk" }));
+    }
+
+    /// <summary>
+    /// The side pane shows the row that the mouse hovered last, or the row that the arrow keys selected last. A row
+    /// under a mouse that did not move does not take back the pane after an arrow key.
+    /// </summary>
+    [Fact]
+    public void AnArrowKeyKeepsThePaneUnderAStillMouse()
+    {
+        // The mouse moves onto row 4.
+        var pane = ListPicker.PaneRow(2, 4, mouseMoved: true);
+        Assert.Equal(4, pane);
+        // Down selects row 5 and gives it to the pane. The mouse stays on row 4.
+        Assert.Equal(5, ListPicker.PaneRow(5, 4, mouseMoved: false));
+        // The mouse moves again, or it leaves the list.
+        Assert.Equal(4, ListPicker.PaneRow(5, 4, mouseMoved: true));
+        Assert.Equal(5, ListPicker.PaneRow(5, -1, mouseMoved: true));
+    }
+
+    /// <summary>Esc cancels the pick, but while a dropdown of the pane is open, Esc closes only the dropdown.</summary>
+    [Fact]
+    public void EscInADropdownOfThePaneKeepsThePick()
+    {
+        Assert.True(ListPicker.Cancels(escape: true, dropdown: false));
+        Assert.False(ListPicker.Cancels(escape: true, dropdown: true));
+        Assert.False(ListPicker.Cancels(escape: false, dropdown: false));
+    }
+
+    /// <summary>The list filters its rows again only for new rows, a new search text or a change of a filter of the pane.
+    /// A frame without a change reuses the rows and the lines.</summary>
+    [Fact]
+    public void TheListFiltersAgainOnlyAfterAChange()
+    {
+        var calls = 0;
+        bool Shows(ListPickerRow row)
+        {
+            calls++;
+            return row.Value != "b";
+        }
+
+        var model = new ListPickerModel([Row("a", "Mine"), Row("b", "Mine"), Row("c", "Other")], "");
+        var filter = new ListPickerFilter();
+
+        var first = filter.Get(model, "", false, Shows);
+        Assert.Equal(3, calls);
+        Assert.Equal([0, 2], first.Rows);
+        Assert.Equal([~0, 0, ~2, 2], first.Lines);
+        Assert.Same(first.Rows, filter.Get(model, "", false, Shows).Rows);
+        Assert.Equal(3, calls);
+
+        Assert.Equal([2], filter.Get(model, "c", false, Shows).Rows);
+        Assert.Equal(6, calls);
+        Assert.Equal([2], filter.Get(model, "c", true, _ => true).Rows);
+        var reopened = new ListPickerModel([Row("a"), Row("d")], "");
+        Assert.Empty(filter.Get(reopened, "c", false, Shows).Rows);
+        Assert.Equal([1], filter.Get(reopened, "d", false, Shows).Rows);
     }
 
     /// <summary>The search also finds the note of a row, and a second filter hides entries but not the "Missing"
