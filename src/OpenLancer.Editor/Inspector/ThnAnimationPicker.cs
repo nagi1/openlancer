@@ -60,8 +60,8 @@ internal sealed class ThnAnimationPicker(EditorWindow window, PropertyGrid grid)
         eventType == EventTypes.StartMotion && path == AnimationPath && targetType == Character;
 
     /// <summary>
-    /// Draws the Animation row. When the clip list is not available, the row keeps its text field, and its note gives
-    /// the reason.
+    /// Draws the row of the animation. When the clip list is not available, the row keeps its text field, and its note
+    /// gives the reason.
     /// </summary>
     /// <param name="note">The note of the schema row, or null.</param>
     /// <param name="parse">Gives the value of a text.</param>

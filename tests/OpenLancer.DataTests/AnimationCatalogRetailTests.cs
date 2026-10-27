@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using LibreLancer.Data.IO;
-using LibreLancer.Data.Schema;
 using LibreLancer.Thn;
 using OpenLancer.Data.IO;
 using OpenLancer.Data.Thn;
