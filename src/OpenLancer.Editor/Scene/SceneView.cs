@@ -194,6 +194,12 @@ internal sealed class SceneView : IDisposable
     public bool IsBehind => stage?.IsBehind == true;
 
     /// <summary>
+    /// Applies the changes of W now, also while the Scene does not draw (see <see cref="SceneSync.Flush"/>). Call it only
+    /// before the panels draw. Then no worker task of the renderer reads the zones, as at flush A.
+    /// </summary>
+    public void Flush() => stage?.Flush();
+
+    /// <summary>
     /// The shapes of the open system for the start of Play from camera (see <see cref="SpawnPoint.Shapes"/>). They have
     /// the unsaved edits that the scene shows. Null when the open system is not the system with that nickname.
     /// </summary>

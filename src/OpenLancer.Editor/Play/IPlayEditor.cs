@@ -54,9 +54,16 @@ internal interface IPlayEditor : IPlayHost
     /// <summary>
     /// True while the Scene does not show each change of the edits. The Scene applies them at its next flush, at the
     /// start of its next frame (section 3 of the M2 design). For example, an Inspector field that a click on Play ends
-    /// commits its edit after the flush of that frame.
+    /// commits its edit after the flush of that frame. The Scene does not flush while it does not draw.
     /// </summary>
     bool SceneBehind { get; }
+
+    /// <summary>
+    /// Makes the Scene apply each change of the edits now, also while it does not draw, for example while the Mission tab
+    /// hides its Scene part. A new model waits while an edit is open or the game data loads, so the Scene can stay
+    /// behind. Call it only before the panels draw: then no worker task of the renderer reads the scene.
+    /// </summary>
+    void CatchUpScene();
 
     /// <summary>The shapes of a system for the start of Play from camera (see <see cref="SpawnPoint.Shapes"/>), as the
     /// Scene shows them. Null when the Scene does not show that system.</summary>
@@ -95,6 +102,11 @@ internal interface IMissionStart
 
     /// <summary>True when the last start that <see cref="Prepare"/> made is approximate.</summary>
     bool Approximate { get; }
+
+    /// <summary>True when <see cref="Prepare"/> can read the Scene: the start place is the Scene camera, or the suggested
+    /// place, which can be a point in the system that the Scene shows and gets the start check. A base that the user
+    /// picks does not read the Scene.</summary>
+    bool ReadsScene { get; }
 
     /// <summary>The nicknames of the setup triggers of the last start that <see cref="Prepare"/> made. They are in the
     /// test layer, not in the mod.</summary>

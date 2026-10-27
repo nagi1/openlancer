@@ -90,6 +90,9 @@ internal sealed class MissionPlayStart(IMissionPlayHost host, MissionPlayRequest
 
     public bool Approximate => Plan?.Kind == StartKind.Approximate;
 
+    // The plan uses the suggested place for a base choice without a base.
+    public bool ReadsScene => Request is not { Place: StartPlaceChoice.Base, PlaceBase: not null };
+
     public IReadOnlySet<string> SetupTriggers =>
         (Plan?.Setup ?? []).Select(t => t.Nickname).ToHashSet(StringComparer.OrdinalIgnoreCase);
 

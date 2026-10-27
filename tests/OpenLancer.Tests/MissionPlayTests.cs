@@ -135,6 +135,50 @@ public sealed class MissionPlayTests : IDisposable
         Assert.NotSame(question.Choices, editor.Asked!.Value.Choices);
     }
 
+    /// <summary>After "Save and continue", the earlier agent request runs until Play gives its result, for example until
+    /// the game answers a restart. A second agent request then gets busy, and the reason does not say that the user did
+    /// not answer. After the result, a new request starts.</summary>
+    [Fact]
+    public async Task ASecondAgentRequestAfterTheAnswerGivesBusyUntilTheFirstEnds()
+    {
+        var cancel = TestContext.Current.CancellationToken;
+        editor.UnsavedMod = "act";
+        var running = new TaskCompletionSource<PlayRequestResult>();
+        editor.Result = running;
+        var first = plays.Request(AgentRequest("t_kill"));
+        editor.Asked!.Value.Choices.Single(c => c.Label == "Save and continue").Action();
+
+        var second = await plays.Request(AgentRequest(null)).WaitAsync(Wait, cancel);
+
+        Assert.Equal(EditErrorKind.Busy, second.Error!.Kind);
+        Assert.Equal(PlayRequests.AgentWaitsDetail, second.Error.Detail);
+        Assert.Equal(PlayRequests.AgentRunsReason, second.Error.Message);
+        Assert.False(first.IsCompleted);
+
+        running.SetResult(new PlayRequestResult(PlayStatus.Running));
+        Assert.True((await first.WaitAsync(Wait, cancel)).Started);
+        editor.Result = null;
+        editor.UnsavedMod = null;
+        var third = await plays.Request(AgentRequest(null)).WaitAsync(Wait, cancel);
+
+        Assert.True(third.Started);
+        Assert.Equal(2, editor.Requests.Count);
+    }
+
+    /// <summary>Only a base that the user picked keeps the start check of a mission play away from the Scene, so Play
+    /// waits for the Scene in the other cases. A base choice without a base uses the suggested place.</summary>
+    [Theory]
+    [InlineData(StartPlaceChoice.Suggested, null, true)]
+    [InlineData(StartPlaceChoice.Camera, null, true)]
+    [InlineData(StartPlaceChoice.Base, null, true)]
+    [InlineData(StartPlaceChoice.Base, "ol_base_a", false)]
+    public void AStartReadsTheSceneUnlessItsPlaceIsAPickedBase(StartPlaceChoice place, string? dock, bool reads)
+    {
+        var request = new MissionPlayRequest(ScriptPath, MissionStartPoint.MissionStart) { Place = place, PlaceBase = dock };
+
+        Assert.Equal(reads, new MissionPlayStart(plays, request).ReadsScene);
+    }
+
     /// <summary>The user can start another play while the question is open. "Save and continue" then checks the rule
     /// again, and the agent gets refused, so the request does not close the play of the user.</summary>
     [Fact]
@@ -457,11 +501,14 @@ public sealed class MissionPlayTests : IDisposable
                 : new StartSavePlace(place.System ?? "ol_sys_a", null, place.Position, place.Orientation);
         }
 
+        /// <summary>The result of the next requests, or null for a play that started at once.</summary>
+        public TaskCompletionSource<PlayRequestResult>? Result { get; set; }
+
         public Task<PlayRequestResult> RequestMission(IMissionStart start, string? package, PlaySaveRule save)
         {
             Requests.Add(start);
             Saves.Add(save);
-            return Task.FromResult(new PlayRequestResult(PlayStatus.Starting));
+            return Result?.Task ?? Task.FromResult(new PlayRequestResult(PlayStatus.Starting));
         }
 
         public void Ask(string title, string message, IReadOnlyList<Choice> choices, Action cancel) =>

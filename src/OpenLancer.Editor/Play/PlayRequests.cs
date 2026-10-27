@@ -105,12 +105,18 @@ internal static class PlayRequests
     /// <summary>The detail code of the refusal when the user does not save.</summary>
     public const string NotSavedDetail = "NotSaved";
 
-    /// <summary>The detail code of an agent request while the question of another agent request is open.</summary>
+    /// <summary>The detail code of an agent request while an earlier agent request that asked the user did not
+    /// end.</summary>
     public const string AgentWaitsDetail = "AgentPlayWaits";
 
     /// <summary>The refusal of an agent request while the question of another agent request is open.</summary>
     public const string AgentWaitsReason = "The user did not answer an earlier agent play request yet, so this request " +
                                            "did not start. Wait for the result of the earlier request.";
+
+    /// <summary>The refusal of an agent request after the user clicked "Save and continue" for an earlier agent request,
+    /// until Play gives the result of the earlier request.</summary>
+    public const string AgentRunsReason = "An earlier agent play request did not end yet, so this request did not " +
+                                          "start. Wait for the result of the earlier request.";
 
     /// <summary>The question of the agent play rule (user decision of 2026-10-20 of the M6c design).</summary>
     public static string AgentPlayQuestion(string mod) =>

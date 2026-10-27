@@ -771,6 +771,8 @@ internal sealed partial class EditorWindow : Game
         agentController.Frame();
         agentRender.Frame();
         agentBench?.Update();
+        // Before the panels draw, so that the Scene can apply the edits for Play also while it does not show.
+        Play.BeforePanels(IsEditing);
         var menuHeight = MainMenu();
         var statusHeight = MathF.Truncate(StatusBar.Height * ImGuiHelper.Scale);
         frameElapsed = elapsed;

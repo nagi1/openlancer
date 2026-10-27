@@ -143,6 +143,8 @@ public sealed class PlayStartPageTests
 
         public bool Approximate => false;
 
+        public bool ReadsScene => true;
+
         public IReadOnlySet<string> SetupTriggers => new HashSet<string>();
 
         public StartPlan? Plan => null;

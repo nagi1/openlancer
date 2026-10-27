@@ -59,6 +59,8 @@ A zone with less damage, for example a radiation cloud, does not move the start.
 
 The check knows the objects and the zones of the system. It does not know mines, asteroids or other ships.
 
+The check reads the Scene. So Play first lets the Scene show each edit, also while another tab shows. When a new model of an edit waits for the load of the game data, Play waits for the end of the load, and the Console tells why.
+
 ## Play at base
 
 Open the Play menu and select Play at base. The list shows the bases of the open system first. The other bases are in one submenu for each system. Click a base. The game starts with the ship docked at that base. Play at base needs no open system.
@@ -240,6 +242,7 @@ An agent of the agent server can start a mission play. The agent tools that star
 | A mission play runs | The game starts again at the start of the request. |
 | The start cannot start | Play does not start. The agent gets the reason of the start plan. |
 | The dialog of another agent request is open | Play does not start. The agent gets an error and waits for the result of the other request. |
+| You clicked "Save and continue" for another agent request, and Play did not end that request yet | Play does not start. The agent gets an error and waits for the result of the other request. |
 
 An agent request plays the start of the request. It does not change the play start of the mission. Your own F5 and Ctrl+F5 always save first, as before.
 

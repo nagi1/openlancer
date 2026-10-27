@@ -46,8 +46,9 @@ internal enum PlayStatus
 /// </summary>
 /// <remarks>
 /// <para>A request waits for the end of the frame and for the end of an open field edit, drag or dialog, so that the
-/// save has the edit of the field (section 9.1). A start at the camera also waits until the Scene shows each edit,
-/// because its start check reads the Scene (section 9.5).</para>
+/// save has the edit of the field (section 9.1). A request whose start check reads the Scene also waits until the Scene
+/// shows each edit (section 9.5): a start at the camera, and a mission play whose start place can be in the Scene.
+/// Before the panels draw, Play lets the Scene apply the edits, also while the Scene does not show.</para>
 /// <para>The gate (section 9.3): the validation of the gate save decides. The gate save is the save whose files the game
 /// reads. Errors stop the game at once (D16). The start command waits for the waiting event of the game: until then,
 /// the game reads the mod files, and a save in that time makes the newest save the gate save (the read window, D51).
@@ -279,17 +280,16 @@ internal sealed class PlayController : IDisposable
             return;
         }
 
-        // The start check of Play from camera reads the Scene. So it waits until the Scene shows each edit, also the edit
-        // of a field that the click on Play ended (section 9.5). The start place of a mission play can be the Scene
-        // camera too.
-        var readsScene = request.Start is PlayStart.InSpace || request.Mission != null;
+        // The start check reads the Scene. So the request waits until the Scene shows each edit, also the edit of a field
+        // that the click on Play ended (section 9.5). BeforePanels lets the Scene apply the edits in the next frame.
+        var sceneBehind = ReadsScene(request) && editor.SceneBehind;
         if (game is { } running)
         {
             // A mission play while a mission play runs starts the game again at the new start (section 5.8 of the M6c
             // design). The process stays.
             if (request.Mission != null && running.Mission != null && CanRestart(running))
             {
-                if (editor.SceneBehind)
+                if (sceneBehind)
                 {
                     return;
                 }
@@ -309,7 +309,7 @@ internal sealed class PlayController : IDisposable
             return;
         }
 
-        if (readsScene && editor.SceneBehind)
+        if (sceneBehind)
         {
             return;
         }
@@ -317,6 +317,39 @@ internal sealed class PlayController : IDisposable
         pending = null;
         Finish(request, Begin(request));
     }
+
+    /// <summary>
+    /// Lets the Scene apply each edit for a request whose start check reads the Scene (section 9.5). The Scene applies
+    /// the edits only while it draws, so without this step such a request waits without end while the Scene does not
+    /// show, for example while the Mission tab hides its Scene part. When the Scene still cannot show each edit, because a
+    /// new model waits for the load of the game data, the Console tells once why Play waits. Call it once each frame,
+    /// before the panels draw.
+    /// </summary>
+    /// <param name="editing">True while a field edit or a drag is open. The request waits for its end first.</param>
+    public void BeforePanels(bool editing)
+    {
+        if (editing || pending is not { } request || !ReadsScene(request) || !editor.SceneBehind)
+        {
+            return;
+        }
+
+        editor.CatchUpScene();
+        if (editor.SceneBehind && !request.SceneWaitTold)
+        {
+            request.SceneWaitTold = true;
+            Log(ConsoleSeverity.Info, SceneWaitText);
+        }
+    }
+
+    /// <summary>The note of a request that waits until the Scene shows each edit.</summary>
+    internal const string SceneWaitText = "Play waits until the Scene shows each edit, because the start check of Play " +
+                                          "reads the Scene. The Scene shows new models when the load of the game data " +
+                                          "ends.";
+
+    /// <summary>True when the start check of a request reads the Scene: Play from camera, and a mission play whose start
+    /// place can be the Scene camera or a point in the system that the Scene shows.</summary>
+    private static bool ReadsScene(PlayRequest request) =>
+        request.Start is PlayStart.InSpace || request.Mission is { ReadsScene: true };
 
     /// <summary>
     /// Ends the game because the session ends: a profile close, a change of the active mod or a new mod, or the window
@@ -1238,6 +1271,9 @@ internal sealed class PlayController : IDisposable
 
         /// <summary>What the save of Play does for the request.</summary>
         public PlaySaveRule Save { get; init; }
+
+        /// <summary>True after the Console told why the request waits for the Scene.</summary>
+        public bool SceneWaitTold { get; set; }
 
         /// <summary>The result of the request. Its continuations run on the thread pool, not in the frame of the
         /// editor.</summary>

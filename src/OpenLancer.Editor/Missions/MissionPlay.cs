@@ -104,8 +104,8 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
         };
     }
 
-    // The result of the agent request whose question is open, or null.
-    private Task<PlayRequestResult>? asking;
+    // The last agent request that asked the user, or null. Until it ends, a new agent request gets busy.
+    private AgentQuestion? asking;
 
     /// <summary>The play start of a script of the open profile, or the mission start without a profile.</summary>
     public PlayStartSetting PlayStartOf(string script) => editor.ProfilePath is { } profile
@@ -211,36 +211,45 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
             return Task.FromResult(refused);
         }
 
-        var asks = PlayRequests.AsksUser(editor, request.Origin);
+        var question = PlayRequests.AsksUser(editor, request.Origin) ? new AgentQuestion() : null;
         var result = PlayRequests.WithAgentRule(editor, request.Origin, () => editor.PlayStatus, save =>
+        {
+            if (question == null)
+            {
+                return editor.RequestMission(new MissionPlayStart(this, request), editor.PlayPackage, save);
+            }
+
             // The user can start another play while the question is open, so the rule of an agent request runs again
             // after the answer.
-            asks && AgentRefusal(request, afterQuestion: true) is { } late
+            question.Answered = true;
+            return AgentRefusal(request, afterQuestion: true) is { } late
                 ? Task.FromResult(late)
-                : editor.RequestMission(new MissionPlayStart(this, request), editor.PlayPackage, save));
-        if (asks)
+                : editor.RequestMission(new MissionPlayStart(this, request), editor.PlayPackage, save);
+        });
+        if (question != null)
         {
-            asking = result;
+            question.Result = result;
+            asking = question;
         }
 
         return result;
     }
 
     /// <summary>
-    /// Why a request of an agent cannot start before it asks the user, or null: the question of another agent request
-    /// is open, another play runs (section 7.2 of the M6c design), the script or the trigger does not resolve, or the plan
-    /// of the model now refuses (section 7.4). The plan of the model now is the plan of the saved script, because the save
-    /// writes the model.
+    /// Why a request of an agent cannot start before it asks the user, or null: an earlier agent request that asked the
+    /// user did not end, another play runs (section 7.2 of the M6c design), the script or the trigger does not resolve, or
+    /// the plan of the model now refuses (section 7.4). The plan of the model now is the plan of the saved script, because
+    /// the save writes the model.
     /// </summary>
     /// <param name="afterQuestion">True for the check after the answer of the user. The open question is then the
     /// question of this request.</param>
     private PlayRequestResult? AgentRefusal(MissionPlayRequest request, bool afterQuestion = false)
     {
         var status = editor.PlayStatus;
-        if (!afterQuestion && asking is { IsCompleted: false })
+        if (!afterQuestion && asking is { Result.IsCompleted: false } earlier)
         {
-            return PlayRequestResult.Refused(status, PlayRequests.AgentWaitsDetail, PlayRequests.AgentWaitsReason,
-                EditErrorKind.Busy);
+            return PlayRequestResult.Refused(status, PlayRequests.AgentWaitsDetail,
+                earlier.Answered ? PlayRequests.AgentRunsReason : PlayRequests.AgentWaitsReason, EditErrorKind.Busy);
         }
 
         if (editor.GameRuns || status != PlayStatus.Idle && editor.RunningMission == null)
@@ -271,4 +280,15 @@ internal sealed class MissionPlay(IMissionPlayEditor editor) : IMissionPlayHost
         editor.ModelOf(script, out problem);
 
     StartSavePlace? IMissionPlayHost.PlaceOf(StartPlace place, out string? problem) => editor.PlaceOf(place, out problem);
+
+    /// <summary>An agent request that asked the user.</summary>
+    private sealed class AgentQuestion
+    {
+        /// <summary>The result of the request. It completes when Play gives the result, which can be after the
+        /// answer.</summary>
+        public Task<PlayRequestResult>? Result { get; set; }
+
+        /// <summary>True after the user clicked "Save and continue".</summary>
+        public bool Answered { get; set; }
+    }
 }

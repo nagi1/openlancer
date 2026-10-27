@@ -81,6 +81,8 @@ internal sealed partial class EditorWindow : IPlayEditor, IGamePlayHost, IMissio
 
     bool IPlayEditor.SceneBehind => Scene.IsBehind;
 
+    void IPlayEditor.CatchUpScene() => Scene.Flush();
+
     IReadOnlyList<SpawnShape>? IPlayEditor.SpawnShapes(string system) => Scene.SpawnShapes(system);
 
     void IPlayEditor.MissionChanged(PlayEvent.MissionChanges changes) => Missions.MissionChanged(changes);

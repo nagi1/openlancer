@@ -1870,10 +1870,14 @@ public sealed class PlayControllerTests : IDisposable
         StopAndRunToIdle();
     }
 
-    /// <summary>A mission play waits until the Scene shows each edit, because its start place can be the Scene camera
-    /// (review fix of M6c-2).</summary>
+    /// <summary>
+    /// A mission play whose start place can be in the Scene waits until the Scene shows each edit. The Scene applies the
+    /// edits only while it draws. So before the panels draw, Play lets the Scene apply them, and the play starts in the
+    /// next frame also while the Scene does not show, for example after a node drag in the Mission tab without its Scene
+    /// part (review fix of M6c-2).
+    /// </summary>
     [Fact]
-    public void AMissionPlayWaitsUntilTheSceneShowsEachEdit()
+    public void AMissionPlayLetsAHiddenSceneShowTheEditsAndStartsInTheNextFrame()
     {
         editor.Commit(1);
         editor.Finish(1);
@@ -1885,9 +1889,90 @@ public sealed class PlayControllerTests : IDisposable
 
         Assert.Equal(0, mission.Prepares);
         Assert.Empty(starts);
-        editor.SceneBehind = false;
+        // The next frame: no Scene draws, so only Play makes the Scene apply the edits.
+        play.BeforePanels(editing: false);
+        Assert.Equal(1, editor.CatchUpCalls);
         play.Update(false, false);
         Assert.Equal(1, mission.Prepares);
+        Assert.DoesNotContain(PlayController.SceneWaitText, Console);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>F5 during a mission play also lets a hidden Scene apply the edits, and then the game starts again at the
+    /// new start.</summary>
+    [Fact]
+    public void F5DuringAMissionPlayLetsAHiddenSceneShowTheEdits()
+    {
+        PlayMissionToRunning(Game with { RestartLines = [Restarted(1)] }, new FakeMissionStart());
+        var second = new FakeMissionStart();
+        editor.SceneBehind = true;
+
+        play.RequestMission(second, null);
+        play.Update(false, false);
+        Assert.Equal(0, second.Prepares);
+
+        play.BeforePanels(editing: false);
+        play.Update(false, false);
+
+        Assert.Equal(1, second.Prepares);
+        RunUntil(PlayStatus.Running);
+        Assert.Same(second, play.Mission);
+        Assert.Equal(["start", "restart 1"], stub.Input(0));
+        StopAndRunToIdle();
+    }
+
+    /// <summary>A mission play at a base that the user picked does not read the Scene, so it does not wait for
+    /// it.</summary>
+    [Fact]
+    public void AMissionPlayAtAPickedBaseDoesNotWaitForTheScene()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        editor.SceneBehind = true;
+        var mission = new FakeMissionStart { ReadsScene = false };
+
+        play.RequestMission(mission, null);
+        play.BeforePanels(editing: false);
+        play.Update(false, false);
+
+        Assert.Equal(0, editor.CatchUpCalls);
+        Assert.Equal(1, mission.Prepares);
+        RunUntil(PlayStatus.Running);
+        StopAndRunToIdle();
+    }
+
+    /// <summary>
+    /// When the Scene cannot show each edit, because a new model waits for the load of the game data, Play waits and the
+    /// Console tells why, once. Play does not make the Scene apply the edits while a field edit or a drag is open. The
+    /// play starts when the Scene shows each edit.
+    /// </summary>
+    [Fact]
+    public void PlayTellsOnceWhyItWaitsWhenTheSceneCannotShowEachEdit()
+    {
+        editor.Commit(1);
+        editor.Finish(1);
+        editor.SceneBehind = true;
+        editor.SceneStaysBehind = true;
+
+        play.Request(Space, null);
+        play.BeforePanels(editing: true);
+        Assert.Equal(0, editor.CatchUpCalls);
+        for (var frame = 0; frame < 3; frame++)
+        {
+            play.BeforePanels(editing: false);
+            play.Update(false, false);
+        }
+
+        Assert.Equal(3, editor.CatchUpCalls);
+        Assert.Empty(starts);
+        Assert.Equal(1, Console.Count(m => m == PlayController.SceneWaitText));
+
+        editor.SceneStaysBehind = false;
+        play.BeforePanels(editing: false);
+        play.Update(false, false);
+
+        Assert.Single(starts);
         RunUntil(PlayStatus.Running);
         StopAndRunToIdle();
     }
@@ -1990,6 +2075,8 @@ public sealed class PlayControllerTests : IDisposable
         public string StartName { get; init; } = "Checkpoint t_restore";
 
         public bool Approximate { get; init; }
+
+        public bool ReadsScene { get; init; } = true;
 
         public IReadOnlySet<string> SetupTriggers { get; init; } = new HashSet<string>();
 
@@ -2160,6 +2247,18 @@ public sealed class PlayControllerTests : IDisposable
             nickname.Equals("br01_01_base", StringComparison.OrdinalIgnoreCase) ? "Planet New London" : "";
 
         public bool SceneBehind { get; set; }
+
+        /// <summary>True: the Scene stays behind after a catch-up, as while a new model waits for the load of the game
+        /// data.</summary>
+        public bool SceneStaysBehind { get; set; }
+
+        public int CatchUpCalls { get; private set; }
+
+        public void CatchUpScene()
+        {
+            CatchUpCalls++;
+            SceneBehind = SceneStaysBehind;
+        }
 
         /// <summary>The shapes of Br01, the system that the Scene shows.</summary>
         public List<SpawnShape> Shapes { get; } = [];
