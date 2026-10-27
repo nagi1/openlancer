@@ -149,9 +149,9 @@
     },
     {
       "id": "microsoft-packages", "name": "Entity Framework Core, Microsoft.Data.Sqlite and Microsoft.Extensions", "version": "NuGet packages", "license": "MIT",
-      "packages": ["Microsoft.Data.Sqlite.Core", "Microsoft.EntityFrameworkCore", "Microsoft.EntityFrameworkCore.Abstractions", "Microsoft.EntityFrameworkCore.Proxies", "Microsoft.EntityFrameworkCore.Relational", "Microsoft.EntityFrameworkCore.Sqlite", "Microsoft.EntityFrameworkCore.Sqlite.Core", "Microsoft.Extensions.AI.Abstractions", "Microsoft.Extensions.Caching.Abstractions", "Microsoft.Extensions.Caching.Memory", "Microsoft.Extensions.Configuration.Abstractions", "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.DependencyInjection.Abstractions", "Microsoft.Extensions.DependencyModel", "Microsoft.Extensions.Logging", "Microsoft.Extensions.Logging.Abstractions", "Microsoft.Extensions.Options", "Microsoft.Extensions.Primitives"],
+      "packages": ["Microsoft.Data.Sqlite.Core", "Microsoft.EntityFrameworkCore", "Microsoft.EntityFrameworkCore.Abstractions", "Microsoft.EntityFrameworkCore.Proxies", "Microsoft.EntityFrameworkCore.Relational", "Microsoft.EntityFrameworkCore.Sqlite", "Microsoft.EntityFrameworkCore.Sqlite.Core", "Microsoft.Extensions.AI.Abstractions", "Microsoft.Extensions.DependencyModel"],
       "copyright": ["Copyright (c) Microsoft Corporation. All rights reserved."],
-      "texts": ["repo:release/licenses/MIT.txt", "nuget:Microsoft.Extensions.Logging/THIRD-PARTY-NOTICES.TXT"]
+      "texts": ["repo:release/licenses/MIT.txt", "nuget:Microsoft.Extensions.DependencyModel/THIRD-PARTY-NOTICES.TXT"]
     },
     {
       "id": "modelcontextprotocol", "name": "MCP C# SDK (ModelContextProtocol)", "version": "NuGet packages", "license": "Apache-2.0, parts MIT",
@@ -159,11 +159,6 @@
       "copyright": ["Copyright (c) 2024-2026 Model Context Protocol a Series of LF Projects, LLC.", "Copyright (c) 2024 Peder Holdgaard Pedersen (mcpdotnet)", "Copyright (c) .NET Foundation and Contributors (Polyfills)"],
       "texts": ["repo:release/licenses/Apache-2.0.txt", "repo:release/licenses/MIT.txt"],
       "note": "The agent server of oltool and of the editor (milestone MCP1). The repository of the SDK moves from the MIT License to the Apache License 2.0. Parts whose authors did not agree to the change stay under the MIT License. The packages hold no license file, so the texts come from release/licenses."
-    },
-    {
-      "id": "system-diagnostics-eventlog", "name": "System.Diagnostics.EventLog", "version": "NuGet package", "license": "MIT",
-      "packages": ["System.Diagnostics.EventLog"],
-      "texts": ["nuget:System.Diagnostics.EventLog/LICENSE.TXT", "nuget:System.Diagnostics.EventLog/THIRD-PARTY-NOTICES.TXT"]
     },
     {
       "id": "castle-core", "name": "Castle Core", "version": "NuGet package", "license": "Apache-2.0",
