@@ -41,6 +41,7 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
 
     private readonly ThnCurveEditor curves = new(window, grid);
     private readonly ThnPathKeysEditor pathKeys = new(window, grid);
+    private readonly ThnAnimationPicker animations = new(window);
 
     // The text of the time shift of a set of events.
     private string shift = "0";
@@ -54,6 +55,8 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
 
     /// <summary>Ends an open drag of a curve point, for example when the window closes.</summary>
     public void EndDrag() => curves.End();
+
+    public void Dispose() => animations.Dispose();
 
     private static IReadOnlyDictionary<string, ThnSymbolInfo> Symbols => CutsceneWorkspace.Symbols;
 
@@ -593,6 +596,14 @@ internal sealed class ThnPage(EditorWindow window, PropertyGrid grid)
         if (kind == ThnElementKind.Entity && IsIn(row.Path, TransformRecord) && ThnFlags.IsReference(table, Symbols))
         {
             note = note == null ? ThnPose.ReferencePoseNote : $"{ThnPose.ReferencePoseNote}\n\n{note}";
+        }
+
+        if (kind == ThnElementKind.Event && path.Text == "props.animation" &&
+            ThnSchema.TypeOf(kind, table, Symbols) == "START_MOTION")
+        {
+            grid.ThnRow("Animation", field, "Select a clip and play it on the event target.",
+                () => animations.Draw(workspace, field, table));
+            return;
         }
 
         switch (row.Kind)

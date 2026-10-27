@@ -328,6 +328,13 @@ public sealed class CutscenePlayer : ICutscenePlayer
         cutscene.Draw(stepSeconds, viewport.Width, viewport.Height, overrideCamera);
     }
 
+    /// <summary>Gets the character appearance of a scene object for an independent preview.</summary>
+    public CharacterRenderer? CharacterOf(string name)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return cutscene.GetObject(name)?.Object?.RenderComponent as CharacterRenderer;
+    }
+
     /// <summary>
     /// The scene object with a name now, or null when the scene has no such object. The names compare without letter
     /// case, as the engine compares them (Cutscene.cs:41). A REFERENCE entity has the object of its name in the set

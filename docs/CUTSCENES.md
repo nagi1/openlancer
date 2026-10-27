@@ -165,6 +165,19 @@ While the Cutscene tab shows, the Hierarchy shows the open cutscene: the cutscen
 
 ## The Inspector of a cutscene
 
+A motion event has an animation picker. Select its character in the target row, then open the Animation field. The
+picker reads the animation files that the game loads. It shows the last file for a name that more than one file uses.
+Filter by character, body part or search text. The picker selects a character filter from the target when it can identify
+the character. Short labels come from words in the clip names. A filter does not guarantee that a clip fits the model.
+
+Hover over a clip to play it on the preview character. The preview plays the clip by itself, not in the cutscene. Scroll
+to zoom. Drag with the left mouse button to rotate. Drag with the right or middle button, or hold Shift and drag with the
+left button, to move the view. **Reset view** restores the camera. Select another named character to preview the clip on
+that character, if the character is in the scene. Select **Use this character for the event** to change the event target.
+
+Select a clip to change the event. Click Preview to play the cutscene from the event time. The selection is an edit. Undo
+it to put back the previous clip. The picker needs an active editable mod and a cutscene preview.
+
 The Inspector shows the selected entity or event, the selected events, or the cutscene page when the cutscene is selected: the state, the duration, the counts, the monitors, the lines that use the script and the scripts of the preview. With an active mod, its rows edit W, and each edit is one entry of the edit history. A blue label and a bar mark a value that differs from the lower cutscene. The menu of a label has **Revert to the lower cutscene**, **Remove** and **Copy value**. The tooltip of a label names the engine lines that read the key.
 
 - An entity shows the rows of its type, in the groups of its records: Transform, Camera, Light, Sound, Character, Path, Effect and User props. An event shows its time, length, type and targets, then the rows of its type. The time and the length change as a drag on the Timeline changes them: on the 1 ms grid, and not below 0. A key that the editor does not know shows in **Other keys** as Lua text, and the evaluator reads a new text. A key that the engine does not read has a note, for example `No_Fog`. The engine reads the `userprops` keys without letter case, so a row edits the spelling that the entity has.

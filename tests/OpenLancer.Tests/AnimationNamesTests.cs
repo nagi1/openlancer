@@ -50,7 +50,7 @@ public sealed class AnimationNamesTests
     /// A UTF file: the root, "Animation" with the child "Script" and a peer "Other", and two scripts under "Script"
     /// with letter case of their own. A data block of keys follows the string block.
     /// </summary>
-    private static (byte[] Bytes, int DataOffset) Build(bool scripts = true)
+    internal static (byte[] Bytes, int DataOffset) Build(bool scripts = true)
     {
         var names = new List<string> { "\\", "animation", "SCRIPT", "Other", "Sc_Walk", "Sc_Run" };
         var nameOffsets = new List<int>();
